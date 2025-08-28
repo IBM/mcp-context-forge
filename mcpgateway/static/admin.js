@@ -4295,6 +4295,82 @@ let toolInputSchemaRegistry = null;
 /**
  * ENHANCED: Tool testing with improved race condition handling
  */
+
+function detectArrayLike(p) {
+    // Returns { isArrayLike, itemsSchema, isNullable }
+    const out = {
+        isArrayLike: false,
+        itemsSchema: undefined,
+        isNullable: false,
+    };
+    if (!p || typeof p !== "object") {
+        return out;
+    }
+
+    const t = Array.isArray(p.type) ? p.type : p.type ? [p.type] : [];
+    if (t.includes("null")) {
+        out.isNullable = true;
+    }
+    if (p.nullable === true) {
+        out.isNullable = true;
+    }
+    if (Array.isArray(p.enum) && p.enum.includes(null)) {
+        out.isNullable = true;
+    }
+    if (p.const === null) {
+        out.isNullable = true;
+    }
+
+    // A) explicit array on prop
+    if (t.includes("array")) {
+        out.isArrayLike = true;
+        out.itemsSchema = p.items;
+        return out;
+    }
+    // B) items present without explicit type
+    if (p.items) {
+        out.isArrayLike = true;
+        out.itemsSchema = p.items;
+        return out;
+    }
+
+    // C) union variants (anyOf/oneOf) detect array + null
+    const unions = []
+        .concat(Array.isArray(p.anyOf) ? p.anyOf : [])
+        .concat(Array.isArray(p.oneOf) ? p.oneOf : []);
+
+    for (const v of unions) {
+        if (!v) {
+            continue;
+        }
+        const vt = Array.isArray(v.type) ? v.type : v.type ? [v.type] : [];
+        if (vt.includes("null")) {
+            out.isNullable = true;
+        }
+        if (
+            v.nullable === true ||
+            (Array.isArray(v.enum) && v.enum.includes(null)) ||
+            v.const === null
+        ) {
+            out.isNullable = true;
+        }
+    }
+
+    for (const v of unions) {
+        if (!v) {
+            continue;
+        }
+        const vt = Array.isArray(v.type) ? v.type : v.type ? [v.type] : [];
+        if (vt.includes("array") || v.items) {
+            out.isArrayLike = true;
+            out.itemsSchema = v.items;
+            return out;
+        }
+    }
+
+    return out;
+}
+
 async function testTool(toolId) {
     try {
         console.log(`Testing tool ID: ${toolId}`);
@@ -4476,7 +4552,10 @@ async function testTool(toolId) {
                     fieldDiv.appendChild(description);
                 }
 
-                if (prop.type === "array") {
+                const { isArrayLike, itemsSchema, isNullable } =
+                    detectArrayLike(prop);
+
+                if (isArrayLike) {
                     const arrayContainer = document.createElement("div");
                     arrayContainer.className = "space-y-2";
 
@@ -4484,32 +4563,53 @@ async function testTool(toolId) {
                         const wrapper = document.createElement("div");
                         wrapper.className = "flex items-center space-x-2";
 
-                        const input = document.createElement("input");
-                        input.name = keyValidation.value;
-                        input.required =
-                            schema.required && schema.required.includes(key);
-                        input.className =
-                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                        // Use itemsSchema (NOT prop.items)
+                        const items = itemsSchema || {};
+                        const itemTypes = Array.isArray(items.anyOf)
+                            ? items.anyOf.map((t) => t.type).filter(Boolean)
+                            : [items.type].filter(Boolean);
 
-                        const itemTypes = Array.isArray(prop.items?.anyOf)
-                            ? prop.items.anyOf.map((t) => t.type)
-                            : [prop.items?.type];
-
+                        let input;
                         if (
                             itemTypes.includes("number") ||
                             itemTypes.includes("integer")
                         ) {
+                            input = document.createElement("input");
                             input.type = "number";
                             input.step = itemTypes.includes("integer")
                                 ? "1"
                                 : "any";
                         } else if (itemTypes.includes("boolean")) {
+                            const hiddenFalse = document.createElement("input");
+                            hiddenFalse.type = "hidden";
+                            hiddenFalse.name = keyValidation.value + "[]";
+                            hiddenFalse.value = "false";
+
+                            input = document.createElement("input");
                             input.type = "checkbox";
+                            input.name = keyValidation.value + "[]";
                             input.value = "true";
-                            input.checked = value === true || value === "true";
+
+                            const checked = value === true || value === "true";
+                            input.checked = checked;
+                            hiddenFalse.disabled = checked;
+
+                            input.addEventListener("change", () => {
+                                hiddenFalse.disabled = input.checked;
+                            });
+
+                            wrapper.appendChild(hiddenFalse);
+                            wrapper.appendChild(input);
                         } else {
+                            input = document.createElement("input");
                             input.type = "text";
                         }
+
+                        input.name = input.name || keyValidation.value + "[]";
+                        input.required =
+                            schema.required && schema.required.includes(key);
+                        input.className =
+                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                         if (
                             typeof value === "string" ||
@@ -4528,7 +4628,10 @@ async function testTool(toolId) {
                             arrayContainer.removeChild(wrapper);
                         });
 
-                        wrapper.appendChild(input);
+                        if (!itemTypes.includes("boolean")) {
+                            wrapper.appendChild(input);
+                        }
+
                         wrapper.appendChild(delBtn);
                         return wrapper;
                     }
@@ -4542,62 +4645,83 @@ async function testTool(toolId) {
                         arrayContainer.appendChild(createArrayInput());
                     });
 
-                    if (Array.isArray(prop.default)) {
-                        if (prop.default.length > 0) {
-                            prop.default.forEach((val) => {
-                                arrayContainer.appendChild(
-                                    createArrayInput(val),
-                                );
-                            });
-                        } else {
-                            // Create one empty input for empty default arrays
-                            arrayContainer.appendChild(createArrayInput());
-                        }
-                    } else {
+                    // Seed rows:
+                    if (
+                        Array.isArray(prop.default) &&
+                        prop.default.length > 0
+                    ) {
+                        prop.default.forEach((val) =>
+                            arrayContainer.appendChild(createArrayInput(val)),
+                        );
+                    } else if (!isNullable) {
+                        // Non-nullable: start with one empty row
                         arrayContainer.appendChild(createArrayInput());
                     }
+                    // Nullable + default null/undefined → start with zero rows (button still shown)
 
                     fieldDiv.appendChild(arrayContainer);
                     fieldDiv.appendChild(addBtn);
                 } else {
-                    // Input field with validation (with multiline support)
                     let fieldInput;
-                    const isTextType = prop.type === "text";
-                    if (isTextType) {
-                        fieldInput = document.createElement("textarea");
-                        fieldInput.rows = 4;
-                    } else {
+
+                    if (prop.type === "boolean") {
+                        // Hidden "false" to ensure a value when unchecked
+                        const hiddenFalse = document.createElement("input");
+                        hiddenFalse.type = "hidden";
+                        hiddenFalse.name = keyValidation.value;
+                        hiddenFalse.value = "false";
+
+                        // Visible checkbox (submits "true" when checked)
                         fieldInput = document.createElement("input");
-                        if (prop.type === "number" || prop.type === "integer") {
+                        fieldInput.type = "checkbox";
+                        fieldInput.name = keyValidation.value;
+                        fieldInput.value = "true";
+
+                        fieldInput.required =
+                            schema.required && schema.required.includes(key);
+                        fieldInput.className =
+                            "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded";
+
+                        // set defaults
+                        const checked = prop.default === true;
+                        fieldInput.checked = checked;
+                        hiddenFalse.disabled = checked;
+
+                        fieldInput.addEventListener("change", () => {
+                            hiddenFalse.disabled = fieldInput.checked;
+                        });
+
+                        // append both (hidden first)
+                        fieldDiv.appendChild(hiddenFalse);
+                        fieldDiv.appendChild(fieldInput);
+                    } else {
+                        // Non-boolean handling
+                        if (prop.type === "text") {
+                            fieldInput = document.createElement("textarea");
+                            fieldInput.rows = 4;
+                        } else if (
+                            prop.type === "number" ||
+                            prop.type === "integer"
+                        ) {
+                            fieldInput = document.createElement("input");
                             fieldInput.type = "number";
-                        } else if (prop.type === "boolean") {
-                            fieldInput.type = "checkbox";
                         } else {
                             fieldInput = document.createElement("textarea");
                             fieldInput.rows = 1;
                         }
-                    }
 
-                    fieldInput.name = keyValidation.value;
-                    fieldInput.required =
-                        schema.required && schema.required.includes(key);
-                    fieldInput.className =
-                        prop.type === "boolean"
-                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                        fieldInput.name = keyValidation.value;
+                        fieldInput.required =
+                            schema.required && schema.required.includes(key);
+                        fieldInput.className =
+                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
-                    // Set default values here
-                    if (prop.default !== undefined) {
-                        if (fieldInput.type === "checkbox") {
-                            fieldInput.checked = prop.default === true;
-                        } else if (isTextType) {
-                            fieldInput.value = prop.default;
-                        } else {
+                        if (prop.default !== undefined) {
                             fieldInput.value = prop.default;
                         }
-                    }
 
-                    fieldDiv.appendChild(fieldInput);
+                        fieldDiv.appendChild(fieldInput);
+                    }
                 }
 
                 container.appendChild(fieldDiv);
