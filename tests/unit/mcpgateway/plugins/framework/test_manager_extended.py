@@ -8,19 +8,21 @@ Extended tests for plugin manager to achieve 100% coverage.
 """
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+import re
 
 import pytest
 
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import (
-    Config,
+from mcpgateway.plugins.framework.models import Config
+from mcpgateway.plugins.framework import (
     GlobalContext,
     HookType,
     PluginCondition,
     PluginConfig,
     PluginContext,
+    PluginError,
+    PluginManager,
     PluginMode,
     PluginViolation,
     PluginResult,
@@ -68,13 +70,15 @@ async def test_manager_timeout_handling():
         prompt = PromptPrehookPayload(name="test", args={})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+        escaped_regex = re.escape("Plugin TimeoutPlugin exceeded 0.01s timeout")
+        with pytest.raises(PluginError, match=escaped_regex):
+            result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
-        # Should block in enforce mode
-        assert not result.continue_processing
-        assert result.violation is not None
-        assert result.violation.code == "PLUGIN_TIMEOUT"
-        assert "timeout" in result.violation.description.lower()
+        # Should pass since fail_on_plugin_error: false
+        # assert result.continue_processing
+        #assert result.violation is not None
+        #assert result.violation.code == "PLUGIN_TIMEOUT"
+        #assert "timeout" in result.violation.description.lower()
 
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
@@ -124,13 +128,15 @@ async def test_manager_exception_handling():
         prompt = PromptPrehookPayload(name="test", args={})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+        escaped_regex = re.escape("RuntimeError('Plugin error!')")
+        with pytest.raises(PluginError, match=escaped_regex):
+            result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
         # Should block in enforce mode
-        assert not result.continue_processing
-        assert result.violation is not None
-        assert result.violation.code == "PLUGIN_ERROR"
-        assert "error" in result.violation.description.lower()
+        #assert result.continue_processing
+        #assert result.violation is not None
+        #assert result.violation.code == "PLUGIN_ERROR"
+        #assert "error" in result.violation.description.lower()
 
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
@@ -141,6 +147,17 @@ async def test_manager_exception_handling():
         result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
         # Should continue in permissive mode
+        assert result.continue_processing
+        assert result.violation is None
+    
+    plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
+    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+        plugin_ref = PluginRef(error_plugin)
+        mock_get.return_value = [plugin_ref]
+
+        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+
+        # Should continue in enforce_ignore_error mode
         assert result.continue_processing
         assert result.violation is None
 
@@ -545,6 +562,7 @@ async def test_manager_initialization_edge_cases():
         mock_logger.debug.assert_called_with("Skipping disabled plugin: DisabledPlugin")
 
     await manager3.shutdown()
+    await manager2.shutdown()
 
 
 @pytest.mark.asyncio
@@ -577,8 +595,8 @@ async def test_manager_context_cleanup():
 
     await manager.shutdown()
 
-
-def test_manager_constructor_context_init():
+@pytest.mark.asyncio
+async def test_manager_constructor_context_init():
     """Test manager constructor context initialization."""
 
     # Test that managers share state and context store exists (covers lines 432-433)
@@ -593,6 +611,8 @@ def test_manager_constructor_context_init():
 
     # They should be the same instance due to shared state
     assert manager1._context_store is manager2._context_store
+    await manager1.shutdown()
+    await manager2.shutdown()
 
 
 @pytest.mark.asyncio
@@ -631,7 +651,7 @@ async def test_base_plugin_coverage():
     assert plugin_ref.mode == PluginMode.ENFORCE  # Default mode
 
     # Test NotImplementedError for prompt_pre_fetch (covers lines 151-155)
-    context = PluginContext(request_id="test")
+    context = PluginContext(global_context=GlobalContext(request_id="test"))
     payload = PromptPrehookPayload(name="test", args={})
 
     with pytest.raises(NotImplementedError, match="'prompt_pre_fetch' not implemented"):
@@ -665,7 +685,7 @@ async def test_plugin_types_coverage():
     from mcpgateway.plugins.framework.errors import PluginViolationError
 
     # Test PluginContext state methods (covers lines 266, 275)
-    plugin_ctx = PluginContext(request_id="test", user="testuser")
+    plugin_ctx = PluginContext(global_context=GlobalContext(request_id="test", user="testuser"))
 
     # Test get_state with default
     assert plugin_ctx.get_state("nonexistent", "default_value") == "default_value"
