@@ -92,14 +92,18 @@ class TestMetadataIntegration:
             "name": unique_name,
             "url": "http://example.com/api",
             "description": "Tool created via API",
-            "integration_type": "REST",
-            "request_type": "GET"
+            "integrationType": "REST",
+            "requestType": "GET"
         }
 
         response = client.post("/tools", json=tool_data)
         assert response.status_code == 200
 
         tool = response.json()
+
+        print()
+        print("response.status_code", response.status_code)
+        print("response.json()", response.json()['detail'])
 
         # Verify metadata was captured
         assert tool["createdBy"] == "test_user"
@@ -136,11 +140,16 @@ class TestMetadataIntegration:
             "name": f"update_test_tool_{uuid.uuid4().hex[:8]}",
             "url": "http://example.com/test",
             "description": "Tool for update testing",
-            "integration_type": "REST",
-            "request_type": "GET"
+            "integrationType": "REST",
+            "requestType": "GET"
         }
 
         create_response = client.post("/tools", json=tool_data)
+
+        print()
+        print("create_response.status_code", create_response.status_code)
+        print("create_response.json()", create_response.json()['detail']) 
+
         assert create_response.status_code == 200
         tool_id = create_response.json()["id"]
 
@@ -167,13 +176,17 @@ class TestMetadataIntegration:
             "name": f"legacy_simulation_tool_{uuid.uuid4().hex[:8]}",
             "url": "http://example.com/legacy",
             "description": "Simulated legacy tool",
-            "integration_type": "REST",
-            "request_type": "GET"
+            "integrationType": "REST",
+            "requestType": "GET"
         }
 
         response = client.post("/tools", json=tool_data)
         assert response.status_code == 200
         tool = response.json()
+
+        print()
+        print("response.status_code", response.status_code)
+        print("response.json()", response.json()['detail'])
 
         # Even "legacy" simulation should have metadata since we're testing new code
         # But verify that optional fields handle None gracefully
@@ -190,14 +203,18 @@ class TestMetadataIntegration:
             "name": f"anonymous_test_tool_{uuid.uuid4().hex[:8]}",
             "url": "http://example.com/anon",
             "description": "Tool created anonymously",
-            "integration_type": "REST",
-            "request_type": "GET"
+            "integrationType": "REST",
+            "requestType": "GET"
         }
 
         response = client.post("/tools", json=tool_data)
         assert response.status_code == 200
 
         tool = response.json()
+
+        print()
+        print("response.status_code", response.status_code)
+        print("response.json()", response.json()['detail'])
 
         # Verify anonymous metadata
         assert tool["createdBy"] == "anonymous"
@@ -210,11 +227,16 @@ class TestMetadataIntegration:
             "name": f"schema_test_tool_{uuid.uuid4().hex[:8]}",
             "url": "http://example.com/schema",
             "description": "Tool for schema testing",
-            "integration_type": "REST",
-            "request_type": "GET"
+            "integrationType": "REST",
+            "requestType": "GET"
         }
 
         response = client.post("/tools", json=tool_data)
+
+        print()
+        print("response.status_code", response.status_code)
+        print("response.json()", response.json()['detail'])
+
         assert response.status_code == 200
 
         tool = response.json()
@@ -236,8 +258,8 @@ class TestMetadataIntegration:
             "name": f"list_test_tool_{uuid.uuid4().hex[:8]}",
             "url": "http://example.com/list",
             "description": "Tool for list testing",
-            "integration_type": "REST",
-            "request_type": "GET"
+            "integrationType": "REST",
+            "requestType": "GET"
         }
 
         client.post("/tools", json=tool_data)
@@ -283,8 +305,8 @@ class TestMetadataIntegration:
             name=f"service_layer_test_{uuid.uuid4().hex[:8]}",
             url="http://example.com/service",
             description="Service layer test tool",
-            integration_type="REST",
-            request_type="GET"
+            integrationType="REST",
+            requestType="GET"
         )
 
         # Test service creation with metadata
