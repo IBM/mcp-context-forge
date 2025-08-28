@@ -634,7 +634,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
         return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
-
     try:
         await server_service.register_server(db, server)
         return JSONResponse(

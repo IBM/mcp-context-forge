@@ -296,7 +296,7 @@ class SecurityValidator:
 
         Examples:
             >>> SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716-446655440000')
-            '550e8400-e29b-41d4-a716-446655440000'
+            '550e8400e29b41d4a716446655440000'
             >>> SecurityValidator.validate_uuid('invalid-uuid')
             Traceback (most recent call last):
                 ...
@@ -309,8 +309,9 @@ class SecurityValidator:
             # Validate UUID format by attempting to parse it
             uuid_obj = uuid.UUID(value)
             # Return the normalized string representation
-            return str(uuid_obj)
+            return str(uuid_obj).replace("-", "")
         except ValueError:
+            logger.error(f"Invalid UUID format for {field_name}: {value}")
             raise ValueError(f"{field_name} must be a valid UUID format")
 
     @classmethod
