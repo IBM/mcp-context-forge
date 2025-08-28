@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [Unreleased] - Multi-User Authentication System
+
+### Added
+
+#### **👥 Multi-User Authentication & Authorization System**
+* **Complete User Management** - User registration, authentication, and profile management
+* **Enhanced JWT System** - User-context JWT tokens with unique IDs (jti) and revocation support
+* **API Token Management** - Individual token creation, listing, and revocation per user
+* **Team Collaboration** - Team creation, membership management, and invitations
+* **Resource Scoping** - Private, team, and global resource visibility for multi-tenancy
+* **Password Security** - Bcrypt hashing with configurable password policies
+* **Account Protection** - Brute force protection with account lockout and rate limiting
+* **Authentication Audit** - Comprehensive logging of all authentication events
+* **CSRF Protection** - Security for cookie-based authentication
+* **Session Management** - Secure user sessions with configurable timeouts
+
+#### **🔐 Security Enhancements**
+* **Algorithm Validation** - JWT algorithm allowlist (blocks "none" algorithm)
+* **Token Age Validation** - Maximum token age enforcement
+* **Claims Validation** - Required JWT claims (exp, iat, sub, jti, iss, aud)
+* **Revocation Checking** - Database-backed token validation and revocation
+
+#### **🔄 Backward Compatibility**
+* **Legacy Mode Support** - Existing single-user deployments continue working unchanged
+* **Gradual Migration** - Optional migration path to multi-user mode
+* **Zero Breaking Changes** - Automatic migration creates default admin user
+
+#### **📚 Documentation & Configuration**
+* **Complete API Documentation** - OpenAPI specs for all new endpoints
+* **Configuration Examples** - .env.example, Helm values, docker-compose updates
+* **Migration Guide** - Step-by-step upgrade instructions
+* **Security Documentation** - Production security best practices
+
+#### **🛠️ Developer Experience**
+* **API Endpoints** - RESTful APIs for authentication, users, tokens, and teams
+* **Database Migration** - Alembic migration with proper indexes and constraints
+* **Testing Framework** - Comprehensive test suite for multi-user functionality
+* **Demo Scripts** - Working examples demonstrating all features
+
+### Dependencies
+
+* **Added**: `bcrypt>=4.3.0` for secure password hashing
+* **Added**: `email-validator>=2.2.0` for Pydantic email validation
+
+### Database Schema
+
+* **New Tables**: `users`, `user_sessions`, `api_tokens`, `auth_events`, `teams`, `team_members`, `team_invitations`
+* **Extended Tables**: Added `user_id`, `scope_type`, `scope_team_id` to all resource tables for scoping
+
+### API Endpoints
+
+* **Authentication**: `/auth/login`, `/auth/logout`, `/auth/me`, `/auth/change-password`, `/auth/refresh`
+* **User Management**: `/users/*` - Complete CRUD operations for user management
+* **Token Management**: `/tokens/*` - API token creation, listing, and revocation
+* **Team Management**: `/teams/*` - Team creation, membership, and invitations
+
+---
+
 ## [0.6.0] - 2025-08-22 - Security, Scale & Smart Automation
 
 ### Overview

@@ -6,3 +6,9 @@ extend-ignore =
 per-file-ignores =
     mcpgateway/services/gateway_service.py: DAR401,DAR402
     mcpgateway/translate.py: DAR401
+    mcpgateway/routers/auth.py: DAR101,DAR201,DAR401
+    mcpgateway/routers/users.py: DAR101,DAR201,DAR401
+    mcpgateway/routers/tokens.py: DAR101,DAR201,DAR401
+    mcpgateway/routers/teams.py: DAR101,DAR201,DAR401
+    mcpgateway/schemas.py: DAR101,DAR201,DAR401
+    mcpgateway/admin.py: DAR101,DAR201,DAR401

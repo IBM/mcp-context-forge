@@ -65,6 +65,25 @@ from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, Log
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
+
+# Import multi-user authentication routers and services
+try:
+    # First-Party
+    from mcpgateway.db import User
+    from mcpgateway.routers.auth import router as auth_router
+    from mcpgateway.routers.teams import router as teams_router
+    from mcpgateway.routers.tokens import router as tokens_router
+    from mcpgateway.routers.users import router as users_router
+    from mcpgateway.services.user_service import UserService
+
+    AUTH_ROUTERS_AVAILABLE = True
+except ImportError:
+    AUTH_ROUTERS_AVAILABLE = False
+    UserService = None
+    User = None
+# First-Party
+from mcpgateway.auth import get_current_user_legacy_compatible
+from mcpgateway.db import User
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
@@ -233,6 +252,29 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         refresh_slugs_on_startup()
+
+        # Initialize multi-user system if enabled
+        if AUTH_ROUTERS_AVAILABLE and settings.multi_user_enabled and not settings.legacy_auth_mode and UserService and User:
+            try:
+                # Ensure default admin user exists (idempotent and race-condition safe)
+                with SessionLocal() as db:
+                    user_service = UserService(db)
+                    admin_user = await user_service.ensure_admin_user_exists(
+                        username=settings.basic_auth_user,
+                        password=settings.basic_auth_password,
+                        full_name="Default Admin User",
+                    )
+
+                    existing_users = db.query(User).count()
+                    logger.info(f"Multi-user system ready - admin user '{admin_user.username}' available ({existing_users} total users)")
+
+            except Exception as e:
+                # Multi-user initialization failed, but don't block startup
+                if "UNIQUE constraint failed" in str(e):
+                    logger.info(f"Multi-user system ready - admin user '{settings.basic_auth_user}' already exists")
+                else:
+                    logger.warning(f"Multi-user initialization issue: {e}")
+                logger.info("Application continuing with existing user configuration")
 
         logger.info("All services initialized successfully")
 
@@ -733,7 +775,7 @@ def update_url_protocol(request: Request) -> str:
 
 # Protocol APIs #
 @protocol_router.post("/initialize")
-async def initialize(request: Request, user: str = Depends(require_auth)) -> InitializeResult:
+async def initialize(request: Request, current_user: User = Depends(get_current_user_legacy_compatible)) -> InitializeResult:
     """
     Initialize a protocol.
 
@@ -765,7 +807,7 @@ async def initialize(request: Request, user: str = Depends(require_auth)) -> Ini
 
 
 @protocol_router.post("/ping")
-async def ping(request: Request, user: str = Depends(require_auth)) -> JSONResponse:
+async def ping(request: Request, current_user: User = Depends(get_current_user_legacy_compatible)) -> JSONResponse:
     """
     Handle a ping request according to the MCP specification.
 
@@ -801,7 +843,7 @@ async def ping(request: Request, user: str = Depends(require_auth)) -> JSONRespo
 
 
 @protocol_router.post("/notifications")
-async def handle_notification(request: Request, user: str = Depends(require_auth)) -> None:
+async def handle_notification(request: Request, current_user: User = Depends(get_current_user_legacy_compatible)) -> None:
     """
     Handles incoming notifications from clients. Depending on the notification method,
     different actions are taken (e.g., logging initialization, cancellation, or messages).
@@ -829,7 +871,7 @@ async def handle_notification(request: Request, user: str = Depends(require_auth
 
 
 @protocol_router.post("/completion/complete")
-async def handle_completion(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+async def handle_completion(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)):
     """
     Handles the completion of tasks by processing a completion request.
 
@@ -847,7 +889,7 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
 
 
 @protocol_router.post("/sampling/createMessage")
-async def handle_sampling(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+async def handle_sampling(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)):
     """
     Handles the creation of a new message for sampling.
 
@@ -873,7 +915,7 @@ async def list_servers(
     include_inactive: bool = False,
     tags: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[ServerRead]:
     """
     Lists all servers in the system, optionally including inactive ones.
@@ -897,7 +939,7 @@ async def list_servers(
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
-async def get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
+async def get_server(server_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
@@ -924,7 +966,7 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user: str = 
 async def create_server(
     server: ServerCreate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> ServerRead:
     """
     Creates a new server.
@@ -960,7 +1002,7 @@ async def update_server(
     server_id: str,
     server: ServerUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> ServerRead:
     """
     Updates the information of an existing server.
@@ -999,7 +1041,7 @@ async def toggle_server_status(
     server_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> ServerRead:
     """
     Toggles the status of a server (activate or deactivate).
@@ -1026,7 +1068,7 @@ async def toggle_server_status(
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
-async def delete_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_server(server_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
@@ -1055,7 +1097,7 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user: str
 
 
 @server_router.get("/{server_id}/sse")
-async def sse_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
+async def sse_endpoint(request: Request, server_id: str, current_user: User = Depends(get_current_user_legacy_compatible)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
@@ -1093,7 +1135,7 @@ async def sse_endpoint(request: Request, server_id: str, user: str = Depends(req
 
 
 @server_router.post("/{server_id}/message")
-async def message_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
+async def message_endpoint(request: Request, server_id: str, current_user: User = Depends(get_current_user_legacy_compatible)):
     """
     Handles incoming messages for a specific server.
 
@@ -1138,7 +1180,7 @@ async def server_get_tools(
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[ToolRead]:
     """
     List tools for the server  with an option to include inactive tools.
@@ -1166,7 +1208,7 @@ async def server_get_resources(
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[ResourceRead]:
     """
     List resources for the server with an option to include inactive resources.
@@ -1194,7 +1236,7 @@ async def server_get_prompts(
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[PromptRead]:
     """
     List prompts for the server with an option to include inactive prompts.
@@ -1226,7 +1268,7 @@ async def list_a2a_agents(
     include_inactive: bool = False,
     tags: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[A2AAgentRead]:
     """
     Lists all A2A agents in the system, optionally including inactive ones.
@@ -1250,7 +1292,7 @@ async def list_a2a_agents(
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
-async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> A2AAgentRead:
+async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> A2AAgentRead:
     """
     Retrieves an A2A agent by its ID.
 
@@ -1278,7 +1320,7 @@ async def create_a2a_agent(
     agent: A2AAgentCreate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> A2AAgentRead:
     """
     Creates a new A2A agent.
@@ -1328,7 +1370,7 @@ async def update_a2a_agent(
     agent: A2AAgentUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> A2AAgentRead:
     """
     Updates the information of an existing A2A agent.
@@ -1379,7 +1421,7 @@ async def toggle_a2a_agent_status(
     agent_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> A2AAgentRead:
     """
     Toggles the status of an A2A agent (activate or deactivate).
@@ -1406,7 +1448,7 @@ async def toggle_a2a_agent_status(
 
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
-async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
@@ -1440,7 +1482,7 @@ async def invoke_a2a_agent(
     parameters: Dict[str, Any] = Body(default_factory=dict),
     interaction_type: str = Body(default="query"),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, Any]:
     """
     Invokes an A2A agent with the specified parameters.
@@ -1512,7 +1554,7 @@ async def list_tools(
 
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
-async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
+async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> ToolRead:
     """
     Creates a new tool in the system.
 
@@ -1568,7 +1610,7 @@ async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(
 async def get_tool(
     tool_id: str,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
     apijsonpath: JsonPathModifier = Body(None),
 ) -> Union[ToolRead, Dict]:
     """
@@ -1606,7 +1648,7 @@ async def update_tool(
     tool: ToolUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> ToolRead:
     """
     Updates an existing tool with new data.
@@ -1658,7 +1700,7 @@ async def update_tool(
 
 
 @tool_router.delete("/{tool_id}")
-async def delete_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_tool(tool_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
@@ -1686,7 +1728,7 @@ async def toggle_tool_status(
     tool_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, Any]:
     """
     Activates or deactivates a tool.
@@ -1722,7 +1764,7 @@ async def toggle_tool_status(
 @resource_router.get("/templates/list", response_model=ListResourceTemplatesResult)
 async def list_resource_templates(
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> ListResourceTemplatesResult:
     """
     List all available resource templates.
@@ -1745,7 +1787,7 @@ async def toggle_resource_status(
     resource_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, Any]:
     """
     Activate or deactivate a resource by its ID.
@@ -1781,7 +1823,7 @@ async def list_resources(
     include_inactive: bool = False,
     tags: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[ResourceRead]:
     """
     Retrieve a list of resources.
@@ -1816,7 +1858,7 @@ async def create_resource(
     resource: ResourceCreate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> ResourceRead:
     """
     Create a new resource.
@@ -1861,7 +1903,7 @@ async def create_resource(
 
 
 @resource_router.get("/{uri:path}")
-async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ResourceContent:
+async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> ResourceContent:
     """
     Read a resource by its URI with plugin support.
 
@@ -1903,7 +1945,7 @@ async def update_resource(
     uri: str,
     resource: ResourceUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> ResourceRead:
     """
     Update a resource identified by its URI.
@@ -1936,7 +1978,7 @@ async def update_resource(
 
 
 @resource_router.delete("/{uri:path}")
-async def delete_resource(uri: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_resource(uri: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, str]:
     """
     Delete a resource by its URI.
 
@@ -1963,7 +2005,7 @@ async def delete_resource(uri: str, db: Session = Depends(get_db), user: str = D
 
 
 @resource_router.post("/subscribe/{uri:path}")
-async def subscribe_resource(uri: str, user: str = Depends(require_auth)) -> StreamingResponse:
+async def subscribe_resource(uri: str, current_user: User = Depends(get_current_user_legacy_compatible)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
@@ -1986,7 +2028,7 @@ async def toggle_prompt_status(
     prompt_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, Any]:
     """
     Toggle the activation status of a prompt.
@@ -2022,7 +2064,7 @@ async def list_prompts(
     include_inactive: bool = False,
     tags: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[PromptRead]:
     """
     List prompts with optional pagination and inclusion of inactive items.
@@ -2052,7 +2094,7 @@ async def create_prompt(
     prompt: PromptCreate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> PromptRead:
     """
     Create a new prompt.
@@ -2111,7 +2153,7 @@ async def get_prompt(
     name: str,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Any:
     """Get a prompt by name with arguments.
 
@@ -2178,7 +2220,7 @@ async def get_prompt(
 async def get_prompt_no_args(
     name: str,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Any:
     """Get a prompt by name without arguments.
 
@@ -2233,7 +2275,7 @@ async def update_prompt(
     name: str,
     prompt: PromptUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> PromptRead:
     """
     Update (overwrite) an existing prompt definition.
@@ -2276,7 +2318,7 @@ async def update_prompt(
 
 
 @prompt_router.delete("/{name}")
-async def delete_prompt(name: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_prompt(name: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, str]:
     """
     Delete a prompt by name.
 
@@ -2317,7 +2359,7 @@ async def toggle_gateway_status(
     gateway_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, Any]:
     """
     Toggle the activation status of a gateway.
@@ -2355,7 +2397,7 @@ async def toggle_gateway_status(
 async def list_gateways(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[GatewayRead]:
     """
     List all gateways.
@@ -2378,7 +2420,7 @@ async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> GatewayRead:
     """
     Register a new gateway.
@@ -2422,7 +2464,7 @@ async def register_gateway(
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
+async def get_gateway(gateway_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> GatewayRead:
     """
     Retrieve a gateway by ID.
 
@@ -2443,7 +2485,7 @@ async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> GatewayRead:
     """
     Update a gateway.
@@ -2479,7 +2521,7 @@ async def update_gateway(
 
 
 @gateway_router.delete("/{gateway_id}")
-async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
@@ -2502,7 +2544,7 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user: s
 @root_router.get("", response_model=List[Root])
 @root_router.get("/", response_model=List[Root])
 async def list_roots(
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[Root]:
     """
     Retrieve a list of all registered roots.
@@ -2521,7 +2563,7 @@ async def list_roots(
 @root_router.post("/", response_model=Root)
 async def add_root(
     root: Root,  # Accept JSON body using the Root model from models.py
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Root:
     """
     Add a new root.
@@ -2540,7 +2582,7 @@ async def add_root(
 @root_router.delete("/{uri:path}")
 async def remove_root(
     uri: str,
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, str]:
     """
     Remove a registered root by URI.
@@ -2559,7 +2601,7 @@ async def remove_root(
 
 @root_router.get("/changes")
 async def subscribe_roots_changes(
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> StreamingResponse:
     """
     Subscribe to real-time changes in root list via Server-Sent Events (SSE).
@@ -2579,7 +2621,7 @@ async def subscribe_roots_changes(
 ##################
 @utility_router.post("/rpc/")
 @utility_router.post("/rpc")
-async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):  # revert this back
+async def handle_rpc(request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)):  # revert this back
     """Handle RPC requests.
 
     Args:
@@ -2802,7 +2844,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-async def utility_sse_endpoint(request: Request, user: str = Depends(require_auth)):
+async def utility_sse_endpoint(request: Request, current_user: User = Depends(get_current_user_legacy_compatible)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
 
@@ -2839,7 +2881,7 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
 
 
 @utility_router.post("/message")
-async def utility_message_endpoint(request: Request, user: str = Depends(require_auth)):
+async def utility_message_endpoint(request: Request, current_user: User = Depends(get_current_user_legacy_compatible)):
     """
     Handle a JSON-RPC message directed to a specific SSE session.
 
@@ -2882,7 +2924,7 @@ async def utility_message_endpoint(request: Request, user: str = Depends(require
 
 
 @utility_router.post("/logging/setLevel")
-async def set_log_level(request: Request, user: str = Depends(require_auth)) -> None:
+async def set_log_level(request: Request, current_user: User = Depends(get_current_user_legacy_compatible)) -> None:
     """
     Update the server's log level at runtime.
 
@@ -2904,7 +2946,7 @@ async def set_log_level(request: Request, user: str = Depends(require_auth)) -> 
 # Metrics          #
 ####################
 @metrics_router.get("", response_model=dict)
-async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require_auth)) -> dict:
+async def get_metrics(db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> dict:
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
@@ -2937,7 +2979,7 @@ async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require
 
 
 @metrics_router.post("/reset", response_model=dict)
-async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] = None, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> dict:
+async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] = None, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)) -> dict:
     """
     Reset metrics for a specific entity type and optionally a specific entity ID,
     or perform a global reset if no entity is specified.
@@ -3037,7 +3079,7 @@ async def list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[TagInfo]:
     """
     Retrieve all unique tags across specified entity types.
@@ -3076,7 +3118,7 @@ async def get_entities_by_tag(
     tag_name: str,
     entity_types: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> List[TaggedEntity]:
     """
     Get all entities that have a specific tag.
@@ -3124,7 +3166,7 @@ async def export_configuration(
     include_inactive: bool = False,
     include_dependencies: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, Any]:
     """
     Export gateway configuration to JSON format.
@@ -3181,7 +3223,7 @@ async def export_configuration(
 
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
 async def export_selective_configuration(
-    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user: str = Depends(require_auth)
+    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), current_user: User = Depends(get_current_user_legacy_compatible)
 ) -> Dict[str, Any]:
     """
     Export specific entities by their IDs/names.
@@ -3231,7 +3273,7 @@ async def import_configuration(
     rekey_secret: Optional[str] = None,
     selected_entities: Optional[Dict[str, List[str]]] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    current_user: User = Depends(get_current_user_legacy_compatible),
 ) -> Dict[str, Any]:
     """
     Import configuration data with conflict resolution.
@@ -3285,7 +3327,7 @@ async def import_configuration(
 
 
 @export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
-async def get_import_status(import_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
+async def get_import_status(import_id: str, current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, Any]:
     """
     Get the status of an import operation.
 
@@ -3309,7 +3351,7 @@ async def get_import_status(import_id: str, user: str = Depends(require_auth)) -
 
 
 @export_import_router.get("/import/status", response_model=List[Dict[str, Any]])
-async def list_import_statuses(user: str = Depends(require_auth)) -> List[Dict[str, Any]]:
+async def list_import_statuses(current_user: User = Depends(get_current_user_legacy_compatible)) -> List[Dict[str, Any]]:
     """
     List all import operation statuses.
 
@@ -3326,7 +3368,7 @@ async def list_import_statuses(user: str = Depends(require_auth)) -> List[Dict[s
 
 
 @export_import_router.post("/import/cleanup", response_model=Dict[str, Any])
-async def cleanup_import_statuses(max_age_hours: int = 24, user: str = Depends(require_auth)) -> Dict[str, Any]:
+async def cleanup_import_statuses(max_age_hours: int = 24, current_user: User = Depends(get_current_user_legacy_compatible)) -> Dict[str, Any]:
     """
     Clean up completed import statuses older than specified age.
 
@@ -3368,6 +3410,18 @@ else:
     logger.info("A2A router not included - A2A features disabled")
 
 app.include_router(well_known_router)
+
+# Include multi-user authentication routers
+if AUTH_ROUTERS_AVAILABLE and settings.multi_user_enabled and not settings.legacy_auth_mode:
+    app.include_router(auth_router)
+    app.include_router(users_router)
+    app.include_router(tokens_router)
+    app.include_router(teams_router)
+    logger.info("Multi-user authentication routers included")
+elif settings.legacy_auth_mode:
+    logger.info("Running in legacy authentication mode - multi-user routers not included")
+else:
+    logger.info("Multi-user authentication disabled or routers not available")
 
 # Include OAuth router
 try:

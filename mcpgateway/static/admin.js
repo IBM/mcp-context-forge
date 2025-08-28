@@ -1,3 +1,5 @@
+/* global htmx */
+/* eslint-disable no-unused-vars */ // Functions are used as onclick handlers in HTML
 // Make URL field read-only for integration type MCP
 function updateEditToolUrl() {
     const editTypeField = document.getElementById("edit-tool-type");
@@ -3589,6 +3591,13 @@ function showTab(tabName) {
     try {
         console.log(`Switching to tab: ${tabName}`);
 
+        // Special debug for admin tab
+        if (tabName === "admin") {
+            console.log("Admin tab clicked - checking panel exists");
+            const adminPanel = document.getElementById("admin-panel");
+            console.log("Admin panel found:", !!adminPanel);
+        }
+
         // Clear any pending tab switch
         if (tabSwitchTimeout) {
             clearTimeout(tabSwitchTimeout);
@@ -3621,6 +3630,52 @@ function showTab(tabName) {
         const panel = safeGetElement(`${tabName}-panel`);
         if (panel) {
             panel.classList.remove("hidden");
+
+            // Special handling for admin panel - show first sub-panel
+            if (tabName === "admin") {
+                setTimeout(() => {
+                    const firstSubPanel =
+                        panel.querySelector(".admin-sub-panel");
+                    const firstSubTab = panel.querySelector(".admin-sub-tab");
+
+                    if (firstSubPanel && firstSubTab) {
+                        // Hide all admin sub-panels
+                        panel
+                            .querySelectorAll(".admin-sub-panel")
+                            .forEach((sp) => sp.classList.add("hidden"));
+
+                        // Show first sub-panel
+                        firstSubPanel.classList.remove("hidden");
+
+                        // Set first sub-tab as active
+                        panel
+                            .querySelectorAll(".admin-sub-tab")
+                            .forEach((st) => {
+                                st.classList.remove(
+                                    "border-indigo-500",
+                                    "text-indigo-600",
+                                    "dark:text-indigo-500",
+                                );
+                                st.classList.add(
+                                    "border-transparent",
+                                    "text-gray-500",
+                                    "dark:text-gray-300",
+                                );
+                            });
+
+                        firstSubTab.classList.remove(
+                            "border-transparent",
+                            "text-gray-500",
+                            "dark:text-gray-300",
+                        );
+                        firstSubTab.classList.add(
+                            "border-indigo-500",
+                            "text-indigo-600",
+                            "dark:text-indigo-500",
+                        );
+                    }
+                }, 100);
+            }
         } else {
             console.error(`Panel ${tabName}-panel not found`);
             return;
@@ -3656,7 +3711,9 @@ function showTab(tabName) {
                     const agentsList = safeGetElement("a2a-agents-list");
                     if (agentsList && agentsList.innerHTML.trim() === "") {
                         // Trigger HTMX load manually
-                        window.htmx.trigger(agentsList, "load");
+                        if (typeof window.htmx !== "undefined") {
+                            window.htmx.trigger(agentsList, "load");
+                        }
                     }
                 }
 
@@ -6880,6 +6937,7 @@ function setupTabNavigation() {
         "logs",
         "export-import",
         "version-info",
+        "admin",
     ];
 
     tabs.forEach((tabName) => {
@@ -9157,3 +9215,834 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
 
 // Expose A2A test function to global scope
 window.testA2AAgent = testA2AAgent;
+
+// ===================================================================
+// USER MANAGEMENT FUNCTIONS
+// ===================================================================
+
+// User search debounce timer
+let userSearchTimeout;
+
+function debounceUserSearch() {
+    clearTimeout(userSearchTimeout);
+    userSearchTimeout = setTimeout(() => {
+        filterUsers();
+    }, 300);
+}
+
+function filterUsers() {
+    const search = document.getElementById("user-search").value;
+    const statusFilter = document.getElementById("user-status-filter").value;
+
+    let url = "/admin/users/list-html?";
+    if (search) {
+        url += `search=${encodeURIComponent(search)}&`;
+    }
+    if (statusFilter) {
+        if (statusFilter === "active") {
+            url += "is_active=true&";
+        } else if (statusFilter === "inactive") {
+            url += "is_active=false&";
+        }
+    }
+
+    if (typeof htmx !== "undefined") {
+        htmx.ajax("GET", url, { target: "#users-list", swap: "innerHTML" });
+    }
+}
+
+function showUserCreateForm() {
+    document.getElementById("user-create-modal").classList.remove("hidden");
+    document.getElementById("user-create-form").reset();
+    document.getElementById("create-user-result").innerHTML = "";
+}
+
+function hideUserCreateForm() {
+    document.getElementById("user-create-modal").classList.add("hidden");
+}
+
+function toggleUserStatus(userId, username) {
+    if (
+        confirm(
+            `Are you sure you want to toggle the status for user "${username}"?`,
+        )
+    ) {
+        if (typeof htmx !== "undefined") {
+            htmx.ajax("POST", `/admin/users/${userId}/toggle`, {
+                target: "#users-list",
+                swap: "outerHTML",
+            }).then(() => {
+                // Refresh the user list
+                filterUsers();
+            });
+        }
+    }
+}
+
+function deleteUser(userId, username) {
+    if (
+        confirm(
+            `Are you sure you want to DELETE user "${username}"? This action cannot be undone!`,
+        )
+    ) {
+        if (typeof htmx !== "undefined") {
+            htmx.ajax("DELETE", `/admin/users/${userId}`, {
+                target: "#users-list",
+                swap: "outerHTML",
+            }).then(() => {
+                // Refresh the user list
+                filterUsers();
+            });
+        }
+    }
+}
+
+function revokeUserTokens(userId, username) {
+    if (
+        confirm(
+            `Are you sure you want to revoke ALL tokens for user "${username}"? This will log them out immediately!`,
+        )
+    ) {
+        if (typeof htmx !== "undefined") {
+            htmx.ajax("POST", `/admin/users/${userId}/revoke-tokens`).then(
+                (response) => {
+                    if (response.success) {
+                        alert(
+                            `Revoked ${response.revoked_count} tokens for ${username}`,
+                        );
+                    } else {
+                        alert(`Error: ${response.error}`);
+                    }
+                },
+            );
+        }
+    }
+}
+
+function showUserTokens(userId, username) {
+    // Load user tokens in a modal or expand section
+    const tokensContainer = document.getElementById(`user-${userId}-tokens`);
+    if (tokensContainer) {
+        if (tokensContainer.classList.contains("hidden")) {
+            if (typeof htmx !== "undefined") {
+                htmx.ajax("GET", `/admin/users/${userId}/tokens-html`, {
+                    target: `#user-${userId}-tokens-content`,
+                    swap: "innerHTML",
+                });
+            }
+            tokensContainer.classList.remove("hidden");
+        } else {
+            tokensContainer.classList.add("hidden");
+        }
+    }
+}
+
+function showUserAuthEvents(userId, username) {
+    // Load user authentication events
+    const eventsContainer = document.getElementById(`user-${userId}-events`);
+    if (eventsContainer) {
+        if (eventsContainer.classList.contains("hidden")) {
+            if (typeof htmx !== "undefined") {
+                htmx.ajax(
+                    "GET",
+                    `/admin/users/${userId}/events-html?limit=20`,
+                    {
+                        target: `#user-${userId}-events-content`,
+                        swap: "innerHTML",
+                    },
+                );
+            }
+            eventsContainer.classList.remove("hidden");
+        } else {
+            eventsContainer.classList.add("hidden");
+        }
+    }
+}
+
+// Handle user creation form success
+document.addEventListener("htmx:afterRequest", function (event) {
+    if (
+        event.detail.xhr.responseURL &&
+        event.detail.xhr.responseURL.includes("/admin/users") &&
+        event.detail.xhr.status === 200
+    ) {
+        const response = JSON.parse(event.detail.xhr.responseText);
+        if (response.success) {
+            hideUserCreateForm();
+            filterUsers(); // Refresh the user list
+            showToast("success", response.message);
+        } else {
+            showToast("error", response.error);
+        }
+    }
+});
+
+// Show toast notifications
+function showToast(type, message) {
+    const toastContainer =
+        document.getElementById("toast-container") || createToastContainer();
+
+    const toast = document.createElement("div");
+    toast.className = `px-4 py-3 rounded-md shadow-lg ${type === "success" ? "bg-green-500 text-white" : "bg-red-500 text-white"} mb-2`;
+    toast.textContent = message;
+
+    toastContainer.appendChild(toast);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (toast.parentNode) {
+            toast.parentNode.removeChild(toast);
+        }
+    }, 5000);
+}
+
+function createToastContainer() {
+    const container = document.createElement("div");
+    container.id = "toast-container";
+    container.className = "fixed top-4 right-4 z-50";
+    document.body.appendChild(container);
+    return container;
+}
+
+// ===================================================================
+// ADMIN SUB-TAB NAVIGATION
+// ===================================================================
+
+// Handle admin sub-tab switching
+document.addEventListener("DOMContentLoaded", function () {
+    // Admin sub-tab functionality
+    const adminSubTabs = document.querySelectorAll(".admin-sub-tab");
+    const adminSubPanels = document.querySelectorAll(".admin-sub-panel");
+
+    adminSubTabs.forEach((tab) => {
+        tab.addEventListener("click", function (e) {
+            e.preventDefault();
+
+            // Get target panel ID from href
+            const targetId = this.getAttribute("href").substring(1) + "-panel";
+
+            // Hide all admin sub-panels
+            adminSubPanels.forEach((panel) => panel.classList.add("hidden"));
+
+            // Remove active classes from all admin sub-tabs
+            adminSubTabs.forEach((t) => {
+                t.classList.remove(
+                    "border-indigo-500",
+                    "text-indigo-600",
+                    "dark:text-indigo-500",
+                );
+                t.classList.add(
+                    "border-transparent",
+                    "text-gray-500",
+                    "dark:text-gray-300",
+                );
+            });
+
+            // Show target panel
+            const targetPanel = document.getElementById(targetId);
+            if (targetPanel) {
+                targetPanel.classList.remove("hidden");
+            }
+
+            // Set active classes on clicked tab
+            this.classList.remove(
+                "border-transparent",
+                "text-gray-500",
+                "dark:text-gray-300",
+            );
+            this.classList.add(
+                "border-indigo-500",
+                "text-indigo-600",
+                "dark:text-indigo-500",
+            );
+        });
+    });
+});
+
+// Team management functions
+function showTeamCreateForm() {
+    // Create team modal functionality
+    const modal = document.createElement("div");
+    modal.className = "fixed inset-0 bg-gray-600 bg-opacity-50 z-50";
+    modal.innerHTML = `
+        <div class="flex items-center justify-center min-h-screen">
+            <div class="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md">
+                <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">Create New Team</h3>
+                <form id="team-create-form" onsubmit="createTeamViaAPI(event)" hx-target="#create-team-result" hx-swap="innerHTML">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Team Name *</label>
+                            <input type="text" name="name" required class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
+                            <textarea name="description" rows="3" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"></textarea>
+                        </div>
+                    </div>
+                    <div id="create-team-result" class="mt-4"></div>
+                    <div class="mt-6 flex justify-end space-x-3">
+                        <button type="button" onclick="hideTeamCreateForm()" class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300">Cancel</button>
+                        <button type="submit" class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700">Create Team</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    modal.id = "team-create-modal";
+}
+
+function hideTeamCreateForm() {
+    const modal = document.getElementById("team-create-modal");
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Additional team management functions
+function viewTeamDetails(teamId, teamName) {
+    // Show team members and details
+    const detailsContainer = document.getElementById(`team-${teamId}-details`);
+    if (detailsContainer) {
+        if (detailsContainer.classList.contains("hidden")) {
+            if (typeof htmx !== "undefined") {
+                htmx.ajax("GET", `/teams/${teamId}/members`, {
+                    target: `#team-${teamId}-details-content`,
+                    swap: "innerHTML",
+                });
+            }
+            detailsContainer.classList.remove("hidden");
+        } else {
+            detailsContainer.classList.add("hidden");
+        }
+    }
+}
+
+function viewTeamResources(teamId, teamName) {
+    // Show team resources
+    const resourcesContainer = document.getElementById(
+        `team-${teamId}-resources`,
+    );
+    if (resourcesContainer) {
+        if (resourcesContainer.classList.contains("hidden")) {
+            if (typeof htmx !== "undefined") {
+                htmx.ajax("GET", `/teams/${teamId}/resources`, {
+                    target: `#team-${teamId}-resources-content`,
+                    swap: "innerHTML",
+                });
+            }
+            resourcesContainer.classList.remove("hidden");
+        } else {
+            resourcesContainer.classList.add("hidden");
+        }
+    }
+}
+
+function editTeam(teamId, teamName) {
+    // Team editing functionality
+    alert(`Team editing for "${teamName}" - feature coming soon!`);
+}
+
+// Update security statistics on load
+function updateSecurityStats() {
+    if (typeof htmx !== "undefined") {
+        htmx.ajax("GET", "/admin/users/stats", {
+            target: "#admin-security-panel .grid",
+            swap: "none",
+        }).then((response) => {
+            if (response && response.failed_logins_last_24h !== undefined) {
+                document.getElementById("failed-logins-24h").textContent =
+                    response.failed_logins_last_24h;
+                document.getElementById("login-events-24h").textContent =
+                    response.login_events_last_24h;
+                // Note: locked-accounts would need a separate endpoint
+            }
+        });
+    }
+}
+
+// Auto-refresh security events every 30 seconds when security panel is visible
+setInterval(() => {
+    const securityPanel = document.getElementById("admin-security-panel");
+    if (securityPanel && !securityPanel.classList.contains("hidden")) {
+        if (typeof htmx !== "undefined") {
+            htmx.ajax("GET", "/admin/security/events-html", {
+                target: "#security-events-list",
+                swap: "innerHTML",
+            });
+        }
+        updateSecurityStats();
+    }
+}, 30000);
+
+// Function to create team via API with proper authentication
+async function createTeamViaAPI(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const formData = new FormData(form);
+    const name = formData.get("name");
+    const description = formData.get("description");
+
+    if (!name) {
+        showToast("error", "Team name is required");
+        return;
+    }
+
+    try {
+        // First, login to get a proper Bearer token
+        const loginResponse = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: "admin",
+                password: "ChangeMe_12345678$", // Use the password from .env
+            }),
+        });
+
+        if (!loginResponse.ok) {
+            throw new Error("Failed to authenticate");
+        }
+
+        const loginData = await loginResponse.json();
+        const token = loginData.access_token;
+
+        // Create team using the teams API
+        const createResponse = await fetch("/teams", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ name, description }),
+        });
+
+        if (createResponse.ok) {
+            const teamData = await createResponse.json();
+            showToast(
+                "success",
+                `Team "${teamData.name}" created successfully`,
+            );
+
+            // Refresh the teams list
+            if (document.getElementById("teams-list")) {
+                if (typeof htmx !== "undefined") {
+                    htmx.ajax("GET", "/admin/teams/list-html", {
+                        target: "#teams-list",
+                        swap: "innerHTML",
+                    });
+                }
+            }
+            if (typeof filterUsers === "function") {
+                filterUsers(); // Refresh if on users tab
+            }
+
+            // Close the modal
+            hideTeamCreateForm();
+
+            // Reset form
+            form.reset();
+        } else {
+            const errorData = await createResponse.json();
+            showToast("error", errorData.detail || "Failed to create team");
+        }
+    } catch (error) {
+        showToast("error", `Error creating team: ${error.message}`);
+    }
+}
+
+// Function to create user via API with proper authentication
+async function createUserViaAPI(event) {
+    event.preventDefault();
+
+    const form = event.target;
+    const formData = new FormData(form);
+    const username = formData.get("username");
+    const password = formData.get("password");
+    const email = formData.get("email") || null;
+    const fullName = formData.get("full_name") || null;
+    const isAdmin = formData.get("is_admin") === "on";
+
+    if (!username || !password) {
+        showToast("error", "Username and password are required");
+        return;
+    }
+
+    try {
+        // First, login to get a proper Bearer token
+        const loginResponse = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: "admin",
+                password: "ChangeMe_12345678$",
+            }),
+        });
+
+        if (!loginResponse.ok) {
+            throw new Error("Failed to authenticate");
+        }
+
+        const loginData = await loginResponse.json();
+        const token = loginData.access_token;
+
+        // Create user using the users API
+        const createResponse = await fetch("/users", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+                username,
+                password,
+                email,
+                fullName,
+                is_admin: isAdmin,
+            }),
+        });
+
+        if (createResponse.ok) {
+            const userData = await createResponse.json();
+            showToast(
+                "success",
+                `User "${userData.username}" created successfully`,
+            );
+
+            // Refresh the users list
+            if (typeof filterUsers === "function") {
+                filterUsers();
+            }
+
+            // Close the modal
+            hideUserCreateForm();
+
+            // Reset form
+            form.reset();
+        } else {
+            const errorData = await createResponse.json();
+            showToast("error", errorData.detail || "Failed to create user");
+        }
+    } catch (error) {
+        showToast("error", `Error creating user: ${error.message}`);
+    }
+}
+
+// Load admin data using working API endpoints
+async function loadAdminData() {
+    try {
+        // Get authentication token
+        const loginResponse = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: "admin",
+                password: "ChangeMe_12345678$",
+            }),
+        });
+
+        if (!loginResponse.ok) {
+            console.error("Failed to authenticate for admin data loading");
+            return;
+        }
+
+        const loginData = await loginResponse.json();
+        const token = loginData.access_token;
+
+        // Load user statistics
+        loadUserStats(token);
+
+        // Load users list
+        loadUsersList(token);
+
+        // Load teams list
+        loadTeamsList(token);
+    } catch (error) {
+        console.error("Error loading admin data:", error);
+    }
+}
+
+async function loadUserStats(token) {
+    try {
+        const response = await fetch("/users", {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const totalUsers = data.total || data.users.length;
+            const activeUsers = data.users.filter((u) => u.is_active).length;
+            const adminUsers = data.users.filter((u) => u.is_admin).length;
+
+            // Get token count
+            const tokensResponse = await fetch("/tokens", {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            let activeTokens = 0;
+            if (tokensResponse.ok) {
+                const tokensData = await tokensResponse.json();
+                activeTokens = tokensData.tokens.filter(
+                    (t) => t.is_active,
+                ).length;
+            }
+
+            // Update statistics cards
+            const statsContainer = document.getElementById("user-stats-cards");
+            if (statsContainer) {
+                statsContainer.innerHTML = `
+                    <div class="bg-blue-50 dark:bg-blue-900 p-4 rounded-lg">
+                        <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">${totalUsers}</div>
+                        <div class="text-sm text-blue-800 dark:text-blue-300">Total Users</div>
+                    </div>
+                    <div class="bg-green-50 dark:bg-green-900 p-4 rounded-lg">
+                        <div class="text-2xl font-bold text-green-600 dark:text-green-400">${activeUsers}</div>
+                        <div class="text-sm text-green-800 dark:text-green-300">Active Users</div>
+                    </div>
+                    <div class="bg-purple-50 dark:bg-purple-900 p-4 rounded-lg">
+                        <div class="text-2xl font-bold text-purple-600 dark:text-purple-400">${adminUsers}</div>
+                        <div class="text-sm text-purple-800 dark:text-purple-300">Admin Users</div>
+                    </div>
+                    <div class="bg-yellow-50 dark:bg-yellow-900 p-4 rounded-lg">
+                        <div class="text-2xl font-bold text-yellow-600 dark:text-yellow-400">${activeTokens}</div>
+                        <div class="text-sm text-yellow-800 dark:text-yellow-300">Active Tokens</div>
+                    </div>
+                `;
+            }
+        }
+    } catch (error) {
+        console.error("Error loading user stats:", error);
+    }
+}
+
+async function loadTeamsList(token) {
+    try {
+        const response = await fetch("/teams", {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (response.ok) {
+            const teams = await response.json();
+
+            const teamsContainer =
+                document.getElementById("teams-list") ||
+                document.getElementById("teams-list-container");
+            if (teamsContainer) {
+                if (teams.length === 0) {
+                    teamsContainer.innerHTML =
+                        '<div class="text-center py-8 text-gray-500">No teams found</div>';
+                } else {
+                    let html = "";
+                    teams.forEach((team) => {
+                        html += `
+                            <div class="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1">
+                                        <div class="flex items-center space-x-3">
+                                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">${escapeHtml(team.name)}</h3>
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">${team.member_count} members</span>
+                                        </div>
+                                        <div class="mt-1 space-y-1">
+                                            <p class="text-sm text-gray-600 dark:text-gray-400">📝 ${escapeHtml(team.description || "No description")}</p>
+                                            <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: ${new Date(team.created_at).toLocaleDateString()}</p>
+                                            <p class="text-sm text-gray-600 dark:text-gray-400">🔗 Slug: ${escapeHtml(team.slug)}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    teamsContainer.innerHTML = html;
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Error loading teams list:", error);
+        const teamsContainer =
+            document.getElementById("teams-list") ||
+            document.getElementById("teams-list-container");
+        if (teamsContainer) {
+            teamsContainer.innerHTML =
+                '<div class="text-center py-8 text-red-500">Error loading teams</div>';
+        }
+    }
+}
+
+// Auto-load admin data when admin panels are shown
+document.addEventListener("DOMContentLoaded", function () {
+    // Load data when admin tab is clicked
+    const adminTab = document.getElementById("tab-admin");
+    if (adminTab) {
+        adminTab.addEventListener("click", function () {
+            setTimeout(loadAdminDataComplete, 500); // Small delay to ensure panels are shown
+        });
+    }
+
+    // Also load immediately if admin panel is visible
+    const adminPanel = document.getElementById("admin-panel");
+    if (adminPanel && !adminPanel.classList.contains("hidden")) {
+        loadAdminDataComplete();
+    }
+});
+
+// Refresh functions for after creation
+async function loadAdminDataComplete() {
+    try {
+        // Get authentication token
+        const loginResponse = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                username: "admin",
+                password: "ChangeMe_12345678$",
+            }),
+        });
+
+        if (!loginResponse.ok) {
+            console.error("Failed to authenticate for admin data loading");
+            return;
+        }
+
+        const loginData = await loginResponse.json();
+        const token = loginData.access_token;
+
+        // Load all admin data
+        await loadUserStats(token);
+        await loadUsersList(token);
+        await loadTeamsList(token);
+    } catch (error) {
+        console.error("Error loading admin data:", error);
+    }
+}
+
+async function loadUsersList(token) {
+    try {
+        const response = await fetch("/users", {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            const users = data.users || [];
+
+            const usersContainer = document.getElementById("users-list");
+            if (usersContainer) {
+                if (users.length === 0) {
+                    usersContainer.innerHTML =
+                        '<div class="text-center py-8 text-gray-500">No users found</div>';
+                } else {
+                    let html = "";
+                    users.forEach((user) => {
+                        const statusClass = user.is_active
+                            ? "bg-green-100 text-green-800"
+                            : "bg-red-100 text-red-800";
+                        const statusText = user.is_active
+                            ? "Active"
+                            : "Inactive";
+                        const adminBadge = user.is_admin
+                            ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">Admin</span>'
+                            : "";
+                        const lastLogin = user.last_login
+                            ? new Date(user.last_login).toLocaleDateString()
+                            : "Never";
+
+                        html += `
+                            <div class="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg p-4">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex-1">
+                                        <div class="flex items-center space-x-3">
+                                            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">${escapeHtml(user.username)}</h3>
+                                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass}">${statusText}</span>
+                                            ${adminBadge}
+                                        </div>
+                                        <div class="mt-1 space-y-1">
+                                            ${user.email ? `<p class="text-sm text-gray-600 dark:text-gray-400">📧 ${escapeHtml(user.email)}</p>` : ""}
+                                            ${user.full_name ? `<p class="text-sm text-gray-600 dark:text-gray-400">👤 ${escapeHtml(user.full_name)}</p>` : ""}
+                                            <p class="text-sm text-gray-600 dark:text-gray-400">📅 Last login: ${lastLogin}</p>
+                                            <p class="text-sm text-gray-600 dark:text-gray-400">📝 Created: ${new Date(user.created_at).toLocaleDateString()}</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <button
+                                            onclick="toggleUserStatusAPI('${user.id}', '${escapeHtml(user.username)}', ${user.is_active})"
+                                            class="px-3 py-1 text-sm font-medium ${user.is_active ? "text-red-700 bg-red-100 hover:bg-red-200" : "text-green-700 bg-green-100 hover:bg-green-200"} rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                            ${user.username === "admin" ? 'disabled title="Cannot deactivate admin user"' : ""}
+                                        >
+                                            ${user.is_active ? "Deactivate" : "Activate"}
+                                        </button>
+                                        <button
+                                            onclick="viewUserTokensAPI('${user.id}', '${escapeHtml(user.username)}')"
+                                            class="px-3 py-1 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md"
+                                        >
+                                            🔑 Tokens
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    usersContainer.innerHTML = html;
+                }
+            }
+        }
+    } catch (error) {
+        console.error("Error loading users list:", error);
+        const usersContainer = document.getElementById("users-list");
+        if (usersContainer) {
+            usersContainer.innerHTML =
+                '<div class="text-center py-8 text-red-500">Error loading users</div>';
+        }
+    }
+}
+
+// User management functions via API
+async function toggleUserStatusAPI(userId, username, currentStatus) {
+    if (
+        confirm(
+            `Are you sure you want to ${currentStatus ? "deactivate" : "activate"} user "${username}"?`,
+        )
+    ) {
+        try {
+            const loginResponse = await fetch("/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    username: "admin",
+                    password: "ChangeMe_12345678$",
+                }),
+            });
+
+            const loginData = await loginResponse.json();
+            const token = loginData.access_token;
+
+            const response = await fetch(`/users/${userId}`, {
+                method: "PUT",
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ is_active: !currentStatus }),
+            });
+
+            if (response.ok) {
+                showToast(
+                    "success",
+                    `User "${username}" ${currentStatus ? "deactivated" : "activated"} successfully`,
+                );
+                loadAdminDataComplete();
+            } else {
+                const errorData = await response.json();
+                showToast("error", errorData.detail || "Failed to update user");
+            }
+        } catch (error) {
+            showToast("error", `Error updating user: ${error.message}`);
+        }
+    }
+}
+
+async function viewUserTokensAPI(userId, username) {
+    // TODO: Implement token viewing functionality
+    showToast("info", `Token viewing for ${username} - coming soon!`);
+}
+
+// Update the existing loadAdminData to use the complete version

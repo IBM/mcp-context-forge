@@ -227,13 +227,32 @@ mcpContextForge:
   ####################################################################
   secret:
     # ─ Admin & auth ─
-    BASIC_AUTH_USER: admin                 # username for basic-auth login
+    BASIC_AUTH_USER: admin                 # username for basic-auth login (legacy mode)
     BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
     TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
     AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+
+    # ─ Multi-User Authentication ─
+    MULTI_USER_ENABLED: "true"             # enable multi-user authentication system
+    LEGACY_AUTH_MODE: "false"              # use legacy single-user mode (backward compatibility)
+    JWT_ISSUER: mcpgateway                 # JWT issuer claim
+    JWT_AUDIENCE: mcpgateway-api           # JWT audience claim
+
+    # ─ Password Policy ─
+    PASSWORD_MIN_LENGTH: "12"              # minimum password length
+    PASSWORD_BCRYPT_ROUNDS: "12"           # bcrypt cost factor
+
+    # ─ Session Management ─
+    SESSION_TIMEOUT_HOURS: "24"           # user session timeout (hours)
+    TOKEN_DEFAULT_EXPIRY_DAYS: "30"       # default API token expiry (days)
+
+    # ─ Security Settings ─
+    ENABLE_AUTH_LOGGING: "true"           # enable authentication audit logging
+    MAX_FAILED_LOGIN_ATTEMPTS: "5"       # account lockout threshold
+    ACCOUNT_LOCKOUT_DURATION_MINUTES: "30"  # lockout duration
     # (derived URLs are defined in deployment-mcp.yaml)
 
     # ─ Optional database / redis overrides ─
