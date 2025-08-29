@@ -22,6 +22,8 @@ import uuid
 # First-Party
 from mcpgateway.plugins.framework.models import (
     HookType,
+    HttpHeaderPayload,
+    HttpHeaderPayloadResult,
     PluginCondition,
     PluginConfig,
     PluginContext,
@@ -249,6 +251,38 @@ class Plugin:
         """
         raise NotImplementedError(
             f"""'resource_post_fetch' not implemented for plugin {self._config.name}
+                                    of plugin type {type(self)}
+                                   """
+        )
+
+    async def http_pre_forwarding_call(self, payload: HttpHeaderPayload, context: PluginContext) -> HttpHeaderPayloadResult:
+        """Plugin hook run before a forwarding HTTP call is made to a tool or gateway.
+
+        Args:
+            payload: The HTTP headers that can be checked or modified  .
+            context: Contextual information about the hook call.
+
+        Raises:
+            NotImplementedError: needs to be implemented by sub class.
+        """
+        raise NotImplementedError(
+            f"""'http_pre_forwarding_call' not implemented for plugin {self._config.name}
+                                    of plugin type {type(self)}
+                                   """
+        )
+
+    async def http_post_forwarding_call(self, payload: HttpHeaderPayload, context: PluginContext) -> HttpHeaderPayloadResult:
+        """Plugin hook run after a forwarding HTTP call is made to a tool or gateway.
+
+        Args:
+            payload: The HTTP headers that can be checked or modified  .
+            context: Contextual information about the hook call.
+
+        Raises:
+            NotImplementedError: needs to be implemented by sub class.
+        """
+        raise NotImplementedError(
+            f"""'http_post_forwarding_call' not implemented for plugin {self._config.name}
                                     of plugin type {type(self)}
                                    """
         )

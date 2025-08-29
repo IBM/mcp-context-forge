@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeVar
 
 # Third-Party
-from pydantic import BaseModel, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+from pydantic import BaseModel, field_serializer, field_validator, model_validator, PrivateAttr, RootModel, ValidationInfo
 
 # First-Party
 from mcpgateway.models import PromptResult
@@ -759,3 +759,29 @@ class ResourcePostFetchPayload(BaseModel):
 
 ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]
 ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload]
+
+
+class HttpHeaderPayload(RootModel[dict[str, str]]):
+    """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""
+
+    def __iter__(self):
+        """Custom iterator function to override root attribute.
+
+        Returns:
+            A custom iterator for header dictionary.
+        """
+        return iter(self.root)
+
+    def __getitem__(self, item: str) -> str:
+        """Custom getitem function to override root attribute.
+
+        Args:
+            item: The http header key.
+
+        Returns:
+            A custom accesser for the header dictionary.
+        """
+        return self.root[item]
+
+
+HttpHeaderPayloadResult = PluginResult[HttpHeaderPayload]
