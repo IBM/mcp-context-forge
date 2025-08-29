@@ -6476,11 +6476,11 @@ async function viewTool(toolId) {
               </div>
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Technical Name:</span>
-                <div class="mt-1 tool-name text-sm text-gray-600 dark:text-gray-400"></div>
+                <div class="mt-1 tool-name text-sm"></div>
               </div>
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">URL:</span>
-                <div class="mt-1 tool-url text-sm text-gray-600 dark:text-gray-400 break-all"></div>
+                <div class="mt-1 tool-url text-sm"></div>
               </div>
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Type:</span>
@@ -6491,7 +6491,7 @@ async function viewTool(toolId) {
             <div class="space-y-3">
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Description:</span>
-                <div class="mt-1 tool-description text-sm text-gray-600 dark:text-gray-400"></div>
+                <div class="mt-1 tool-description text-sm"></div>
               </div>
               <div>
                 <span class="font-medium text-gray-700 dark:text-gray-300">Tags:</span>
