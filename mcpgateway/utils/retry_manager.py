@@ -595,8 +595,10 @@ class ResilientHttpClient:
                     raise
                 logging.warning("Error opening stream (will retry): %s", exc)
 
-            backoff = min(self.base_backoff * (2**attempt), self.max_delay)
-            await self._sleep_with_jitter(backoff)
+            backoff = self.base_backoff * (2**attempt)
+            jitter_range = backoff * self.jitter_max
+            await self._sleep_with_jitter(backoff, jitter_range)
+
             attempt += 1
             logging.debug("Retrying stream open (attempt %d) after backoff %.2f", attempt + 1, backoff)
 
