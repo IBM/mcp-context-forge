@@ -2694,6 +2694,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
                 result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+            except PluginViolationError:
+                return JSONResponse(status_code=403, content={"detail": "policy_deny"})
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:

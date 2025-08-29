@@ -1,18 +1,16 @@
 # plugins/config.yaml - Main plugin configuration file
 
 plugins:
-  - name: "DenyListPlugin"
+  - name: "ContextPlugin"
     kind: "external"
     mcp:
-      proto: STREAMABLEHTTP
-      url: http://127.0.0.1:3000/mcp
-
-  - name: "OPAPluginFilter"
+      proto: STDIO
+      script: mcpgateway/plugins/framework/external/mcp/server/runtime.py
+  - name: "ContextPlugin2"
     kind: "external"
-    priority: 10 # adjust the priority
     mcp:
-      proto: STREAMABLEHTTP
-      url: http://127.0.0.1:8000/mcp
+      proto: STDIO
+      script: mcpgateway/plugins/framework/external/mcp/server/runtime.py
 
 # Plugin directories to scan
 plugin_dirs:
@@ -24,6 +22,6 @@ plugin_dirs:
 plugin_settings:
   parallel_execution_within_band: true
   plugin_timeout: 30
-  fail_on_plugin_error: false
+  fail_on_plugin_error: true
   enable_plugin_api: true
   plugin_health_check_interval: 60
