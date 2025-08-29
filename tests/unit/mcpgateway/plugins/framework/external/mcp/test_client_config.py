@@ -8,24 +8,27 @@ Additional unit tests for ExternalPlugin client.
 Tests for error conditions, edge cases, and uncovered code paths.
 """
 
+# Standard
 import os
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
+# Third-Party
 from mcp.types import CallToolResult
+import pytest
 
+# First-Party
 from mcpgateway.models import Message, PromptResult, ResourceContent, Role, TextContent
-from mcpgateway.plugins.framework.external.mcp.client import ExternalPlugin
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
+    ConfigLoader,
     PluginContext,
-    PromptPrehookPayload,
     PromptPosthookPayload,
-    ToolPreInvokePayload,
-    ToolPostInvokePayload,
-    ResourcePreFetchPayload,
+    PromptPrehookPayload,
     ResourcePostFetchPayload,
+    ResourcePreFetchPayload,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
 )
-from mcpgateway.plugins.framework import ConfigLoader
+from mcpgateway.plugins.framework.external.mcp.client import ExternalPlugin
 
 
 @pytest.mark.asyncio
