@@ -68,9 +68,6 @@ def upgrade() -> None:
         print("Fresh database detected. Skipping migration.")
         return
 
-    # Detect database type for proper column types
-    is_postgresql = bind.dialect.name == "postgresql"
-
     if "email_users" not in existing_tables:
         # Create email_users table
         op.create_table(
