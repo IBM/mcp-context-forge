@@ -47,7 +47,7 @@ def mock_tool():
 @pytest.fixture
 def mock_resource():
     res = MagicMock(spec=DbResource)
-    res.id = 201
+    res.id = "201"
     res.name = "test_resource"
     res._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return res
@@ -56,7 +56,7 @@ def mock_resource():
 @pytest.fixture
 def mock_prompt():
     pr = MagicMock(spec=DbPrompt)
-    pr.id = 301
+    pr.id = "301"
     pr.name = "test_prompt"
     pr._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return pr
@@ -157,8 +157,8 @@ class TestServerService:
         test_db.get = Mock(
             side_effect=lambda cls, _id: {
                 (DbTool, "101"): mock_tool,
-                (DbResource, 201): mock_resource,
-                (DbPrompt, 301): mock_prompt,
+                (DbResource, "201"): mock_resource,
+                (DbPrompt, "301"): mock_prompt,
             }.get((cls, _id))
         )
 
@@ -174,8 +174,8 @@ class TestServerService:
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
                 associated_tools=["101"],
-                associated_resources=[201],
-                associated_prompts=[301],
+                associated_resources=["201"],
+                associated_prompts=["301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -209,8 +209,8 @@ class TestServerService:
 
         assert result.name == "test_server"
         assert "101" in result.associated_tools
-        assert 201 in result.associated_resources
-        assert 301 in result.associated_prompts
+        assert "201" in result.associated_resources
+        assert "301" in result.associated_prompts
 
     @pytest.mark.asyncio
     async def test_register_server_name_conflict(self, server_service, mock_server, test_db):
@@ -279,8 +279,8 @@ class TestServerService:
             updated_at="2023-01-01T00:00:00",
             is_active=True,
             associated_tools=["101"],
-            associated_resources=[201],
-            associated_prompts=[301],
+            associated_resources=["201"],
+            associated_prompts=["301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -313,8 +313,8 @@ class TestServerService:
             updated_at="2023-01-01T00:00:00",
             is_active=True,
             associated_tools=["101"],
-            associated_resources=[201],
-            associated_prompts=[301],
+            associated_resources=["201"],
+            associated_prompts=["301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -410,8 +410,8 @@ class TestServerService:
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
                 associated_tools=["102"],
-                associated_resources=[202],
-                associated_prompts=[302],
+                associated_resources=["202"],
+                associated_prompts=["302"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -490,8 +490,8 @@ class TestServerService:
                 updated_at="2023-01-01T00:00:00",
                 is_active=False,
                 associated_tools=["101"],
-                associated_resources=[201],
-                associated_prompts=[301],
+                associated_resources=["201"],
+                associated_prompts=["301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,

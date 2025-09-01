@@ -496,7 +496,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db_resources = [
                 DbResource(
                     uri=resource.uri,
-                    name=resource.name,
+                    original_name=resource.name,
+                    custom_name=resource.name,
+                    custom_name_slug=slugify(resource.name),
+                    display_name=generate_display_name(resource.name),
                     description=resource.description,
                     mime_type=resource.mime_type,
                     template=resource.template,
@@ -514,7 +517,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Create prompt DB models
             db_prompts = [
                 DbPrompt(
-                    name=prompt.name,
+                    original_name=prompt.name,
+                    custom_name=prompt.name,
+                    custom_name_slug=slugify(prompt.name),
+                    display_name=generate_display_name(prompt.name),
                     description=prompt.description,
                     template=prompt.template if hasattr(prompt, "template") else "",
                     argument_schema={},  # Use argument_schema instead of arguments
@@ -863,7 +869,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 gateway.resources.append(
                                     DbResource(
                                         uri=resource.uri,
-                                        name=resource.name,
+                                        original_name=resource.name,
+                                        custom_name=resource.custom_name,
+                                        custom_name_slug=slugify(resource.custom_name),
+                                        display_name=generate_display_name(resource.custom_name),
                                         description=resource.description,
                                         mime_type=resource.mime_type,
                                         template=resource.template,
@@ -876,7 +885,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             if not existing_prompt:
                                 gateway.prompts.append(
                                     DbPrompt(
-                                        name=prompt.name,
+                                        original_name=prompt.name,
+                                        custom_name=prompt.custom_name,
+                                        custom_name_slug=slugify(prompt.custom_name),
+                                        display_name=generate_display_name(prompt.custom_name),
                                         description=prompt.description,
                                         template=prompt.template if hasattr(prompt, "template") else "",
                                         argument_schema={},  # Use argument_schema instead of arguments
@@ -886,7 +898,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
                         gateway.last_seen = datetime.now(timezone.utc)
 
                         # Update tracking with new URL
@@ -1052,7 +1064,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 gateway.resources.append(
                                     DbResource(
                                         uri=resource.uri,
-                                        name=resource.name,
+                                        original_name=resource.name,
+                                        custom_name=resource.custom_name,
+                                        custom_name_slug=slugify(resource.custom_name),
+                                        display_name=generate_display_name(resource.custom_name),
                                         description=resource.description,
                                         mime_type=resource.mime_type,
                                         template=resource.template,
@@ -1065,7 +1080,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             if not existing_prompt:
                                 gateway.prompts.append(
                                     DbPrompt(
-                                        name=prompt.name,
+                                        original_name=prompt.name,
+                                        custom_name=prompt.custom_name,
+                                        custom_name_slug=slugify(prompt.custom_name),
+                                        display_name=generate_display_name(prompt.custom_name),
                                         description=prompt.description,
                                         template=prompt.template if hasattr(prompt, "template") else "",
                                         argument_schema={},  # Use argument_schema instead of arguments
@@ -1075,7 +1093,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.original_name in new_prompt_names]  # keep only still-valid rows
                         gateway.last_seen = datetime.now(timezone.utc)
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")

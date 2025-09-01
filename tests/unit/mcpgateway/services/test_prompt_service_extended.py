@@ -54,10 +54,10 @@ class TestPromptServiceExtended:
         assert "test_prompt" in str(error)
 
         # Test inactive prompt conflict
-        error_inactive = PromptNameConflictError("inactive_prompt", False, 123)
+        error_inactive = PromptNameConflictError("inactive_prompt", False, "123")
         assert error_inactive.name == "inactive_prompt"
         assert error_inactive.is_active is False
-        assert error_inactive.prompt_id == 123
+        assert error_inactive.prompt_id == "123"
         assert "inactive_prompt" in str(error_inactive)
         assert "currently inactive, ID: 123" in str(error_inactive)
 

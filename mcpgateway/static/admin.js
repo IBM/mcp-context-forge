@@ -4233,6 +4233,93 @@ function initToolSelect(
     checkboxes.forEach((cb) => cb.addEventListener("change", update));
 }
 
+function initResourceSelect(
+    selectId,
+    max = 6,
+    selectBtnId = null,
+    clearBtnId = null,
+) {
+    const container = document.getElementById(selectId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
+
+    if (!container) {
+        console.warn(`Resource select elements not found: ${selectId}`);
+        return;
+    }
+
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+
+    function update() {
+        try {
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+            const count = checked.length;
+        } catch (error) {
+            console.error("Error updating resource select:", error);
+        }
+    }
+
+    if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = false));
+            update();
+        });
+    }
+
+    if (selectBtn) {
+        selectBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = true));
+            update();
+        });
+    }
+
+    update(); // Initial render
+    checkboxes.forEach((cb) => cb.addEventListener("change", update));
+}
+
+function initPromptSelect(
+    selectId,
+    max = 6,
+    selectBtnId = null,
+    clearBtnId = null,
+) {
+    const container = document.getElementById(selectId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
+
+    if (!container) {
+        console.warn(`Prompt select elements not found: ${selectId}`);
+        return;
+    }
+
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+
+    function update() {
+        try {
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+            const count = checked.length;
+        } catch (error) {
+            console.error("Error updating prompt select:", error);
+        }
+    }
+
+    if (clearBtn) {
+        clearBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = false));
+            update();
+        });
+    }
+
+    if (selectBtn) {
+        selectBtn.addEventListener("click", () => {
+            checkboxes.forEach((cb) => (cb.checked = true));
+            update();
+        });
+    }
+
+    update(); // Initial render
+    checkboxes.forEach((cb) => cb.addEventListener("change", update));
+}
 // ===================================================================
 // INACTIVE ITEMS HANDLING
 // ===================================================================
@@ -6694,8 +6781,10 @@ document.addEventListener("DOMContentLoaded", () => {
         // 1. Initialize CodeMirror editors first
         initializeCodeMirrorEditors();
 
-        // 2. Initialize tool selects
+        // 2. Initialize tool, resource, prompt selects
         initializeToolSelects();
+        initializeResourceSelects();
+        initializePromptSelects();
 
         // 3. Set up all event listeners
         initializeEventListeners();
@@ -6853,6 +6942,40 @@ function initializeToolSelects() {
         6,
         "selectAllEditToolsBtn",
         "clearAllEditToolsBtn",
+    );
+}
+
+function initializeResourceSelects() {
+    console.log("Initializing resource selects...");
+
+    initResourceSelect(
+        "associatedResources",
+        6,
+        "selectAllResourcesBtn",
+        "clearAllResourcesBtn",
+    );
+    initResourceSelect(
+        "edit-server-resources",
+        6,
+        "selectAllEditResourcesBtn",
+        "clearAllEditResourcesBtn",
+    );
+}
+
+function initializePromptSelects() {
+    console.log("Initializing prompt selects...");
+
+    initPromptSelect(
+        "associatedPrompts",
+        6,
+        "selectAllPromptsBtn",
+        "clearAllPromptsBtn",
+    );
+    initPromptSelect(
+        "edit-server-prompts",
+        6,
+        "selectAllEditPromptsBtn",
+        "clearAllEditPromptsBtn",
     );
 }
 

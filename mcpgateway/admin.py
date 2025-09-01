@@ -627,8 +627,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(form.getlist("associatedTools")),
-            associated_resources=form.get("associatedResources"),
-            associated_prompts=form.get("associatedPrompts"),
+            associated_resources=",".join(form.getlist("associatedResources")),
+            associated_prompts=",".join(form.getlist("associatedPrompts")),
             tags=tags,
         )
     except KeyError as e:
@@ -785,8 +785,8 @@ async def admin_edit_server(
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(form.getlist("associatedTools")),
-            associated_resources=form.get("associatedResources"),
-            associated_prompts=form.get("associatedPrompts"),
+            associated_resources=",".join(form.getlist("associatedResources")),
+            associated_prompts=",".join(form.getlist("associatedPrompts")),
             tags=tags,
         )
         await server_service.update_server(db, server_id, server)
@@ -3442,7 +3442,7 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
 
 @admin_router.post("/resources/{resource_id}/toggle")
 async def admin_toggle_resource(
-    resource_id: int,
+    resource_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -3456,7 +3456,7 @@ async def admin_toggle_resource(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        resource_id (int): The ID of the resource whose status to toggle.
+        resource_id (str): The ID of the resource whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -3927,7 +3927,7 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
 
 @admin_router.post("/prompts/{prompt_id}/toggle")
 async def admin_toggle_prompt(
-    prompt_id: int,
+    prompt_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user: str = Depends(require_auth),
@@ -3941,7 +3941,7 @@ async def admin_toggle_prompt(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        prompt_id (int): The ID of the prompt whose status to toggle.
+        prompt_id (str): The ID of the prompt whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.

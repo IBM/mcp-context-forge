@@ -49,6 +49,7 @@ from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.metrics_common import build_top_performers
 
 # Plugin support imports (conditional)
@@ -217,6 +218,17 @@ class ResourceService:
             "last_execution_time": last_time,
         }
         resource_dict["tags"] = resource.tags or []
+
+        resource_dict["name"] = resource.name
+        # Handle displayName with fallback and None checks
+        display_name = getattr(resource, "display_name", None)
+        custom_name = getattr(resource, "custom_name", resource.original_name)
+        resource_dict["displayName"] = display_name or custom_name
+        resource_dict["custom_name"] = custom_name
+        resource_dict["gateway_slug"] = getattr(resource, "gateway_slug", "") or ""
+        resource_dict["custom_name_slug"] = getattr(resource, "custom_name_slug", "") or ""
+        resource_dict["tags"] = getattr(resource, "tags", []) or []
+
         return ResourceRead.model_validate(resource_dict)
 
     async def register_resource(
@@ -279,7 +291,9 @@ class ResourceService:
             # Create DB model
             db_resource = DbResource(
                 uri=resource.uri,
-                name=resource.name,
+                original_name=resource.name,
+                custom_name=resource.name,
+                custom_name_slug=slugify(resource.name),
                 description=resource.description,
                 mime_type=mime_type,
                 template=resource.template,
@@ -545,7 +559,7 @@ class ResourceService:
             # Return content
             return content
 
-    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool) -> ResourceRead:
+    async def toggle_resource_status(self, db: Session, resource_id: str, activate: bool) -> ResourceRead:
         """
         Toggle the activation status of a resource.
 
@@ -735,8 +749,10 @@ class ResourceService:
                 raise ResourceNotFoundError(f"Resource not found: {uri}")
 
             # Update fields if provided
-            if resource_update.name is not None:
-                resource.name = resource_update.name
+            if resource_update.custom_name is not None:
+                resource.custom_name = resource_update.custom_name
+            if resource_update.displayName is not None:
+                resource.display_name = resource_update.displayName
             if resource_update.description is not None:
                 resource.description = resource_update.description
             if resource_update.mime_type is not None:

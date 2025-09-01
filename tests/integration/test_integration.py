@@ -146,7 +146,10 @@ MOCK_SERVER = ServerRead(
 )
 
 MOCK_RESOURCE = ResourceRead(
-    id=1,
+    id="1",
+    gateway_slug="test_gateway",
+    custom_name="Hello",
+    custom_name_slug="hello",
     uri="file:///tmp/hello.txt",
     name="Hello",
     description="demo text",

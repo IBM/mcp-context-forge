@@ -37,6 +37,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.metrics_common import build_top_performers
 
 # Initialize logging service first
@@ -218,7 +219,7 @@ class PromptService:
         avg_rt = (sum(m.response_time for m in db_prompt.metrics) / total) if total > 0 else None
         last_time = max((m.timestamp for m in db_prompt.metrics), default=None) if total > 0 else None
 
-        return {
+        prompt_dict = {
             "id": db_prompt.id,
             "name": db_prompt.name,
             "description": db_prompt.description,
@@ -239,6 +240,16 @@ class PromptService:
             },
             "tags": db_prompt.tags or [],
         }
+
+        display_name = getattr(db_prompt, "display_name", None)
+        custom_name = getattr(db_prompt, "custom_name", db_prompt.original_name)
+        prompt_dict["displayName"] = display_name or custom_name
+        prompt_dict["custom_name"] = custom_name
+        prompt_dict["gateway_slug"] = getattr(db_prompt, "gateway_slug", "") or ""
+        prompt_dict["custom_name_slug"] = getattr(db_prompt, "custom_name_slug", "") or ""
+        prompt_dict["tags"] = getattr(db_prompt, "tags", []) or []
+
+        return prompt_dict
 
     async def register_prompt(
         self,
@@ -309,7 +320,9 @@ class PromptService:
 
             # Create DB model
             db_prompt = DbPrompt(
-                name=prompt.name,
+                original_name=prompt.name,
+                custom_name=prompt.name,
+                custom_name_slug=slugify(prompt.name),
                 description=prompt.description,
                 template=prompt.template,
                 argument_schema=argument_schema,
@@ -631,8 +644,10 @@ class PromptService:
 
                 raise PromptNotFoundError(f"Prompt not found: {name}")
 
-            if prompt_update.name is not None:
-                prompt.name = prompt_update.name
+            if prompt_update.custom_name is not None:
+                prompt.custom_name = prompt_update.custom_name
+            if prompt_update.displayName is not None:
+                prompt.display_name = prompt_update.displayName
             if prompt_update.description is not None:
                 prompt.description = prompt_update.description
             if prompt_update.template is not None:
@@ -675,7 +690,7 @@ class PromptService:
             db.rollback()
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
-    async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool) -> PromptRead:
+    async def toggle_prompt_status(self, db: Session, prompt_id: str, activate: bool) -> PromptRead:
         """
         Toggle the activation status of a prompt.
 
