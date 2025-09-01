@@ -36,18 +36,40 @@ def upgrade() -> None:
             columns: List of column names for the index
         """
         try:
-            op.create_index(index_name, table_name, columns)
-        except Exception:
-            pass  # Index might already exist
+            existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
+            if index_name not in existing_indexes:
+                op.create_index(index_name, table_name, columns)
+        except Exception as e:
+            print(f"Warning: Could not create index {index_name} on {table_name}: {e}")
+
+    def safe_add_column_if_not_exists(table_name: str, column: sa.Column):
+        """Add column to table if it doesn't already exist.
+
+        Args:
+            table_name: Name of the table
+            column: SQLAlchemy Column object to add
+        """
+        if table_name in existing_tables:
+            columns = [col["name"] for col in inspector.get_columns(table_name)]
+            if column.name not in columns:
+                op.add_column(table_name, column)
 
     # ===============================
     # STEP 1: Core User Authentication
     # ===============================
 
     # Check if email_users table exists
-    conn = op.get_bind()
-    inspector = sa.inspect(conn)
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
+
+    # Check if this is a fresh database without existing tables
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Detect database type for proper column types
+    is_postgresql = bind.dialect.name == "postgresql"
 
     if "email_users" not in existing_tables:
         # Create email_users table
@@ -56,12 +78,12 @@ def upgrade() -> None:
             sa.Column("email", sa.String(255), primary_key=True, index=True),
             sa.Column("password_hash", sa.String(255), nullable=False),
             sa.Column("full_name", sa.String(255), nullable=True),
-            sa.Column("is_admin", sa.Boolean, default=False, nullable=False),
-            sa.Column("is_active", sa.Boolean, default=True, nullable=False),
+            sa.Column("is_admin", sa.Boolean, nullable=False, server_default=sa.false()),
+            sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.true()),
             sa.Column("email_verified_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("auth_provider", sa.String(50), default="local", nullable=False),
-            sa.Column("password_hash_type", sa.String(20), default="argon2id", nullable=False),
-            sa.Column("failed_login_attempts", sa.Integer, default=0, nullable=False),
+            sa.Column("auth_provider", sa.String(50), nullable=False, server_default=sa.text("'local'")),
+            sa.Column("password_hash_type", sa.String(20), nullable=False, server_default=sa.text("'argon2id'")),
+            sa.Column("failed_login_attempts", sa.Integer, nullable=False, server_default=sa.text("0")),
             sa.Column("locked_until", sa.DateTime(timezone=True), nullable=True),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -76,7 +98,7 @@ def upgrade() -> None:
             "email_auth_events",
             sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
             sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("user_email", sa.String(255), nullable=True, index=True),
+            sa.Column("user_email", sa.String(255), nullable=True),
             sa.Column("event_type", sa.String(50), nullable=False),
             sa.Column("success", sa.Boolean, nullable=False),
             sa.Column("ip_address", sa.String(45), nullable=True),  # IPv6 compatible
@@ -100,12 +122,12 @@ def upgrade() -> None:
             sa.Column("slug", sa.String(255), nullable=False),
             sa.Column("description", sa.Text(), nullable=True),
             sa.Column("created_by", sa.String(255), nullable=False),
-            sa.Column("is_personal", sa.Boolean(), nullable=False, default=False),
-            sa.Column("visibility", sa.String(20), nullable=False, default="private"),
+            sa.Column("is_personal", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("visibility", sa.String(20), nullable=False, server_default=sa.text("'private'")),
             sa.Column("max_members", sa.Integer(), nullable=True),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-            sa.Column("is_active", sa.Boolean(), nullable=False, default=True),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("slug"),
             sa.CheckConstraint("visibility IN ('private', 'public')", name="ck_email_teams_visibility"),
@@ -113,12 +135,29 @@ def upgrade() -> None:
     else:
         # Add visibility constraint to existing email_teams table if it doesn't exist
         try:
-            # Use batch mode for SQLite compatibility
-            with op.batch_alter_table("email_teams", schema=None) as batch_op:
-                batch_op.create_check_constraint("ck_email_teams_visibility", "visibility IN ('private', 'public')")
-        except Exception:
-            # Constraint might already exist, ignore
-            pass
+            # Check if constraint already exists by looking at existing constraints
+            existing_constraints = [c["name"] for c in inspector.get_check_constraints("email_teams")]
+            if "ck_email_teams_visibility" not in existing_constraints:
+                # Normalize existing data to satisfy the constraint before adding it
+                try:
+                    op.execute(
+                        sa.text(
+                            """
+                            UPDATE email_teams
+                            SET visibility = 'private'
+                            WHERE visibility IS NULL
+                               OR visibility NOT IN ('private', 'public')
+                            """
+                        )
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not normalize email_teams.visibility values: {e}")
+
+                # Use batch mode for SQLite compatibility
+                with op.batch_alter_table("email_teams", schema=None) as batch_op:
+                    batch_op.create_check_constraint("ck_email_teams_visibility", "visibility IN ('private', 'public')")
+        except Exception as e:
+            print(f"Warning: Could not create visibility constraint on email_teams: {e}")
 
     if "email_team_members" not in existing_tables:
         # Create email_team_members table
@@ -127,10 +166,10 @@ def upgrade() -> None:
             sa.Column("id", sa.String(36), nullable=False),
             sa.Column("team_id", sa.String(36), nullable=False),
             sa.Column("user_email", sa.String(255), nullable=False),
-            sa.Column("role", sa.String(50), nullable=False, default="member"),
+            sa.Column("role", sa.String(50), nullable=False, server_default=sa.text("'member'")),
             sa.Column("joined_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("invited_by", sa.String(255), nullable=True),
-            sa.Column("is_active", sa.Boolean(), nullable=False, default=True),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("team_id", "user_email", name="uq_team_member"),
         )
@@ -142,12 +181,12 @@ def upgrade() -> None:
             sa.Column("id", sa.String(36), nullable=False),
             sa.Column("team_id", sa.String(36), nullable=False),
             sa.Column("email", sa.String(255), nullable=False),
-            sa.Column("role", sa.String(50), nullable=False, default="member"),
+            sa.Column("role", sa.String(50), nullable=False, server_default=sa.text("'member'")),
             sa.Column("invited_by", sa.String(255), nullable=False),
             sa.Column("invited_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("token", sa.String(500), nullable=False),
-            sa.Column("is_active", sa.Boolean(), nullable=False, default=True),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("token"),
         )
@@ -172,10 +211,10 @@ def upgrade() -> None:
             sa.Column("time_restrictions", sa.Text(), nullable=True, comment="JSON object of time-based restrictions"),
             sa.Column("usage_limits", sa.Text(), nullable=True, comment="JSON object of usage limits"),
             # Lifecycle fields
-            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"), comment="Token creation timestamp"),
+            sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now(), comment="Token creation timestamp"),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True, comment="Token expiry timestamp"),
             sa.Column("last_used", sa.DateTime(timezone=True), nullable=True, comment="Last usage timestamp"),
-            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true"), comment="Active status flag"),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true(), comment="Active status flag"),
             # Metadata fields
             sa.Column("description", sa.Text(), nullable=True, comment="Token description"),
             sa.Column("tags", sa.Text(), nullable=True, comment="JSON array of tags"),
@@ -199,7 +238,7 @@ def upgrade() -> None:
         op.create_table(
             "token_revocations",
             sa.Column("jti", sa.String(36), nullable=False, comment="JWT ID of revoked token"),
-            sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP"), comment="Revocation timestamp"),
+            sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now(), comment="Revocation timestamp"),
             sa.Column("revoked_by", sa.String(255), nullable=True, comment="Email of user who revoked token"),
             sa.Column("reason", sa.String(255), nullable=True, comment="Reason for revocation"),
             # Constraints
@@ -222,7 +261,7 @@ def upgrade() -> None:
             sa.Column("name", sa.String(length=255), nullable=False),
             sa.Column("description", sa.Text(), nullable=True),
             sa.Column("scope", sa.String(length=20), nullable=False),
-            sa.Column("permissions", sa.JSON(), nullable=False),
+            sa.Column("permissions", sa.Text(), nullable=False),  # JSON as text for cross-DB compatibility
             sa.Column("inherits_from", sa.String(length=36), nullable=True),
             sa.Column("created_by", sa.String(length=255), nullable=False),
             sa.Column("is_system_role", sa.Boolean(), nullable=False),
@@ -268,7 +307,7 @@ def upgrade() -> None:
             sa.Column("resource_id", sa.String(length=255), nullable=True),
             sa.Column("team_id", sa.String(length=36), nullable=True),
             sa.Column("granted", sa.Boolean(), nullable=False),
-            sa.Column("roles_checked", sa.JSON(), nullable=True),
+            sa.Column("roles_checked", sa.Text(), nullable=True),  # JSON as text for cross-DB compatibility
             sa.Column("ip_address", sa.String(length=45), nullable=True),
             sa.Column("user_agent", sa.Text(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
@@ -280,27 +319,8 @@ def upgrade() -> None:
         safe_create_index("idx_permission_audit_log_permission", "permission_audit_log", ["permission"])
 
     # ===============================
-    # STEP 5: User Approval System
+    # STEP 5: User Approval System (handled in SSO section)
     # ===============================
-
-    if "pending_user_approvals" not in existing_tables:
-        op.create_table(
-            "pending_user_approvals",
-            sa.Column("id", sa.String(length=36), nullable=False),
-            sa.Column("email", sa.String(length=255), nullable=False),
-            sa.Column("full_name", sa.String(length=255), nullable=False),
-            sa.Column("auth_provider", sa.String(length=50), nullable=False),
-            sa.Column("sso_metadata", sa.JSON(), nullable=True),
-            sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
-            sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-            sa.Column("approved_by", sa.String(length=255), nullable=True),
-            sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("status", sa.String(length=20), nullable=False),
-            sa.Column("rejection_reason", sa.Text(), nullable=True),
-            sa.Column("admin_notes", sa.Text(), nullable=True),
-            sa.PrimaryKeyConstraint("id"),
-            sa.UniqueConstraint("email"),
-        )
 
     # ===============================
     # STEP 6: Add Team Scoping to Existing Tables
@@ -313,17 +333,22 @@ def upgrade() -> None:
         Args:
             table_name: Name of the table to add columns to.
         """
+        if table_name not in existing_tables:
+            return
+
         columns = inspector.get_columns(table_name)
         existing_column_names = [col["name"] for col in columns]
 
-        if "team_id" not in existing_column_names:
-            op.add_column(table_name, sa.Column("team_id", sa.String(length=36), nullable=True))
+        # Use batch mode for SQLite compatibility
+        with op.batch_alter_table(table_name, schema=None) as batch_op:
+            if "team_id" not in existing_column_names:
+                batch_op.add_column(sa.Column("team_id", sa.String(length=36), nullable=True))
 
-        if "owner_email" not in existing_column_names:
-            op.add_column(table_name, sa.Column("owner_email", sa.String(length=255), nullable=True))
+            if "owner_email" not in existing_column_names:
+                batch_op.add_column(sa.Column("owner_email", sa.String(length=255), nullable=True))
 
-        if "visibility" not in existing_column_names:
-            op.add_column(table_name, sa.Column("visibility", sa.String(length=20), nullable=False, server_default="private"))
+            if "visibility" not in existing_column_names:
+                batch_op.add_column(sa.Column("visibility", sa.String(length=20), nullable=False, server_default=sa.text("'private'")))
 
     # Add team scoping to existing resource tables if they exist
     resource_tables = ["prompts", "resources", "servers", "tools", "gateways", "a2a_agents"]
@@ -344,17 +369,17 @@ def upgrade() -> None:
             sa.Column("name", sa.String(100), nullable=False, unique=True),
             sa.Column("display_name", sa.String(100), nullable=False),
             sa.Column("provider_type", sa.String(20), nullable=False),
-            sa.Column("is_enabled", sa.Boolean, nullable=False, default=True),
+            sa.Column("is_enabled", sa.Boolean, nullable=False, server_default=sa.true()),
             sa.Column("client_id", sa.String(255), nullable=False),
             sa.Column("client_secret_encrypted", sa.Text, nullable=False),
             sa.Column("authorization_url", sa.String(500), nullable=False),
             sa.Column("token_url", sa.String(500), nullable=False),
             sa.Column("userinfo_url", sa.String(500), nullable=False),
             sa.Column("issuer", sa.String(500), nullable=True),
-            sa.Column("trusted_domains", sa.JSON, nullable=False, default="[]"),
-            sa.Column("scope", sa.String(200), nullable=False, default="openid profile email"),
-            sa.Column("auto_create_users", sa.Boolean, nullable=False, default=True),
-            sa.Column("team_mapping", sa.JSON, nullable=False, default="{}"),
+            sa.Column("trusted_domains", sa.Text, nullable=False, server_default=sa.text("'[]'")),  # JSON as text for cross-DB compatibility
+            sa.Column("scope", sa.String(200), nullable=False, server_default=sa.text("'openid profile email'")),
+            sa.Column("auto_create_users", sa.Boolean, nullable=False, server_default=sa.true()),
+            sa.Column("team_mapping", sa.Text, nullable=False, server_default=sa.text("'{}'")),  # JSON as text for cross-DB compatibility
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         )
@@ -367,7 +392,7 @@ def upgrade() -> None:
             sa.Column("team_id", sa.String(36), nullable=False),
             sa.Column("user_email", sa.String(255), nullable=False),
             sa.Column("message", sa.Text, nullable=True),
-            sa.Column("status", sa.String(20), nullable=False, default="pending"),
+            sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
             sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
@@ -397,11 +422,11 @@ def upgrade() -> None:
         op.create_table(
             "pending_user_approvals",
             sa.Column("id", sa.String(36), primary_key=True),
-            sa.Column("email", sa.String(255), nullable=False, index=True),
+            sa.Column("email", sa.String(255), nullable=False),
             sa.Column("provider_id", sa.String(50), nullable=False),
             sa.Column("provider_user_id", sa.String(255), nullable=True),
             sa.Column("full_name", sa.String(255), nullable=True),
-            sa.Column("status", sa.String(20), nullable=False, default="pending"),
+            sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
             sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("reviewed_by", sa.String(255), nullable=True),
@@ -409,6 +434,9 @@ def upgrade() -> None:
             sa.Column("notes", sa.Text, nullable=True),
             sa.UniqueConstraint("email", "provider_id", name="uq_pending_approval"),
         )
+
+        # Ensure index on email for quick lookup (safe on both SQLite/PostgreSQL)
+        safe_create_index(op.f("ix_pending_user_approvals_email"), "pending_user_approvals", ["email"])
 
     # Note: Foreign key constraints are intentionally omitted for SQLite compatibility
     # The ORM models handle the relationships properly
@@ -424,15 +452,37 @@ def downgrade() -> None:
             index_name: Name of the index to drop
             table_name: Name of the table containing the index
         """
+        if table_name not in existing_tables:
+            return
         try:
-            op.drop_index(index_name, table_name)
-        except Exception:
-            pass  # Index might not exist
+            existing_indexes = [idx["name"] for idx in inspector.get_indexes(table_name)]
+            if index_name in existing_indexes:
+                op.drop_index(index_name, table_name)
+        except Exception as e:
+            print(f"Warning: Could not drop index {index_name} from {table_name}: {e}")
+
+    def safe_drop_table(table_name: str):
+        """Helper function to safely drop tables.
+
+        Args:
+            table_name: Name of the table to drop
+        """
+        if table_name in existing_tables:
+            try:
+                op.drop_table(table_name)
+                print(f"Dropped table {table_name}")
+            except Exception as e:
+                print(f"Warning: Could not drop table {table_name}: {e}")
 
     # Get current tables to check what exists
-    conn = op.get_bind()
-    inspector = sa.inspect(conn)
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
+
+    # Check if this is a fresh database without existing tables
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping downgrade.")
+        return
 
     # Remove team scoping columns from resource tables
     resource_tables = ["tools", "servers", "resources", "prompts", "gateways", "a2a_agents"]
@@ -442,23 +492,23 @@ def downgrade() -> None:
             columns = inspector.get_columns(table_name)
             existing_column_names = [col["name"] for col in columns]
 
-            # SQLite has issues dropping columns with foreign key constraints
-            # Use safe column dropping that ignores errors
+            # Use batch mode for SQLite compatibility
+            columns_to_drop = []
             if "visibility" in existing_column_names:
-                try:
-                    op.drop_column(table_name, "visibility")
-                except Exception:
-                    pass  # SQLite constraint issues
+                columns_to_drop.append("visibility")
             if "owner_email" in existing_column_names:
-                try:
-                    op.drop_column(table_name, "owner_email")
-                except Exception:
-                    pass  # SQLite constraint issues
+                columns_to_drop.append("owner_email")
             if "team_id" in existing_column_names:
+                columns_to_drop.append("team_id")
+
+            if columns_to_drop:
                 try:
-                    op.drop_column(table_name, "team_id")
-                except Exception:
-                    pass  # SQLite constraint issues
+                    with op.batch_alter_table(table_name, schema=None) as batch_op:
+                        for col_name in columns_to_drop:
+                            batch_op.drop_column(col_name)
+                    print(f"Dropped columns {columns_to_drop} from {table_name}")
+                except Exception as e:
+                    print(f"Warning: Could not drop columns from {table_name}: {e}")
 
     # Drop new tables in reverse order
     tables_to_drop = [
@@ -506,5 +556,5 @@ def downgrade() -> None:
             elif table_name == "email_users":
                 safe_drop_index(op.f("ix_email_users_email"), table_name)
 
-            # Drop the table
-            op.drop_table(table_name)
+            # Drop the table using safe helper
+            safe_drop_table(table_name)
