@@ -22,7 +22,7 @@ type: application
 # * appVersion   - upstream application version; shown in UIs but not
 #                  used for upgrade logic.
 # --------------------------------------------------------------------
-version: 0.6.0
+version: 0.6.1
 appVersion: "0.6.0"
 
 # Icon shown by registries / dashboards (must be an http(s) URL).
