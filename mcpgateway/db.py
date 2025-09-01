@@ -186,7 +186,7 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
-# RBAC Models (Epic 004) - SQLAlchemy Database Models
+# RBAC Models - SQLAlchemy Database Models
 # ---------------------------------------------------------------------------
 
 
@@ -385,7 +385,7 @@ class Permissions:
 
 
 # ---------------------------------------------------------------------------
-# Email-based User Authentication Models (Epic 001)
+# Email-based User Authentication Models
 # ---------------------------------------------------------------------------
 
 

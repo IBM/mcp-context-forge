@@ -140,7 +140,7 @@ Update your `.env` file with the new multi-tenancy settings:
 
 ```bash
 #####################################
-# Email-Based Authentication (Epic 001)
+# Email-Based Authentication
 #####################################
 
 # Enable email-based authentication system
@@ -164,7 +164,7 @@ PASSWORD_REQUIRE_NUMBERS=false
 PASSWORD_REQUIRE_SPECIAL=false
 
 #####################################
-# Personal Teams Configuration (Epic 002)
+# Personal Teams Configuration
 #####################################
 
 # Enable automatic personal team creation for new users

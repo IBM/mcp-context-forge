@@ -3720,7 +3720,7 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
 
 
 # ---------------------------------------------------------------------------
-# Email-Based Authentication Schemas (Epic 001)
+# Email-Based Authentication Schemas
 # ---------------------------------------------------------------------------
 
 
@@ -4106,7 +4106,7 @@ class SuccessResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Team Management Schemas (Epic 002)
+# Team Management Schemas
 # ---------------------------------------------------------------------------
 
 
@@ -4707,7 +4707,7 @@ class TokenUsageStatsResponse(BaseModel):
     top_endpoints: List[tuple[str, int]] = Field(..., description="Most accessed endpoints with counts")
 
 
-# ===== RBAC Schemas (Epic 004) =====
+# ===== RBAC Schemas =====
 
 
 class RoleCreateRequest(BaseModel):

@@ -221,7 +221,7 @@ class Settings(BaseSettings):
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
 
-    # Email-Based Authentication (Epic 001)
+    # Email-Based Authentication
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: str = Field(default="changeme", description="Platform administrator password")
@@ -243,7 +243,7 @@ class Settings(BaseSettings):
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
 
-    # Personal Teams Configuration (Epic 002)
+    # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
     personal_team_prefix: str = Field(default="personal", description="Personal team naming prefix")
     max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")

@@ -52,4 +52,3 @@ def test_closed_resource_error_is_suppressed(monkeypatch):
     # Cleanup
     root.removeHandler(collector)
     anyio.run(service.shutdown)  # type: ignore[arg-type]
-

@@ -829,7 +829,7 @@ class Gateway(BaseModel):
     last_seen: Optional[datetime] = None
 
 
-# ===== RBAC Models (Epic 004) =====
+# ===== RBAC Models =====
 
 
 class RBACRole(BaseModel):
