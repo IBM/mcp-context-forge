@@ -337,7 +337,7 @@ Use the MCP Gateway container to generate a JWT token:
 
 ```bash
 docker run -it --rm ghcr.io/ibm/mcp-context-forge:0.6.0 \
-  python3 -m mcpgateway.utils.create_jwt_token -u admin --secret jwt-secret-key
+  python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret jwt-secret-key
 ```
 
 Export the token as an environment variable:

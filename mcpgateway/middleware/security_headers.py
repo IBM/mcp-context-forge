@@ -75,10 +75,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # This CSP is designed to work with the Admin UI while providing security
         csp_directives = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
             "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
             "img-src 'self' data: https:",
-            "font-src 'self' data:",
+            "font-src 'self' data: https://cdnjs.cloudflare.com",
             "connect-src 'self' ws: wss: https:",
             "frame-ancestors 'none'",
         ]
@@ -97,5 +97,28 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 del response.headers["X-Powered-By"]
             if "Server" in response.headers:
                 del response.headers["Server"]
+
+        # Lightweight dynamic CORS reflection based on current settings
+        origin = request.headers.get("Origin")
+        if origin:
+            allow = False
+            if settings.environment != "production":
+                # In non-production, honor allowed_origins dynamically
+                allow = (not settings.allowed_origins) or (origin in settings.allowed_origins)
+            else:
+                # In production, require explicit allow-list
+                allow = origin in settings.allowed_origins
+            if allow:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                # Standard CORS helpers
+                if settings.cors_allow_credentials:
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
+                # Expose common headers for clients
+                exposed = ["Content-Length", "X-Request-ID"]
+                response.headers["Access-Control-Expose-Headers"] = ", ".join(exposed)
+                # Ensure caches vary on Origin
+                existing_vary = response.headers.get("Vary")
+                vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+                response.headers["Vary"] = vary_val
 
         return response

@@ -18,7 +18,7 @@ Examples:
     >>> cache.get('a')
     1
     >>> import time
-    >>> time.sleep(1.5)  # Use 1.5s to ensure expiration
+    >>> time.sleep(1.5)  # Use 1.5s to ensure reliable expiration
     >>> cache.get('a') is None
     True
     >>> cache.set('a', 1)

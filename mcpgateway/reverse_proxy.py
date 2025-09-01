@@ -22,7 +22,7 @@ Environment variables:
 
 Example:
     $ export REVERSE_PROXY_GATEWAY=https://gateway.example.com
-    $ export REVERSE_PROXY_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret key)
+    $ export REVERSE_PROXY_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret key)
     $ python3 -m mcpgateway.reverse_proxy --local-stdio "uvx mcp-server-git"
 """
 

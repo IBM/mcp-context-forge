@@ -113,13 +113,26 @@ class ResourceService:
         self._event_subscribers: Dict[str, List[asyncio.Queue]] = {}
         self._template_cache: Dict[str, ResourceTemplate] = {}
 
-        # Initialize plugin manager if plugins are enabled
+        # Initialize plugin manager if plugins are enabled in settings
         self._plugin_manager = None
-        if PLUGINS_AVAILABLE and os.getenv("PLUGINS_ENABLED", "false").lower() == "true":
+        if PLUGINS_AVAILABLE:
             try:
-                config_file = os.getenv("PLUGIN_CONFIG_FILE", "plugins/config.yaml")
-                self._plugin_manager = PluginManager(config_file)
-                logger.info(f"Plugin manager initialized for ResourceService with config: {config_file}")
+                # First-Party
+                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+                # Support env overrides for testability without reloading settings
+                env_flag = os.getenv("PLUGINS_ENABLED")
+                if env_flag is not None:
+                    env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
+                    plugins_enabled = env_enabled
+                else:
+                    plugins_enabled = settings.plugins_enabled
+
+                config_file = os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
+
+                if plugins_enabled:
+                    self._plugin_manager = PluginManager(config_file)
+                    logger.info(f"Plugin manager initialized for ResourceService with config: {config_file}")
             except Exception as e:
                 logger.warning(f"Plugin manager initialization failed in ResourceService: {e}")
                 self._plugin_manager = None
@@ -229,6 +242,9 @@ class ResourceService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: str = "private",
     ) -> ResourceRead:
         """Register a new resource.
 
@@ -241,6 +257,9 @@ class ResourceService:
             created_user_agent: User agent of the creator
             import_batch_id: Optional batch ID for bulk imports
             federation_source: Optional source of the resource if federated
+            team_id (Optional[str]): Team ID to assign the resource to.
+            owner_email (Optional[str]): Email of the user who owns this resource.
+            visibility (str): Resource visibility level (private, team, public).
 
         Returns:
             Created resource information
@@ -294,6 +313,10 @@ class ResourceService:
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
                 version=1,
+                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
+                team_id=getattr(resource, "team_id", None) or team_id,
+                owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
+                visibility=getattr(resource, "visibility", None) or visibility,
             )
 
             # Add to DB
@@ -361,6 +384,79 @@ class ResourceService:
         resources = db.execute(query).scalars().all()
         return [self._convert_resource_to_read(r) for r in resources]
 
+    async def list_resources_for_user(
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+    ) -> List[ResourceRead]:
+        """
+        List resources user has access to with team filtering.
+
+        Args:
+            db: Database session
+            user_email: Email of the user requesting resources
+            team_id: Optional team ID to filter by specific team
+            visibility: Optional visibility filter (private, team, public)
+            include_inactive: Whether to include inactive resources
+            skip: Number of resources to skip for pagination
+            limit: Maximum number of resources to return
+
+        Returns:
+            List[ResourceRead]: Resources the user has access to
+        """
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        # Build query following existing patterns from list_resources()
+        query = select(DbResource)
+
+        # Apply active/inactive filter
+        if not include_inactive:
+            query = query.where(DbResource.is_active)
+
+        if team_id:
+            # Filter by specific team
+            query = query.where(DbResource.team_id == team_id)
+
+            # Validate user has access to team
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id not in team_ids:
+                return []  # No access to team
+        else:
+            # Get user's accessible teams
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            # Build access conditions following existing patterns
+            # Third-Party
+            from sqlalchemy import and_, or_  # pylint: disable=import-outside-toplevel
+
+            access_conditions = []
+
+            # 1. User's personal resources (owner_email matches)
+            access_conditions.append(DbResource.owner_email == user_email)
+
+            # 2. Team resources where user is member
+            if team_ids:
+                access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+
+            # 3. Public resources (if visibility allows)
+            access_conditions.append(DbResource.visibility == "public")
+
+            query = query.where(or_(*access_conditions))
+
+        # Apply visibility filter if specified
+        if visibility:
+            query = query.where(DbResource.visibility == visibility)
+
+        # Apply pagination following existing patterns
+        query = query.offset(skip).limit(limit)
+
+        resources = db.execute(query).scalars().all()
+        return [self._convert_resource_to_read(r) for r in resources]
+
     async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
@@ -419,13 +515,14 @@ class ResourceService:
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.models import ResourceContent
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> uri = 'http://example.com/resource.txt'
             >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(content='test')
             >>> import asyncio
             >>> result = asyncio.run(service.read_resource(db, uri))
-            >>> result == 'test'
+            >>> isinstance(result, ResourceContent)
             True
         """
         start_time = time.monotonic()
@@ -450,7 +547,8 @@ class ResourceService:
             contexts = None
 
             # Call pre-fetch hooks if plugin manager is available
-            if self._plugin_manager and PLUGINS_AVAILABLE:
+            plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and ("://" in uri))
+            if plugin_eligible:
                 # Initialize plugin manager if needed
                 # pylint: disable=protected-access
                 if not self._plugin_manager._initialized:
@@ -458,7 +556,18 @@ class ResourceService:
                 # pylint: enable=protected-access
 
                 # Create plugin context
-                global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id)
+                # Normalize user to an identifier string if provided
+                user_id = None
+                if user is not None:
+                    if isinstance(user, dict) and "email" in user:
+                        user_id = user.get("email")
+                    elif isinstance(user, str):
+                        user_id = user
+                    else:
+                        # Attempt to fallback to attribute access
+                        user_id = getattr(user, "email", None)
+
+                global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
 
                 # Create pre-fetch payload
                 pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
@@ -505,7 +614,7 @@ class ResourceService:
                 content = resource.content
 
             # Call post-fetch hooks if plugin manager is available
-            if self._plugin_manager and PLUGINS_AVAILABLE:
+            if plugin_eligible:
                 # Create post-fetch payload
                 post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
 
@@ -542,8 +651,26 @@ class ResourceService:
                 if content:
                     span.set_attribute("content.size", len(str(content)))
 
-            # Return content
-            return content
+            # Return standardized content without breaking callers that expect passthrough
+            # Prefer returning first-class content models or objects with content-like attributes.
+            # ResourceContent and TextContent already imported at top level
+
+            # If content is already a Pydantic content model, return as-is
+            if isinstance(content, (ResourceContent, TextContent)):
+                return content
+
+            # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
+            if hasattr(content, "text") or hasattr(content, "blob"):
+                return content
+
+            # Normalize primitive types to ResourceContent
+            if isinstance(content, bytes):
+                return ResourceContent(type="resource", uri=original_uri, blob=content)
+            if isinstance(content, str):
+                return ResourceContent(type="resource", uri=original_uri, text=content)
+
+            # Fallback to stringified content
+            return ResourceContent(type="resource", uri=original_uri, text=str(content))
 
     async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool) -> ResourceRead:
         """

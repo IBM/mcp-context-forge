@@ -58,7 +58,7 @@ make compose-up     # spins up the Docker Compose stack
 
 # Test the basics
 curl -k https://localhost:4444/health` # {"status":"healthy"}
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
 curl -sk -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/version  | jq -c '.database, .redis'
 
 # Add an MCP server to http://localhost:4444 then check logs:

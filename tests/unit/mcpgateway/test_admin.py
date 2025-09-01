@@ -230,8 +230,8 @@ def mock_metrics():
 class TestAdminServerRoutes:
     """Test admin routes for server management with enhanced coverage."""
 
-    @patch.object(ServerService, "list_servers")
-    async def test_admin_list_servers_with_various_states(self, mock_list_servers, mock_db):
+    @patch.object(ServerService, "list_servers_for_user")
+    async def test_admin_list_servers_with_various_states(self, mock_list_servers_for_user, mock_db):
         """Test listing servers with various states and configurations."""
         # Setup servers with different states
         mock_server_active = MagicMock()
@@ -241,20 +241,20 @@ class TestAdminServerRoutes:
         mock_server_inactive.model_dump.return_value = {"id": 2, "name": "Inactive Server", "is_active": False, "associated_tools": [], "metrics": {"total_executions": 0}}
 
         # Test with include_inactive=False
-        mock_list_servers.return_value = [mock_server_active]
+        mock_list_servers_for_user.return_value = [mock_server_active]
         result = await admin_list_servers(False, mock_db, "test-user")
 
         assert len(result) == 1
         assert result[0]["name"] == "Active Server"
-        mock_list_servers.assert_called_with(mock_db, include_inactive=False)
+        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=False)
 
         # Test with include_inactive=True
-        mock_list_servers.return_value = [mock_server_active, mock_server_inactive]
+        mock_list_servers_for_user.return_value = [mock_server_active, mock_server_inactive]
         result = await admin_list_servers(True, mock_db, "test-user")
 
         assert len(result) == 2
         assert result[1]["name"] == "Inactive Server"
-        mock_list_servers.assert_called_with(mock_db, include_inactive=True)
+        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=True)
 
     @patch.object(ServerService, "get_server")
     async def test_admin_get_server_edge_cases(self, mock_get_server, mock_db):
@@ -363,7 +363,7 @@ class TestAdminServerRoutes:
 class TestAdminToolRoutes:
     """Test admin routes for tool management with enhanced coverage."""
 
-    @patch.object(ToolService, "list_tools")
+    @patch.object(ToolService, "list_tools_for_user")
     async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_db):
         """Test listing tools with empty results and exceptions."""
         # Test empty list
@@ -779,7 +779,7 @@ class TestAdminBulkImportRoutes:
 class TestAdminResourceRoutes:
     """Test admin routes for resource management with enhanced coverage."""
 
-    @patch.object(ResourceService, "list_resources")
+    @patch.object(ResourceService, "list_resources_for_user")
     async def test_admin_list_resources_with_complex_data(self, mock_list_resources, mock_db):
         """Test listing resources with complex data structures."""
         mock_resource = MagicMock()
@@ -886,7 +886,7 @@ class TestAdminResourceRoutes:
 class TestAdminPromptRoutes:
     """Test admin routes for prompt management with enhanced coverage."""
 
-    @patch.object(PromptService, "list_prompts")
+    @patch.object(PromptService, "list_prompts_for_user")
     async def test_admin_list_prompts_with_complex_arguments(self, mock_list_prompts, mock_db):
         """Test listing prompts with complex argument structures."""
         mock_prompt = MagicMock()
@@ -904,6 +904,7 @@ class TestAdminPromptRoutes:
         mock_list_prompts.return_value = [mock_prompt]
         result = await admin_list_prompts(False, mock_db, "test-user")
 
+        assert len(result) == 1
         assert len(result[0]["arguments"]) == 3
 
     @patch.object(PromptService, "get_prompt_details")
@@ -1463,10 +1464,10 @@ class TestAdminGatewayTestRoute:
 class TestAdminUIRoute:
     """Test the main admin UI route with enhanced coverage."""
 
-    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_with_service_failures(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
@@ -1480,14 +1481,14 @@ class TestAdminUIRoute:
 
         # Should propagate the exception
         with pytest.raises(Exception) as excinfo:
-            await admin_ui(mock_request, False, mock_db, "admin", "jwt.token")
+            await admin_ui(mock_request, False, mock_db, "admin")
 
         assert "Resource service down" in str(excinfo.value)
 
-    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_template_context(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
@@ -1505,7 +1506,7 @@ class TestAdminUIRoute:
             mock_settings.app_root_path = "/custom/root"
             mock_settings.gateway_tool_name_separator = "__"
 
-            response = await admin_ui(mock_request, True, mock_db, "admin", "jwt.token")
+            response = await admin_ui(mock_request, True, mock_db, "admin")
 
             # Check template was called with correct context
             template_call = mock_request.app.state.templates.TemplateResponse.call_args
@@ -1521,10 +1522,10 @@ class TestAdminUIRoute:
             assert "gateways" in context
             assert "roots" in context
 
-    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_cookie_settings(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
@@ -1533,24 +1534,14 @@ class TestAdminUIRoute:
         for mock in [mock_servers, mock_tools, mock_resources, mock_prompts, mock_gateways, mock_roots]:
             mock.return_value = []
 
-        # Create a mock response that we can inspect
-        mock_response = HTMLResponse("<html></html>")
-        mock_response.set_cookie = MagicMock()
-        mock_request.app.state.templates.TemplateResponse.return_value = mock_response
+        response = await admin_ui(mock_request, False, mock_db, "admin")
 
-        jwt_token = "test.jwt.token"
-        response = await admin_ui(mock_request, False, mock_db, "admin", jwt_token)
+        # Verify response is an HTMLResponse
+        assert isinstance(response, HTMLResponse)
+        assert response.status_code == 200
 
-        # Verify cookie was set with secure parameters using security_cookies utility
-        mock_response.set_cookie.assert_called_once_with(
-            key="jwt_token",
-            value=jwt_token,
-            max_age=3600,  # 1 hour
-            httponly=True,
-            secure=True,  # Default secure_cookies=True
-            samesite="lax",  # Default cookie_samesite
-            path="/"
-        )
+        # Verify template was called (cookies are now set during login, not on admin page access)
+        mock_request.app.state.templates.TemplateResponse.assert_called_once()
 
 
 class TestRateLimiting:
@@ -2642,10 +2633,10 @@ class TestAdminUIMainEndpoint:
     """Test the main admin UI endpoint and its edge cases."""
 
     @patch('mcpgateway.admin.a2a_service', None)  # Mock A2A disabled
-    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
-    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
-    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
-    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_a2a_disabled(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
@@ -2654,7 +2645,7 @@ class TestAdminUIMainEndpoint:
         for mock in [mock_servers, mock_tools, mock_resources, mock_prompts, mock_gateways, mock_roots]:
             mock.return_value = []
 
-        response = await admin_ui(mock_request, False, mock_db, "admin", "jwt.token")
+        response = await admin_ui(mock_request, False, mock_db, "admin")
 
         # Check template was called with correct context (no a2a_agents)
         template_call = mock_request.app.state.templates.TemplateResponse.call_args

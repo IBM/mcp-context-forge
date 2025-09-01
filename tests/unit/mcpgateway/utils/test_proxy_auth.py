@@ -43,6 +43,7 @@ class TestProxyAuthentication:
         """Create a mock request object."""
         request = Mock(spec=Request)
         request.headers = {}
+        request.cookies = {}  # Empty cookies dict, not Mock
         return request
 
     @pytest.mark.asyncio

@@ -22,7 +22,7 @@ MCP Gateway uses JWT Bearer tokens for authentication. Generate a token before m
 ```bash
 # Generate authentication token
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Verify the token was generated
 echo "Token: ${MCPGATEWAY_BEARER_TOKEN}"
@@ -506,7 +506,7 @@ echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | python3 -m mcpgateway.wr
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Function to make authenticated JSON-RPC calls
 make_call() {
@@ -625,7 +625,7 @@ echo "=== Session Complete ==="
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 echo "=== Starting SSE Session ==="
 
@@ -771,7 +771,7 @@ MCP follows JSON-RPC 2.0 error handling standards:
 ```bash
 # Verify token generation
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Test token validity
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -1090,7 +1090,7 @@ async function main() {
     try {
         // Generate authentication token
         const authToken = execSync(
-            'python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key',
+            'python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key',
             { encoding: 'utf8' }
         ).trim();
 

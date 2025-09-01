@@ -50,12 +50,201 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+async def bootstrap_admin_user() -> None:
+    """
+    Bootstrap the platform admin user from environment variables.
+
+    Creates the admin user if email authentication is enabled and the user doesn't exist.
+    Also creates a personal team for the admin user if auto-creation is enabled.
+    """
+    if not settings.email_auth_enabled:
+        logger.info("Email authentication disabled - skipping admin user bootstrap")
+        return
+
+    try:
+        # Import services here to avoid circular imports
+        # First-Party
+        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            auth_service = EmailAuthService(db)
+
+            # Check if admin user already exists
+            existing_user = await auth_service.get_user_by_email(settings.platform_admin_email)
+            if existing_user:
+                logger.info(f"Admin user {settings.platform_admin_email} already exists - skipping creation")
+                return
+
+            # Create admin user
+            logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
+            admin_user = await auth_service.create_user(
+                email=settings.platform_admin_email,
+                password=settings.platform_admin_password,
+                full_name=settings.platform_admin_full_name,
+                is_admin=True,
+            )
+
+            # Mark admin user as email verified
+            # First-Party
+            from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
+
+            admin_user.email_verified_at = utc_now()
+            db.commit()
+
+            # Personal team is automatically created during user creation if enabled
+            if settings.auto_create_personal_teams:
+                logger.info("Personal team automatically created for admin user")
+
+            db.commit()
+            logger.info(f"Platform admin user created successfully: {settings.platform_admin_email}")
+
+    except Exception as e:
+        logger.error(f"Failed to bootstrap admin user: {e}")
+        # Don't fail the entire bootstrap process if admin user creation fails
+        return
+
+
+async def bootstrap_default_roles() -> None:
+    """Bootstrap default system roles and assign them to admin user.
+
+    Creates essential RBAC roles and assigns administrative privileges
+    to the platform admin user.
+    """
+    if not settings.email_auth_enabled:
+        logger.info("Email authentication disabled - skipping default roles bootstrap")
+        return
+
+    try:
+        # First-Party
+        from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+        # Get database session
+        db_gen = get_db()
+        db = next(db_gen)
+
+        try:
+            role_service = RoleService(db)
+            auth_service = EmailAuthService(db)
+
+            # Check if admin user exists
+            admin_user = await auth_service.get_user_by_email(settings.platform_admin_email)
+            if not admin_user:
+                logger.info("Admin user not found - skipping role assignment")
+                return
+
+            # Default system roles to create
+            default_roles = [
+                {"name": "platform_admin", "description": "Platform administrator with all permissions", "scope": "global", "permissions": ["*"], "is_system_role": True},  # All permissions
+                {
+                    "name": "team_admin",
+                    "description": "Team administrator with team management permissions",
+                    "scope": "team",
+                    "permissions": ["teams.read", "teams.update", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "is_system_role": True,
+                },
+                {
+                    "name": "developer",
+                    "description": "Developer with tool and resource access",
+                    "scope": "team",
+                    "permissions": ["tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "is_system_role": True,
+                },
+                {"name": "viewer", "description": "Read-only access to resources", "scope": "team", "permissions": ["tools.read", "resources.read", "prompts.read"], "is_system_role": True},
+            ]
+
+            # Create default roles
+            created_roles = []
+            for role_def in default_roles:
+                try:
+                    # Check if role already exists
+                    existing_role = await role_service.get_role_by_name(role_def["name"], role_def["scope"])
+                    if existing_role:
+                        logger.info(f"System role {role_def['name']} already exists - skipping")
+                        created_roles.append(existing_role)
+                        continue
+
+                    # Create the role
+                    role = await role_service.create_role(
+                        name=role_def["name"],
+                        description=role_def["description"],
+                        scope=role_def["scope"],
+                        permissions=role_def["permissions"],
+                        created_by=settings.platform_admin_email,
+                        is_system_role=role_def["is_system_role"],
+                    )
+                    created_roles.append(role)
+                    logger.info(f"Created system role: {role.name}")
+
+                except Exception as e:
+                    logger.error(f"Failed to create role {role_def['name']}: {e}")
+                    continue
+
+            # Assign platform_admin role to admin user
+            platform_admin_role = next((r for r in created_roles if r.name == "platform_admin"), None)
+            if platform_admin_role:
+                try:
+                    # Check if assignment already exists
+                    existing_assignment = await role_service.get_user_role_assignment(user_email=admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                    if not existing_assignment or not existing_assignment.is_active:
+                        await role_service.assign_role_to_user(user_email=admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by="system")
+                        logger.info(f"Assigned platform_admin role to {admin_user.email}")
+                    else:
+                        logger.info("Admin user already has platform_admin role")
+
+                except Exception as e:
+                    logger.error(f"Failed to assign platform_admin role: {e}")
+
+            logger.info("Default RBAC roles bootstrap completed successfully")
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        logger.error(f"Failed to bootstrap default roles: {e}")
+        # Don't fail the entire bootstrap process if role creation fails
+        return
+
+
+def normalize_team_visibility() -> int:
+    """Normalize team visibility values to the supported set {private, public}.
+
+    Any team with an unsupported visibility (e.g., 'team') is set to 'private'.
+
+    Returns:
+        int: Number of teams updated
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import EmailTeam, SessionLocal  # pylint: disable=import-outside-toplevel
+
+        with SessionLocal() as db:
+            # Find teams with invalid visibility
+            invalid = db.query(EmailTeam).filter(EmailTeam.visibility.notin_(["private", "public"]))
+            count = 0
+            for team in invalid.all():
+                old = team.visibility
+                team.visibility = "private"
+                count += 1
+                logger.info(f"Normalized team visibility: id={team.id} {old} -> private")
+            if count:
+                db.commit()
+            return count
+    except Exception as e:
+        logger.error(f"Failed to normalize team visibility: {e}")
+        return 0
+
+
 async def main() -> None:
     """
     Bootstrap or upgrade the database schema, then log readiness.
 
     Runs `create_all()` + `alembic stamp head` on an empty DB, otherwise just
     executes `alembic upgrade head`, leaving application data intact.
+    Also creates the platform admin user if email authentication is enabled.
 
     Args:
         None
@@ -78,7 +267,18 @@ async def main() -> None:
         else:
             command.upgrade(cfg, "head")
 
+    # Post-upgrade normalization passes
+    updated = normalize_team_visibility()
+    if updated:
+        logger.info(f"Normalized {updated} team record(s) to supported visibility values")
+
     logger.info("Database ready")
+
+    # Bootstrap admin user after database is ready
+    await bootstrap_admin_user()
+
+    # Bootstrap default RBAC roles after admin user is created
+    await bootstrap_default_roles()
 
 
 if __name__ == "__main__":

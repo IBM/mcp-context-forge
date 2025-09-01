@@ -358,7 +358,7 @@ services:
         done
 
         echo "Generating JWT token..."
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 
         echo "Registering fast_time_server with gateway..."
         RESPONSE=$$(curl -s -X POST http://gateway:4444/gateways \

@@ -270,7 +270,7 @@ BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
 
 # 3️⃣  Generate a bearer token & smoke-test the API
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
@@ -300,7 +300,7 @@ mcpgateway.exe --host 0.0.0.0 --port 4444
 
 # 4️⃣  Bearer token and smoke-test
 $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-    --username admin --exp 10080 --secret my-test-key
+    --username admin@example.com --exp 10080 --secret my-test-key
 
 curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
      http://127.0.0.1:4444/version | jq
@@ -452,7 +452,7 @@ docker logs -f mcpgateway
 
 # Generating an API key
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.6.0 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
@@ -569,7 +569,7 @@ podman run -d --name mcpgateway \
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
-  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 --secret my-test-key
+  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com -e 10080 --secret my-test-key
   ```
 * **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
 
@@ -600,7 +600,7 @@ The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while ke
 
 ```bash
 # Set environment variables
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
 export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
 export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
 export MCP_TOOL_CALL_TIMEOUT=120
@@ -1019,9 +1019,12 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | --------------------- | ---------------------------------------------------------------- | ------------- | ---------- |
 | `BASIC_AUTH_USER`     | Username for Admin UI login and HTTP Basic authentication        | `admin`       | string     |
 | `BASIC_AUTH_PASSWORD` | Password for Admin UI login and HTTP Basic authentication        | `changeme`    | string     |
+| `PLATFORM_ADMIN_EMAIL` | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string |
 | `AUTH_REQUIRED`       | Require authentication for all API routes                        | `true`        | bool       |
 | `JWT_SECRET_KEY`      | Secret key used to **sign JWT tokens** for API access            | `my-test-key` | string     |
 | `JWT_ALGORITHM`       | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based) | `HS256`       | PyJWT algs |
+| `JWT_AUDIENCE`        | JWT audience claim for token validation                           | `mcpgateway-api` | string  |
+| `JWT_ISSUER`          | JWT issuer claim for token validation                             | `mcpgateway`  | string     |
 | `TOKEN_EXPIRY`        | Expiry of generated JWTs in minutes                              | `10080`       | int > 0    |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase used to derive AES key for encrypting tool auth headers | `my-test-salt` | string |
 
@@ -1036,7 +1039,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 > * Generate tokens via:
 >
 >   ```bash
->   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+>   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
 >   echo $MCPGATEWAY_BEARER_TOKEN
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.
@@ -1480,7 +1483,7 @@ Generate an API Bearer token, and test the various API endpoints.
 
 ```bash
 # Generate a bearer token using the configured secret key (use the same as your .env)
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 echo ${MCPGATEWAY_BEARER_TOKEN}
 
 # Quickly confirm that authentication works and the gateway is healthy
