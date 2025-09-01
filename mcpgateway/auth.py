@@ -163,20 +163,14 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
                 api_token.last_used = utc_now()
                 db.commit()
             else:
-                logger.debug("API token not found in database, checking bootstrap admin key")
-                # Check for bootstrap admin API key
-                if settings.bootstrap_admin_api_key and credentials.credentials == settings.bootstrap_admin_api_key:
-                    # Bootstrap admin key - create virtual admin user
-                    email = settings.platform_admin_email
-                    logger.debug("Bootstrap admin key authentication successful")
-                else:
-                    logger.debug("No valid authentication method found")
-                    # Neither JWT nor API token nor bootstrap key worked
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid authentication credentials",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
+                logger.debug("API token not found in database")
+                logger.debug("No valid authentication method found")
+                # Neither JWT nor API token worked
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
         except HTTPException:
             # Re-raise HTTP exceptions
             raise

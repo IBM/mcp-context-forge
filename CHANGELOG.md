@@ -61,11 +61,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
   DB_POOL_TIMEOUT=30           # Seconds to wait for connection before timeout (default: 30)
   DB_POOL_RECYCLE=3600         # Seconds before recreating connection (default: 3600)
   ```
-* **Bootstrap Admin API Key** - Secure initial setup and automation support:
-  ```bash
-  # New bootstrap admin configuration:
-  BOOTSTRAP_ADMIN_API_KEY=bootstrap_admin_token_xyz  # For initial setup and automation
-  ```
 * **Enhanced JWT Configuration** - Audience, issuer claims, and improved token validation:
   ```bash
   # New JWT configuration options:

@@ -170,9 +170,6 @@ class Settings(BaseSettings):
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 
-    # Bootstrap Admin API Key (for initial setup and automation)
-    bootstrap_admin_api_key: Optional[str] = Field(default=None, description="Master admin API key for initial setup and automation. Set in production for secure admin access.")
-
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
 
     # SSO Configuration
