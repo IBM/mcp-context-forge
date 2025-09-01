@@ -177,18 +177,20 @@ flowchart TB
     style R2 fill:#f3e5f5
 ```
 
-#### Team Role Semantics (Design)
+#### Team Membership Levels (Design)
 
-- Owner:
+**Note**: These are team membership levels, separate from RBAC roles. A user can have both a membership level and RBAC role assignments within the same team.
+
+- **Owner** (Team Membership Level):
   - Manage team settings (name, description, visibility) and lifecycle (cannot delete personal teams).
   - Manage membership (invite, accept, change roles, remove members).
   - Full control over team resources (create/update/delete), subject to platform policies.
 
-- Member:
+- **Member** (Team Membership Level):
   - Access and use team resources; can create resources by default unless policies restrict it.
   - Cannot manage team membership or team‑level settings.
 
-Platform Admin is a global role (not a team role) with system‑wide oversight.
+**Platform Admin** is a global RBAC role (not a team membership level) with system‑wide oversight.
 
 ### Team Invitation Workflow
 
@@ -390,15 +392,97 @@ flowchart TD
 
 ## Platform Administration
 
+## Role-Based Access Control (RBAC)
+
+The MCP Gateway implements a comprehensive RBAC system with four built-in roles that are automatically created during system bootstrap. These roles provide granular permission management across different scopes.
+
+### System Roles
+
+The following roles are created automatically when the system starts:
+
+#### 1. Platform Admin (Global Scope)
+- **Permissions**: `*` (all permissions)
+- **Scope**: Global
+- **Description**: Platform administrator with all system-wide permissions
+- **Use Case**: System administrators who manage the entire platform
+
+#### 2. Team Admin (Team Scope)
+- **Permissions**:
+  - `teams.read` - View team information
+  - `teams.update` - Modify team settings
+  - `teams.manage_members` - Add/remove team members
+  - `tools.read` - View tools
+  - `tools.execute` - Execute tools
+  - `resources.read` - View resources
+  - `prompts.read` - View prompts
+- **Scope**: Team
+- **Description**: Team administrator with team management permissions
+- **Use Case**: Team leaders who manage team membership and resources
+
+#### 3. Developer (Team Scope)
+- **Permissions**:
+  - `tools.read` - View tools
+  - `tools.execute` - Execute tools
+  - `resources.read` - View resources
+  - `prompts.read` - View prompts
+- **Scope**: Team
+- **Description**: Developer with tool and resource access
+- **Use Case**: Team members who need to use tools and access resources
+
+#### 4. Viewer (Team Scope)
+- **Permissions**:
+  - `tools.read` - View tools
+  - `resources.read` - View resources
+  - `prompts.read` - View prompts
+- **Scope**: Team
+- **Description**: Read-only access to resources
+- **Use Case**: Team members who only need to view resources without executing them
+
+### Permission Categories
+
+The RBAC system defines permissions across multiple resource categories:
+
+#### User Management
+- `users.create`, `users.read`, `users.update`, `users.delete`, `users.invite`
+
+#### Team Management
+- `teams.create`, `teams.read`, `teams.update`, `teams.delete`, `teams.manage_members`
+
+#### Tool Management
+- `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute`
+
+#### Resource Management
+- `resources.create`, `resources.read`, `resources.update`, `resources.delete`, `resources.share`
+
+#### Prompt Management
+- `prompts.create`, `prompts.read`, `prompts.update`, `prompts.delete`, `prompts.execute`
+
+#### Server Management
+- `servers.create`, `servers.read`, `servers.update`, `servers.delete`, `servers.manage`
+
+#### Token Management
+- `tokens.create`, `tokens.read`, `tokens.revoke`, `tokens.scope`
+
+#### Admin Functions
+- `admin.system_config`, `admin.user_management`, `admin.security_audit`
+
+### Role Assignment and Scope
+
+Roles are assigned to users within specific scopes:
+
+- **Global Scope**: Platform-wide permissions (platform_admin only)
+- **Team Scope**: Team-specific permissions (team_admin, developer, viewer)
+- **Personal Scope**: Individual user permissions (future use)
+
 ### Administrator Hierarchy
 
 ```mermaid
 flowchart TD
-    subgraph "Platform Roles"
-        A[Platform Administrator<br/>- System-wide access<br/>- User management<br/>- SSO configuration<br/>- Global settings]
-        B[Team Owner<br/>- Team management<br/>- Team resource control<br/>- Member management]
-        C[Team Member<br/>- Team resource access<br/>- Limited team visibility]
-        D[Regular User<br/>- Personal team only<br/>- Public resource access]
+    subgraph "RBAC Roles"
+        A[Platform Admin<br/>- All permissions (*)<br/>- Global scope<br/>- System management]
+        B[Team Admin<br/>- Team management<br/>- Member control<br/>- Resource access]
+        C[Developer<br/>- Tool execution<br/>- Resource access<br/>- No team management]
+        D[Viewer<br/>- Read-only access<br/>- No execution<br/>- No management]
     end
 
     subgraph "Domain Restrictions"
@@ -413,9 +497,9 @@ flowchart TD
 
     subgraph "Access Hierarchy"
         H[Platform Admin] --> I[All Teams & Resources]
-        J[Team Owner] --> K[Team Resources & Members]
-        L[Team Member] --> M[Team Resources Only]
-        N[Regular User] --> O[Personal + Public Resources]
+        J[Team Admin] --> K[Team Resources & Members]
+        L[Developer] --> M[Team Resources Only]
+        N[Viewer] --> O[Read-Only Access]
     end
 
     style A fill:#ff8a80
@@ -465,11 +549,33 @@ sequenceDiagram
     end
 ```
 
-### Admin vs User Experience
+### Role-Based UI Experience
 
-- Admin team view: Administrators can view and manage all non-personal teams across the platform in Teams Management. Personal teams remain protected from cross-tenant edits and deletion.
-- User team view: Non-admin users see only teams they belong to. Team owners manage membership via invitations; members can access team resources per visibility rules.
-- UI access: The main dashboard supports both admins and regular users. Admin-only actions remain protected by RBAC; non-admins can access their teams, resources, and tokens but cannot perform admin functions.
+The user interface adapts based on the user's assigned roles:
+
+#### Platform Admin Experience
+- **Full System Access**: Can view and manage all teams, users, and resources across the platform
+- **Global Configuration**: Access to system-wide settings, SSO configuration, and platform management
+- **Cross-Team Management**: Can manage resources in any team regardless of membership
+- **User Management**: Can create, modify, and delete user accounts and role assignments
+
+#### Team Admin Experience
+- **Team Management**: Can modify team settings, manage team membership (invite/remove members)
+- **Resource Control**: Full access to create, modify, and delete team resources
+- **Member Oversight**: Can view and manage all team members and their access
+- **Limited to Assigned Teams**: Only sees teams where they have the team_admin role
+
+#### Developer Experience
+- **Tool Access**: Can view and execute tools within their teams
+- **Resource Usage**: Can access and use team resources and prompts
+- **No Management Rights**: Cannot manage team membership or team settings
+- **Create Resources**: Can create new tools, resources, and prompts within their teams
+
+#### Viewer Experience
+- **Read-Only Access**: Can view tools, resources, and prompts but cannot execute or modify them
+- **No Creation Rights**: Cannot create new resources or tools
+- **No Management Access**: Cannot manage team membership or settings
+- **Limited Interaction**: Primarily for reviewing and consuming existing resources
 
 ### Default Visibility & Sharing
 
@@ -858,14 +964,16 @@ flowchart TD
     style F fill:#f0f4c3
 ```
 
-### Access Control Matrix
+### RBAC Access Control Matrix
 
-| User Role | Team Access | Resource Creation | Member Management | Team Settings | Platform Admin |
-|-----------|-------------|-------------------|-------------------|---------------|----------------|
-| Platform Admin | All teams | All resources | All teams | All settings | Full access |
-| Team Owner | Owned teams | Team resources | Team members | Team settings | No access |
-| Team Member | Member teams | Team resources | No access | No access | No access |
-| Regular User | Personal team | Personal resources | Personal team | Personal settings | No access |
+| RBAC Role | Scope | Team Access | Resource Creation | Member Management | Team Settings | Platform Admin |
+|-----------|-------|-------------|-------------------|-------------------|---------------|----------------|
+| Platform Admin | Global | All teams | All resources | All teams | All settings | Full access |
+| Team Admin | Team | Assigned teams | Team resources | Team members | Team settings | No access |
+| Developer | Team | Member teams | Team resources | No access | No access | No access |
+| Viewer | Team | Member teams | No access | No access | No access | No access |
+
+**Note**: Team Owner/Member roles from the team management system work alongside RBAC roles. A user can have both team membership status (Owner/Member) and RBAC role assignments (Team Admin/Developer/Viewer) within the same team.
 
 ---
 
