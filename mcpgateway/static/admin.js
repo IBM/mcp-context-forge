@@ -3570,6 +3570,25 @@ async function editServer(serverId) {
             tagsField.value = server.tags ? server.tags.join(", ") : "";
         }
 
+        // Pre-select associated tools
+        const toolCheckboxes = document.querySelectorAll("#edit-server-tools input[type=checkbox]");
+        if (toolCheckboxes && server.associatedTools) {
+            toolCheckboxes.forEach(cb => {
+                cb.checked = server.associatedTools.some(tool => tool.id === cb.value);
+            });
+
+            const pillsContainer = safeGetElement("selectedEditToolsPills");
+            if (pillsContainer) {
+                pillsContainer.innerHTML = "";
+                server.associatedTools.forEach(tool => {
+                    const label = document.createElement("span");
+                    label.className = pillClasses;
+                    label.textContent = tool.displayName;
+                    pillsContainer.appendChild(label);
+                });
+            }
+        }
+
         openModal("server-edit-modal");
         console.log("✓ Server edit modal loaded successfully");
     } catch (error) {
@@ -4164,6 +4183,9 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 });
 //= ==================================================================
+const pillClasses =
+    "inline-block px-3 py-1 text-xs font-semibold text-indigo-700 bg-indigo-100 rounded-full shadow";
+
 function initToolSelect(
     selectId,
     pillsId,
@@ -4186,8 +4208,6 @@ function initToolSelect(
     }
 
     const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-    const pillClasses =
-        "inline-block px-3 py-1 text-xs font-semibold text-indigo-700 bg-indigo-100 rounded-full shadow";
 
     function update() {
         try {
