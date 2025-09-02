@@ -2517,7 +2517,7 @@ async def admin_view_team_members(
 
             # Generate appropriate button based on whether this is the last owner
             if is_last_owner:
-                remove_button = f"""
+                remove_button = """
                     <span class="px-2 py-1 text-xs font-medium text-gray-400 dark:text-gray-500 border border-gray-300 dark:border-gray-600 rounded-md cursor-not-allowed"
                           title="Cannot remove last owner">
                         Last Owner
