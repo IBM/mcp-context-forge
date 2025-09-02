@@ -952,7 +952,7 @@
                     class="px-6 py-4 max-w-xs break-words text-sm text-gray-500 dark:text-gray-300"
                   >
                     {% if server.associatedTools %} {{ server.associatedTools |
-                    map('string') | join(', ') }} {% else %}
+                    map(attribute='displayName') | join(', ') }} {% else %}
                     <span class="text-gray-500 dark:text-gray-300">N/A</span>
                     {% endif %}
                   </td>

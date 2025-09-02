@@ -3106,7 +3106,7 @@ class ServerRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    associated_tools: List[str] = []
+    associated_tools: List[Dict[str, str]] = []
     associated_resources: List[int] = []
     associated_prompts: List[int] = []
     associated_a2a_agents: List[str] = []

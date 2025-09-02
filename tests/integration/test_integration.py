@@ -108,6 +108,7 @@ MOCK_TOOL = ToolRead(
     id="tool-1",
     name="test_tool",
     original_name="test_tool",
+    displayName="Test Tool",
     url="http://example.com/tools/test",
     description="demo",
     request_type="POST",
@@ -138,7 +139,13 @@ MOCK_SERVER = ServerRead(
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
     is_active=True,
-    associated_tools=[MOCK_TOOL.id],
+    associated_tools=[
+        {
+            "id": MOCK_TOOL.id,
+            "name": MOCK_TOOL.name,
+            "displayName": MOCK_TOOL.displayName,
+        }
+    ],
     associated_resources=[],
     associated_prompts=[],
     metrics=MOCK_METRICS,
@@ -194,7 +201,7 @@ class TestIntegrationScenarios:
         srv_req = {
             "name": "test_server",
             "description": "integration server",
-            "associated_tools": [MOCK_TOOL.id],
+            "associated_tools": [{"id": MOCK_TOOL.id, "name": MOCK_TOOL.name, "displayName": MOCK_TOOL.displayName}],
         }
         resp_srv = test_client.post("/servers/", json=srv_req, headers=auth_headers)
         assert resp_srv.status_code == 201
