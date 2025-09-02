@@ -76,6 +76,11 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
 
     Raises:
         HTTPException: If team creation fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(create_team)
+        True
     """
     try:
         db = current_user_ctx["db"]
@@ -126,6 +131,11 @@ async def list_teams(
 
     Raises:
         HTTPException: If there's an error listing teams
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(list_teams)
+        True
     """
     try:
         db = current_user_ctx["db"]

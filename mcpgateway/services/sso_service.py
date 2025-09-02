@@ -122,11 +122,12 @@ class SSOService:
             List of enabled SSO providers
 
         Examples:
-            Method existence check:
-            >>> from unittest.mock import Mock
-            >>> service = SSOService(Mock())
-            >>> callable(service.list_enabled_providers)
-            True
+            Returns empty list when DB has no providers:
+            >>> from unittest.mock import MagicMock
+            >>> service = SSOService(MagicMock())
+            >>> service.db.execute.return_value.scalars.return_value.all.return_value = []
+            >>> service.list_enabled_providers()
+            []
         """
         stmt = select(SSOProvider).where(SSOProvider.is_enabled.is_(True))
         result = self.db.execute(stmt)
@@ -140,6 +141,13 @@ class SSOService:
 
         Returns:
             SSO provider or None if not found
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> service = SSOService(MagicMock())
+            >>> service.db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> service.get_provider('x') is None
+            True
         """
         stmt = select(SSOProvider).where(SSOProvider.id == provider_id)
         result = self.db.execute(stmt)
@@ -153,6 +161,13 @@ class SSOService:
 
         Returns:
             SSO provider or None if not found
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> service = SSOService(MagicMock())
+            >>> service.db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> service.get_provider_by_name('github') is None
+            True
         """
         stmt = select(SSOProvider).where(SSOProvider.name == provider_name)
         result = self.db.execute(stmt)
@@ -168,21 +183,20 @@ class SSOService:
             Created SSO provider
 
         Examples:
-            # >>> service = SSOService(db_session)
-            # >>> data = {
-            # ...     "id": "github",
-            # ...     "name": "github",
-            # ...     "display_name": "GitHub",
-            # ...     "provider_type": "oauth2",
-            # ...     "client_id": "client_123",
-            # ...     "client_secret": "secret_456",
-            # ...     "authorization_url": "https://github.com/login/oauth/authorize",
-            # ...     "token_url": "https://github.com/login/oauth/access_token",
-            # ...     "userinfo_url": "https://api.github.com/user"
-            # ... }
-            # >>> provider = service.create_provider(data)
-            # >>> provider.id == "github"
-            # True
+            >>> from unittest.mock import MagicMock
+            >>> service = SSOService(MagicMock())
+            >>> service._encrypt_secret = lambda s: 'ENC(' + s + ')'
+            >>> data = {
+            ...     'id': 'github', 'name': 'github', 'display_name': 'GitHub', 'provider_type': 'oauth2',
+            ...     'client_id': 'cid', 'client_secret': 'sec',
+            ...     'authorization_url': 'https://example/auth', 'token_url': 'https://example/token',
+            ...     'userinfo_url': 'https://example/user', 'scope': 'user:email'
+            ... }
+            >>> provider = service.create_provider(data)
+            >>> hasattr(provider, 'id') and provider.id == 'github'
+            True
+            >>> provider.client_secret_encrypted.startswith('ENC(')
+            True
         """
         # Encrypt client secret
         client_secret = provider_data.pop("client_secret")
@@ -203,6 +217,22 @@ class SSOService:
 
         Returns:
             Updated SSO provider or None if not found
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from unittest.mock import MagicMock
+            >>> svc = SSOService(MagicMock())
+            >>> # Existing provider object
+            >>> existing = SimpleNamespace(id='github', name='github', client_id='old', client_secret_encrypted='X', is_enabled=True)
+            >>> svc.get_provider = lambda _id: existing
+            >>> svc._encrypt_secret = lambda s: 'ENC-' + s
+            >>> svc.db.commit = lambda: None
+            >>> svc.db.refresh = lambda obj: None
+            >>> updated = svc.update_provider('github', {'client_id': 'new', 'client_secret': 'sec'})
+            >>> updated.client_id
+            'new'
+            >>> updated.client_secret_encrypted
+            'ENC-sec'
         """
         provider = self.get_provider(provider_id)
         if not provider:
@@ -230,6 +260,19 @@ class SSOService:
 
         Returns:
             True if deleted, False if not found
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from unittest.mock import MagicMock
+            >>> svc = SSOService(MagicMock())
+            >>> svc.db.delete = lambda obj: None
+            >>> svc.db.commit = lambda: None
+            >>> svc.get_provider = lambda _id: SimpleNamespace(id='github')
+            >>> svc.delete_provider('github')
+            True
+            >>> svc.get_provider = lambda _id: None
+            >>> svc.delete_provider('missing')
+            False
         """
         provider = self.get_provider(provider_id)
         if not provider:
@@ -277,10 +320,20 @@ class SSOService:
             Authorization URL or None if provider not found
 
         Examples:
-            Callable check:
-            >>> from unittest.mock import Mock
-            >>> service = SSOService(Mock())
-            >>> callable(service.get_authorization_url)
+            >>> from types import SimpleNamespace
+            >>> from unittest.mock import MagicMock
+            >>> service = SSOService(MagicMock())
+            >>> provider = SimpleNamespace(id='github', is_enabled=True, provider_type='oauth2', client_id='cid', authorization_url='https://example/auth', scope='user:email')
+            >>> service.get_provider = lambda _pid: provider
+            >>> service.db.add = lambda x: None
+            >>> service.db.commit = lambda: None
+            >>> url = service.get_authorization_url('github', 'https://app/callback', ['email'])
+            >>> isinstance(url, str) and 'client_id=cid' in url and 'state=' in url
+            True
+
+            Missing provider returns None:
+            >>> service.get_provider = lambda _pid: None
+            >>> service.get_authorization_url('missing', 'https://app/callback') is None
             True
         """
         provider = self.get_provider(provider_id)
@@ -329,11 +382,45 @@ class SSOService:
             User info dict or None if authentication failed
 
         Examples:
-            Coroutine check:
-            >>> from unittest.mock import Mock
-            >>> service = SSOService(Mock())
+            Happy-path with patched exchanges and user info:
             >>> import asyncio
-            >>> asyncio.iscoroutinefunction(service.handle_oauth_callback)
+            >>> from types import SimpleNamespace
+            >>> from unittest.mock import MagicMock
+            >>> svc = SSOService(MagicMock())
+            >>> # Mock DB auth session lookup
+            >>> provider = SimpleNamespace(id='github', is_enabled=True, provider_type='oauth2')
+            >>> auth_session = SimpleNamespace(provider_id='github', state='st', provider=provider, is_expired=False)
+            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = auth_session
+            >>> # Patch token exchange and user info retrieval
+            >>> async def _ex(p, sess, c):
+            ...     return {'access_token': 'tok'}
+            >>> async def _ui(p, access):
+            ...     return {'email': 'user@example.com'}
+            >>> svc._exchange_code_for_tokens = _ex
+            >>> svc._get_user_info = _ui
+            >>> svc.db.delete = lambda obj: None
+            >>> svc.db.commit = lambda: None
+            >>> out = asyncio.run(svc.handle_oauth_callback('github', 'code', 'st'))
+            >>> out['email']
+            'user@example.com'
+
+            Early return cases:
+            >>> # No session
+            >>> svc2 = SSOService(MagicMock())
+            >>> svc2.db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> asyncio.run(svc2.handle_oauth_callback('github', 'c', 's')) is None
+            True
+            >>> # Expired session
+            >>> expired = SimpleNamespace(provider_id='github', state='st', provider=SimpleNamespace(is_enabled=True), is_expired=True)
+            >>> svc3 = SSOService(MagicMock())
+            >>> svc3.db.execute.return_value.scalar_one_or_none.return_value = expired
+            >>> asyncio.run(svc3.handle_oauth_callback('github', 'c', 'st')) is None
+            True
+            >>> # Disabled provider
+            >>> disabled = SimpleNamespace(provider_id='github', state='st', provider=SimpleNamespace(is_enabled=False), is_expired=False)
+            >>> svc4 = SSOService(MagicMock())
+            >>> svc4.db.execute.return_value.scalar_one_or_none.return_value = disabled
+            >>> asyncio.run(svc4.handle_oauth_callback('github', 'c', 'st')) is None
             True
         """
         # Validate auth session

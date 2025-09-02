@@ -203,6 +203,24 @@ class ResourceService:
 
         Returns:
             ResourceRead: The Pydantic model representing the resource, including aggregated metrics.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timezone
+            >>> svc = ResourceService()
+            >>> now = datetime.now(timezone.utc)
+            >>> # Fake metrics
+            >>> m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
+            >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
+            >>> r = SimpleNamespace(
+            ...     id=1, uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
+            ...     created_at=now, updated_at=now, is_active=True, tags=['t'], metrics=[m1, m2]
+            ... )
+            >>> out = svc._convert_resource_to_read(r)
+            >>> out.metrics.total_executions
+            2
+            >>> out.metrics.successful_executions
+            1
         """
         resource_dict = resource.__dict__.copy()
         # Remove SQLAlchemy state and any pre-existing 'metrics' attribute
@@ -366,6 +384,13 @@ class ResourceService:
             >>> result = asyncio.run(service.list_resources(db))
             >>> isinstance(result, list)
             True
+
+            With tags filter:
+            >>> db2 = MagicMock()
+            >>> db2.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> result2 = asyncio.run(service.list_resources(db2, tags=['api']))
+            >>> isinstance(result2, list)
+            True
         """
         query = select(DbResource)
         if not include_inactive:
@@ -401,6 +426,34 @@ class ResourceService:
 
         Returns:
             List[ResourceRead]: Resources the user has access to
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> import asyncio
+            >>> service = ResourceService()
+            >>> db = MagicMock()
+            >>> # Patch TeamManagementService used inside the method
+            >>> from mcpgateway.services import resource_service as _rs
+            >>> class _TeamSvc:
+            ...     def __init__(self, _db):
+            ...         pass
+            ...     async def get_user_teams(self, email):
+            ...         Team = type('T', (), {})
+            ...         t = Team(); t.id = 'team-1'
+            ...         return [t]
+            >>> _rs.TeamManagementService = _TeamSvc
+            >>> service._convert_resource_to_read = MagicMock(return_value=MagicMock())
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> out = asyncio.run(service.list_resources_for_user(db, 'user@example.com', team_id='team-1'))
+            >>> isinstance(out, list)
+            True
+
+            Without team_id (public and personal visibility):
+            >>> db3 = MagicMock()
+            >>> db3.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+            >>> out2 = asyncio.run(service.list_resources_for_user(db3, 'user@example.com'))
+            >>> isinstance(out2, list)
+            True
         """
         # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
@@ -487,6 +540,10 @@ class ResourceService:
             >>> result = asyncio.run(service.list_server_resources(db, 'server1'))
             >>> isinstance(result, list)
             True
+            >>> # Include inactive branch
+            >>> result = asyncio.run(service.list_server_resources(db, 'server1', include_inactive=True))
+            >>> isinstance(result, list)
+            True
         """
         query = select(DbResource).join(server_resource_association, DbResource.id == server_resource_association.c.resource_id).where(server_resource_association.c.server_id == server_id)
         if not include_inactive:
@@ -523,6 +580,17 @@ class ResourceService:
             >>> import asyncio
             >>> result = asyncio.run(service.read_resource(db, uri))
             >>> isinstance(result, ResourceContent)
+            True
+
+            Not found case returns ResourceNotFoundError:
+            >>> db2 = MagicMock()
+            >>> db2.execute.return_value.scalar_one_or_none.return_value = None
+            >>> def _nf():
+            ...     try:
+            ...         asyncio.run(service.read_resource(db2, 'abc'))
+            ...     except ResourceNotFoundError:
+            ...         return True
+            >>> _nf()
             True
         """
         start_time = time.monotonic()

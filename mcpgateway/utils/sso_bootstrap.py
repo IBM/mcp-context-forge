@@ -47,6 +47,30 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     result = get_predefined_sso_providers()
         >>> isinstance(result, list)
         True
+
+        Patch configuration to include Google provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=True, sso_google_client_id='gid', sso_google_client_secret='gsec',
+        ...     sso_ibm_verify_enabled=False, sso_okta_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Okta provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=False, sso_okta_enabled=True, sso_okta_client_id='ok', sso_okta_client_secret='os', sso_okta_issuer='https://company.okta.com',
+        ...     sso_ibm_verify_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
     """
     providers = []
 

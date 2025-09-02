@@ -51,6 +51,11 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, db: Session = D
     Raises:
         HTTPException: If the gateway is not found, not configured for OAuth, or not using
             the Authorization Code flow. If an unexpected error occurs during the initiation process.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(initiate_oauth_flow)
+        True
     """
     try:
         # Get gateway configuration
@@ -103,6 +108,11 @@ async def oauth_callback(
 
     Returns:
         HTMLResponse: An HTML response indicating the result of the OAuth authorization process.
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(oauth_callback)
+        True
     """
 
     try:

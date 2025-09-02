@@ -51,6 +51,11 @@ async def create_token(
 
     Raises:
         HTTPException: If token name already exists or validation fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(create_token)
+        True
     """
     service = TokenCatalogService(db)
 
@@ -123,6 +128,11 @@ async def list_tokens(
 
     Returns:
         TokenListResponse: List of user's API tokens
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(list_tokens)
+        True
     """
     service = TokenCatalogService(db)
     tokens = await service.list_user_tokens(
@@ -182,6 +192,11 @@ async def get_token(
 
     Raises:
         HTTPException: If token not found or not owned by user
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_token)
+        True
     """
     service = TokenCatalogService(db)
     token = await service.get_token(token_id, current_user["email"])

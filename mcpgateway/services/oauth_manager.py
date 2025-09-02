@@ -89,6 +89,29 @@ class OAuthManager:
         Raises:
             ValueError: If grant type is unsupported
             OAuthError: If token acquisition fails
+
+        Examples:
+            Client credentials flow:
+            >>> import asyncio
+            >>> class TestMgr(OAuthManager):
+            ...     async def _client_credentials_flow(self, credentials):
+            ...         return 'tok'
+            >>> mgr = TestMgr()
+            >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
+            'tok'
+
+            Authorization code fallback to client credentials:
+            >>> asyncio.run(mgr.get_access_token({'grant_type': 'authorization_code'}))
+            'tok'
+
+            Unsupported grant type raises ValueError:
+            >>> def _unsupported():
+            ...     try:
+            ...         asyncio.run(mgr.get_access_token({'grant_type': 'bad'}))
+            ...     except ValueError:
+            ...         return True
+            >>> _unsupported()
+            True
         """
         grant_type = credentials.get("grant_type")
         logger.debug(f"Getting access token for grant type: {grant_type}")

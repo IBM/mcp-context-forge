@@ -199,6 +199,11 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
     Returns:
         AuthenticationResponse: Access token and user info
 
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(login)
+        True
+
     Raises:
         HTTPException: If authentication fails
 

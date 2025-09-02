@@ -71,6 +71,11 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
 
     Raises:
         HTTPException: If role creation fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(create_role)
+        True
     """
     try:
         role_service = RoleService(db)
@@ -116,6 +121,11 @@ async def list_roles(
 
     Raises:
         HTTPException: If user lacks required permissions
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(list_roles)
+        True
     """
     try:
         role_service = RoleService(db)
@@ -143,6 +153,11 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
 
     Raises:
         HTTPException: If role not found
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_role)
+        True
     """
     try:
         role_service = RoleService(db)
@@ -176,6 +191,11 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
 
     Raises:
         HTTPException: If role not found or update fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(update_role)
+        True
     """
     try:
         role_service = RoleService(db)
@@ -212,6 +232,11 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
 
     Raises:
         HTTPException: If role not found or deletion fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(delete_role)
+        True
     """
     try:
         role_service = RoleService(db)
@@ -249,6 +274,11 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
 
     Raises:
         HTTPException: If assignment fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(assign_role_to_user)
+        True
     """
     try:
         role_service = RoleService(db)
@@ -290,6 +320,11 @@ async def get_user_roles(
 
     Raises:
         HTTPException: If role retrieval fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_user_roles)
+        True
     """
     try:
         permission_service = PermissionService(db)
@@ -327,6 +362,11 @@ async def revoke_user_role(
 
     Raises:
         HTTPException: If revocation fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(revoke_user_role)
+        True
     """
     try:
         role_service = RoleService(db)
@@ -363,6 +403,11 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
 
     Raises:
         HTTPException: If permission check fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(check_permission)
+        True
     """
     try:
         permission_service = PermissionService(db)
@@ -399,6 +444,11 @@ async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(N
 
     Raises:
         HTTPException: If retrieving user permissions fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_user_permissions)
+        True
     """
     try:
         permission_service = PermissionService(db)
@@ -451,6 +501,11 @@ async def get_my_roles(user=Depends(get_current_user_with_permissions), db: Sess
 
     Raises:
         HTTPException: If retrieving user roles fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_my_roles)
+        True
     """
     try:
         permission_service = PermissionService(db)
@@ -477,6 +532,11 @@ async def get_my_permissions(team_id: Optional[str] = Query(None, description="T
 
     Raises:
         HTTPException: If retrieving user permissions fails
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_my_permissions)
+        True
     """
     try:
         permission_service = PermissionService(db)
