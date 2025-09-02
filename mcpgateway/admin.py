@@ -2508,49 +2508,103 @@ async def admin_view_team_members(
         # Count owners to determine if this is the last owner
         owner_count = sum(1 for _, membership in members if membership.role == "owner")
 
-        members_html = ""
+        # Check if current user is team owner
+        current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
+        is_team_owner = current_user_role == "owner"
+
+        # Build member table with inline role editing for team owners
+        members_html = """
+        <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Team Members</h4>
+            </div>
+            <div class="divide-y divide-gray-200 dark:divide-gray-700">
+        """
+
         for member_user, membership in members:
             role_display = membership.role.replace("_", " ").title() if membership.role else "Member"
-
-            # Check if this is the last owner
             is_last_owner = membership.role == "owner" and owner_count == 1
+            is_current_user = member_user.email == user_email
 
-            # Generate appropriate button based on whether this is the last owner
-            if is_last_owner:
-                remove_button = """
-                    <span class="px-2 py-1 text-xs font-medium text-gray-400 dark:text-gray-500 border border-gray-300 dark:border-gray-600 rounded-md cursor-not-allowed"
-                          title="Cannot remove last owner">
-                        Last Owner
-                    </span>"""
+            # Role selection - only show for team owners and not for last owner
+            if is_team_owner and not is_last_owner:
+                role_selector = f"""
+                    <select
+                        name="role"
+                        class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        hx-post="{root_path}/admin/teams/{team_id}/update-member-role"
+                        hx-vals='{{"user_email": "{member_user.email}"}}'
+                        hx-target="#team-edit-modal-content"
+                        hx-swap="innerHTML"
+                        hx-trigger="change">
+                        <option value="member" {'selected' if membership.role == 'member' else ''}>Member</option>
+                        <option value="owner" {'selected' if membership.role == 'owner' else ''}>Owner</option>
+                    </select>
+                """
             else:
+                # Show static role badge
+                role_color = "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
+
+            # Remove button - hide for current user and last owner
+            if is_team_owner and not is_current_user and not is_last_owner:
                 remove_button = f"""
                     <button
-                        class="px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-1 focus:ring-offset-1 focus:ring-red-500"
+                        class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 focus:outline-none"
                         hx-post="{root_path}/admin/teams/{team_id}/remove-member"
                         hx-vals='{{"user_email": "{member_user.email}"}}'
                         hx-confirm="Remove {member_user.email} from this team?"
                         hx-target="#team-edit-modal-content"
-                        hx-swap="innerHTML">
-                        Remove
-                    </button>"""
+                        hx-swap="innerHTML"
+                        title="Remove member">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                    </button>
+                """
+            else:
+                remove_button = ""
+
+            # Special indicators
+            indicators = []
+            if is_current_user:
+                indicators.append('<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>')
+            if is_last_owner:
+                indicators.append(
+                    '<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>'
+                )
 
             members_html += f"""
-            <div class="flex justify-between items-center py-2 px-3 border-b border-gray-200 dark:border-gray-600 last:border-b-0">
-                <div>
-                    <span class="font-medium text-gray-900 dark:text-white">{member_user.email}</span>
-                    <span class="ml-2 px-2 py-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 rounded-full">{role_display}</span>
+                <div class="px-6 py-4 flex items-center justify-between">
+                    <div class="flex items-center space-x-4 flex-1">
+                        <div class="flex-shrink-0">
+                            <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member_user.email[0].upper()}</span>
+                            </div>
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center space-x-2">
+                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member_user.full_name or member_user.email}</p>
+                                {' '.join(indicators)}
+                            </div>
+                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member_user.email}</p>
+                            <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {membership.joined_at.strftime("%b %d, %Y") if membership.joined_at else "Unknown"}</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-3">
+                        {role_selector}
+                        {remove_button}
+                    </div>
                 </div>
-                <div class="flex items-center gap-3">
-                    <span class="text-sm text-gray-500 dark:text-gray-400">
-                        Joined: {membership.joined_at.strftime("%Y-%m-%d") if membership.joined_at else "Unknown"}
-                    </span>
-                    {remove_button}
-                </div>
-            </div>
             """
 
-        if not members_html:
-            members_html = '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No members found</div>'
+        members_html += """
+            </div>
+        </div>
+        """
+
+        if not members:
+            members_html = '<div class="text-center py-8 text-gray-500 dark:text-gray-400">No members found</div>'
 
         # Add member management interface
         management_html = f"""
@@ -2564,23 +2618,30 @@ async def admin_view_team_members(
                 </button>
             </div>"""
 
-        # Only show Add Member for public teams
-        if team.visibility == "public":
+        # Show Add Member interface for team owners
+        if is_team_owner:
             management_html += f"""
-            <div class="mb-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                <div class="flex gap-2">
-                    <button
-                        class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                        onclick="showAddMemberForm('{team.id}')">
-                        Add Member
-                    </button>
-                </div>
-            <div id="add-member-form-{team.id}" class="hidden mt-3">
-                <form hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
-                    <div class="flex gap-2">
-                        <select name="user_email" required
-                                class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                            <option value="">Select a user...</option>"""
+            <div class="mb-6">
+                <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                        <div class="flex items-center justify-between">
+                            <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Add New Member</h4>
+                            <button
+                                id="toggle-add-member-{team.id}"
+                                class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 focus:outline-none"
+                                onclick="document.getElementById('add-member-form-{team.id}').classList.toggle('hidden'); this.textContent = this.textContent === 'Show' ? 'Hide' : 'Show';">
+                                Show
+                            </button>
+                        </div>
+                    </div>
+                    <div id="add-member-form-{team.id}" class="hidden px-6 py-4">
+                        <form hx-post="{root_path}/admin/teams/{team.id}/add-member" hx-target="#team-edit-modal-content" hx-swap="innerHTML">
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Select User</label>
+                                    <select name="user_email" required
+                                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                                        <option value="">Choose a user to add...</option>"""
 
             # Get available users (not already members of this team)
             try:
@@ -2601,15 +2662,25 @@ async def admin_view_team_members(
                 LOGGER.error(f"Error loading available users for team {team.id}: {e}")
 
             management_html += """                        </select>
-                        <select name="role" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                            <option value="member">Member</option>
-                            <option value="owner">Owner</option>
-                        </select>
-                        <button type="submit" class="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">Add</button>
-                        <button type="button" onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="px-3 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600">Cancel</button>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Role</label>
+                                    <select name="role" required
+                                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                                        <option value="member">Member</option>
+                                        <option value="owner">Owner</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="mt-4 flex justify-end space-x-3">
+                                <button type="submit"
+                                        class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200">
+                                    Add Member
+                                </button>
+                            </div>
+                        </form>
                     </div>
-                </form>
-            </div>
+                </div>
             </div>"""
         else:
             management_html += """
@@ -2618,10 +2689,10 @@ async def admin_view_team_members(
                     <svg class="w-5 h-5 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
                         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
                     </svg>
-                    <span class="text-sm font-medium text-yellow-800 dark:text-yellow-200">Private Team - Invitation Only</span>
+                    <span class="text-sm font-medium text-yellow-800 dark:text-yellow-200">Private Team - Member Access</span>
                 </div>
                 <p class="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
-                    Private teams require invitations to add new members. Use the team invitation system instead.
+                    You are a member of this private team. Only team owners can directly add new members. Use the team invitation system to request access for others.
                 </p>
             </div>"""
 
@@ -2851,7 +2922,7 @@ async def admin_delete_team(
 
 
 @admin_router.post("/teams/{team_id}/add-member")
-@require_permission("admin.user_management")
+@require_permission("teams.write")  # Team write permission instead of admin user management
 async def admin_add_team_member(
     team_id: str,
     request: Request,
@@ -2885,9 +2956,12 @@ async def admin_add_team_member(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
-        # Private teams cannot have members added directly - they need invitations
+        # For private teams, only team owners can add members directly
+        user_email_from_jwt = get_user_email(user)
         if team.visibility == "private":
-            return HTMLResponse(content='<div class="text-red-500">Cannot add members to private teams. Use the invitation system instead.</div>', status_code=403)
+            user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
+            if user_role != "owner":
+                return HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
 
         form = await request.form()
         user_email = form.get("user_email")
@@ -2902,7 +2976,6 @@ async def admin_add_team_member(
             return HTMLResponse(content=f'<div class="text-red-500">User {user_email} not found</div>', status_code=400)
 
         # Add member to team
-        user_email_from_jwt = get_user_email(user)
         await team_service.add_member_to_team(team_id=team_id, user_email=user_email, role=role, invited_by=user_email_from_jwt)
 
         # Return success message with script to refresh modal
@@ -2928,7 +3001,7 @@ async def admin_add_team_member(
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
-@require_permission("admin.user_management")
+@require_permission("teams.write")
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
@@ -2955,6 +3028,17 @@ async def admin_update_team_member_role(
 
         team_service = TeamManagementService(db)
 
+        # Check if team exists and validate user permissions
+        team = await team_service.get_team_by_id(team_id)
+        if not team:
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        # Only team owners can modify member roles
+        user_email_from_jwt = get_user_email(user)
+        user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
+        if user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can modify member roles</div>', status_code=403)
+
         form = await request.form()
         user_email = form.get("user_email")
         new_role = form.get("role", "member")
@@ -2966,7 +3050,6 @@ async def admin_update_team_member_role(
             return HTMLResponse(content='<div class="text-red-500">Role is required</div>', status_code=400)
 
         # Update member role
-        user_email_from_jwt = get_user_email(user)
         await team_service.update_member_role(team_id=team_id, user_email=user_email, new_role=new_role, updated_by=user_email_from_jwt)
 
         # Return success message with auto-close and refresh
@@ -2997,7 +3080,7 @@ async def admin_update_team_member_role(
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
-@require_permission("admin.user_management")
+@require_permission("teams.write")  # Team write permission instead of admin user management
 async def admin_remove_team_member(
     team_id: str,
     request: Request,
@@ -3020,10 +3103,20 @@ async def admin_remove_team_member(
 
     try:
         # First-Party
-        # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
         team_service = TeamManagementService(db)
+
+        # Check if team exists and validate user permissions
+        team = await team_service.get_team_by_id(team_id)
+        if not team:
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        # Only team owners can remove members
+        user_email_from_jwt = get_user_email(user)
+        user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
+        if user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can remove members</div>', status_code=403)
 
         form = await request.form()
         user_email = form.get("user_email")
@@ -3032,7 +3125,6 @@ async def admin_remove_team_member(
             return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
 
         # Remove member from team
-        user_email_from_jwt = get_user_email(user)
 
         try:
             success = await team_service.remove_member_from_team(team_id=team_id, user_email=user_email, removed_by=user_email_from_jwt)
