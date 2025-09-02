@@ -33,11 +33,37 @@ logger = logging_service.get_logger(__name__)
 
 
 class A2AAgentError(Exception):
-    """Base class for A2A agent-related errors."""
+    """Base class for A2A agent-related errors.
+
+    Examples:
+        >>> try:
+        ...     raise A2AAgentError("Agent operation failed")
+        ... except A2AAgentError as e:
+        ...     str(e)
+        'Agent operation failed'
+        >>> try:
+        ...     raise A2AAgentError("Connection error")
+        ... except Exception as e:
+        ...     isinstance(e, A2AAgentError)
+        True
+    """
 
 
 class A2AAgentNotFoundError(A2AAgentError):
-    """Raised when a requested A2A agent is not found."""
+    """Raised when a requested A2A agent is not found.
+
+    Examples:
+        >>> try:
+        ...     raise A2AAgentNotFoundError("Agent 'test-agent' not found")
+        ... except A2AAgentNotFoundError as e:
+        ...     str(e)
+        "Agent 'test-agent' not found"
+        >>> try:
+        ...     raise A2AAgentNotFoundError("No such agent")
+        ... except A2AAgentError as e:
+        ...     isinstance(e, A2AAgentError)  # Should inherit from A2AAgentError
+        True
+    """
 
 
 class A2AAgentNameConflictError(A2AAgentError):
@@ -53,6 +79,28 @@ class A2AAgentNameConflictError(A2AAgentError):
             name: The agent name that caused the conflict.
             is_active: Whether the conflicting agent is currently active.
             agent_id: The ID of the conflicting agent, if known.
+
+        Examples:
+            >>> error = A2AAgentNameConflictError("test-agent")
+            >>> error.name
+            'test-agent'
+            >>> error.is_active
+            True
+            >>> error.agent_id is None
+            True
+            >>> "test-agent" in str(error)
+            True
+            >>>
+            >>> # Test inactive agent conflict
+            >>> error = A2AAgentNameConflictError("inactive-agent", is_active=False, agent_id="agent-123")
+            >>> error.is_active
+            False
+            >>> error.agent_id
+            'agent-123'
+            >>> "inactive" in str(error)
+            True
+            >>> "agent-123" in str(error)
+            True
         """
         self.name = name
         self.is_active = is_active

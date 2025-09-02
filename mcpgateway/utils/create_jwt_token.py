@@ -190,6 +190,18 @@ def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[s
 
     Returns:
         Dictionary containing the decoded payload.
+
+    Examples:
+        >>> # Test algorithm parameter handling
+        >>> algs = ['HS256', 'HS512']
+        >>> len(algs)
+        2
+        >>> 'HS256' in algs
+        True
+        >>> # Test None algorithms handling
+        >>> default_algo = [DEFAULT_ALGO]
+        >>> isinstance(default_algo, list)
+        True
     """
     return jwt.decode(
         token,

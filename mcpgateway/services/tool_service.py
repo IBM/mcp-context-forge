@@ -138,9 +138,15 @@ class ToolInvocationError(ToolError):
 
     Examples:
         >>> from mcpgateway.services.tool_service import ToolInvocationError
-        >>> err = ToolInvocationError("Failed to invoke tool")
+        >>> err = ToolInvocationError("Tool execution failed")
         >>> str(err)
-        'Failed to invoke tool'
+        'Tool execution failed'
+        >>> isinstance(err, ToolError)
+        True
+        >>> # Test with detailed error
+        >>> detailed_err = ToolInvocationError("Network timeout after 30 seconds")
+        >>> "timeout" in str(detailed_err)
+        True
         >>> isinstance(err, ToolError)
         True
     """

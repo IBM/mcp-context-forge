@@ -30,6 +30,14 @@ def get_db():
 
     Yields:
         Session: SQLAlchemy database session
+
+    Examples:
+        >>> db_gen = get_db()
+        >>> db = next(db_gen)
+        >>> hasattr(db, 'query')
+        True
+        >>> hasattr(db, 'close')
+        True
     """
     db = SessionLocal()
     try:

@@ -106,6 +106,31 @@ def set_logging_service(service: LoggingService):
 
     Args:
         service: The LoggingService instance to use
+
+    Examples:
+        >>> from mcpgateway.services.logging_service import LoggingService
+        >>> from mcpgateway import admin
+        >>> logging_svc = LoggingService()
+        >>> admin.set_logging_service(logging_svc)
+        >>> admin.logging_service is not None
+        True
+        >>> admin.LOGGER is not None
+        True
+
+        Test with different service instance:
+        >>> new_svc = LoggingService()
+        >>> admin.set_logging_service(new_svc)
+        >>> admin.logging_service == new_svc
+        True
+        >>> admin.LOGGER.name
+        'mcpgateway.admin'
+
+        Test that global variables are properly set:
+        >>> admin.set_logging_service(logging_svc)
+        >>> hasattr(admin, 'logging_service')
+        True
+        >>> hasattr(admin, 'LOGGER')
+        True
     """
     global logging_service, LOGGER  # pylint: disable=global-statement
     logging_service = service
@@ -147,6 +172,47 @@ def rate_limit(requests_per_minute: int = None):
 
     Returns:
         Decorator function that enforces rate limiting
+
+    Examples:
+        Test basic decorator creation:
+        >>> from mcpgateway import admin
+        >>> decorator = admin.rate_limit(10)
+        >>> callable(decorator)
+        True
+
+        Test with None parameter (uses default):
+        >>> default_decorator = admin.rate_limit(None)
+        >>> callable(default_decorator)
+        True
+
+        Test with specific limit:
+        >>> limited_decorator = admin.rate_limit(5)
+        >>> callable(limited_decorator)
+        True
+
+        Test decorator returns wrapper:
+        >>> async def dummy_func():
+        ...     return "success"
+        >>> decorated_func = decorator(dummy_func)
+        >>> callable(decorated_func)
+        True
+
+        Test rate limit storage structure:
+        >>> isinstance(admin.rate_limit_storage, dict)
+        True
+        >>> from collections import defaultdict
+        >>> isinstance(admin.rate_limit_storage, defaultdict)
+        True
+
+        Test decorator with zero limit:
+        >>> zero_limit_decorator = admin.rate_limit(0)
+        >>> callable(zero_limit_decorator)
+        True
+
+        Test decorator with high limit:
+        >>> high_limit_decorator = admin.rate_limit(1000)
+        >>> callable(high_limit_decorator)
+        True
     """
 
     def decorator(func):
@@ -211,6 +277,62 @@ def get_user_email(user) -> str:
 
     Returns:
         str: User email address
+
+    Examples:
+        Test with dictionary user (JWT payload) with 'sub':
+        >>> from mcpgateway import admin
+        >>> user_dict = {'sub': 'alice@example.com', 'iat': 1234567890}
+        >>> admin.get_user_email(user_dict)
+        'alice@example.com'
+
+        Test with dictionary user with 'email' field:
+        >>> user_dict = {'email': 'bob@company.com', 'role': 'admin'}
+        >>> admin.get_user_email(user_dict)
+        'bob@company.com'
+
+        Test with dictionary user with both 'sub' and 'email' (sub takes precedence):
+        >>> user_dict = {'sub': 'charlie@primary.com', 'email': 'charlie@secondary.com'}
+        >>> admin.get_user_email(user_dict)
+        'charlie@primary.com'
+
+        Test with dictionary user with no email fields:
+        >>> user_dict = {'username': 'dave', 'role': 'user'}
+        >>> admin.get_user_email(user_dict)
+        'unknown'
+
+        Test with user object having email attribute:
+        >>> class MockUser:
+        ...     def __init__(self, email):
+        ...         self.email = email
+        >>> user_obj = MockUser('eve@test.com')
+        >>> admin.get_user_email(user_obj)
+        'eve@test.com'
+
+        Test with user object without email attribute:
+        >>> class BasicUser:
+        ...     def __init__(self, name):
+        ...         self.name = name
+        ...     def __str__(self):
+        ...         return self.name
+        >>> user_obj = BasicUser('frank')
+        >>> admin.get_user_email(user_obj)
+        'frank'
+
+        Test with None user:
+        >>> admin.get_user_email(None)
+        'unknown'
+
+        Test with string user:
+        >>> admin.get_user_email('grace@example.org')
+        'grace@example.org'
+
+        Test with empty dictionary:
+        >>> admin.get_user_email({})
+        'unknown'
+
+        Test with non-string, non-dict, non-object values:
+        >>> admin.get_user_email(12345)
+        '12345'
     """
     if isinstance(user, dict):
         # Standard JWT format - try 'sub' first, then 'email'
@@ -230,6 +352,54 @@ def serialize_datetime(obj):
 
     Returns:
         str: ISO format string if obj is datetime, otherwise returns obj unchanged
+
+    Examples:
+        Test with datetime object:
+        >>> from mcpgateway import admin
+        >>> from datetime import datetime, timezone
+        >>> dt = datetime(2025, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+        >>> admin.serialize_datetime(dt)
+        '2025-01-15T10:30:45+00:00'
+
+        Test with naive datetime:
+        >>> dt_naive = datetime(2025, 3, 20, 14, 15, 30)
+        >>> result = admin.serialize_datetime(dt_naive)
+        >>> '2025-03-20T14:15:30' in result
+        True
+
+        Test with datetime with microseconds:
+        >>> dt_micro = datetime(2025, 6, 10, 9, 25, 12, 500000)
+        >>> result = admin.serialize_datetime(dt_micro)
+        >>> '2025-06-10T09:25:12.500000' in result
+        True
+
+        Test with non-datetime objects (should return unchanged):
+        >>> admin.serialize_datetime("2025-01-15T10:30:45")
+        '2025-01-15T10:30:45'
+        >>> admin.serialize_datetime(12345)
+        12345
+        >>> admin.serialize_datetime(['a', 'list'])
+        ['a', 'list']
+        >>> admin.serialize_datetime({'key': 'value'})
+        {'key': 'value'}
+        >>> admin.serialize_datetime(None)
+        >>> admin.serialize_datetime(True)
+        True
+
+        Test with current datetime:
+        >>> import datetime as dt_module
+        >>> now = dt_module.datetime.now()
+        >>> result = admin.serialize_datetime(now)
+        >>> isinstance(result, str)
+        True
+        >>> 'T' in result  # ISO format contains 'T' separator
+        True
+
+        Test edge case with datetime min/max:
+        >>> dt_min = datetime.min
+        >>> result = admin.serialize_datetime(dt_min)
+        >>> result.startswith('0001-01-01T')
+        True
     """
     if isinstance(obj, datetime):
         return obj.isoformat()
@@ -2159,7 +2329,7 @@ async def admin_list_teams(
                             <p class="text-sm text-gray-600 dark:text-gray-400">Slug: {team.slug}</p>
                             <p class="text-sm text-gray-600 dark:text-gray-400">Visibility: {team.visibility}</p>
                             <p class="text-sm text-gray-600 dark:text-gray-400">Members: {member_count}</p>
-                            {f'<p class="text-sm text-gray-600 dark:text-gray-400">{team.description}</p>' if team.description else ''}
+                            {f'<p class="text-sm text-gray-600 dark:text-gray-400">{team.description}</p>' if team.description else ""}
                         </div>
                         <div class="flex space-x-2">
                             <button
@@ -2176,8 +2346,8 @@ async def admin_list_teams(
                             >
                                 Edit
                             </button>
-                            {f'<button onclick="leaveTeam(&quot;{team.id}&quot;, &quot;{team.name}&quot;)" class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">Leave Team</button>' if not team.is_personal and not current_user.is_admin else ''}
-                            {f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/teams/{team.id}" hx-confirm="Are you sure you want to delete this team?" hx-target="#team-card-{team.id}" hx-swap="outerHTML">Delete</button>' if not team.is_personal else ''}
+                            {f'<button onclick="leaveTeam(&quot;{team.id}&quot;, &quot;{team.name}&quot;)" class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">Leave Team</button>' if not team.is_personal and not current_user.is_admin else ""}
+                            {f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/teams/{team.id}" hx-confirm="Are you sure you want to delete this team?" hx-target="#team-card-{team.id}" hx-swap="outerHTML">Delete</button>' if not team.is_personal else ""}
                         </div>
                     </div>
                     <div id="team-details-{team.id}" class="mt-4"></div>
@@ -2251,7 +2421,7 @@ async def admin_create_team(
                     <p class="text-sm text-gray-600 dark:text-gray-400">Slug: {team.slug}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400">Visibility: {team.visibility}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400">Members: {member_count}</p>
-                    {f'<p class="text-sm text-gray-600 dark:text-gray-400">{team.description}</p>' if team.description else ''}
+                    {f'<p class="text-sm text-gray-600 dark:text-gray-400">{team.description}</p>' if team.description else ""}
                 </div>
                 <div class="flex space-x-2">
                     <button
@@ -2262,7 +2432,7 @@ async def admin_create_team(
                     >
                         View Members
                     </button>
-                    {'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="/admin/teams/' + team.id + '" hx-confirm="Are you sure you want to delete this team?" hx-target="#team-card-' + team.id + '" hx-swap="outerHTML">Delete</button>' if not team.is_personal else ''}
+                    {'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="/admin/teams/' + team.id + '" hx-confirm="Are you sure you want to delete this team?" hx-target="#team-card-' + team.id + '" hx-swap="outerHTML">Delete</button>' if not team.is_personal else ""}
                 </div>
             </div>
             <div id="team-details-{team.id}" class="mt-4"></div>
@@ -2346,7 +2516,7 @@ async def admin_view_team_members(
                 </div>
                 <div class="flex items-center gap-3">
                     <span class="text-sm text-gray-500 dark:text-gray-400">
-                        Joined: {membership.joined_at.strftime('%Y-%m-%d') if membership.joined_at else 'Unknown'}
+                        Joined: {membership.joined_at.strftime("%Y-%m-%d") if membership.joined_at else "Unknown"}
                     </span>
                     <button
                         class="px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-1 focus:ring-offset-1 focus:ring-red-500"
@@ -2496,7 +2666,7 @@ async def admin_get_team_edit(
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
                     <textarea name="description" rows="3"
-                              class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{team.description or ''}</textarea>
+                              class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">{team.description or ""}</textarea>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Visibility</label>
@@ -3073,8 +3243,8 @@ async def admin_list_join_requests(
             <div class="flex justify-between items-center p-4 border border-gray-200 dark:border-gray-600 rounded-lg mb-3">
                 <div>
                     <p class="font-medium text-gray-900 dark:text-white">{req.user_email}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Requested: {req.requested_at.strftime('%Y-%m-%d %H:%M') if req.requested_at else 'Unknown'}</p>
-                    {f'<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Message: {req.message}</p>' if req.message else ''}
+                    <p class="text-sm text-gray-600 dark:text-gray-400">Requested: {req.requested_at.strftime("%Y-%m-%d %H:%M") if req.requested_at else "Unknown"}</p>
+                    {f'<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Message: {req.message}</p>' if req.message else ""}
                     <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300">{req.status.upper()}</span>
                 </div>
                 <div class="flex gap-2">
@@ -3289,22 +3459,41 @@ async def admin_list_users(
                 <div class="flex justify-between items-start">
                     <div class="flex-1">
                         <div class="flex items-center gap-2 mb-2">
-                            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{user_obj.full_name or 'N/A'}</h3>
+                            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{user_obj.full_name or "N/A"}</h3>
                             {admin_badge}
                             <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
                         </div>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
-                        <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime('%Y-%m-%d %H:%M')}</p>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime("%Y-%m-%d %H:%M")}</p>
                     </div>
                     <div class="flex gap-2 ml-4">
                         <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                                hx-get="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe='')}/edit" hx-target="#user-edit-modal-content">
+                                hx-get="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/edit" hx-target="#user-edit-modal-content">
                             Edit
                         </button>
-                        {('<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" hx-post="' + root_path + '/admin/users/' + urllib.parse.quote(user_obj.email, safe='') + '/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>') if not user_obj.is_active else (
-                            '<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="' + root_path + '/admin/users/' + urllib.parse.quote(user_obj.email, safe='') + '/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>')}
-                        <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe='')}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
+                        {
+                (
+                    '<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" hx-post="'
+                    + root_path
+                    + "/admin/users/"
+                    + urllib.parse.quote(user_obj.email, safe="")
+                    + '/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
+                )
+                if not user_obj.is_active
+                else (
+                    '<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="'
+                    + root_path
+                    + "/admin/users/"
+                    + urllib.parse.quote(user_obj.email, safe="")
+                    + '/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
+                )
+            }
+                        <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{
+                root_path
+            }/admin/users/{
+                urllib.parse.quote(user_obj.email, safe="")
+            }" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
                     </div>
                 </div>
             </div>
@@ -3362,13 +3551,13 @@ async def admin_create_user(
             <div class="flex justify-between items-start">
                 <div class="flex-1">
                     <div class="flex items-center gap-2 mb-2">
-                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{new_user.full_name or 'N/A'}</h3>
+                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{new_user.full_name or "N/A"}</h3>
                         {admin_badge}
                         <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
                     </div>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {new_user.email}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {new_user.auth_provider}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {new_user.created_at.strftime('%Y-%m-%d %H:%M')}</p>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {new_user.created_at.strftime("%Y-%m-%d %H:%M")}</p>
                 </div>
                 <div class="flex gap-2 ml-4">
                     <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -3434,7 +3623,7 @@ async def admin_get_user_edit(
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Full Name</label>
-                    <input type="text" name="full_name" value="{user_obj.full_name or ''}" required
+                    <input type="text" name="full_name" value="{user_obj.full_name or ""}" required
                            class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                 </div>
                 <div>
@@ -3578,7 +3767,7 @@ async def admin_activate_user(
                     </div>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime('%Y-%m-%d %H:%M') if user_obj.created_at else 'Unknown'}</p>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime("%Y-%m-%d %H:%M") if user_obj.created_at else "Unknown"}</p>
                 </div>
                 <div class="flex gap-2 ml-4">
                     <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -3651,7 +3840,7 @@ async def admin_deactivate_user(
                     </div>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime('%Y-%m-%d %H:%M') if user_obj.created_at else 'Unknown'}</p>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {user_obj.created_at.strftime("%Y-%m-%d %H:%M") if user_obj.created_at else "Unknown"}</p>
                 </div>
                 <div class="flex gap-2 ml-4">
                     <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"

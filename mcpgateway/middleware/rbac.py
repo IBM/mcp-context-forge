@@ -32,6 +32,12 @@ def get_db() -> Generator[Session, None, None]:
 
     Yields:
         Session: SQLAlchemy database session
+
+    Examples:
+        >>> gen = get_db()
+        >>> db = next(gen)
+        >>> hasattr(db, 'query')
+        True
     """
     db = SessionLocal()
     try:
@@ -48,6 +54,9 @@ async def get_permission_service(db: Session = Depends(get_db)) -> PermissionSer
 
     Returns:
         PermissionService: Permission checking service instance
+
+    Examples:
+        Service factory for permission checking operations.
     """
     return PermissionService(db)
 
@@ -208,7 +217,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             )
 
             if not granted:
-                logger.warning(f"Permission denied: user={user_context['email']}, " f"permission={permission}, resource_type={resource_type}")
+                logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
 
             # Permission granted, execute the original function
@@ -359,7 +368,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                     break
 
             if not granted:
-                logger.warning(f"Permission denied: user={user_context['email']}, " f"permissions={permissions}, resource_type={resource_type}")
+                logger.warning(f"Permission denied: user={user_context['email']}, permissions={permissions}, resource_type={resource_type}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required one of: {', '.join(permissions)}")
 
             # Permission granted, execute the original function

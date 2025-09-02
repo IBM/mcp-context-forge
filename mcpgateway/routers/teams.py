@@ -13,6 +13,10 @@ Examples:
     >>> from mcpgateway.routers.teams import teams_router
     >>> app = FastAPI()
     >>> app.include_router(teams_router, prefix="/teams", tags=["Teams"])
+    >>> isinstance(teams_router, APIRouter)
+    True
+    >>> len(teams_router.routes) > 10  # Multiple team management endpoints
+    True
 """
 
 # Standard

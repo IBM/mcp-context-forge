@@ -29,7 +29,35 @@ logger = logging.getLogger(__name__)
 
 
 class TokenStorageService:
-    """Manages OAuth token storage and retrieval."""
+    """Manages OAuth token storage and retrieval.
+
+    Examples:
+        >>> service = TokenStorageService(None)  # Mock DB for doctest
+        >>> service.db is None
+        True
+        >>> service.encryption is not None or service.encryption is None  # Encryption may or may not be available
+        True
+        >>> # Test token expiration calculation
+        >>> from datetime import datetime, timedelta
+        >>> expires_in = 3600  # 1 hour
+        >>> now = datetime.utcnow()
+        >>> expires_at = now + timedelta(seconds=expires_in)
+        >>> expires_at > now
+        True
+        >>> # Test scope list handling
+        >>> scopes = ["read", "write", "admin"]
+        >>> isinstance(scopes, list)
+        True
+        >>> "read" in scopes
+        True
+        >>> # Test token encryption detection
+        >>> short_token = "abc123"
+        >>> len(short_token) < 100
+        True
+        >>> encrypted_token = "gAAAAABh" + "x" * 100
+        >>> len(encrypted_token) > 100
+        True
+    """
 
     def __init__(self, db: Session):
         """Initialize Token Storage Service.

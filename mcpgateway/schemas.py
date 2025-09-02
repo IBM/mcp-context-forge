@@ -68,6 +68,22 @@ def to_camel_case(s: str) -> str:
         'LeadingUnderscore'
         >>> to_camel_case("trailing_underscore_")
         'trailingUnderscore'
+        >>> to_camel_case("multiple_words_here")
+        'multipleWordsHere'
+        >>> to_camel_case("api_key_value")
+        'apiKeyValue'
+        >>> to_camel_case("user_id")
+        'userId'
+        >>> to_camel_case("created_at")
+        'createdAt'
+        >>> to_camel_case("team_member_role")
+        'teamMemberRole'
+        >>> to_camel_case("oauth_client_id")
+        'oauthClientId'
+        >>> to_camel_case("jwt_token")
+        'jwtToken'
+        >>> to_camel_case("a2a_agent_name")
+        'a2aAgentName'
     """
     return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
@@ -83,9 +99,21 @@ def encode_datetime(v: datetime) -> str:
         str: The ISO 8601 formatted string representation of the datetime object.
 
     Examples:
-        >>> from datetime import datetime
+        >>> from datetime import datetime, timezone
         >>> encode_datetime(datetime(2023, 5, 22, 14, 30, 0))
         '2023-05-22T14:30:00'
+        >>> encode_datetime(datetime(2024, 12, 25, 9, 15, 30))
+        '2024-12-25T09:15:30'
+        >>> encode_datetime(datetime(2025, 1, 1, 0, 0, 0))
+        '2025-01-01T00:00:00'
+        >>> # Test with timezone
+        >>> dt_utc = datetime(2023, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        >>> encode_datetime(dt_utc)
+        '2023-06-15T12:00:00+00:00'
+        >>> # Test microseconds
+        >>> dt_micro = datetime(2023, 7, 20, 16, 45, 30, 123456)
+        >>> encode_datetime(dt_micro)
+        '2023-07-20T16:45:30.123456'
     """
     return v.isoformat()
 
@@ -167,6 +195,39 @@ class ToolMetrics(BaseModelWithConfigDict):
         max_response_time (Optional[float]): Maximum response time in seconds.
         avg_response_time (Optional[float]): Average response time in seconds.
         last_execution_time (Optional[datetime]): Timestamp of the most recent invocation.
+
+    Examples:
+        >>> from datetime import datetime
+        >>> metrics = ToolMetrics(
+        ...     total_executions=100,
+        ...     successful_executions=95,
+        ...     failed_executions=5,
+        ...     failure_rate=0.05,
+        ...     min_response_time=0.1,
+        ...     max_response_time=2.5,
+        ...     avg_response_time=0.8
+        ... )
+        >>> metrics.total_executions
+        100
+        >>> metrics.failure_rate
+        0.05
+        >>> metrics.successful_executions + metrics.failed_executions == metrics.total_executions
+        True
+        >>> # Test with minimal data
+        >>> minimal_metrics = ToolMetrics(
+        ...     total_executions=10,
+        ...     successful_executions=8,
+        ...     failed_executions=2,
+        ...     failure_rate=0.2
+        ... )
+        >>> minimal_metrics.min_response_time is None
+        True
+        >>> # Test model dump functionality
+        >>> data = metrics.model_dump()
+        >>> isinstance(data, dict)
+        True
+        >>> data['total_executions']
+        100
     """
 
     total_executions: int = Field(..., description="Total number of tool invocations")
@@ -4127,6 +4188,44 @@ class TeamCreateRequest(BaseModel):
         ... )
         >>> request.name
         'Engineering Team'
+        >>> request.visibility
+        'private'
+        >>> request.slug is None
+        True
+        >>>
+        >>> # Test with all fields
+        >>> full_request = TeamCreateRequest(
+        ...     name="DevOps Team",
+        ...     slug="devops-team",
+        ...     description="Infrastructure and deployment team",
+        ...     visibility="public",
+        ...     max_members=50
+        ... )
+        >>> full_request.slug
+        'devops-team'
+        >>> full_request.max_members
+        50
+        >>> full_request.visibility
+        'public'
+        >>>
+        >>> # Test validation
+        >>> try:
+        ...     TeamCreateRequest(name="   ", description="test")
+        ... except ValueError as e:
+        ...     "empty" in str(e).lower()
+        True
+        >>>
+        >>> # Test slug validation
+        >>> try:
+        ...     TeamCreateRequest(name="Test", slug="Invalid_Slug")
+        ... except ValueError:
+        ...     True
+        True
+        >>>
+        >>> # Test valid slug patterns
+        >>> valid_slug = TeamCreateRequest(name="Test", slug="valid-slug-123")
+        >>> valid_slug.slug
+        'valid-slug-123'
     """
 
     name: str = Field(..., min_length=1, max_length=255, description="Team display name")

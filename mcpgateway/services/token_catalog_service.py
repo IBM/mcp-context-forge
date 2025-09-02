@@ -59,6 +59,22 @@ class TokenScope:
         True
         >>> scope.has_permission("tools.read")
         True
+        >>> scope.has_permission("tools.write")
+        False
+        >>> scope.has_permission("resources.read")
+        True
+        >>>
+        >>> # Test empty scope
+        >>> empty_scope = TokenScope()
+        >>> empty_scope.is_server_scoped()
+        False
+        >>> empty_scope.has_permission("anything")
+        False
+        >>>
+        >>> # Test global scope
+        >>> global_scope = TokenScope(permissions=["*"])
+        >>> global_scope.has_permission("*")
+        True
     """
 
     def __init__(
@@ -108,6 +124,16 @@ class TokenScope:
 
         Returns:
             dict: Dictionary representation of the token scope.
+
+        Examples:
+            >>> scope = TokenScope(server_id="server-123", permissions=["read", "write"])
+            >>> result = scope.to_dict()
+            >>> result["server_id"]
+            'server-123'
+            >>> result["permissions"]
+            ['read', 'write']
+            >>> isinstance(result, dict)
+            True
         """
         return {"server_id": self.server_id, "permissions": self.permissions, "ip_restrictions": self.ip_restrictions, "time_restrictions": self.time_restrictions, "usage_limits": self.usage_limits}
 
@@ -120,6 +146,29 @@ class TokenScope:
 
         Returns:
             TokenScope: New TokenScope instance.
+
+        Examples:
+            >>> data = {
+            ...     "server_id": "server-456",
+            ...     "permissions": ["tools.read", "tools.execute"],
+            ...     "ip_restrictions": ["10.0.0.0/8"]
+            ... }
+            >>> scope = TokenScope.from_dict(data)
+            >>> scope.server_id
+            'server-456'
+            >>> scope.permissions
+            ['tools.read', 'tools.execute']
+            >>> scope.is_server_scoped()
+            True
+            >>> scope.has_permission("tools.read")
+            True
+            >>>
+            >>> # Test empty dict
+            >>> empty_scope = TokenScope.from_dict({})
+            >>> empty_scope.server_id is None
+            True
+            >>> empty_scope.permissions
+            []
         """
         return cls(
             server_id=data.get("server_id"),

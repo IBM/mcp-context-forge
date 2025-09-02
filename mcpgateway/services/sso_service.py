@@ -590,7 +590,6 @@ class SSOService:
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:
-
                 pending = self.db.execute(select(PendingUserApproval).where(and_(PendingUserApproval.email == email, PendingUserApproval.status == "approved"))).scalar_one_or_none()
                 if pending:
                     # Mark as used (we could delete or keep for audit trail)

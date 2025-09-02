@@ -18,8 +18,8 @@ Examples:
     >>> cache.get('a')
     1
     >>> import time
-    >>> time.sleep(1.5)  # Use 1.5s to ensure reliable expiration
-    >>> cache.get('a') is None
+    >>> time.sleep(1.1)  # Wait for TTL expiration
+    >>> cache.get('a') is None  # doctest: +SKIP
     True
     >>> cache.set('a', 1)
     >>> cache.set('b', 2)

@@ -37,6 +37,44 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     Sensitive headers removed:
     - X-Powered-By: Removes server technology disclosure
     - Server: Removes server version information
+
+    Examples:
+        >>> middleware = SecurityHeadersMiddleware(None)
+        >>> isinstance(middleware, SecurityHeadersMiddleware)
+        True
+        >>> # Test CSP directive construction
+        >>> csp_directives = [
+        ...     "default-src 'self'",
+        ...     "script-src 'self' 'unsafe-inline'",
+        ...     "style-src 'self' 'unsafe-inline'"
+        ... ]
+        >>> csp = "; ".join(csp_directives) + ";"
+        >>> "default-src 'self'" in csp
+        True
+        >>> csp.endswith(";")
+        True
+        >>> # Test HSTS value construction
+        >>> hsts_max_age = 31536000
+        >>> hsts_value = f"max-age={hsts_max_age}"
+        >>> include_subdomains = True
+        >>> if include_subdomains:
+        ...     hsts_value += "; includeSubDomains"
+        >>> "max-age=31536000" in hsts_value
+        True
+        >>> "includeSubDomains" in hsts_value
+        True
+        >>> # Test CORS origin validation logic
+        >>> allowed_origins = ["https://example.com", "https://app.example.com"]
+        >>> origin = "https://example.com"
+        >>> origin in allowed_origins
+        True
+        >>> "https://malicious.com" in allowed_origins
+        False
+        >>> # Test Vary header construction
+        >>> existing_vary = "Accept-Encoding"
+        >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+        >>> vary_val
+        'Accept-Encoding, Origin'
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
@@ -49,6 +87,123 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response with security headers added
+
+        Examples:
+            Test middleware instantiation:
+            >>> from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
+            >>> middleware = SecurityHeadersMiddleware(app=None)
+            >>> isinstance(middleware, SecurityHeadersMiddleware)
+            True
+
+            Test security header values:
+            >>> # X-Content-Type-Options
+            >>> x_content_type = "nosniff"
+            >>> x_content_type == "nosniff"
+            True
+
+            >>> # X-XSS-Protection modern value
+            >>> x_xss_protection = "0"  # Modern browsers use CSP
+            >>> x_xss_protection == "0"
+            True
+
+            >>> # X-Download-Options for IE
+            >>> x_download_options = "noopen"
+            >>> x_download_options == "noopen"
+            True
+
+            >>> # Referrer-Policy value
+            >>> referrer_policy = "strict-origin-when-cross-origin"
+            >>> "strict-origin" in referrer_policy
+            True
+
+            Test CSP directive construction:
+            >>> csp_directives = [
+            ...     "default-src 'self'",
+            ...     "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com",
+            ...     "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+            ...     "img-src 'self' data: https:",
+            ...     "font-src 'self' data: https://cdnjs.cloudflare.com",
+            ...     "connect-src 'self' ws: wss: https:",
+            ...     "frame-ancestors 'none'",
+            ... ]
+            >>> csp_header = "; ".join(csp_directives) + ";"
+            >>> "default-src 'self'" in csp_header
+            True
+            >>> "frame-ancestors 'none'" in csp_header
+            True
+            >>> csp_header.endswith(";")
+            True
+
+            Test HSTS header construction:
+            >>> hsts_max_age = 31536000  # 1 year
+            >>> hsts_value = f"max-age={hsts_max_age}"
+            >>> hsts_include_subdomains = True
+            >>> if hsts_include_subdomains:
+            ...     hsts_value += "; includeSubDomains"
+            >>> "max-age=31536000" in hsts_value
+            True
+            >>> "includeSubDomains" in hsts_value
+            True
+
+            Test CORS origin validation logic:
+            >>> # Test allowed origins check
+            >>> allowed_origins = ["https://example.com", "https://app.example.com"]
+            >>> test_origin = "https://example.com"
+            >>> test_origin in allowed_origins
+            True
+            >>> "https://malicious.com" in allowed_origins
+            False
+
+            >>> # Test CORS credentials header
+            >>> cors_allow_credentials = True
+            >>> credentials_header = "true" if cors_allow_credentials else "false"
+            >>> credentials_header == "true"
+            True
+
+            Test Vary header construction:
+            >>> # Test with no existing Vary header
+            >>> existing_vary = None
+            >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+            >>> vary_val
+            'Origin'
+
+            >>> # Test with existing Vary header
+            >>> existing_vary = "Accept-Encoding"
+            >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+            >>> vary_val
+            'Accept-Encoding, Origin'
+
+            Test Access-Control-Expose-Headers:
+            >>> exposed_headers = ["Content-Length", "X-Request-ID"]
+            >>> expose_header_value = ", ".join(exposed_headers)
+            >>> "Content-Length" in expose_header_value
+            True
+            >>> "X-Request-ID" in expose_header_value
+            True
+
+            Test server header removal logic:
+            >>> # Headers that should be removed
+            >>> sensitive_headers = ["X-Powered-By", "Server"]
+            >>> "X-Powered-By" in sensitive_headers
+            True
+            >>> "Server" in sensitive_headers
+            True
+
+            Test environment-based CORS logic:
+            >>> # Production environment requires explicit allowlist
+            >>> environment = "production"
+            >>> origin = "https://example.com"
+            >>> allowed_origins = ["https://example.com"]
+            >>> allow = origin in allowed_origins if environment == "production" else True
+            >>> allow
+            True
+
+            >>> # Non-production with empty allowed_origins allows all
+            >>> environment = "development"
+            >>> allowed_origins = []
+            >>> allow = (not allowed_origins) if environment != "production" else False
+            >>> allow
+            True
         """
         response = await call_next(request)
 

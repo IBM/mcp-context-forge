@@ -58,11 +58,19 @@ class TeamManagementService:
             db: SQLAlchemy database session
 
         Examples:
-            >>> from mcpgateway.db import SessionLocal
-            >>> db = SessionLocal()
-            >>> service = TeamManagementService(db)
-            >>> isinstance(service.db, Session)
+            Basic initialization:
+            >>> from mcpgateway.services.team_management_service import TeamManagementService
+            >>> from unittest.mock import Mock
+            >>> db_session = Mock()
+            >>> service = TeamManagementService(db_session)
+            >>> service.db is db_session
             True
+
+            Service attributes:
+            >>> hasattr(service, 'db')
+            True
+            >>> service.__class__.__name__
+            'TeamManagementService'
         """
         self.db = db
 
@@ -84,7 +92,51 @@ class TeamManagementService:
             Exception: If team creation fails
 
         Examples:
-            Team creation with automatic owner membership assignment.
+            Team creation parameter validation:
+            >>> from mcpgateway.services.team_management_service import TeamManagementService
+
+            Test team name validation:
+            >>> team_name = "My Development Team"
+            >>> len(team_name) > 0
+            True
+            >>> len(team_name) <= 255
+            True
+            >>> bool(team_name.strip())
+            True
+
+            Test visibility validation:
+            >>> visibility = "private"
+            >>> valid_visibilities = ["private", "public"]
+            >>> visibility in valid_visibilities
+            True
+            >>> "invalid" in valid_visibilities
+            False
+
+            Test max_members validation:
+            >>> max_members = 50
+            >>> isinstance(max_members, int)
+            True
+            >>> max_members > 0
+            True
+
+            Test creator validation:
+            >>> created_by = "admin@example.com"
+            >>> "@" in created_by
+            True
+            >>> len(created_by) > 0
+            True
+
+            Test description handling:
+            >>> description = "A team for software development"
+            >>> description is not None
+            True
+            >>> isinstance(description, str)
+            True
+
+            >>> # Test None description
+            >>> description_none = None
+            >>> description_none is None
+            True
         """
         try:
             # Validate visibility
@@ -597,7 +649,6 @@ class TeamManagementService:
             ValueError: If team not found, not public, or user already member/has pending request
         """
         try:
-
             # Validate team
             team = await self.get_team_by_id(team_id)
             if not team:

@@ -39,11 +39,42 @@ logger = logging.getLogger(__name__)
 
 
 class ExportError(Exception):
-    """Base class for export-related errors."""
+    """Base class for export-related errors.
+
+    Examples:
+        >>> try:
+        ...     raise ExportError("General export error")
+        ... except ExportError as e:
+        ...     str(e)
+        'General export error'
+        >>> try:
+        ...     raise ExportError("Export failed")
+        ... except Exception as e:
+        ...     isinstance(e, ExportError)
+        True
+    """
 
 
 class ExportValidationError(ExportError):
-    """Raised when export data validation fails."""
+    """Raised when export data validation fails.
+
+    Examples:
+        >>> try:
+        ...     raise ExportValidationError("Invalid export format")
+        ... except ExportValidationError as e:
+        ...     str(e)
+        'Invalid export format'
+        >>> try:
+        ...     raise ExportValidationError("Schema validation failed")
+        ... except ExportError as e:
+        ...     isinstance(e, ExportError)  # Should inherit from ExportError
+        True
+        >>> try:
+        ...     raise ExportValidationError("Missing required field")
+        ... except Exception as e:
+        ...     isinstance(e, ExportValidationError)
+        True
+    """
 
 
 class ExportService:
@@ -58,6 +89,36 @@ class ExportService:
 
     The service only exports locally configured entities, excluding dynamic content
     from federated sources to ensure exports contain only configuration data.
+
+    Examples:
+        >>> service = ExportService()
+        >>> hasattr(service, 'gateway_service')
+        True
+        >>> hasattr(service, 'tool_service')
+        True
+        >>> hasattr(service, 'resource_service')
+        True
+        >>> # Test entity type validation
+        >>> valid_types = ["tools", "gateways", "servers", "prompts", "resources", "roots"]
+        >>> "tools" in valid_types
+        True
+        >>> "invalid_type" in valid_types
+        False
+        >>> # Test filtering logic
+        >>> include_types = ["tools", "servers"]
+        >>> exclude_types = ["gateways"]
+        >>> "tools" in include_types and "tools" not in exclude_types
+        True
+        >>> "gateways" in include_types and "gateways" not in exclude_types
+        False
+        >>> # Test tag filtering
+        >>> entity_tags = ["production", "api"]
+        >>> filter_tags = ["production"]
+        >>> any(tag in entity_tags for tag in filter_tags)
+        True
+        >>> filter_tags = ["development"]
+        >>> any(tag in entity_tags for tag in filter_tags)
+        False
     """
 
     def __init__(self):

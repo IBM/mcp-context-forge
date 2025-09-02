@@ -37,6 +37,12 @@ def get_db():
 
     Yields:
         Session: SQLAlchemy database session
+
+    Examples:
+        >>> db_gen = get_db()
+        >>> db = next(db_gen)
+        >>> hasattr(db, 'close')
+        True
     """
     db = SessionLocal()
     try:
@@ -65,6 +71,22 @@ class LoginRequest(BaseModel):
 
         Raises:
             ValueError: If neither email nor username is provided
+
+        Examples:
+            >>> req = LoginRequest(email="test@example.com", password="pass")
+            >>> req.get_email()
+            'test@example.com'
+            >>> req = LoginRequest(username="user@domain.com", password="pass")
+            >>> req.get_email()
+            'user@domain.com'
+            >>> req = LoginRequest(username="invaliduser", password="pass")
+            >>> req.get_email()  # doctest: +IGNORE_EXCEPTION_DETAIL
+            Traceback (most recent call last):
+            ValueError: Username format not supported. Please use email address.
+            >>> req = LoginRequest(password="pass")
+            >>> req.get_email()  # doctest: +IGNORE_EXCEPTION_DETAIL
+            Traceback (most recent call last):
+            ValueError: Either email or username must be provided
         """
         if self.email:
             return str(self.email)

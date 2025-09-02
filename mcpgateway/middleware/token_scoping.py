@@ -30,10 +30,22 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class TokenScopingMiddleware:
-    """Middleware to enforce token scoping restrictions."""
+    """Middleware to enforce token scoping restrictions.
+
+    Examples:
+        >>> middleware = TokenScopingMiddleware()
+        >>> isinstance(middleware, TokenScopingMiddleware)
+        True
+    """
 
     def __init__(self):
-        """Initialize token scoping middleware."""
+        """Initialize token scoping middleware.
+
+        Examples:
+            >>> middleware = TokenScopingMiddleware()
+            >>> hasattr(middleware, '_extract_token_scopes')
+            True
+        """
 
     def _extract_token_scopes(self, request: Request) -> Optional[dict]:
         """Extract token scopes from JWT in request.

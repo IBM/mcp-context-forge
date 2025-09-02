@@ -13,6 +13,8 @@ Examples:
     >>> from mcpgateway.routers.email_auth import email_auth_router
     >>> app = FastAPI()
     >>> app.include_router(email_auth_router, prefix="/auth/email", tags=["Email Auth"])
+    >>> isinstance(email_auth_router, APIRouter)
+    True
 """
 
 # Standard

@@ -80,7 +80,7 @@ class Argon2PasswordService:
         # Initialize Argon2 password hasher with configured parameters
         self.hasher = PasswordHasher(time_cost=self.time_cost, memory_cost=self.memory_cost, parallelism=self.parallelism, hash_len=hash_len, salt_len=salt_len)
 
-        logger.info(f"Initialized Argon2PasswordService with time_cost={self.time_cost}, " f"memory_cost={self.memory_cost}, parallelism={self.parallelism}")
+        logger.info(f"Initialized Argon2PasswordService with time_cost={self.time_cost}, memory_cost={self.memory_cost}, parallelism={self.parallelism}")
 
     def hash_password(self, password: str) -> str:
         """Hash a password using Argon2id.
@@ -244,7 +244,7 @@ class Argon2PasswordService:
         Returns:
             str: String representation of Argon2PasswordService instance
         """
-        return f"Argon2PasswordService(time_cost={self.time_cost}, " f"memory_cost={self.memory_cost}, parallelism={self.parallelism})"
+        return f"Argon2PasswordService(time_cost={self.time_cost}, memory_cost={self.memory_cost}, parallelism={self.parallelism})"
 
 
 # Global instance for use throughout the application

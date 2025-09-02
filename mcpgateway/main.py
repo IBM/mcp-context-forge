@@ -194,6 +194,50 @@ def get_user_email(user):
 
     Returns:
         str: User email address or 'unknown' if not available
+
+    Examples:
+        Test with dictionary user containing email:
+        >>> from mcpgateway import main
+        >>> user_dict = {'email': 'alice@example.com', 'role': 'admin'}
+        >>> main.get_user_email(user_dict)
+        'alice@example.com'
+
+        Test with dictionary user without email:
+        >>> user_dict_no_email = {'username': 'bob', 'role': 'user'}
+        >>> main.get_user_email(user_dict_no_email)
+        'unknown'
+
+        Test with string user (legacy format):
+        >>> user_string = 'charlie@company.com'
+        >>> main.get_user_email(user_string)
+        'charlie@company.com'
+
+        Test with None user:
+        >>> main.get_user_email(None)
+        'unknown'
+
+        Test with empty dictionary:
+        >>> main.get_user_email({})
+        'unknown'
+
+        Test with integer (non-string, non-dict):
+        >>> main.get_user_email(123)
+        '123'
+
+        Test with user object having various data types:
+        >>> user_complex = {'email': 'david@test.org', 'id': 456, 'active': True}
+        >>> main.get_user_email(user_complex)
+        'david@test.org'
+
+        Test with empty string user:
+        >>> main.get_user_email('')
+        'unknown'
+
+        Test with boolean user:
+        >>> main.get_user_email(True)
+        'True'
+        >>> main.get_user_email(False)
+        'unknown'
     """
     if isinstance(user, dict):
         return user.get("email", "unknown")
@@ -748,6 +792,60 @@ def get_protocol_from_request(request: Request) -> str:
 
     Returns:
         str: The protocol used for the request, either "http" or "https".
+
+    Examples:
+        Test with X-Forwarded-Proto header (proxy scenario):
+        >>> from mcpgateway import main
+        >>> from fastapi import Request
+        >>> from urllib.parse import urlparse
+        >>>
+        >>> # Mock request with X-Forwarded-Proto
+        >>> scope = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'headers': [(b'x-forwarded-proto', b'https')],
+        ...     'server': ('testserver', 80),
+        ...     'path': '/',
+        ... }
+        >>> req = Request(scope)
+        >>> main.get_protocol_from_request(req)
+        'https'
+
+        Test with comma-separated X-Forwarded-Proto:
+        >>> scope_multi = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'headers': [(b'x-forwarded-proto', b'https,http')],
+        ...     'server': ('testserver', 80),
+        ...     'path': '/',
+        ... }
+        >>> req_multi = Request(scope_multi)
+        >>> main.get_protocol_from_request(req_multi)
+        'https'
+
+        Test without X-Forwarded-Proto (direct connection):
+        >>> scope_direct = {
+        ...     'type': 'http',
+        ...     'scheme': 'https',
+        ...     'headers': [],
+        ...     'server': ('testserver', 443),
+        ...     'path': '/',
+        ... }
+        >>> req_direct = Request(scope_direct)
+        >>> main.get_protocol_from_request(req_direct)
+        'https'
+
+        Test with HTTP direct connection:
+        >>> scope_http = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'headers': [],
+        ...     'server': ('testserver', 80),
+        ...     'path': '/',
+        ... }
+        >>> req_http = Request(scope_http)
+        >>> main.get_protocol_from_request(req_http)
+        'http'
     """
     forwarded = request.headers.get("x-forwarded-proto")
     if forwarded:
@@ -765,6 +863,56 @@ def update_url_protocol(request: Request) -> str:
 
     Returns:
         str: The base URL with the correct protocol.
+
+    Examples:
+        Test URL protocol update with HTTPS proxy:
+        >>> from mcpgateway import main
+        >>> from fastapi import Request
+        >>>
+        >>> # Mock request with HTTPS forwarded proto
+        >>> scope_https = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'server': ('example.com', 80),
+        ...     'path': '/',
+        ...     'headers': [(b'x-forwarded-proto', b'https')],
+        ... }
+        >>> req_https = Request(scope_https)
+        >>> url = main.update_url_protocol(req_https)
+        >>> url.startswith('https://example.com')
+        True
+
+        Test URL protocol update with HTTP direct:
+        >>> scope_http = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'server': ('localhost', 8000),
+        ...     'path': '/',
+        ...     'headers': [],
+        ... }
+        >>> req_http = Request(scope_http)
+        >>> url = main.update_url_protocol(req_http)
+        >>> url.startswith('http://localhost:8000')
+        True
+
+        Test URL protocol update preserves host and port:
+        >>> scope_port = {
+        ...     'type': 'http',
+        ...     'scheme': 'https',
+        ...     'server': ('api.test.com', 443),
+        ...     'path': '/',
+        ...     'headers': [],
+        ... }
+        >>> req_port = Request(scope_port)
+        >>> url = main.update_url_protocol(req_port)
+        >>> 'api.test.com' in url and url.startswith('https://')
+        True
+
+        Test trailing slash removal:
+        >>> # URL should not end with trailing slash
+        >>> url = main.update_url_protocol(req_http)
+        >>> url.endswith('/')
+        False
     """
     parsed = urlparse(str(request.base_url))
     proto = get_protocol_from_request(request)

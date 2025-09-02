@@ -464,20 +464,6 @@ async def require_docs_basic_auth(auth_header: str) -> str:
     Raises:
         HTTPException: If credentials are invalid or malformed.
         ValueError: If the basic auth format is invalid (missing colon).
-    """
-    """Dedicated handler for HTTP Basic Auth for documentation endpoints only.
-
-    This function is ONLY intended for /docs, /redoc, or similar endpoints, and is enabled
-    via the settings.docs_allow_basic_auth flag. It should NOT be used for general API authentication.
-
-    Args:
-        auth_header: Raw Authorization header value (e.g. "Basic dXNlcjpwYXNz").
-
-    Returns:
-        str: The authenticated username if credentials are valid.
-
-    Raises:
-        HTTPException: If credentials are invalid or malformed.
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
@@ -493,10 +479,19 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         ...     docs_allow_basic_auth = True
         >>> vc.settings = DummySettings()
         >>> import base64, asyncio
+
+        Test with properly encoded credentials:
         >>> userpass = base64.b64encode(b'user:pass').decode()
         >>> auth_header = f'Basic {userpass}'
         >>> asyncio.run(vc.require_docs_basic_auth(auth_header))
         'user'
+
+        Test with different valid credentials:
+        >>> valid_creds = base64.b64encode(b'user:pass').decode()
+        >>> valid_header = f'Basic {valid_creds}'
+        >>> result = asyncio.run(vc.require_docs_basic_auth(valid_header))
+        >>> result == 'user'
+        True
 
         Test with invalid password:
         >>> badpass = base64.b64encode(b'user:wrong').decode()
@@ -504,26 +499,61 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         >>> try:
         ...     asyncio.run(vc.require_docs_basic_auth(bad_header))
         ... except vc.HTTPException as e:
-        ...     print(e.status_code, e.detail)
-        401 Invalid credentials
+        ...     e.status_code == 401
+        True
 
-        Test with malformed header:
+        Test with malformed base64 (no colon):
         >>> malformed = base64.b64encode(b'userpass').decode()
         >>> malformed_header = f'Basic {malformed}'
         >>> try:
         ...     asyncio.run(vc.require_docs_basic_auth(malformed_header))
         ... except vc.HTTPException as e:
-        ...     print(e.status_code, e.detail)
-        401 Invalid basic auth credentials
+        ...     e.status_code == 401
+        True
 
-        Test when docs_allow_basic_auth is False:
+        Test with invalid base64 encoding:
+        >>> invalid_header = 'Basic invalid_base64!'
+        >>> try:
+        ...     asyncio.run(vc.require_docs_basic_auth(invalid_header))
+        ... except vc.HTTPException as e:
+        ...     'Invalid basic auth credentials' in e.detail
+        True
+
+        Test when docs_allow_basic_auth is disabled:
         >>> vc.settings.docs_allow_basic_auth = False
         >>> try:
         ...     asyncio.run(vc.require_docs_basic_auth(auth_header))
         ... except vc.HTTPException as e:
-        ...     print(e.status_code, e.detail)
-        401 Basic authentication not allowed or malformed
+        ...     'not allowed' in e.detail
+        True
         >>> vc.settings.docs_allow_basic_auth = True
+
+        Test with non-Basic auth scheme:
+        >>> bearer_header = 'Bearer eyJhbGciOiJIUzI1NiJ9...'
+        >>> try:
+        ...     asyncio.run(vc.require_docs_basic_auth(bearer_header))
+        ... except vc.HTTPException as e:
+        ...     e.status_code == 401
+        True
+
+        Test with empty credentials part:
+        >>> empty_header = 'Basic '
+        >>> try:
+        ...     asyncio.run(vc.require_docs_basic_auth(empty_header))
+        ... except vc.HTTPException as e:
+        ...     'not allowed' in e.detail
+        True
+
+        Test with Unicode decode error:
+        >>> from base64 import b64encode
+        >>> bad_bytes = bytes([0xff, 0xfe])  # Invalid UTF-8 bytes
+        >>> bad_unicode = b64encode(bad_bytes).decode()
+        >>> unicode_header = f'Basic {bad_unicode}'
+        >>> try:
+        ...     asyncio.run(vc.require_docs_basic_auth(unicode_header))
+        ... except vc.HTTPException as e:
+        ...     'Invalid basic auth credentials' in e.detail
+        True
     """
     scheme, param = get_authorization_scheme_param(auth_header)
     if scheme.lower() == "basic" and param and settings.docs_allow_basic_auth:

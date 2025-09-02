@@ -34,6 +34,24 @@ def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
         >>> mock_request.headers = {}
         >>> extract_token_scopes_from_request(mock_request) is None
         True
+        >>>
+        >>> # Test with invalid authorization header
+        >>> mock_request = Mock()
+        >>> mock_request.headers = {"Authorization": "Invalid token"}
+        >>> extract_token_scopes_from_request(mock_request) is None
+        True
+        >>>
+        >>> # Test with malformed Bearer token
+        >>> mock_request = Mock()
+        >>> mock_request.headers = {"Authorization": "Bearer"}
+        >>> extract_token_scopes_from_request(mock_request) is None
+        True
+        >>>
+        >>> # Test with Bearer but no space
+        >>> mock_request = Mock()
+        >>> mock_request.headers = {"Authorization": "Bearer123"}
+        >>> extract_token_scopes_from_request(mock_request) is None
+        True
     """
     # Get authorization header
     auth_header = request.headers.get("Authorization")

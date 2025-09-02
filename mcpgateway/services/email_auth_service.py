@@ -42,19 +42,51 @@ logger = logging_service.get_logger(__name__)
 
 
 class EmailValidationError(Exception):
-    """Raised when email format is invalid."""
+    """Raised when email format is invalid.
+
+    Examples:
+        >>> try:
+        ...     raise EmailValidationError("Invalid email format")
+        ... except EmailValidationError as e:
+        ...     str(e)
+        'Invalid email format'
+    """
 
 
 class PasswordValidationError(Exception):
-    """Raised when password doesn't meet policy requirements."""
+    """Raised when password doesn't meet policy requirements.
+
+    Examples:
+        >>> try:
+        ...     raise PasswordValidationError("Password too short")
+        ... except PasswordValidationError as e:
+        ...     str(e)
+        'Password too short'
+    """
 
 
 class UserExistsError(Exception):
-    """Raised when attempting to create a user that already exists."""
+    """Raised when attempting to create a user that already exists.
+
+    Examples:
+        >>> try:
+        ...     raise UserExistsError("User already exists")
+        ... except UserExistsError as e:
+        ...     str(e)
+        'User already exists'
+    """
 
 
 class AuthenticationError(Exception):
-    """Raised when authentication fails."""
+    """Raised when authentication fails.
+
+    Examples:
+        >>> try:
+        ...     raise AuthenticationError("Invalid credentials")
+        ... except AuthenticationError as e:
+        ...     str(e)
+        'Invalid credentials'
+    """
 
 
 class EmailAuthService:
@@ -100,11 +132,45 @@ class EmailAuthService:
             >>> service = EmailAuthService(None)
             >>> service.validate_email("user@example.com")
             True
+            >>> service.validate_email("test.user+tag@domain.co.uk")
+            True
+            >>> service.validate_email("user123@test-domain.com")
+            True
             >>> try:
             ...     service.validate_email("invalid-email")
             ... except EmailValidationError as e:
-            ...     str(e)
-            'Invalid email format'
+            ...     "Invalid email format" in str(e)
+            True
+            >>> try:
+            ...     service.validate_email("")
+            ... except EmailValidationError as e:
+            ...     "Email is required" in str(e)
+            True
+            >>> try:
+            ...     service.validate_email("user@")
+            ... except EmailValidationError as e:
+            ...     "Invalid email format" in str(e)
+            True
+            >>> try:
+            ...     service.validate_email("@domain.com")
+            ... except EmailValidationError as e:
+            ...     "Invalid email format" in str(e)
+            True
+            >>> try:
+            ...     service.validate_email("user@domain")
+            ... except EmailValidationError as e:
+            ...     "Invalid email format" in str(e)
+            True
+            >>> try:
+            ...     service.validate_email("a" * 250 + "@domain.com")
+            ... except EmailValidationError as e:
+            ...     "Email address too long" in str(e)
+            True
+            >>> try:
+            ...     service.validate_email(None)
+            ... except EmailValidationError as e:
+            ...     "Email is required" in str(e)
+            True
         """
         if not email or not isinstance(email, str):
             raise EmailValidationError("Email is required and must be a string")
@@ -135,6 +201,27 @@ class EmailAuthService:
         Examples:
             >>> service = EmailAuthService(None)
             >>> service.validate_password("password123")
+            True
+            >>> service.validate_password("ValidPassword123!")
+            True
+            >>> service.validate_password("shortpass")  # 8+ chars to meet default min_length
+            True
+            >>> service.validate_password("verylongpasswordthatmeetsminimumrequirements")
+            True
+            >>> try:
+            ...     service.validate_password("")
+            ... except PasswordValidationError as e:
+            ...     "Password is required" in str(e)
+            True
+            >>> try:
+            ...     service.validate_password(None)
+            ... except PasswordValidationError as e:
+            ...     "Password is required" in str(e)
+            True
+            >>> try:
+            ...     service.validate_password("short")  # Only 5 chars, should fail with default min_length=8
+            ... except PasswordValidationError as e:
+            ...     "characters long" in str(e)
             True
         """
         if not password:

@@ -59,11 +59,19 @@ class TeamInvitationService:
             db: SQLAlchemy database session
 
         Examples:
-            >>> from mcpgateway.db import SessionLocal
-            >>> db = SessionLocal()
-            >>> service = TeamInvitationService(db)
-            >>> isinstance(service.db, Session)
+            Basic initialization:
+            >>> from mcpgateway.services.team_invitation_service import TeamInvitationService
+            >>> from unittest.mock import Mock
+            >>> db_session = Mock()
+            >>> service = TeamInvitationService(db_session)
+            >>> service.db is db_session
             True
+
+            Service attributes:
+            >>> hasattr(service, 'db')
+            True
+            >>> service.__class__.__name__
+            'TeamInvitationService'
         """
         self.db = db
 
@@ -74,7 +82,33 @@ class TeamInvitationService:
             str: A cryptographically secure random token
 
         Examples:
-            Tokens are used for secure invitation acceptance.
+            Test token generation:
+            >>> from mcpgateway.services.team_invitation_service import TeamInvitationService
+            >>> from unittest.mock import Mock
+            >>> db_session = Mock()
+            >>> service = TeamInvitationService(db_session)
+            >>> token = service._generate_invitation_token()
+            >>> isinstance(token, str)
+            True
+            >>> len(token) > 0
+            True
+
+            Token characteristics:
+            >>> # Test that token is URL-safe
+            >>> import string
+            >>> valid_chars = string.ascii_letters + string.digits + '-_'
+            >>> all(c in valid_chars for c in token)
+            True
+
+            >>> # Test token length (base64-encoded 32 bytes)
+            >>> len(token) >= 32  # URL-safe base64 of 32 bytes is ~43 chars
+            True
+
+            Token uniqueness:
+            >>> token1 = service._generate_invitation_token()
+            >>> token2 = service._generate_invitation_token()
+            >>> token1 != token2
+            True
         """
         return secrets.token_urlsafe(32)
 

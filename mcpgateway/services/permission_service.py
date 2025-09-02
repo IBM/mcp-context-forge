@@ -128,7 +128,7 @@ class PermissionService:
                     user_agent=user_agent,
                 )
 
-            logger.debug(f"Permission check: user={user_email}, permission={permission}, " f"team={team_id}, granted={granted}")
+            logger.debug(f"Permission check: user={user_email}, permission={permission}, team={team_id}, granted={granted}")
 
             return granted
 
