@@ -137,6 +137,52 @@ class RoleService:
             True
             >>> len(created_by) > 0
             True
+
+            Invalid scope is rejected immediately:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> svc = RoleService(Mock())
+            >>> try:
+            ...     asyncio.run(svc.create_role('n','d','invalid',[], 'u@example.com'))
+            ... except ValueError as e:
+            ...     'Invalid scope' in str(e)
+            True
+
+            Duplicate name rejected within scope:
+            >>> from unittest.mock import AsyncMock, patch
+            >>> svc = RoleService(Mock())
+            >>> with patch.object(RoleService, 'get_role_by_name', new=AsyncMock(return_value=object())):
+            ...     try:
+            ...         asyncio.run(svc.create_role('dup','d','global',[], 'u@example.com'))
+            ...     except ValueError as e:
+            ...         'already exists' in str(e)
+            True
+
+            Invalid permissions rejected:
+            >>> with patch.object(RoleService, 'get_role_by_name', new=AsyncMock(return_value=None)):
+            ...     with patch('mcpgateway.services.role_service.Permissions.get_all_permissions', return_value=[]):
+            ...         try:
+            ...             asyncio.run(svc.create_role('n','d','global',['bad'], 'u@example.com'))
+            ...         except ValueError as e:
+            ...             'Invalid permissions' in str(e)
+            True
+
+            Parent not found and cycle detection:
+            >>> with patch.object(RoleService, 'get_role_by_name', new=AsyncMock(return_value=None)):
+            ...     with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=None)):
+            ...         try:
+            ...             asyncio.run(svc.create_role('n','d','global',[], 'u@example.com', inherits_from='p'))
+            ...         except ValueError as e:
+            ...             'Parent role not found' in str(e)
+            True
+            >>> with patch.object(RoleService, 'get_role_by_name', new=AsyncMock(return_value=None)):
+            ...     with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=object())):
+            ...         with patch.object(RoleService, '_would_create_cycle', new=AsyncMock(return_value=True)):
+            ...             try:
+            ...                 asyncio.run(svc.create_role('n','d','global',[], 'u@example.com', inherits_from='p'))
+            ...             except ValueError as e:
+            ...                 'create a cycle' in str(e)
+            True
         """
         # Validate scope
         if scope not in ["global", "team", "personal"]:
@@ -235,6 +281,16 @@ class RoleService:
             >>> service = RoleService(Mock())
             >>> asyncio.iscoroutinefunction(service.list_roles)
             True
+            >>> # Simulate empty list result
+            >>> class _Res:
+            ...     def scalars(self):
+            ...         class _S:
+            ...             def all(self):
+            ...                 return []
+            ...         return _S()
+            >>> service.db.execute = lambda *_a, **_k: _Res()
+            >>> asyncio.run(service.list_roles('team', include_system=False, include_inactive=True)) == []
+            True
         """
         query = select(Role)
 
@@ -293,6 +349,59 @@ class RoleService:
             >>> all(p in params for p in [
             ...     'role_id', 'name', 'description', 'permissions', 'inherits_from', 'is_active'
             ... ])
+            True
+
+        Additional validation paths:
+            Cannot modify system roles:
+            >>> from unittest.mock import AsyncMock, patch
+            >>> service = RoleService(object())
+            >>> mock_role = type('R', (), {'is_system_role': True})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=mock_role)):
+            ...     try:
+            ...         _ = asyncio.run(service.update_role('rid'))
+            ...     except ValueError as e:
+            ...         'system roles' in str(e)
+            True
+
+            Returns None when role not found:
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=None)):
+            ...     asyncio.run(service.update_role('missing')) is None
+            True
+
+            Duplicate new name rejected:
+            >>> role = type('R', (), {'is_system_role': False, 'name': 'old', 'scope': 'global', 'id': 'id1', 'is_active': True})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=role)):
+            ...     with patch.object(RoleService, 'get_role_by_name', new=AsyncMock(return_value=type('R2', (), {'id': 'id2'})())):
+            ...         try:
+            ...             asyncio.run(service.update_role('id1', name='new'))
+            ...         except ValueError as e:
+            ...             'already exists' in str(e)
+            True
+
+            Invalid permissions rejected on update:
+            >>> role = type('R', (), {'is_system_role': False, 'name': 'old', 'scope': 'global', 'id': 'id1', 'is_active': True})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=role)):
+            ...     with patch('mcpgateway.services.role_service.Permissions.get_all_permissions', return_value=[]):
+            ...         try:
+            ...             asyncio.run(service.update_role('id1', permissions=['bad']))
+            ...         except ValueError as e:
+            ...             'Invalid permissions' in str(e)
+            True
+
+            Parent not found and cycle detection on update:
+            >>> role = type('R', (), {'is_system_role': False, 'name': 'old', 'scope': 'global', 'id': 'id1', 'inherits_from': None, 'is_active': True})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(side_effect=[role, None])):
+            ...     try:
+            ...         asyncio.run(service.update_role('id1', inherits_from='p'))
+            ...     except ValueError as e:
+            ...         'Parent role not found' in str(e)
+            True
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(side_effect=[role, object()])):
+            ...     with patch.object(RoleService, '_would_create_cycle', new=AsyncMock(return_value=True)):
+            ...         try:
+            ...             asyncio.run(service.update_role('id1', inherits_from='p'))
+            ...         except ValueError as e:
+            ...             'create a cycle' in str(e)
             True
         """
         role = await self.get_role_by_id(role_id)
@@ -374,6 +483,21 @@ class RoleService:
             >>> service = RoleService(Mock())
             >>> asyncio.iscoroutinefunction(service.delete_role)
             True
+
+            Returns False when role not found:
+            >>> from unittest.mock import AsyncMock, patch
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=None)):
+            ...     asyncio.run(service.delete_role('missing'))
+            False
+
+            System roles cannot be deleted:
+            >>> sys_role = type('R', (), {'is_system_role': True})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=sys_role)):
+            ...     try:
+            ...         asyncio.run(service.delete_role('rid'))
+            ...     except ValueError as e:
+            ...         'system roles' in str(e)
+            True
         """
         role = await self.get_role_by_id(role_id)
         if not role:
@@ -417,6 +541,53 @@ class RoleService:
             >>> from unittest.mock import Mock
             >>> service = RoleService(Mock())
             >>> asyncio.iscoroutinefunction(service.assign_role_to_user)
+            True
+
+            Scope mismatch raises error:
+            >>> from unittest.mock import AsyncMock, patch
+            >>> role = type('Role', (), {'is_active': True, 'scope': 'team'})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=role)):
+            ...     try:
+            ...         asyncio.run(service.assign_role_to_user('u@e','rid','global',None,'admin'))
+            ...     except ValueError as e:
+            ...         "doesn't match" in str(e)
+            True
+
+            Team scope requires scope_id:
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=role)):
+            ...     try:
+            ...         asyncio.run(service.assign_role_to_user('u@e','rid','team',None,'admin'))
+            ...     except ValueError as e:
+            ...         'scope_id required' in str(e)
+            True
+
+            Global scope forbids scope_id:
+            >>> role.scope = 'global'
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=role)):
+            ...     try:
+            ...         asyncio.run(service.assign_role_to_user('u@e','rid','global','x','admin'))
+            ...     except ValueError as e:
+            ...         'not allowed for global' in str(e)
+            True
+
+            Duplicate active assignment is rejected:
+            >>> role.scope = 'team'
+            >>> active = type('UR', (), {'is_active': True, 'is_expired': lambda self: False})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=role)):
+            ...     with patch.object(RoleService, 'get_user_role_assignment', new=AsyncMock(return_value=active)):
+            ...         try:
+            ...             asyncio.run(service.assign_role_to_user('u@e','rid','team','t1','admin'))
+            ...         except ValueError as e:
+            ...             'already has this role' in str(e)
+            True
+
+            Role not found or inactive raises:
+            >>> inactive = type('Role', (), {'is_active': False, 'scope': 'team'})()
+            >>> with patch.object(RoleService, 'get_role_by_id', new=AsyncMock(return_value=inactive)):
+            ...     try:
+            ...         asyncio.run(service.assign_role_to_user('u@e','rid','team','t1','admin'))
+            ...     except ValueError as e:
+            ...         'not found or inactive' in str(e)
             True
         """
         # Validate role exists and is active
@@ -467,6 +638,18 @@ class RoleService:
             >>> from unittest.mock import Mock
             >>> service = RoleService(Mock())
             >>> asyncio.iscoroutinefunction(service.revoke_role_from_user)
+            True
+
+            Returns False when assignment not found or inactive:
+            >>> from unittest.mock import AsyncMock, patch
+            >>> with patch.object(RoleService, 'get_user_role_assignment', new=AsyncMock(return_value=None)):
+            ...     asyncio.run(service.revoke_role_from_user('u','r','team','t'))
+            False
+
+            Returns True on successful revoke:
+            >>> active = type('UR', (), {'is_active': True})()
+            >>> with patch.object(RoleService, 'get_user_role_assignment', new=AsyncMock(return_value=active)):
+            ...     asyncio.run(service.revoke_role_from_user('u','r','team','t'))
             True
         """
         user_role = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
@@ -528,6 +711,17 @@ class RoleService:
             >>> service = RoleService(Mock())
             >>> asyncio.iscoroutinefunction(service.list_user_roles)
             True
+            >>> # Simulate scalar results aggregation
+            >>> class _Res:
+            ...     def scalars(self):
+            ...         class _S:
+            ...             def all(self):
+            ...                 return ['ur1', 'ur2']
+            ...         return _S()
+            >>> service.db.execute = lambda *_a, **_k: _Res()
+            >>> result = asyncio.run(service.list_user_roles('u@example.com', 'team'))
+            >>> isinstance(result, list) and len(result) == 2
+            True
         """
         query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
@@ -561,6 +755,16 @@ class RoleService:
             >>> service = RoleService(Mock())
             >>> asyncio.iscoroutinefunction(service.list_role_assignments)
             True
+            >>> # Simulate scalar results aggregation
+            >>> class _Res:
+            ...     def scalars(self):
+            ...         class _S:
+            ...             def all(self):
+            ...                 return []
+            ...         return _S()
+            >>> service.db.execute = lambda *_a, **_k: _Res()
+            >>> asyncio.run(service.list_role_assignments('rid'))
+            []
         """
         query = select(UserRole).where(and_(UserRole.role_id == role_id, UserRole.is_active.is_(True)))
 

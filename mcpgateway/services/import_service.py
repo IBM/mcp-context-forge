@@ -393,6 +393,26 @@ class ImportService:
 
         Returns:
             Total number of entities to process
+
+        Examples:
+            No selection counts all entities:
+            >>> svc = ImportService()
+            >>> entities = {
+            ...     'tools': [{"name": "t1"}, {"name": "t2"}],
+            ...     'resources': [{"uri": "/r1"}],
+            ... }
+            >>> svc._calculate_total_entities(entities, selected_entities=None)
+            3
+
+            Selection for a subset by name/identifier:
+            >>> selected = {'tools': ['t2'], 'resources': ['/r1']}
+            >>> svc._calculate_total_entities(entities, selected)
+            2
+
+            Selection for only a type (empty list means all of that type):
+            >>> selected = {'tools': []}
+            >>> svc._calculate_total_entities(entities, selected)
+            2
         """
         if selected_entities:
             total = 0
@@ -500,6 +520,27 @@ class ImportService:
 
         Raises:
             ImportError: If re-encryption fails
+
+        Examples:
+            Returns original entity when no auth data present:
+            >>> svc = ImportService()
+            >>> svc._has_auth_data({'name': 'x'})
+            False
+            >>> import asyncio
+            >>> asyncio.run(svc._rekey_auth_data({'name': 'x'}, 'new'))
+            {'name': 'x'}
+
+            Rekeys when auth data is present (encode/decode patched):
+            >>> from unittest.mock import patch
+            >>> data = {'name': 'x', 'auth_value': 'enc_old'}
+            >>> async def run():
+            ...     with patch('mcpgateway.services.import_service.decode_auth', return_value='plain'):
+            ...         with patch('mcpgateway.services.import_service.encode_auth', return_value='enc_new'):
+            ...             return await svc._rekey_auth_data(dict(data), 'new-secret')
+            ...
+            >>> result = asyncio.run(run())
+            >>> result['auth_value']
+            'enc_new'
         """
         if not self._has_auth_data(entity_data):
             return entity_data
