@@ -148,13 +148,22 @@ erDiagram
 ```mermaid
 flowchart TB
     subgraph "Team Visibility Types"
-        T1[Private Team<br/>Not discoverable; invite-only]
-        T2[Public Team<br/>Discoverable; membership by invite/request]
+        T1["Private Team
+Not discoverable; invite-only"]
+        T2["Public Team
+Discoverable; membership by invite/request"]
     end
 
     subgraph "Team Roles"
-        R1[Owner<br/>- Full team control<br/>- Invite/remove members<br/>- Manage resources<br/>- Delete team]
-        R2[Member<br/>- Access team resources<br/>- Create resources<br/>- No member management]
+        R1["Owner
+- Full team control
+- Invite/remove members
+- Manage resources
+- Delete team"]
+        R2["Member
+- Access team resources
+- Create resources
+- No member management"]
     end
 
     subgraph "Team Membership Flow"
@@ -304,9 +313,12 @@ flowchart TD
     end
 
     subgraph "Visibility Levels"
-        J[Private<br/>Owner only]
-        K[Team<br/>Team members]
-        L[Public<br/>All users]
+        J["Private
+Owner only"]
+        K["Team
+Team members"]
+        L["Public
+All users"]
     end
 
     A --> G
@@ -333,16 +345,29 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph "User Access to Resources"
-        U1[User A<br/>Team 1 Member<br/>Team 2 Owner]
-        U2[User B<br/>Team 1 Owner<br/>Team 3 Member]
-        U3[User C<br/>No team membership]
+        U1["User A
+Team 1 Member
+Team 2 Owner"]
+        U2["User B
+Team 1 Owner
+Team 3 Member"]
+        U3["User C
+No team membership"]
     end
 
     subgraph "Resource Visibility"
-        R1[Resource 1<br/>Team 1, Private<br/>Owner: User B]
-        R2[Resource 2<br/>Team 1, Team<br/>Owner: User A]
-        R3[Resource 3<br/>Team 2, Public<br/>Owner: User A]
-        R4[Resource 4<br/>Team 3, Team<br/>Owner: User B]
+        R1["Resource 1
+Team 1, Private
+Owner: User B"]
+        R2["Resource 2
+Team 1, Team
+Owner: User A"]
+        R3["Resource 3
+Team 2, Public
+Owner: User A"]
+        R4["Resource 4
+Team 3, Team
+Owner: User B"]
     end
 
     U1 -.->|❌ No Access| R1
@@ -479,16 +504,31 @@ Roles are assigned to users within specific scopes:
 ```mermaid
 flowchart TD
     subgraph "RBAC Roles"
-        A[Platform Admin<br/>- All permissions (*)<br/>- Global scope<br/>- System management]
-        B[Team Admin<br/>- Team management<br/>- Member control<br/>- Resource access]
-        C[Developer<br/>- Tool execution<br/>- Resource access<br/>- No team management]
-        D[Viewer<br/>- Read-only access<br/>- No execution<br/>- No management]
+        A["Platform Admin
+- All permissions (*)
+- Global scope
+- System management"]
+        B["Team Admin
+- Team management
+- Member control
+- Resource access"]
+        C["Developer
+- Tool execution
+- Resource access
+- No team management"]
+        D["Viewer
+- Read-only access
+- No execution
+- No management"]
     end
 
     subgraph "Domain Restrictions"
-        E[Admin Domain Whitelist<br/>SSO_AUTO_ADMIN_DOMAINS]
-        F[Trusted Domains<br/>SSO_TRUSTED_DOMAINS]
-        G[Manual Assignment<br/>Platform admin approval]
+        E["Admin Domain Whitelist
+SSO_AUTO_ADMIN_DOMAINS"]
+        F["Trusted Domains
+SSO_TRUSTED_DOMAINS"]
+        G["Manual Assignment
+Platform admin approval"]
     end
 
     A --> E
@@ -613,7 +653,7 @@ sequenceDiagram
 
     G->>Res: List resources for user
     Res->>DB: Query with team filtering
-    Note right of Res: WHERE (owner_email = user<br/>OR (team_id IN user_teams AND visibility IN ('team', 'public'))<br/>OR visibility = 'public')
+    Note right of Res: WHERE owner_email = user OR team_id IN user_teams AND visibility IN team,public OR visibility = public
 
     DB-->>Res: Filtered resource list
     Res-->>G: User-accessible resources
@@ -642,9 +682,13 @@ flowchart TD
     C --> D[Build Filter Criteria]
 
     D --> E{Resource Query}
-    E --> F[Owner-Owned Resources<br/>owner_email = user.email]
-    E --> G[Team Resources<br/>team_id IN user.teams<br/>AND visibility IN ('team', 'public')]
-    E --> H[Public Resources<br/>visibility = 'public']
+    E --> F["Owner-Owned Resources
+owner_email = user.email"]
+    E --> G["Team Resources
+team_id IN user.teams
+AND visibility IN team,public"]
+    E --> H["Public Resources
+visibility = public"]
 
     F --> I[Combine Results]
     G --> I
@@ -815,11 +859,13 @@ All resource endpoints follow consistent team-scoping patterns:
 ```mermaid
 flowchart TD
     subgraph "API Endpoint Patterns"
-        A[GET /tools?team_id=uuid&visibility=team]
-        B[POST /tools<br/>{name, team_id, visibility}]
-        C[GET /tools/{id}]
-        D[PUT /tools/{id}<br/>{team_id, visibility}]
-        E[DELETE /tools/{id}]
+        A["GET /tools?team_id=uuid&visibility=team"]
+        B["POST /tools
+name, team_id, visibility"]
+        C["GET /tools/id"]
+        D["PUT /tools/id
+team_id, visibility"]
+        E["DELETE /tools/id"]
     end
 
     subgraph "Request Processing"
@@ -935,21 +981,44 @@ SSO_REQUIRE_ADMIN_APPROVAL=false
 ```mermaid
 flowchart TD
     subgraph "Security Layers"
-        A[Authentication Layer<br/>- JWT validation<br/>- Session management]
-        B[Authorization Layer<br/>- Team membership<br/>- Resource ownership<br/>- Visibility checks]
-        C[Data Isolation Layer<br/>- Team-scoped queries<br/>- Owner validation<br/>- Access logging]
+        A["Authentication Layer
+- JWT validation
+- Session management"]
+        B["Authorization Layer
+- Team membership
+- Resource ownership
+- Visibility checks"]
+        C["Data Isolation Layer
+- Team-scoped queries
+- Owner validation
+- Access logging"]
     end
 
     subgraph "Security Controls"
-        D[Input Validation<br/>- Team ID validation<br/>- Email format<br/>- Role validation]
-        E[Rate Limiting<br/>- Per-user limits<br/>- Per-team limits<br/>- API quotas]
-        F[Audit Logging<br/>- Access attempts<br/>- Resource changes<br/>- Team modifications]
+        D["Input Validation
+- Team ID validation
+- Email format
+- Role validation"]
+        E["Rate Limiting
+- Per-user limits
+- Per-team limits
+- API quotas"]
+        F["Audit Logging
+- Access attempts
+- Resource changes
+- Team modifications"]
     end
 
     subgraph "Attack Prevention"
-        G[Team Enumeration<br/>- UUID team IDs<br/>- Access validation]
-        H[Resource Access<br/>- Ownership checks<br/>- Visibility enforcement]
-        I[Privilege Escalation<br/>- Role validation<br/>- Permission boundaries]
+        G["Team Enumeration
+- UUID team IDs
+- Access validation"]
+        H["Resource Access
+- Ownership checks
+- Visibility enforcement"]
+        I["Privilege Escalation
+- Role validation
+- Permission boundaries"]
     end
 
     A --> B --> C
