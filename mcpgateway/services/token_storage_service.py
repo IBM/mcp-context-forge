@@ -235,6 +235,23 @@ class TokenStorageService:
 
         Returns:
             True if token is expired or near expiration
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timedelta
+            >>> svc = TokenStorageService(None)
+            >>> future = datetime.utcnow() + timedelta(seconds=600)
+            >>> past = datetime.utcnow() - timedelta(seconds=10)
+            >>> rec_future = SimpleNamespace(expires_at=future)
+            >>> rec_past = SimpleNamespace(expires_at=past)
+            >>> svc._is_token_expired(rec_future, threshold_seconds=300)  # 10 min ahead, 5 min threshold
+            False
+            >>> svc._is_token_expired(rec_future, threshold_seconds=900)  # 10 min ahead, 15 min threshold
+            True
+            >>> svc._is_token_expired(rec_past, threshold_seconds=0)
+            True
+            >>> svc._is_token_expired(SimpleNamespace(expires_at=None))
+            True
         """
         if not token_record.expires_at:
             return True

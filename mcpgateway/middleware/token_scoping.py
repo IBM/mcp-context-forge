@@ -102,6 +102,24 @@ class TokenScopingMiddleware:
 
         Returns:
             bool: True if IP is allowed, False otherwise
+
+        Examples:
+            Allow specific IP:
+            >>> m = TokenScopingMiddleware()
+            >>> m._check_ip_restrictions('192.168.1.10', ['192.168.1.10'])
+            True
+
+            Allow CIDR range:
+            >>> m._check_ip_restrictions('10.0.0.5', ['10.0.0.0/24'])
+            True
+
+            Deny when not in list:
+            >>> m._check_ip_restrictions('10.0.1.5', ['10.0.0.0/24'])
+            False
+
+            Empty restrictions allow all:
+            >>> m._check_ip_restrictions('203.0.113.1', [])
+            True
         """
         if not ip_restrictions:
             return True  # No restrictions
@@ -136,6 +154,20 @@ class TokenScopingMiddleware:
 
         Returns:
             bool: True if current time is allowed, False otherwise
+
+        Examples:
+            No restrictions allow access:
+            >>> m = TokenScopingMiddleware()
+            >>> m._check_time_restrictions({})
+            True
+
+            Weekdays only: result depends on current weekday (always bool):
+            >>> isinstance(m._check_time_restrictions({'weekdays_only': True}), bool)
+            True
+
+            Business hours only: result depends on current hour (always bool):
+            >>> isinstance(m._check_time_restrictions({'business_hours_only': True}), bool)
+            True
         """
         if not time_restrictions:
             return True  # No restrictions
@@ -165,6 +197,26 @@ class TokenScopingMiddleware:
 
         Returns:
             bool: True if request is allowed, False otherwise
+
+        Examples:
+            Match server paths:
+            >>> m = TokenScopingMiddleware()
+            >>> m._check_server_restriction('/servers/abc/tools', 'abc')
+            True
+            >>> m._check_server_restriction('/sse/xyz', 'xyz')
+            True
+            >>> m._check_server_restriction('/ws/xyz?x=1', 'xyz')
+            True
+
+            Mismatch denies:
+            >>> m._check_server_restriction('/servers/def', 'abc')
+            False
+
+            General endpoints allowed:
+            >>> m._check_server_restriction('/health', 'abc')
+            True
+            >>> m._check_server_restriction('/', 'abc')
+            True
         """
         if not server_id:
             return True  # No server restriction
@@ -210,6 +262,26 @@ class TokenScopingMiddleware:
 
         Returns:
             bool: True if request is allowed, False otherwise
+
+        Examples:
+            Wildcard allows all:
+            >>> m = TokenScopingMiddleware()
+            >>> m._check_permission_restrictions('/tools', 'GET', ['*'])
+            True
+
+            Requires specific permission:
+            >>> m._check_permission_restrictions('/tools', 'POST', ['tools.create'])
+            True
+            >>> m._check_permission_restrictions('/tools/xyz', 'PUT', ['tools.update'])
+            True
+            >>> m._check_permission_restrictions('/resources', 'GET', ['resources.read'])
+            True
+            >>> m._check_permission_restrictions('/servers/s1/tools/abc/call', 'POST', ['tools.execute'])
+            True
+
+            Missing permission denies:
+            >>> m._check_permission_restrictions('/tools', 'POST', ['tools.read'])
+            False
         """
         if not permissions or "*" in permissions:
             return True  # No restrictions or full access

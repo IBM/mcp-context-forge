@@ -204,6 +204,46 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             >>> allow = (not allowed_origins) if environment != "production" else False
             >>> allow
             True
+
+            Execute middleware end-to-end with a dummy call_next:
+            >>> import asyncio
+            >>> from unittest.mock import patch
+            >>> from starlette.requests import Request
+            >>> from starlette.responses import Response
+            >>> async def call_next(req):
+            ...     return Response("ok")
+            >>> scope = {
+            ...     'type': 'http', 'method': 'GET', 'path': '/', 'scheme': 'https',
+            ...     'headers': [(b'origin', b'https://example.com'), (b'x-forwarded-proto', b'https')]
+            ... }
+            >>> request = Request(scope)
+            >>> mw = SecurityHeadersMiddleware(app=None)
+            >>> with patch('mcpgateway.middleware.security_headers.settings') as s:
+            ...     s.security_headers_enabled = True
+            ...     s.x_content_type_options_enabled = True
+            ...     s.x_frame_options = 'DENY'
+            ...     s.x_xss_protection_enabled = True
+            ...     s.x_download_options_enabled = True
+            ...     s.hsts_enabled = True
+            ...     s.hsts_max_age = 31536000
+            ...     s.hsts_include_subdomains = True
+            ...     s.remove_server_headers = True
+            ...     s.environment = 'production'
+            ...     s.allowed_origins = ['https://example.com']
+            ...     s.cors_allow_credentials = True
+            ...     resp = asyncio.run(mw.dispatch(request, call_next))
+            >>> resp.headers['X-Content-Type-Options']
+            'nosniff'
+            >>> resp.headers['X-Frame-Options']
+            'DENY'
+            >>> 'Content-Security-Policy' in resp.headers
+            True
+            >>> resp.headers['Strict-Transport-Security'].startswith('max-age=')
+            True
+            >>> resp.headers['Access-Control-Allow-Origin']
+            'https://example.com'
+            >>> 'Vary' in resp.headers and 'Origin' in resp.headers['Vary']
+            True
         """
         response = await call_next(request)
 

@@ -182,6 +182,27 @@ class ServerService:
 
         Returns:
             ServerRead: The Pydantic model representing the server, including aggregated metrics.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timezone
+            >>> svc = ServerService()
+            >>> now = datetime.now(timezone.utc)
+            >>> # Fake metric objects
+            >>> m1 = SimpleNamespace(is_success=True, response_time=0.2, timestamp=now)
+            >>> m2 = SimpleNamespace(is_success=False, response_time=0.4, timestamp=now)
+            >>> server = SimpleNamespace(
+            ...     id='s1', name='S', description=None, icon=None,
+            ...     created_at=now, updated_at=now, is_active=True,
+            ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
+            ...     tags=[], metrics=[m1, m2],
+            ...     tools=[], resources=[], prompts=[], a2a_agents=[]
+            ... )
+            >>> result = svc._convert_server_to_read(server)
+            >>> result.metrics.total_executions
+            2
+            >>> result.metrics.successful_executions
+            1
         """
         server_dict = server.__dict__.copy()
         server_dict.pop("_sa_instance_state", None)

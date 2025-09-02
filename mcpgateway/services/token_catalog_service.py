@@ -217,10 +217,24 @@ class TokenCatalogService:
             str: JWT token string
 
         Examples:
+            Basic token generation and payload shape:
             >>> service = TokenCatalogService(None)
             >>> token = service._generate_token("user@example.com")
-            >>> isinstance(token, str) and len(token) > 100
+            >>> import jwt as _jwt
+            >>> payload = _jwt.decode(token, options={"verify_signature": False})
+            >>> payload["sub"]
+            'user@example.com'
+            >>> isinstance(payload.get('scopes'), dict)
             True
+
+            Include team and scoped permissions:
+            >>> scope = TokenScope(permissions=["tools.read"], ip_restrictions=["10.0.0.0/24"], time_restrictions={"weekdays_only": True})
+            >>> token2 = service._generate_token("u@example.com", team_id="team-1", scope=scope)
+            >>> payload2 = _jwt.decode(token2, options={"verify_signature": False})
+            >>> 'team-1' in payload2.get('teams', [])
+            True
+            >>> payload2['scopes']['permissions']
+            ['tools.read']
         """
         now = datetime.now(timezone.utc)
 

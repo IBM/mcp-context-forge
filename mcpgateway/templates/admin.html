@@ -10210,14 +10210,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         }
       });
 
-      // Team member management functions
-      function showAddMemberForm(teamId) {
-        document.getElementById('add-member-form-' + teamId).classList.remove('hidden');
-      }
-
-      function hideAddMemberForm(teamId) {
-        document.getElementById('add-member-form-' + teamId).classList.add('hidden');
-      }
+      // Team member management functions are now in admin.js
 
       // Handle form submission success
       document.addEventListener('htmx:afterRequest', function(evt) {

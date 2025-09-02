@@ -156,6 +156,21 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
         >>> decorator = require_permission("tools.create", "tools")
         >>> callable(decorator)
         True
+
+        Execute wrapped function when permission granted:
+        >>> import asyncio
+        >>> class DummyPS:
+        ...     def __init__(self, db):
+        ...         pass
+        ...     async def check_permission(self, **kwargs):
+        ...         return True
+        >>> @require_permission("tools.read")
+        ... async def demo(user=None):
+        ...     return "ok"
+        >>> from unittest.mock import patch
+        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
+        'ok'
     """
 
     def decorator(func: Callable) -> Callable:
@@ -230,6 +245,21 @@ def require_admin_permission():
         >>> decorator = require_admin_permission()
         >>> callable(decorator)
         True
+
+        Execute when admin permission granted:
+        >>> import asyncio
+        >>> class DummyPS:
+        ...     def __init__(self, db):
+        ...         pass
+        ...     async def check_admin_permission(self, email):
+        ...         return True
+        >>> @require_admin_permission()
+        ... async def demo(user=None):
+        ...     return "admin-ok"
+        >>> from unittest.mock import patch
+        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
+        'admin-ok'
     """
 
     def decorator(func: Callable) -> Callable:
@@ -297,6 +327,21 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
         >>> decorator = require_any_permission(["tools.read", "tools.execute"], "tools")
         >>> callable(decorator)
         True
+
+        Execute when any permission granted:
+        >>> import asyncio
+        >>> class DummyPS:
+        ...     def __init__(self, db):
+        ...         pass
+        ...     async def check_permission(self, **kwargs):
+        ...         return True
+        >>> @require_any_permission(["tools.read", "tools.execute"], "tools")
+        ... async def demo(user=None):
+        ...     return "any-ok"
+        >>> from unittest.mock import patch
+        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
+        'any-ok'
     """
 
     def decorator(func: Callable) -> Callable:

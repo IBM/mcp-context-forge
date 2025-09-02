@@ -25,8 +25,27 @@ def get_predefined_sso_providers() -> List[Dict]:
         List of SSO provider configurations ready for database storage.
 
     Examples:
+        Default (no providers configured):
         >>> providers = get_predefined_sso_providers()
-        >>> len(providers) >= 0
+        >>> isinstance(providers, list)
+        True
+
+        Patch configuration to include GitHub provider:
+        >>> from types import SimpleNamespace
+        >>> from unittest.mock import patch
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=True,
+        ...     sso_github_client_id='id',
+        ...     sso_github_client_secret='sec',
+        ...     sso_trusted_domains=[],
+        ...     sso_auto_create_users=True,
+        ...     sso_google_enabled=False,
+        ...     sso_ibm_verify_enabled=False,
+        ...     sso_okta_enabled=False,
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
         True
     """
     providers = []

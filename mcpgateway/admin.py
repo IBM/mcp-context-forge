@@ -2505,9 +2505,35 @@ async def admin_view_team_members(
         # Get team members
         members = await team_service.get_team_members(team_id)
 
+        # Count owners to determine if this is the last owner
+        owner_count = sum(1 for _, membership in members if membership.role == "owner")
+
         members_html = ""
         for member_user, membership in members:
             role_display = membership.role.replace("_", " ").title() if membership.role else "Member"
+
+            # Check if this is the last owner
+            is_last_owner = membership.role == "owner" and owner_count == 1
+
+            # Generate appropriate button based on whether this is the last owner
+            if is_last_owner:
+                remove_button = f"""
+                    <span class="px-2 py-1 text-xs font-medium text-gray-400 dark:text-gray-500 border border-gray-300 dark:border-gray-600 rounded-md cursor-not-allowed"
+                          title="Cannot remove last owner">
+                        Last Owner
+                    </span>"""
+            else:
+                remove_button = f"""
+                    <button
+                        class="px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-1 focus:ring-offset-1 focus:ring-red-500"
+                        hx-post="{root_path}/admin/teams/{team_id}/remove-member"
+                        hx-vals='{{"user_email": "{member_user.email}"}}'
+                        hx-confirm="Remove {member_user.email} from this team?"
+                        hx-target="#team-edit-modal-content"
+                        hx-swap="innerHTML">
+                        Remove
+                    </button>"""
+
             members_html += f"""
             <div class="flex justify-between items-center py-2 px-3 border-b border-gray-200 dark:border-gray-600 last:border-b-0">
                 <div>
@@ -2518,15 +2544,7 @@ async def admin_view_team_members(
                     <span class="text-sm text-gray-500 dark:text-gray-400">
                         Joined: {membership.joined_at.strftime("%Y-%m-%d") if membership.joined_at else "Unknown"}
                     </span>
-                    <button
-                        class="px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-1 focus:ring-offset-1 focus:ring-red-500"
-                        hx-post="{root_path}/admin/teams/{team_id}/remove-member"
-                        hx-vals='{{"user_email": "{member_user.email}"}}'
-                        hx-confirm="Remove {member_user.email} from this team?"
-                        hx-target="#team-edit-modal-content"
-                        hx-swap="innerHTML">
-                        Remove
-                    </button>
+                    {remove_button}
                 </div>
             </div>
             """
@@ -2588,7 +2606,7 @@ async def admin_view_team_members(
                             <option value="owner">Owner</option>
                         </select>
                         <button type="submit" class="px-3 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600">Add</button>
-                        <button type="button" onclick="hideAddMemberForm('{team.id}')" class="px-3 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600">Cancel</button>
+                        <button type="button" onclick="document.getElementById('team-edit-modal').classList.add('hidden')" class="px-3 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600">Cancel</button>
                     </div>
                 </form>
             </div>
