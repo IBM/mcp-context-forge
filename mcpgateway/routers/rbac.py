@@ -3,6 +3,12 @@
 
 This module provides REST API endpoints for Role-Based Access Control (RBAC)
 management including roles, user role assignments, and permission checking.
+
+Examples:
+    >>> from mcpgateway.routers.rbac import router
+    >>> from fastapi import APIRouter
+    >>> isinstance(router, APIRouter)
+    True
 """
 
 # Standard

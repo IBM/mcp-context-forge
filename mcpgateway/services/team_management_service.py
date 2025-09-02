@@ -9,11 +9,12 @@ This module provides team creation, management, and membership operations
 for the multi-team collaboration system.
 
 Examples:
-    >>> from mcpgateway.services.team_management_service import TeamManagementService
-    >>> from mcpgateway.db import SessionLocal
-    >>> db = SessionLocal()
-    >>> service = TeamManagementService(db)
-    >>> # Service handles team CRUD operations
+    >>> from unittest.mock import Mock
+    >>> service = TeamManagementService(Mock())
+    >>> isinstance(service, TeamManagementService)
+    True
+    >>> hasattr(service, 'db')
+    True
 """
 
 # Standard
@@ -43,11 +44,11 @@ class TeamManagementService:
         db (Session): SQLAlchemy database session
 
     Examples:
-        >>> from mcpgateway.services.team_management_service import TeamManagementService
-        >>> from mcpgateway.db import SessionLocal
-        >>> db = SessionLocal()
-        >>> service = TeamManagementService(db)
-        >>> service.db is not None
+        >>> from unittest.mock import Mock
+        >>> service = TeamManagementService(Mock())
+        >>> service.__class__.__name__
+        'TeamManagementService'
+        >>> hasattr(service, 'db')
         True
     """
 
@@ -178,7 +179,11 @@ class TeamManagementService:
             EmailTeam: The team or None if not found
 
         Examples:
-            Used for team lookup and validation operations.
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> asyncio.iscoroutinefunction(service.get_team_by_id)
+            True
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
@@ -199,7 +204,11 @@ class TeamManagementService:
             EmailTeam: The team or None if not found
 
         Examples:
-            Used for URL-friendly team access and routing.
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> asyncio.iscoroutinefunction(service.get_team_by_slug)
+            True
         """
         try:
             team = self.db.query(EmailTeam).filter(EmailTeam.slug == slug, EmailTeam.is_active.is_(True)).first()
@@ -230,7 +239,11 @@ class TeamManagementService:
             ValueError: If visibility setting is invalid
 
         Examples:
-            Update team settings and configuration.
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> asyncio.iscoroutinefunction(service.update_team)
+            True
         """
         try:
             team = await self.get_team_by_id(team_id)
@@ -285,7 +298,11 @@ class TeamManagementService:
             ValueError: If attempting to delete a personal team
 
         Examples:
-            Team deletion with membership cleanup.
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> asyncio.iscoroutinefunction(service.delete_team)
+            True
         """
         try:
             team = await self.get_team_by_id(team_id)
@@ -331,7 +348,11 @@ class TeamManagementService:
             ValueError: If role is invalid or team member limit exceeded
 
         Examples:
-            Team membership management with role assignment.
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> asyncio.iscoroutinefunction(service.add_member_to_team)
+            True
         """
         try:
             # Validate role

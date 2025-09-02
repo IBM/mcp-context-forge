@@ -30,17 +30,13 @@ class RoleService:
             Database session
 
     Examples:
-        Create a role::
-
-            service = RoleService(db_session)
-            role = await service.create_role(
-                name="team_admin",
-                description="Team administrator",
-                scope="team",
-                permissions=["teams.manage_members"],
-                created_by="admin@example.com"
-            )
-            # role.name -> 'team_admin'
+        Basic construction:
+        >>> from unittest.mock import Mock
+        >>> service = RoleService(Mock())
+        >>> isinstance(service, RoleService)
+        True
+        >>> hasattr(service, 'db')
+        True
     """
 
     def __init__(self, db: Session):
@@ -190,10 +186,12 @@ class RoleService:
             Optional[Role]: The role if found, None otherwise
 
         Examples:
-                service = RoleService(db)
-                role = await service.get_role_by_id("role-123")
-                role.name if role else None
-            'admin'
+            Check coroutine nature and signature:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.get_role_by_id)
+            True
         """
         result = self.db.execute(select(Role).where(Role.id == role_id))
         return result.scalar_one_or_none()
@@ -209,10 +207,12 @@ class RoleService:
             Optional[Role]: The role if found, None otherwise
 
         Examples:
-                service = RoleService(db)
-                role = await service.get_role_by_name("admin", "global")
-                role.scope if role else None
-            'global'
+            Basic callable validation:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.get_role_by_name)
+            True
         """
         result = self.db.execute(select(Role).where(and_(Role.name == name, Role.scope == scope, Role.is_active.is_(True))))
         return result.scalar_one_or_none()
@@ -229,9 +229,11 @@ class RoleService:
             List[Role]: List of matching roles
 
         Examples:
-                service = RoleService(db)
-                team_roles = await service.list_roles(scope="team")
-                len(team_roles) >= 0
+            Callable check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.list_roles)
             True
         """
         query = select(Role)
@@ -281,12 +283,16 @@ class RoleService:
             ValueError: If update would create invalid state
 
         Examples:
-                service = RoleService(db)
-                role = await service.update_role(
-            ...     role_id="role-123",
-            ...     permissions=["tools.read", "tools.write"]
-            ... )
-                "tools.write" in role.permissions if role else False
+            Signature and coroutine checks:
+            >>> import asyncio, inspect
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.update_role)
+            True
+            >>> params = inspect.signature(RoleService.update_role).parameters
+            >>> all(p in params for p in [
+            ...     'role_id', 'name', 'description', 'permissions', 'inherits_from', 'is_active'
+            ... ])
             True
         """
         role = await self.get_role_by_id(role_id)
@@ -362,9 +368,11 @@ class RoleService:
             ValueError: If trying to delete a system role
 
         Examples:
-                service = RoleService(db)
-                success = await service.delete_role("role-123")
-                success
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.delete_role)
             True
         """
         role = await self.get_role_by_id(role_id)
@@ -404,16 +412,12 @@ class RoleService:
             ValueError: If invalid parameters or assignment already exists
 
         Examples:
-                service = RoleService(db)
-                user_role = await service.assign_role_to_user(
-            ...     user_email="user@example.com",
-            ...     role_id="role-123",
-            ...     scope="team",
-            ...     scope_id="team-456",
-            ...     granted_by="admin@example.com"
-            ... )
-                user_role.user_email
-            'user@example.com'
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.assign_role_to_user)
+            True
         """
         # Validate role exists and is active
         role = await self.get_role_by_id(role_id)
@@ -458,14 +462,11 @@ class RoleService:
             bool: True if role was revoked, False if not found
 
         Examples:
-                service = RoleService(db)
-                success = await service.revoke_role_from_user(
-            ...     user_email="user@example.com",
-            ...     role_id="role-123",
-            ...     scope="team",
-            ...     scope_id="team-456"
-            ... )
-                success
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.revoke_role_from_user)
             True
         """
         user_role = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
@@ -492,12 +493,12 @@ class RoleService:
             Optional[UserRole]: The role assignment if found
 
         Examples:
-                service = RoleService(db)
-                user_role = await service.get_user_role_assignment(
-            ...     "user@example.com", "role-123", "global", None
-            ... )
-                user_role.scope if user_role else None
-            'global'
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.get_user_role_assignment)
+            True
         """
         conditions = [UserRole.user_email == user_email, UserRole.role_id == role_id, UserRole.scope == scope]
 
@@ -521,9 +522,11 @@ class RoleService:
             List[UserRole]: User's role assignments
 
         Examples:
-                service = RoleService(db)
-                roles = await service.list_user_roles("user@example.com")
-                len(roles) >= 0
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.list_user_roles)
             True
         """
         query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
@@ -552,9 +555,11 @@ class RoleService:
             List[UserRole]: Role assignments
 
         Examples:
-                service = RoleService(db)
-                assignments = await service.list_role_assignments("role-123")
-                len(assignments) >= 0
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.list_role_assignments)
             True
         """
         query = select(UserRole).where(and_(UserRole.role_id == role_id, UserRole.is_active.is_(True)))

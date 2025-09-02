@@ -46,12 +46,12 @@ class SSOService:
     and integration with the local user system.
 
     Examples:
-        >>> # sso_service = SSOService(db_session)
-        >>> # providers = sso_service.list_enabled_providers()
-        >>> # len(providers) >= 0
-        >>> # auth_url = sso_service.get_authorization_url("github", "https://app.com/callback")
-        >>> # "github.com" in auth_url or auth_url is None  # None if provider not configured
-        >>> True
+        Basic construction and helper checks:
+        >>> from unittest.mock import Mock
+        >>> service = SSOService(Mock())
+        >>> isinstance(service, SSOService)
+        True
+        >>> callable(service.list_enabled_providers)
         True
     """
 
@@ -122,10 +122,11 @@ class SSOService:
             List of enabled SSO providers
 
         Examples:
-            # >>> service = SSOService(db_session)
-            # >>> providers = service.list_enabled_providers()
-            # >>> all(p.is_enabled for p in providers)
-            # True
+            Method existence check:
+            >>> from unittest.mock import Mock
+            >>> service = SSOService(Mock())
+            >>> callable(service.list_enabled_providers)
+            True
         """
         stmt = select(SSOProvider).where(SSOProvider.is_enabled.is_(True))
         result = self.db.execute(stmt)
@@ -245,12 +246,16 @@ class SSOService:
             Tuple of (code_verifier, code_challenge)
 
         Examples:
-            # >>> service = SSOService(db_session)
-            # >>> verifier, challenge = service.generate_pkce_challenge()
-            # >>> len(verifier) >= 43
-            # True
-            # >>> len(challenge) == 43  # Base64URL encoded SHA256 hash
-            # True
+            Generate verifier and challenge:
+            >>> from unittest.mock import Mock
+            >>> service = SSOService(Mock())
+            >>> verifier, challenge = service.generate_pkce_challenge()
+            >>> isinstance(verifier, str) and isinstance(challenge, str)
+            True
+            >>> len(verifier) >= 43
+            True
+            >>> len(challenge) >= 43
+            True
         """
         # Generate cryptographically random code verifier
         code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("utf-8").rstrip("=")
@@ -272,10 +277,11 @@ class SSOService:
             Authorization URL or None if provider not found
 
         Examples:
-            # >>> service = SSOService(db_session)
-            # >>> url = service.get_authorization_url("github", "https://app.com/callback")
-            # >>> url is None or "github.com" in url
-            # True
+            Callable check:
+            >>> from unittest.mock import Mock
+            >>> service = SSOService(Mock())
+            >>> callable(service.get_authorization_url)
+            True
         """
         provider = self.get_provider(provider_id)
         if not provider or not provider.is_enabled:
@@ -323,11 +329,12 @@ class SSOService:
             User info dict or None if authentication failed
 
         Examples:
-            # >>> service = SSOService(db_session)
-            # >>> import asyncio
-            # >>> result = asyncio.run(service.handle_oauth_callback("github", "code123", "state456"))
-            # >>> result is None or "email" in result
-            # True
+            Coroutine check:
+            >>> from unittest.mock import Mock
+            >>> service = SSOService(Mock())
+            >>> import asyncio
+            >>> asyncio.iscoroutinefunction(service.handle_oauth_callback)
+            True
         """
         # Validate auth session
         stmt = select(SSOAuthSession).where(SSOAuthSession.state == state, SSOAuthSession.provider_id == provider_id)

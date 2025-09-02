@@ -106,7 +106,9 @@ async def list_sso_providers(
         HTTPException: If SSO authentication is disabled
 
     Examples:
-        curl -X GET http://localhost:8000/auth/sso/providers
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(list_sso_providers)
+        True
     """
     if not settings.sso_enabled:
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
@@ -139,7 +141,9 @@ async def initiate_sso_login(
         HTTPException: If SSO is disabled or provider not found
 
     Examples:
-        curl -X GET "http://localhost:8000/auth/sso/login/github?redirect_uri=https://app.com/callback"
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(initiate_sso_login)
+        True
     """
     if not settings.sso_enabled:
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
@@ -188,8 +192,9 @@ async def handle_sso_callback(
         HTTPException: If SSO is disabled or authentication fails
 
     Examples:
-        # This is typically called by the SSO provider, not directly by clients
-        curl -X GET "http://localhost:8000/auth/sso/callback/github?code=abc123&state=xyz789"
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(handle_sso_callback)
+        True
     """
     if not settings.sso_enabled:
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")

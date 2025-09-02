@@ -32,15 +32,16 @@ class PermissionService:
         cache_ttl: Permission cache TTL in seconds
 
     Examples:
-        Example usage::
-
-            service = PermissionService(db_session)
-            granted = await service.check_permission(
-                user_email="user@example.com",
-                permission="tools.create",
-                resource_type="tools"
-            )
-            # granted -> True or False
+        Basic construction and coroutine checks:
+        >>> from unittest.mock import Mock
+        >>> service = PermissionService(Mock())
+        >>> isinstance(service, PermissionService)
+        True
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(service.check_permission)
+        True
+        >>> asyncio.iscoroutinefunction(service.get_user_permissions)
+        True
     """
 
     def __init__(self, db: Session, audit_enabled: bool = True):
@@ -84,20 +85,18 @@ class PermissionService:
             bool: True if permission is granted, False otherwise
 
         Examples:
-            Check global permission::
-
-                service = PermissionService(db)
-                granted = await service.check_permission("user@example.com", "users.read")
-                # granted -> True
-
-            Check team-scoped permission::
-
-                granted = await service.check_permission(
-                    "user@example.com",
-                    "teams.manage_members",
-                    team_id="team-123"
-                )
-                # granted -> False
+            Parameter validation helpers:
+            >>> permission = "users.read"
+            >>> permission.count('.') == 1
+            True
+            >>> team_id = "team-123"
+            >>> isinstance(team_id, str)
+            True
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> import asyncio
+            >>> asyncio.iscoroutinefunction(service.check_permission)
+            True
         """
         try:
             # First check if user is admin (bypass all permission checks)
@@ -151,11 +150,15 @@ class PermissionService:
             Set[str]: All effective permissions for the user
 
         Examples:
-            Get user permissions::
-
-                service = PermissionService(db)
-                permissions = await service.get_user_permissions("admin@example.com")
-                # "admin.system_config" in permissions -> True
+            Key shapes and coroutine check:
+            >>> cache_key = f"user@example.com:{'global'}"
+            >>> ':' in cache_key
+            True
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> import asyncio
+            >>> asyncio.iscoroutinefunction(service.get_user_permissions)
+            True
         """
         # Check cache first
         cache_key = f"{user_email}:{team_id or 'global'}"
@@ -191,11 +194,12 @@ class PermissionService:
             List[UserRole]: User's role assignments
 
         Examples:
-            Get user roles::
-
-                service = PermissionService(db)
-                roles = await service.get_user_roles("user@example.com", scope="team")
-                # len(roles) > 0 -> True
+            Coroutine check:
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> import asyncio
+            >>> asyncio.iscoroutinefunction(service.get_user_roles)
+            True
         """
         query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
@@ -229,16 +233,15 @@ class PermissionService:
             bool: True if user has permission on the resource
 
         Examples:
-            Check resource permission::
-
-                service = PermissionService(db)
-                granted = await service.has_permission_on_resource(
-                    "user@example.com",
-                    "tools.delete",
-                    "tools",
-                    "tool-123"
-                )
-                # granted -> True
+            Coroutine check and parameter sanity:
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> import asyncio
+            >>> asyncio.iscoroutinefunction(service.has_permission_on_resource)
+            True
+            >>> res_type, res_id = "tools", "tool-123"
+            >>> all(isinstance(x, str) for x in (res_type, res_id))
+            True
         """
         # Basic permission check
         if not await self.check_permission(user_email=user_email, permission=permission, resource_type=resource_type, resource_id=resource_id, team_id=team_id):
@@ -262,11 +265,12 @@ class PermissionService:
             bool: True if user has admin permissions
 
         Examples:
-            Check admin permission::
-
-                service = PermissionService(db)
-                is_admin = await service.check_admin_permission("admin@example.com")
-                # is_admin -> True
+            Coroutine check:
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> import asyncio
+            >>> asyncio.iscoroutinefunction(service.check_admin_permission)
+            True
         """
         # First check if user is admin (handles platform admin virtual user)
         if await self._is_user_admin(user_email):
@@ -286,10 +290,16 @@ class PermissionService:
             user_email: Email of the user
 
         Examples:
-            Clear user cache::
-
-                service = PermissionService(db)
-                service.clear_user_cache("user@example.com")
+            Cache invalidation behavior:
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> service._permission_cache = {"alice:global": {"tools.read"}, "bob:team1": {"*"}}
+            >>> service._cache_timestamps = {"alice:global": utc_now(), "bob:team1": utc_now()}
+            >>> service.clear_user_cache("alice")
+            >>> "alice:global" in service._permission_cache
+            False
+            >>> "bob:team1" in service._permission_cache
+            True
         """
         keys_to_remove = [key for key in self._permission_cache if key.startswith(f"{user_email}:")]
 
@@ -303,10 +313,16 @@ class PermissionService:
         """Clear all cached permissions.
 
         Examples:
-            Clear all cache::
-
-                service = PermissionService(db)
-                service.clear_cache()
+            Clear all cache:
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> service._permission_cache = {"x": {"p"}}
+            >>> service._cache_timestamps = {"x": utc_now()}
+            >>> service.clear_cache()
+            >>> service._permission_cache == {}
+            True
+            >>> service._cache_timestamps == {}
+            True
         """
         self._permission_cache.clear()
         self._cache_timestamps.clear()

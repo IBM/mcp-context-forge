@@ -56,7 +56,9 @@ async def get_permission_service(db: Session = Depends(get_db)) -> PermissionSer
         PermissionService: Permission checking service instance
 
     Examples:
-        Service factory for permission checking operations.
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_permission_service)
+        True
     """
     return PermissionService(db)
 
@@ -151,19 +153,9 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
         Callable: Decorated function that enforces the permission requirement
 
     Examples:
-        Protect tool creation endpoint::
-
-            @require_permission("tools.create", "tools")
-            @app.post("/tools")
-            async def create_tool(user = Depends(get_current_user_with_permissions)):
-                return {"message": "Tool created"}
-
-        Protect admin endpoint::
-
-            @require_permission("admin.user_management")
-            @app.get("/admin/users")
-            async def list_users(user = Depends(get_current_user_with_permissions)):
-                return {"users": []}
+        >>> decorator = require_permission("tools.create", "tools")
+        >>> callable(decorator)
+        True
     """
 
     def decorator(func: Callable) -> Callable:
@@ -235,12 +227,9 @@ def require_admin_permission():
         Callable: Decorated function that enforces admin permission requirement
 
     Examples:
-        Protect admin endpoint::
-
-            @require_admin_permission()
-            @app.get("/admin/system-config")
-            async def get_system_config(user = Depends(get_current_user_with_permissions)):
-                return {"config": "system settings"}
+        >>> decorator = require_admin_permission()
+        >>> callable(decorator)
+        True
     """
 
     def decorator(func: Callable) -> Callable:
@@ -305,12 +294,9 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
         Callable: Decorated function that enforces the permission requirements
 
     Examples:
-        Require any of multiple permissions::
-
-            @require_any_permission(["tools.read", "tools.execute"], "tools")
-            @app.get("/tools/{tool_id}")
-            async def get_tool(tool_id: str, user = Depends(get_current_user_with_permissions)):
-                return {"tool_id": tool_id}
+        >>> decorator = require_any_permission(["tools.read", "tools.execute"], "tools")
+        >>> callable(decorator)
+        True
     """
 
     def decorator(func: Callable) -> Callable:
@@ -385,17 +371,10 @@ class PermissionChecker:
     Useful for complex permission logic that can't be handled by decorators.
 
     Examples:
-        >>> async def complex_endpoint(user = Depends(get_current_user_with_permissions)):
-        ...     checker = PermissionChecker(user)
-        ...
-        ...     # Check multiple permissions
-        ...     if await checker.has_permission("tools.read"):
-        ...         tools = get_tools()
-        ...
-        ...     if await checker.has_admin_permission():
-        ...         admin_data = get_admin_data()
-        ...
-        ...     return {"data": "result"}
+        >>> from unittest.mock import Mock
+        >>> checker = PermissionChecker({"email": "user@example.com", "db": Mock()})
+        >>> hasattr(checker, 'has_permission') and hasattr(checker, 'has_admin_permission')
+        True
     """
 
     def __init__(self, user_context: dict):
