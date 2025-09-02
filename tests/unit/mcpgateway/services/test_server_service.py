@@ -173,7 +173,7 @@ class TestServerService:
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
-                associated_tools=["101"],
+                associated_tools=[{"id": "101", "name": "test_tool", "displayName": "Test Tool"}],
                 associated_resources=[201],
                 associated_prompts=[301],
                 metrics={
@@ -208,7 +208,7 @@ class TestServerService:
         server_service._notify_server_added.assert_called_once()
 
         assert result.name == "test_server"
-        assert "101" in result.associated_tools
+        assert [{'displayName': 'Test Tool', 'id': '101', 'name': 'test_tool'}] == result.associated_tools
         assert 201 in result.associated_resources
         assert 301 in result.associated_prompts
 
@@ -278,7 +278,7 @@ class TestServerService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,
-            associated_tools=["101"],
+            associated_tools=[{"id": "101", "name": "test_tool", "displayName": "Test Tool"}],
             associated_resources=[201],
             associated_prompts=[301],
             metrics={
@@ -312,7 +312,7 @@ class TestServerService:
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
             is_active=True,
-            associated_tools=["101"],
+            associated_tools=[{"id": "101", "name": "test_tool", "displayName": "Test Tool"}],
             associated_resources=[201],
             associated_prompts=[301],
             metrics={
@@ -409,7 +409,7 @@ class TestServerService:
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=True,
-                associated_tools=["102"],
+                associated_tools=[{"id": "102", "name": "new_tool", "displayName": "New Tool"}],
                 associated_resources=[202],
                 associated_prompts=[302],
                 metrics={
@@ -489,7 +489,7 @@ class TestServerService:
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
                 is_active=False,
-                associated_tools=["101"],
+                associated_tools=[{"id": "101", "name": "test_tool", "displayName": "Test Tool"}],
                 associated_resources=[201],
                 associated_prompts=[301],
                 metrics={

@@ -55,7 +55,7 @@ MOCK_SERVER_READ = {
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
     "is_active": True,
-    "associated_tools": ["101"],
+    "associated_tools": [{"id": "101", "name": "test_tool", "displayName": "Test Tool"}],
     "associated_resources": [201],
     "associated_prompts": [301],
     "metrics": MOCK_METRICS,
