@@ -20,14 +20,14 @@ from fastapi.responses import PlainTextResponse
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.dependencies import get_logging_service
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Get logger instance
-logging_service = LoggingService()
+logging_service = get_logging_service()
 logger = logging_service.get_logger(__name__)
 
-router = APIRouter(tags=["well-known"])
+well_known_router = APIRouter(tags=["well-known"])
 
 # Well-known URI registry with validation
 WELL_KNOWN_REGISTRY = {
@@ -75,8 +75,8 @@ def validate_security_txt(content: str) -> Optional[str]:
     return "\n".join(validated)
 
 
-@router.get("/.well-known/{filename:path}", include_in_schema=False)
-async def get_well_known_file(filename: str, response: Response, request: Request):
+@well_known_router.get("/.well-known/{filename:path}", include_in_schema=False)
+async def get_well_known_file(filename: str, _response: Response, _request: Request):
     """
     Serve well-known URI files.
 
@@ -87,8 +87,8 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
 
     Args:
         filename: The well-known filename requested
-        response: FastAPI response object for headers
-        request: FastAPI request object for logging
+        _response: FastAPI response object for headers
+        _request: FastAPI request object for logging
 
     Returns:
         Plain text content of the requested file
@@ -111,7 +111,7 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
         return PlainTextResponse(content=settings.well_known_robots_txt, media_type="text/plain; charset=utf-8", headers=headers)
 
     # Handle security.txt
-    elif filename == "security.txt":
+    if filename == "security.txt":
         if not settings.well_known_security_txt_enabled:
             raise HTTPException(status_code=404, detail="security.txt not configured")
 
@@ -122,7 +122,7 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
         return PlainTextResponse(content=content, media_type="text/plain; charset=utf-8", headers=common_headers)
 
     # Handle custom files
-    elif filename in settings.custom_well_known_files:
+    if filename in settings.custom_well_known_files:
         content = settings.custom_well_known_files[filename]
 
         # Determine content type
@@ -132,22 +132,20 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
 
         return PlainTextResponse(content=content, media_type=content_type, headers=common_headers)
 
-    # File not found
-    else:
-        # Provide helpful error for known well-known URIs
-        if filename in WELL_KNOWN_REGISTRY:
-            raise HTTPException(status_code=404, detail=f"{filename} is not configured. This is a {WELL_KNOWN_REGISTRY[filename]['description']} file.")
-        else:
-            raise HTTPException(status_code=404, detail="Not found")
+    # File not found - provide helpful error for known well-known URIs
+    if filename in WELL_KNOWN_REGISTRY:
+        raise HTTPException(status_code=404, detail=f"{filename} is not configured. This is a {WELL_KNOWN_REGISTRY[filename]['description']} file.")
+
+    raise HTTPException(status_code=404, detail="Not found")
 
 
-@router.get("/admin/well-known", response_model=dict)
-async def get_well_known_status(user: str = Depends(require_auth)):
+@well_known_router.get("/admin/well-known", response_model=dict)
+async def get_well_known_status(_user: str = Depends(require_auth)):
     """
     Get status of well-known URI configuration.
 
     Args:
-        user: Authenticated user from dependency injection.
+        _user: Authenticated user from dependency injection.
 
     Returns:
         Dict containing well-known configuration status and available files.

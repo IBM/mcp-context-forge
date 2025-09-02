@@ -11,7 +11,9 @@ error handlers, and startup logic.
 """
 
 # Standard
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
+
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -19,6 +21,9 @@ import pytest
 
 # First-Party
 from mcpgateway.main import app
+
+# API version 
+API_VERSION = os.getenv("API_VERSION", "v1")
 
 
 class TestConditionalPaths:
@@ -171,7 +176,7 @@ class TestUtilityFunctions:
         assert response.status_code == 400  # Should require session_id parameter
 
         # Test with valid session_id
-        with patch("mcpgateway.main.session_registry.broadcast") as mock_broadcast:
+        with patch("mcpgateway.registry.session_registry.broadcast") as mock_broadcast:
             response = test_client.post(
                 "/message?session_id=test-session",
                 json=message,
@@ -226,17 +231,19 @@ class TestUtilityFunctions:
         # Should have either result or error
         assert "result" in body or "error" in body
 
-    @patch("mcpgateway.main.settings")
+    @patch(f"mcpgateway.routers.{API_VERSION}.utility.settings")
     def test_websocket_error_scenarios(self, mock_settings):
         """Test WebSocket error scenarios."""
         # Configure mock settings for auth disabled
         mock_settings.mcp_client_auth_enabled = False
         mock_settings.auth_required = False
+        mock_settings.trust_proxy_auth = False
+        mock_settings.proxy_user_header = "X-Authenticated-User"
         mock_settings.federation_timeout = 30
         mock_settings.skip_ssl_verify = False
         mock_settings.port = 4444
-
-        with patch("mcpgateway.main.ResilientHttpClient") as mock_client:
+        
+        with patch("mcpgateway.utils.retry_manager.ResilientHttpClient") as mock_client:
             from types import SimpleNamespace
 
             mock_instance = mock_client.return_value
@@ -265,8 +272,8 @@ class TestUtilityFunctions:
 
     def test_sse_endpoint_edge_cases(self, test_client, auth_headers):
         """Test SSE endpoint edge cases."""
-        with patch("mcpgateway.main.SSETransport") as mock_transport_class, \
-             patch("mcpgateway.main.session_registry.add_session") as mock_add_session:
+        with patch(f"mcpgateway.routers.{API_VERSION}.servers.SSETransport") as mock_transport_class, \
+             patch("mcpgateway.registry.session_registry.add_session") as mock_add_session:
 
             mock_transport = MagicMock()
             mock_transport.session_id = "test-session"
@@ -274,7 +281,8 @@ class TestUtilityFunctions:
             # Test SSE transport creation error
             mock_transport_class.side_effect = Exception("SSE error")
 
-            response = test_client.get("/servers/test/sse", headers=auth_headers)
+            response = test_client.get("/servers/123/sse", headers=auth_headers)
+            print("SSE response status code:", response.status_code)
             # Should handle SSE creation error
             assert response.status_code in [404, 500, 503]
 
@@ -324,7 +332,7 @@ class TestUtilityFunctions:
 @pytest.fixture
 def test_client(app):
     """Test client with auth override for testing protected endpoints."""
-    from mcpgateway.main import require_auth
+    from mcpgateway.utils.verify_credentials import require_auth
     app.dependency_overrides[require_auth] = lambda: "test_user"
     client = TestClient(app)
     yield client

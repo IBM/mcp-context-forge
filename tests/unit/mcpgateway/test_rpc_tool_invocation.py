@@ -152,7 +152,7 @@ class TestRPCToolInvocation:
         """Test the initialize method."""
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_db", return_value=mock_db):
-                with patch("mcpgateway.main.session_registry.handle_initialize_logic", new_callable=AsyncMock) as mock_init:
+                with patch("mcpgateway.registry.session_registry.handle_initialize_logic", new_callable=AsyncMock) as mock_init:
                     mock_init.return_value = MagicMock(model_dump=MagicMock(return_value={"protocolVersion": "1.0", "capabilities": {}, "serverInfo": {"name": "test-server"}}))
 
                     request_body = {"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "1.0", "capabilities": {}, "clientInfo": {"name": "test-client"}}, "id": 5}

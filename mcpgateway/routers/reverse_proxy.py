@@ -31,7 +31,7 @@ from mcpgateway.utils.verify_credentials import require_auth
 logging_service = LoggingService()
 LOGGER = logging_service.get_logger("mcpgateway.routers.reverse_proxy")
 
-router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
+reverse_proxy_router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 
 
 class ReverseProxySession:
@@ -151,16 +151,16 @@ class ReverseProxyManager:
 manager = ReverseProxyManager()
 
 
-@router.websocket("/ws")
+@reverse_proxy_router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    db: Session = Depends(get_db),
+    _db: Session = Depends(get_db),
 ):
     """WebSocket endpoint for reverse proxy connections.
 
     Args:
         websocket: WebSocket connection.
-        db: Database session.
+        _db: Database session.
     """
     await websocket.accept()
 
@@ -232,15 +232,15 @@ async def websocket_endpoint(
         LOGGER.info(f"Reverse proxy session ended: {session_id}")
 
 
-@router.get("/sessions")
+@reverse_proxy_router.get("/sessions")
 async def list_sessions(
-    request: Request,
+    _request: Request,
     _: str | dict = Depends(require_auth),
 ):
     """List all active reverse proxy sessions.
 
     Args:
-        request: HTTP request.
+        _request: HTTP request.
         _: Authenticated user info (used for auth check).
 
     Returns:
@@ -249,17 +249,17 @@ async def list_sessions(
     return {"sessions": manager.list_sessions(), "total": len(manager.sessions)}
 
 
-@router.delete("/sessions/{session_id}")
+@reverse_proxy_router.delete("/sessions/{session_id}")
 async def disconnect_session(
     session_id: str,
-    request: Request,
+    _request: Request,
     _: str | dict = Depends(require_auth),
 ):
     """Disconnect a reverse proxy session.
 
     Args:
         session_id: Session ID to disconnect.
-        request: HTTP request.
+        _request: HTTP request.
         _: Authenticated user info (used for auth check).
 
     Returns:
@@ -279,11 +279,11 @@ async def disconnect_session(
     return {"status": "disconnected", "session_id": session_id}
 
 
-@router.post("/sessions/{session_id}/request")
+@reverse_proxy_router.post("/sessions/{session_id}/request")
 async def send_request_to_session(
     session_id: str,
     mcp_request: Dict[str, Any],
-    request: Request,
+    _request: Request,
     _: str | dict = Depends(require_auth),
 ):
     """Send an MCP request to a reverse proxy session.
@@ -291,7 +291,7 @@ async def send_request_to_session(
     Args:
         session_id: Session ID to send request to.
         mcp_request: MCP request to send.
-        request: HTTP request.
+        _request: HTTP request.
         _: Authenticated user info (used for auth check).
 
     Returns:
@@ -314,7 +314,7 @@ async def send_request_to_session(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to send request: {e}")
 
 
-@router.get("/sse/{session_id}")
+@reverse_proxy_router.get("/sse/{session_id}")
 async def sse_endpoint(
     session_id: str,
     request: Request,

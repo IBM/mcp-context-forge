@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Gateway, get_db
+from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -33,7 +34,7 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(gateway_id: str, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+async def initiate_oauth_flow(gateway_id: str, _request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -42,7 +43,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, db: Session = D
 
     Args:
         gateway_id: The unique identifier of the gateway to authorize.
-        request: The FastAPI request object.
+        _request: The FastAPI request object.
         db: The database session dependency.
 
     Returns:
@@ -85,8 +86,6 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, db: Session = D
 async def oauth_callback(
     code: str = Query(..., description="Authorization code from OAuth provider"),
     state: str = Query(..., description="State parameter for CSRF protection"),
-    # Remove the gateway_id parameter requirement
-    request: Request = None,
     db: Session = Depends(get_db),
 ) -> HTMLResponse:
     """Handle the OAuth callback and complete the authorization process.
@@ -98,7 +97,6 @@ async def oauth_callback(
     Args:
         code (str): The authorization code returned by the OAuth provider.
         state (str): The state parameter for CSRF protection, which encodes the gateway ID.
-        request (Request): The incoming HTTP request object.
         db (Session): The database session dependency.
 
     Returns:
@@ -354,14 +352,14 @@ async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> di
                 "redirect_uri": oauth_config.get("redirect_uri"),
                 "message": "Gateway configured for Authorization Code flow",
             }
-        else:
-            return {
-                "oauth_enabled": True,
-                "grant_type": grant_type,
-                "client_id": oauth_config.get("client_id"),
-                "scopes": oauth_config.get("scopes", []),
-                "message": f"Gateway configured for {grant_type} flow",
-            }
+
+        return {
+            "oauth_enabled": True,
+            "grant_type": grant_type,
+            "client_id": oauth_config.get("client_id"),
+            "scopes": oauth_config.get("scopes", []),
+            "message": f"Gateway configured for {grant_type} flow",
+        }
 
     except HTTPException:
         raise
@@ -385,9 +383,6 @@ async def fetch_tools_after_oauth(gateway_id: str, db: Session = Depends(get_db)
         HTTPException: If fetching tools fails
     """
     try:
-        # First-Party
-        from mcpgateway.services.gateway_service import GatewayService
-
         gateway_service = GatewayService()
         result = await gateway_service.fetch_tools_after_oauth(db, gateway_id)
         tools_count = len(result.get("tools", []))
