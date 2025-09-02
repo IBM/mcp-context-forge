@@ -26,7 +26,7 @@ import re
 from typing import Optional
 
 # Third-Party
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -817,3 +817,34 @@ class EmailAuthService:
             self.db.rollback()
             logger.error(f"Error deleting user {email}: {e}")
             raise
+
+    async def count_active_admin_users(self) -> int:
+        """Count the number of active admin users.
+
+        Returns:
+            int: Number of active admin users
+        """
+        stmt = select(func.count(EmailUser.email)).where(EmailUser.is_admin.is_(True), EmailUser.is_active.is_(True))  # pylint: disable=not-callable
+        result = self.db.execute(stmt)
+        return result.scalar() or 0
+
+    async def is_last_active_admin(self, email: str) -> bool:
+        """Check if the given user is the last active admin.
+
+        Args:
+            email: User's email address
+
+        Returns:
+            bool: True if this user is the last active admin
+        """
+        # First check if the user is an active admin
+        stmt = select(EmailUser).where(EmailUser.email == email)
+        result = self.db.execute(stmt)
+        user = result.scalar_one_or_none()
+
+        if not user or not user.is_admin or not user.is_active:
+            return False
+
+        # Count total active admins
+        admin_count = await self.count_active_admin_users()
+        return admin_count == 1

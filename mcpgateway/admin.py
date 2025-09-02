@@ -3467,10 +3467,30 @@ async def admin_list_users(
 
         # Generate HTML for users
         users_html = ""
+        current_user_email = get_user_email(user)
+
+        # Check how many active admins we have to determine if we should hide buttons for last admin
+        admin_count = await auth_service.count_active_admin_users()
+
         for user_obj in users:
             status_class = "text-green-600" if user_obj.is_active else "text-red-600"
             status_text = "Active" if user_obj.is_active else "Inactive"
             admin_badge = '<span class="px-2 py-1 text-xs font-semibold bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Admin</span>' if user_obj.is_admin else ""
+            is_current_user = user_obj.email == current_user_email
+            is_last_admin = user_obj.is_admin and user_obj.is_active and admin_count == 1
+
+            # Build activate/deactivate buttons (hide for current user and last admin)
+            activate_deactivate_button = ""
+            if not is_current_user and not is_last_admin:
+                if not user_obj.is_active:
+                    activate_deactivate_button = f'<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" hx-post="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
+                else:
+                    activate_deactivate_button = f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
+
+            # Build delete button (hide for current user and last admin)
+            delete_button = ""
+            if not is_current_user and not is_last_admin:
+                delete_button = f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
 
             users_html += f"""
             <div class="user-card border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
@@ -3480,6 +3500,8 @@ async def admin_list_users(
                             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{user_obj.full_name or "N/A"}</h3>
                             {admin_badge}
                             <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
+                            {'<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' if is_current_user else ''}
+                            {'<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>' if is_last_admin else ''}
                         </div>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
@@ -3490,28 +3512,8 @@ async def admin_list_users(
                                 hx-get="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/edit" hx-target="#user-edit-modal-content">
                             Edit
                         </button>
-                        {
-                (
-                    '<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" hx-post="'
-                    + root_path
-                    + "/admin/users/"
-                    + urllib.parse.quote(user_obj.email, safe="")
-                    + '/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
-                )
-                if not user_obj.is_active
-                else (
-                    '<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="'
-                    + root_path
-                    + "/admin/users/"
-                    + urllib.parse.quote(user_obj.email, safe="")
-                    + '/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
-                )
-            }
-                        <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{
-                root_path
-            }/admin/users/{
-                urllib.parse.quote(user_obj.email, safe="")
-            }" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
+                        {activate_deactivate_button}
+                        {delete_button}
                     </div>
                 </div>
             </div>
@@ -3711,10 +3713,12 @@ async def admin_update_user(
         is_admin = form.get("is_admin") == "on"
         password = form.get("password")
 
-        # Check if trying to demote platform admin
+        # Check if trying to remove admin privileges from last admin
         user_obj = await auth_service.get_user_by_email(decoded_email)
-        if user_obj and user_obj.email == settings.platform_admin_email and user_obj.is_admin and not is_admin:
-            return HTMLResponse(content='<div class="text-red-500">Cannot remove administrator privileges from platform admin</div>', status_code=400)
+        if user_obj and user_obj.is_admin and not is_admin:
+            # This user is currently an admin and we're trying to remove admin privileges
+            if await auth_service.is_last_active_admin(decoded_email):
+                return HTMLResponse(content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400)
 
         # Update user
         await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password if password else None)
@@ -3839,13 +3843,13 @@ async def admin_deactivate_user(
         # Get current user email from JWT
         current_user_email = get_user_email(user)
 
-        # Protect platform admin
-        if decoded_email == settings.platform_admin_email:
-            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate the platform administrator</div>', status_code=400)
-
         # Prevent self-deactivation
         if decoded_email == current_user_email:
             return HTMLResponse(content='<div class="text-red-500">Cannot deactivate your own account</div>', status_code=400)
+
+        # Prevent deactivating the last active admin user
+        if await auth_service.is_last_active_admin(decoded_email):
+            return HTMLResponse(content='<div class="text-red-500">Cannot deactivate the last remaining admin user</div>', status_code=400)
 
         user_obj = await auth_service.deactivate_user(decoded_email)
         user_html = f"""
@@ -3913,13 +3917,13 @@ async def admin_delete_user(
         # Get current user email from JWT
         current_user_email = get_user_email(user)
 
-        # Protect platform admin
-        if decoded_email == settings.platform_admin_email:
-            return HTMLResponse(content='<div class="text-red-500">Cannot delete the platform administrator</div>', status_code=400)
-
         # Prevent self-deletion
         if decoded_email == current_user_email:
             return HTMLResponse(content='<div class="text-red-500">Cannot delete your own account</div>', status_code=400)
+
+        # Prevent deleting the last active admin user
+        if await auth_service.is_last_active_admin(decoded_email):
+            return HTMLResponse(content='<div class="text-red-500">Cannot delete the last remaining admin user</div>', status_code=400)
 
         await auth_service.delete_user(decoded_email)
 

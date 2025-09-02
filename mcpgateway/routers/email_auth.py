@@ -618,17 +618,16 @@ async def delete_user(user_email: str, current_user: EmailUser = Depends(get_cur
         if user_email == current_user.email:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete your own account")
 
-        user = await auth_service.get_user_by_email(user_email)
-        if not user:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        # Prevent deleting the last active admin user
+        if await auth_service.is_last_active_admin(user_email):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot delete the last remaining admin user")
 
-        # Soft delete by deactivating
-        user.is_active = False
-        db.commit()
+        # Hard delete using auth service
+        await auth_service.delete_user(user_email)
 
-        logger.info(f"Admin {current_user.email} deactivated user: {user.email}")
+        logger.info(f"Admin {current_user.email} deleted user: {user_email}")
 
-        return SuccessResponse(success=True, message=f"User {user_email} has been deactivated")
+        return SuccessResponse(success=True, message=f"User {user_email} has been deleted")
 
     except Exception as e:
         logger.error(f"Error deleting user {user_email}: {e}")
