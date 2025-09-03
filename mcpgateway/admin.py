@@ -1598,6 +1598,7 @@ async def admin_ui(
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
         },
     )
 

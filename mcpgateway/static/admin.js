@@ -252,8 +252,8 @@ function isInactiveChecked(type) {
 }
 
 // Enhanced fetch with timeout and better error handling
-function fetchWithTimeout(url, options = {}, timeout = 30000) {
-    // Increased from 10000
+function fetchWithTimeout(url, options = {}, timeout = window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 30000) {
+    // Use configurable timeout from window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
         console.warn(`Request to ${url} timed out after ${timeout}ms`);
@@ -661,7 +661,7 @@ async function loadMetricsInternal() {
         const result = await fetchWithTimeoutAndRetry(
             `${window.ROOT_PATH}/admin/metrics`,
             {}, // options
-            45000, // Increased timeout specifically for metrics (was 20000)
+            (window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 30000) * 1.5, // Use 1.5x configurable timeout for metrics
             MAX_METRICS_RETRIES,
         );
 
@@ -711,7 +711,7 @@ async function loadMetricsInternal() {
 async function fetchWithTimeoutAndRetry(
     url,
     options = {},
-    timeout = 20000,
+    timeout = window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 20000,
     maxRetries = 3,
 ) {
     let lastError;
@@ -3666,7 +3666,7 @@ function showTab(tabName) {
                         fetchWithTimeout(
                             `${window.ROOT_PATH}/version?partial=true`,
                             {},
-                            10000,
+                            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 10000,
                         )
                             .then((resp) => {
                                 if (!resp.ok) {
@@ -4287,7 +4287,7 @@ const toolTestState = {
     activeRequests: new Map(), // toolId -> AbortController
     lastRequestTime: new Map(), // toolId -> timestamp
     debounceDelay: 1000, // Increased from 500ms
-    requestTimeout: 30000, // Increased from 10000ms
+    requestTimeout: window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 30000, // Use configurable timeout
 };
 
 let toolInputSchemaRegistry = null;
@@ -4857,7 +4857,7 @@ async function runToolTest() {
                 body: JSON.stringify(payload),
                 credentials: "include",
             },
-            20000, // Increased from 8000
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 20000, // Use configurable timeout
         );
 
         const result = await response.json();
@@ -9096,7 +9096,7 @@ async function testA2AAgent(agentId, agentName, endpointUrl) {
                 headers,
                 body: JSON.stringify(testPayload),
             },
-            10000, // 10 second timeout
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 10000, // Use configurable timeout
         );
 
         if (!response.ok) {
