@@ -1829,7 +1829,7 @@ async def admin_ui(
                             "name": str(team.name) if team.name else "",
                             "type": str(getattr(team, "type", "organization")),
                             "is_personal": bool(getattr(team, "is_personal", False)),
-                            "member_count": len(getattr(team, "members", []) or []),
+                            "member_count": team.get_member_count() if hasattr(team, "get_member_count") else 0,
                         }
                         user_teams.append(team_dict)
                     except Exception as team_error:
@@ -2124,7 +2124,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
     for team in user_teams:
         user_role = await team_service.get_user_role_in_team(current_user.email, team.id)
         relationship = "owner" if user_role == "owner" else "member"
-        all_teams.append({"team": team, "relationship": relationship, "member_count": len(team.members) if team.members else 0})
+        all_teams.append({"team": team, "relationship": relationship, "member_count": team.get_member_count()})
 
     # Add public teams user can join - check for pending requests
     for team in public_teams:
@@ -2132,7 +2132,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         user_requests = await team_service.get_user_join_requests(current_user.email, team.id)
         pending_request = next((req for req in user_requests if req.status == "pending"), None)
 
-        relationship_data = {"team": team, "relationship": "join", "member_count": len(team.members) if team.members else 0, "pending_request": pending_request}
+        relationship_data = {"team": team, "relationship": "join", "member_count": team.get_member_count(), "pending_request": pending_request}
         all_teams.append(relationship_data)
 
     # Generate HTML for unified team view
@@ -2320,7 +2320,7 @@ async def admin_list_teams(
         # Generate HTML for teams (traditional view)
         teams_html = ""
         for team in teams:
-            member_count = len(team.members) if team.members else 0
+            member_count = team.get_member_count()
             teams_html += f"""
                 <div id="team-card-{team.id}" class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
                     <div class="flex justify-between items-start">
@@ -2989,6 +2989,12 @@ async def admin_add_team_member(
                         target: '#team-edit-modal-content',
                         swap: 'innerHTML'
                     }});
+
+                    // Also refresh the teams list to update member counts
+                    const teamsList = document.getElementById('teams-list');
+                    if (teamsList) {{
+                        htmx.trigger(teamsList, 'load');
+                    }}
                 }}, 1000);
             </script>
         </div>
@@ -3058,17 +3064,24 @@ async def admin_update_team_member_role(
             <p>Role updated successfully for {user_email}</p>
             <script>
                 setTimeout(() => {{
+                    // Reload the manage members modal content to show updated roles
+                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams/{team_id}/members', {{
+                        target: '#team-edit-modal-content',
+                        swap: 'innerHTML'
+                    }});
+
                     // Close any open modals
                     const roleModal = document.getElementById('role-assignment-modal');
                     if (roleModal) {{
                         roleModal.classList.add('hidden');
                     }}
+
                     // Refresh teams list if visible
                     const teamsList = document.getElementById('teams-list');
                     if (teamsList) {{
                         htmx.trigger(teamsList, 'load');
                     }}
-                }}, 1500);
+                }}, 1000);
             </script>
         </div>
         """
@@ -3145,6 +3158,12 @@ async def admin_remove_team_member(
                         target: '#team-edit-modal-content',
                         swap: 'innerHTML'
                     }});
+
+                    // Also refresh the teams list to update member counts
+                    const teamsList = document.getElementById('teams-list');
+                    if (teamsList) {{
+                        htmx.trigger(teamsList, 'load');
+                    }}
                 }}, 1000);
             </script>
         </div>
