@@ -33,7 +33,7 @@ import uuid
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 import jwt
 from pydantic import ValidationError
@@ -7437,12 +7437,21 @@ async def admin_get_log_file(
         if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
             raise HTTPException(403, "Not a log file")
 
-        # Return file for download
-        return FileResponse(
-            path=file_path,
-            filename=file_path.name,
-            media_type="application/octet-stream",
-        )
+        # Return file for download using Response with file content
+        try:
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+
+            return Response(
+                content=file_content,
+                media_type="application/octet-stream",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{file_path.name}"',
+                },
+            )
+        except Exception as e:
+            LOGGER.error(f"Error reading file for download: {e}")
+            raise HTTPException(500, f"Error reading file for download: {e}")
 
     # List available log files
     log_files = []
@@ -7465,7 +7474,7 @@ async def admin_get_log_file(
             if settings.log_rotation_enabled:
                 pattern = f"{Path(settings.log_file).stem}.*"
                 for file in log_dir.glob(pattern):
-                    if file.is_file():
+                    if file.is_file() and file.name != main_log.name:  # Exclude main log file
                         stat = file.stat()
                         log_files.append(
                             {
@@ -7505,7 +7514,7 @@ async def admin_get_log_file(
 
 @admin_router.get("/logs/export")
 async def admin_export_logs(
-    export_format: str = "json",
+    format: str = "json",
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
@@ -7536,8 +7545,8 @@ async def admin_export_logs(
     """
     # Standard
     # Validate format
-    if export_format not in ["json", "csv"]:
-        raise HTTPException(400, f"Invalid format: {export_format}. Use 'json' or 'csv'")
+    if format not in ["json", "csv"]:
+        raise HTTPException(400, f"Invalid format: {format}. Use 'json' or 'csv'")
 
     # Get log storage from logging service
     storage = logging_service.get_storage()
@@ -7583,9 +7592,9 @@ async def admin_export_logs(
 
     # Generate filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"logs_export_{timestamp}.{export_format}"
+    filename = f"logs_export_{timestamp}.{format}"
 
-    if export_format == "json":
+    if format == "json":
         # Export as JSON
         content = json.dumps(logs, indent=2, default=str)
         return Response(
