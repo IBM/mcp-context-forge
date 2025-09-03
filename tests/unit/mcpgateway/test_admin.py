@@ -13,11 +13,11 @@ Enhanced with additional test cases for better coverage.
 # Standard
 from datetime import datetime, timezone
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 # Third-Party
 from fastapi import HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
 from pydantic_core import ValidationError as CoreValidationError
@@ -2137,7 +2137,7 @@ class TestLoggingEndpoints:
         assert len(result) == 1
         assert result[0]["message"] == "Test log message"
 
-    @patch('mcpgateway.config.settings')
+    @patch('mcpgateway.admin.settings')
     async def _test_admin_get_logs_file_enabled(self, mock_settings, mock_db):
         """Test getting log file when file logging is enabled."""
         # First-Party
@@ -2148,14 +2148,19 @@ class TestLoggingEndpoints:
         mock_settings.log_file = "test.log"
         mock_settings.log_folder = "logs"
 
-        # Mock file exists
-        with patch('pathlib.Path.exists', return_value=True):
+        # Mock file exists and reading
+        with patch('pathlib.Path.exists', return_value=True), \
+             patch('pathlib.Path.stat') as mock_stat, \
+             patch('builtins.open', mock_open(read_data=b"test log content")):
+
+            mock_stat.return_value.st_size = 16
             result = await admin_get_log_file(filename=None, user="test-user")
 
-            assert isinstance(result, FileResponse)
-            assert "test.log" in str(result.path)
+            assert isinstance(result, Response)
+            assert result.media_type == "application/octet-stream"
+            assert "test.log" in result.headers["content-disposition"]
 
-    @patch('mcpgateway.config.settings')
+    @patch('mcpgateway.admin.settings')
     async def test_admin_get_logs_file_disabled(self, mock_settings, mock_db):
         """Test getting log file when file logging is disabled."""
         # First-Party
@@ -2163,6 +2168,7 @@ class TestLoggingEndpoints:
 
         # Mock settings to disable file logging
         mock_settings.log_to_file = False
+        mock_settings.log_file = None
 
         with pytest.raises(HTTPException) as excinfo:
             await admin_get_log_file(filename=None, user="test-user")

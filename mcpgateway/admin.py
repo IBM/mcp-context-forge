@@ -32,7 +32,7 @@ import urllib.parse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 import jwt
@@ -7514,7 +7514,7 @@ async def admin_get_log_file(
 
 @admin_router.get("/logs/export")
 async def admin_export_logs(
-    format: str = "json",
+    export_format: str = Query("json", alias="format"),
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
@@ -7545,8 +7545,8 @@ async def admin_export_logs(
     """
     # Standard
     # Validate format
-    if format not in ["json", "csv"]:
-        raise HTTPException(400, f"Invalid format: {format}. Use 'json' or 'csv'")
+    if export_format not in ["json", "csv"]:
+        raise HTTPException(400, f"Invalid format: {export_format}. Use 'json' or 'csv'")
 
     # Get log storage from logging service
     storage = logging_service.get_storage()
@@ -7592,9 +7592,9 @@ async def admin_export_logs(
 
     # Generate filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"logs_export_{timestamp}.{format}"
+    filename = f"logs_export_{timestamp}.{export_format}"
 
-    if format == "json":
+    if export_format == "json":
         # Export as JSON
         content = json.dumps(logs, indent=2, default=str)
         return Response(
