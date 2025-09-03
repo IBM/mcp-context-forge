@@ -151,7 +151,6 @@ class Settings(BaseSettings):
     port: int = 4444
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
-    templates_dir: Path = Path("mcpgateway/templates")
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = files("mcpgateway") / "templates"
     static_dir: Path = files("mcpgateway") / "static"
@@ -254,6 +253,9 @@ class Settings(BaseSettings):
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
+
+    # UI Tool Test Configuration
+    mcpgateway_ui_tool_test_timeout: int = Field(default=60000, description="Tool test timeout in milliseconds for the admin UI")
 
     # A2A (Agent-to-Agent) Feature Flags
     mcpgateway_a2a_enabled: bool = True
