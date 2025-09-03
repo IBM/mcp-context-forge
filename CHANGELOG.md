@@ -14,6 +14,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 **Impact:** Complete architectural transformation enabling secure team collaboration, enterprise SSO integration, and scalable multi-tenant deployments.
 
+### 🚀 **Migration Guide**
+
+**⚠️ IMPORTANT**: This is a **major architectural change** requiring database migration.
+
+**📖 Complete migration instructions**: See **[MIGRATION-0.7.0.md](./MIGRATION-0.7.0.md)** for detailed upgrade guidance from v0.6.0 to v0.7.0.
+
+**📋 Migration includes**:
+- Automated database schema upgrade
+- Team assignment for existing servers/resources
+- Platform admin user creation
+- Configuration export/import tools
+- Comprehensive verification and troubleshooting
+
 ### Added
 
 #### **🔐 Authentication & Authorization System**

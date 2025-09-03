@@ -16,6 +16,7 @@ from typing import Sequence, Union
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = "cfc3d6aa0fb2"
@@ -434,6 +435,463 @@ def upgrade() -> None:
 
         # Ensure index on email for quick lookup (safe on both SQLite/PostgreSQL)
         safe_create_index(op.f("ix_pending_user_approvals_email"), "pending_user_approvals", ["email"])
+
+    # ===============================
+    # STEP 9: Populate Team Data for Existing Resources
+    # ===============================
+
+    # This step ensures old resources (created before multitenancy) get assigned
+    # to the platform admin's personal team, making them visible in the UI
+
+    # ===============================
+    # VALIDATION & CONFIGURATION
+    # ===============================
+
+    print("🔧 Starting team data population for existing resources...")
+
+    # Get platform admin configuration from settings (consistent with bootstrap_db.py)
+    try:
+        # First-Party
+        from mcpgateway.config import settings
+
+        platform_admin_email = settings.platform_admin_email
+        platform_admin_password = settings.platform_admin_password
+        platform_admin_full_name = settings.platform_admin_full_name
+        print(f"📧 Using platform admin email from settings: {platform_admin_email}")
+    except Exception as e:
+        print(f"⚠️  Warning: Could not load settings: {e}")
+        print("🔄 Falling back to environment variables...")
+
+        # Fallback to direct environment reading
+        # Standard
+        import os
+
+        platform_admin_email = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
+        platform_admin_password = os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")
+        platform_admin_full_name = os.getenv("PLATFORM_ADMIN_FULL_NAME", "Platform Administrator")
+        print(f"📧 Using platform admin email from environment: {platform_admin_email}")
+
+    # Validate admin email format
+    # Standard
+    import re
+
+    email_pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+    if not re.match(email_pattern, platform_admin_email):
+        print(f"❌ ERROR: Invalid admin email format: {platform_admin_email}")
+        print("⚠️  Skipping team data population - please fix PLATFORM_ADMIN_EMAIL")
+        return
+
+    # Validate password strength
+    if len(platform_admin_password) < 8:
+        print(f"⚠️  Warning: Admin password is short ({len(platform_admin_password)} chars). Consider using a stronger password.")
+
+    # Get current timestamp for database operations
+    # Standard
+    from datetime import datetime, timezone
+
+    current_timestamp = datetime.now(timezone.utc)
+    print(f"⏰ Migration timestamp: {current_timestamp.isoformat()}")
+
+    # Database connection validation
+    try:
+        # Test database connection
+        db_type = str(bind.engine.url).split(":")[0].lower()
+        print(f"🗄️  Database type detected: {db_type}")
+
+        # Test basic query
+        test_result = bind.execute(text("SELECT 1")).scalar()
+        if test_result != 1:
+            raise Exception("Database test query failed")
+        print("✅ Database connection verified")
+    except Exception as e:
+        print(f"❌ ERROR: Database connection test failed: {e}")
+        print("⚠️  Aborting team data population")
+        return
+
+    # ===============================
+    # ADMIN USER CREATION
+    # ===============================
+
+    print("👤 Checking platform admin user...")
+
+    if "email_users" not in existing_tables:
+        print("⚠️  Warning: email_users table not found - multitenancy tables may not be created yet")
+        print("🔄 This is normal for fresh installations")
+    else:
+        try:
+            # Check if admin user exists
+            result = bind.execute(
+                text("SELECT email, is_admin, is_active FROM email_users WHERE email = :email"),
+                {"email": platform_admin_email},
+            ).fetchone()
+
+            if result:
+                email, is_admin, is_active = result
+                print(f"✅ Admin user found: {email}")
+                print(f"   - Is admin: {is_admin}")
+                print(f"   - Is active: {is_active}")
+
+                if not is_admin:
+                    print("⚠️  Warning: User exists but is not admin - updating admin status")
+                    bind.execute(text("UPDATE email_users SET is_admin = :is_admin WHERE email = :email"), {"is_admin": True, "email": platform_admin_email})
+                    print("✅ Admin status updated")
+            else:
+                print(f"👤 Creating platform admin user: {platform_admin_email}")
+
+                # Hash password using the same method as the application
+                password_hash_type = "argon2id"
+                try:
+                    # First-Party
+                    from mcpgateway.services.argon2_service import Argon2PasswordService
+
+                    password_service = Argon2PasswordService()
+                    password_hash = password_service.hash_password(platform_admin_password)
+                    print("🔐 Using Argon2 password hashing")
+                except ImportError as e:
+                    # Fallback to a basic hash if the service is not available
+                    # Standard
+                    import hashlib
+
+                    password_hash = hashlib.sha256(platform_admin_password.encode()).hexdigest()
+                    password_hash_type = "sha256"
+                    print(f"⚠️  Warning: Argon2 not available ({e}), using SHA256 fallback")
+
+                # Validate password hash was created
+                if not password_hash or len(password_hash) < 20:
+                    print("❌ ERROR: Password hashing failed - aborting admin user creation")
+                    print("⚠️  Please check password service configuration")
+                    return
+
+                bind.execute(
+                    text(
+                        """
+                        INSERT INTO email_users (
+                            email, password_hash, full_name, is_admin, is_active,
+                            auth_provider, password_hash_type, failed_login_attempts,
+                            created_at, updated_at, email_verified_at
+                        ) VALUES (
+                            :email, :password_hash, :full_name, :is_admin, :is_active,
+                            :auth_provider, :password_hash_type, :failed_login_attempts,
+                            :created_at, :updated_at, :email_verified_at
+                        )
+                    """
+                    ),
+                    {
+                        "email": platform_admin_email,
+                        "password_hash": password_hash,
+                        "full_name": platform_admin_full_name,
+                        "is_admin": True,
+                        "is_active": True,
+                        "auth_provider": "local",
+                        "password_hash_type": password_hash_type,
+                        "failed_login_attempts": 0,
+                        "created_at": current_timestamp,
+                        "updated_at": current_timestamp,
+                        "email_verified_at": current_timestamp,
+                    },
+                )
+
+                # Verify user was created
+                verify_result = bind.execute(text("SELECT email FROM email_users WHERE email = :email"), {"email": platform_admin_email}).fetchone()
+
+                if verify_result:
+                    print("✅ Admin user created successfully")
+                else:
+                    print("❌ ERROR: Admin user creation failed - user not found after INSERT")
+                    return
+
+        except Exception as e:
+            print(f"❌ ERROR: Admin user creation failed: {e}")
+            print("⚠️  Continuing with migration, but admin user may not be available")
+            # Standard
+            import traceback
+
+            traceback.print_exc()
+
+    # ===============================
+    # ADMIN PERSONAL TEAM CREATION
+    # ===============================
+
+    print("🏢 Checking admin personal team...")
+    admin_team_id = None
+
+    if "email_teams" not in existing_tables:
+        print("⚠️  Warning: email_teams table not found - multitenancy tables may not be created yet")
+    else:
+        try:
+            # Check if admin has a personal team
+            result = bind.execute(
+                text(
+                    """
+                    SELECT id, name, slug, visibility, is_active FROM email_teams
+                    WHERE created_by = :email AND is_personal = true AND is_active = true
+                """
+                ),
+                {"email": platform_admin_email},
+            ).fetchone()
+
+            if result:
+                admin_team_id, team_name, team_slug, visibility, is_active = result
+                print("✅ Found existing admin personal team:")
+                print(f"   - ID: {admin_team_id}")
+                print(f"   - Name: {team_name}")
+                print(f"   - Slug: {team_slug}")
+                print(f"   - Visibility: {visibility}")
+                print(f"   - Active: {is_active}")
+            else:
+                print("👥 Creating personal team for admin user...")
+
+                # Generate a unique team ID and slug
+                # Standard
+                import uuid
+
+                admin_team_id = str(uuid.uuid4())
+
+                # Create safe slug from email
+                safe_email = platform_admin_email.replace("@", "-").replace(".", "-").lower()
+                # Remove any potentially problematic characters
+                safe_email = re.sub(r"[^a-z0-9-]", "-", safe_email)
+                team_slug = f"personal-{safe_email}"
+
+                # Ensure slug is not too long (database constraint)
+                if len(team_slug) > 255:
+                    team_slug = team_slug[:255]
+                    print(f"⚠️  Team slug truncated to fit database constraint: {len(team_slug)} chars")
+
+                team_name = f"{platform_admin_full_name}'s Team"
+                if len(team_name) > 255:
+                    team_name = team_name[:252] + "..."
+                    print("⚠️  Team name truncated to fit database constraint")
+
+                print(f"   - Team ID: {admin_team_id}")
+                print(f"   - Team name: {team_name}")
+                print(f"   - Team slug: {team_slug}")
+
+                # Check for slug conflicts (though unlikely)
+                conflict_check = bind.execute(text("SELECT id FROM email_teams WHERE slug = :slug"), {"slug": team_slug}).fetchone()
+
+                if conflict_check:
+                    # Add timestamp suffix to make unique
+                    # Standard
+                    import time
+
+                    team_slug = f"{team_slug}-{int(time.time())}"
+                    print(f"⚠️  Slug conflict detected, using: {team_slug}")
+
+                bind.execute(
+                    text(
+                        """
+                        INSERT INTO email_teams (
+                            id, name, slug, description, created_by, is_personal,
+                            visibility, is_active, created_at, updated_at
+                        ) VALUES (
+                            :id, :name, :slug, :description, :created_by, :is_personal,
+                            :visibility, :is_active, :created_at, :updated_at
+                        )
+                    """
+                    ),
+                    {
+                        "id": admin_team_id,
+                        "name": team_name,
+                        "slug": team_slug,
+                        "description": "Personal team for platform administrator",
+                        "created_by": platform_admin_email,
+                        "is_personal": True,
+                        "visibility": "private",
+                        "is_active": True,
+                        "created_at": current_timestamp,
+                        "updated_at": current_timestamp,
+                    },
+                )
+
+                # Verify team was created
+                verify_team = bind.execute(text("SELECT id, name FROM email_teams WHERE id = :team_id"), {"team_id": admin_team_id}).fetchone()
+
+                if not verify_team:
+                    print("❌ ERROR: Team creation failed - team not found after INSERT")
+                    return
+
+                print("✅ Admin personal team created successfully")
+
+                # Add admin as owner of the personal team
+                if "email_team_members" in existing_tables:
+                    print("👥 Adding admin as team owner...")
+                    member_id = str(uuid.uuid4())
+
+                    bind.execute(
+                        text(
+                            """
+                            INSERT INTO email_team_members (
+                                id, team_id, user_email, role, joined_at, is_active
+                            ) VALUES (
+                                :id, :team_id, :user_email, :role, :joined_at, :is_active
+                            )
+                        """
+                        ),
+                        {"id": member_id, "team_id": admin_team_id, "user_email": platform_admin_email, "role": "owner", "joined_at": current_timestamp, "is_active": True},
+                    )
+
+                    # Verify membership was created
+                    verify_member = bind.execute(
+                        text("SELECT role FROM email_team_members WHERE team_id = :team_id AND user_email = :email"), {"team_id": admin_team_id, "email": platform_admin_email}
+                    ).fetchone()
+
+                    if verify_member:
+                        print(f"✅ Admin added as team {verify_member[0]}")
+                    else:
+                        print("❌ ERROR: Team membership creation failed")
+                        # Continue anyway, team exists
+                else:
+                    print("⚠️  email_team_members table not found - membership not created")
+
+        except Exception as e:
+            print(f"❌ ERROR: Personal team creation failed: {e}")
+            print("⚠️  Continuing with migration, but team assignments may not work")
+            # Standard
+            import traceback
+
+            traceback.print_exc()
+
+    # ===============================
+    # RESOURCE TEAM ASSIGNMENT
+    # ===============================
+
+    if not admin_team_id:
+        print("❌ ERROR: No admin team available - cannot assign resources")
+        print("⚠️  Old resources will remain unassigned and may not be visible")
+        print("💡 Run the fix script after migration to resolve this")
+        return
+
+    print("📦 Starting resource team assignment...")
+    print(f"🎯 Target team: {admin_team_id}")
+
+    # Track migration statistics
+    migration_stats = {"tables_processed": 0, "resources_found": 0, "resources_migrated": 0, "errors": 0}
+
+    # Validate resource tables exist and have required columns
+    valid_tables = []
+    for table_name in resource_tables:
+        if table_name in existing_tables:
+            # Validate table name to prevent SQL injection (whitelist approach)
+            if table_name not in ["prompts", "resources", "servers", "tools", "gateways", "a2a_agents"]:
+                print(f"⚠️  Skipping unknown table: {table_name}")
+                continue
+
+            # Check if table has the multitenancy columns
+            try:
+                columns = [col["name"] for col in inspector.get_columns(table_name)]
+                if "team_id" in columns and "owner_email" in columns and "visibility" in columns:
+                    valid_tables.append(table_name)
+                    print(f"✅ {table_name}: multitenancy columns present")
+                else:
+                    missing_cols = []
+                    for col in ["team_id", "owner_email", "visibility"]:
+                        if col not in columns:
+                            missing_cols.append(col)
+                    print(f"⚠️  {table_name}: missing columns {missing_cols} - skipping")
+            except Exception as e:
+                print(f"❌ {table_name}: column inspection failed - {e}")
+                migration_stats["errors"] += 1
+        else:
+            print(f"⚠️  {table_name}: table not found - skipping")
+
+    if not valid_tables:
+        print("⚠️  No valid resource tables found for migration")
+        return
+
+    print(f"📋 Processing {len(valid_tables)} resource tables: {', '.join(valid_tables)}")
+
+    # Process each resource table
+    for table_name in valid_tables:
+        try:
+            print(f"\\n🔄 Processing {table_name}...")
+            migration_stats["tables_processed"] += 1
+
+            # Count total resources in table
+            total_count = bind.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
+            print(f"   📊 Total {table_name}: {total_count}")
+
+            # Find resources needing migration
+            select_sql = f"SELECT id, name FROM {table_name} WHERE team_id IS NULL OR owner_email IS NULL OR visibility IS NULL"
+            old_resources = bind.execute(text(select_sql)).fetchall()
+
+            if not old_resources:
+                print(f"   ✅ {table_name}: all resources already have team assignments")
+                continue
+
+            migration_stats["resources_found"] += len(old_resources)
+            print(f"   🔧 Found {len(old_resources)} {table_name} needing migration")
+
+            # Show sample of resources being migrated (first 3)
+            for i, (resource_id, resource_name) in enumerate(old_resources[:3]):
+                name_display = resource_name[:50] + "..." if len(resource_name) > 50 else resource_name
+                print(f"      • {name_display} (ID: {resource_id})")
+
+            if len(old_resources) > 3:
+                print(f"      • ... and {len(old_resources) - 3} more")
+
+            # Perform the migration
+            update_sql = f"""
+                UPDATE {table_name}
+                SET team_id = :team_id,
+                    owner_email = :owner_email,
+                    visibility = :visibility
+                WHERE team_id IS NULL OR owner_email IS NULL OR visibility IS NULL
+            """
+
+            result = bind.execute(text(update_sql), {"team_id": admin_team_id, "owner_email": platform_admin_email, "visibility": "public"})  # Make visible to all users initially
+
+            rows_updated = result.rowcount
+            migration_stats["resources_migrated"] += rows_updated
+
+            if rows_updated == len(old_resources):
+                print(f"   ✅ Successfully migrated {rows_updated} {table_name}")
+            else:
+                print(f"   ⚠️  Expected {len(old_resources)}, updated {rows_updated} {table_name}")
+
+            # Verify migration
+            remaining = bind.execute(text(select_sql)).fetchall()
+            if remaining:
+                print(f"   ⚠️  {len(remaining)} {table_name} still need migration")
+            else:
+                print(f"   ✅ All {table_name} successfully migrated")
+
+        except Exception as e:
+            print(f"   ❌ ERROR migrating {table_name}: {e}")
+            migration_stats["errors"] += 1
+            # Standard
+            import traceback
+
+            traceback.print_exc()
+            continue
+
+    # ===============================
+    # MIGRATION SUMMARY
+    # ===============================
+
+    print("\\n" + "=" * 60)
+    print("📊 TEAM DATA POPULATION SUMMARY")
+    print("=" * 60)
+    print(f"✅ Tables processed: {migration_stats['tables_processed']}")
+    print(f"🔍 Resources found: {migration_stats['resources_found']}")
+    print(f"📦 Resources migrated: {migration_stats['resources_migrated']}")
+    print(f"❌ Errors encountered: {migration_stats['errors']}")
+
+    if migration_stats["errors"] == 0:
+        print("🎉 Team data population completed successfully!")
+    else:
+        print("⚠️  Team data population completed with errors")
+
+    print(f"👤 All migrated resources assigned to: {platform_admin_email}")
+    print(f"🏢 Target team: {admin_team_id}")
+    print("👁️  Default visibility: public")
+    print("=" * 60)
+
+    if migration_stats["resources_migrated"] > 0:
+        print("💡 Next steps:")
+        print("   1. Run verification: python3 scripts/verify_multitenancy_0_7_0_migration.py")
+        print("   2. Check admin UI: /admin to see your resources")
+        print("   3. Adjust visibility settings as needed")
 
     # Note: Foreign key constraints are intentionally omitted for SQLite compatibility
     # The ORM models handle the relationships properly
