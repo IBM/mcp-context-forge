@@ -9,20 +9,14 @@ Basic tests for Email Authentication Service functionality.
 
 # Standard
 from unittest.mock import MagicMock, patch
-import pytest
 
 # Third-Party
+import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.services.email_auth_service import (
-    EmailAuthService,
-    EmailValidationError,
-    PasswordValidationError,
-    UserExistsError,
-    AuthenticationError
-)
 from mcpgateway.services.argon2_service import Argon2PasswordService
+from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 
 
 class TestEmailAuthBasic:

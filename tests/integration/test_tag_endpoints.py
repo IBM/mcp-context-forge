@@ -8,7 +8,7 @@ Integration tests for tag endpoints.
 """
 
 # Standard
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -17,6 +17,8 @@ import pytest
 # First-Party
 from mcpgateway.main import app, require_auth
 from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
+
+# Local
 from tests.utils.rbac_mocks import MockPermissionService
 
 
@@ -26,7 +28,10 @@ def test_client() -> TestClient:
     app.dependency_overrides[require_auth] = lambda: "integration-test-user"
 
     # Also need to override RBAC authentication
-    from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_permission_service, get_db as rbac_get_db
+    # First-Party
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.middleware.rbac import get_db as rbac_get_db
+    from mcpgateway.middleware.rbac import get_permission_service
 
     async def mock_user_with_permissions():
         """Mock user context for RBAC."""

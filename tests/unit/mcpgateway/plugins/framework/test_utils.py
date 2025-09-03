@@ -6,11 +6,12 @@ Authors: Teryl Taylor
 
 Unit tests for utilities.
 """
+# Standard
 import sys
 
+# First-Party
+from mcpgateway.plugins.framework.models import GlobalContext, PluginCondition, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.plugins.framework.utils import import_module, matches, parse_class_name, post_prompt_matches, post_tool_matches, pre_prompt_matches, pre_tool_matches
-from mcpgateway.plugins.framework.models import GlobalContext, PluginCondition, PromptPrehookPayload, PromptPosthookPayload, ToolPostInvokePayload, ToolPreInvokePayload
-
 
 
 def test_server_ids():
@@ -108,7 +109,8 @@ def test_parse_class_name():
 def test_post_prompt_matches():
     """Test the post_prompt_matches function."""
     # Import required models
-    from mcpgateway.models import PromptResult, Message, TextContent
+    # First-Party
+    from mcpgateway.models import Message, PromptResult, TextContent
 
     # Test basic matching
     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))
@@ -136,7 +138,8 @@ def test_post_prompt_matches():
 
 def test_post_prompt_matches_multiple_conditions():
     """Test post_prompt_matches with multiple conditions (OR logic)."""
-    from mcpgateway.models import PromptResult, Message, TextContent
+    # First-Party
+    from mcpgateway.models import Message, PromptResult, TextContent
 
     # Create the payload
     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))

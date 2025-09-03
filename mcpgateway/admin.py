@@ -2991,10 +2991,10 @@ async def admin_add_team_member(
                     }});
 
                     // Also refresh the teams list to update member counts
-                    const teamsList = document.getElementById('teams-list');
-                    if (teamsList) {{
-                        htmx.trigger(teamsList, 'load');
-                    }}
+                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
+                        target: '#unified-teams-list',
+                        swap: 'innerHTML'
+                    }});
                 }}, 1000);
             </script>
         </div>
@@ -3077,10 +3077,10 @@ async def admin_update_team_member_role(
                     }}
 
                     // Refresh teams list if visible
-                    const teamsList = document.getElementById('teams-list');
-                    if (teamsList) {{
-                        htmx.trigger(teamsList, 'load');
-                    }}
+                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
+                        target: '#unified-teams-list',
+                        swap: 'innerHTML'
+                    }});
                 }}, 1000);
             </script>
         </div>
@@ -3160,10 +3160,10 @@ async def admin_remove_team_member(
                     }});
 
                     // Also refresh the teams list to update member counts
-                    const teamsList = document.getElementById('teams-list');
-                    if (teamsList) {{
-                        htmx.trigger(teamsList, 'load');
-                    }}
+                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
+                        target: '#unified-teams-list',
+                        swap: 'innerHTML'
+                    }});
                 }}, 1000);
             </script>
         </div>
@@ -3173,6 +3173,89 @@ async def admin_remove_team_member(
     except Exception as e:
         LOGGER.error(f"Error removing member from team {team_id}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error removing member: {str(e)}</div>', status_code=400)
+
+
+@admin_router.post("/teams/{team_id}/leave")
+@require_permission("teams.join")  # Users who can join can also leave
+async def admin_leave_team(
+    team_id: str,
+    request: Request,  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Leave a team via admin UI.
+
+    Args:
+        team_id: ID of the team to leave
+        request: FastAPI request object
+        db: Database session
+        user: Current authenticated user context
+
+    Returns:
+        HTMLResponse: Success message or error response
+    """
+    if not settings.email_auth_enabled:
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+
+    try:
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        team_service = TeamManagementService(db)
+
+        # Check if team exists
+        team = await team_service.get_team_by_id(team_id)
+        if not team:
+            return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
+
+        # Get current user email
+        user_email = get_user_email(user)
+
+        # Check if user is a member of the team
+        user_role = await team_service.get_user_role_in_team(user_email, team_id)
+        if not user_role:
+            return HTMLResponse(content='<div class="text-red-500">You are not a member of this team</div>', status_code=400)
+
+        # Prevent leaving personal teams
+        if team.is_personal:
+            return HTMLResponse(content='<div class="text-red-500">Cannot leave your personal team</div>', status_code=400)
+
+        # Check if user is the last owner
+        if user_role == "owner":
+            members = await team_service.get_team_members(team_id)
+            owner_count = sum(1 for _, membership in members if membership.role == "owner")
+            if owner_count <= 1:
+                return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner. Transfer ownership or delete the team instead.</div>', status_code=400)
+
+        # Remove user from team
+        success = await team_service.remove_member_from_team(team_id=team_id, user_email=user_email, removed_by=user_email)
+        if not success:
+            return HTMLResponse(content='<div class="text-red-500">Failed to leave team</div>', status_code=400)
+
+        # Return success message with redirect
+        success_html = """
+        <div class="text-green-500 text-center p-4">
+            <p>Successfully left the team</p>
+            <script>
+                setTimeout(() => {{
+                    // Refresh the unified teams list
+                    htmx.ajax('GET', window.ROOT_PATH + '/admin/teams?unified=true', {{
+                        target: '#unified-teams-list',
+                        swap: 'innerHTML'
+                    }});
+
+                    // Close any open modals
+                    const modals = document.querySelectorAll('[id$="-modal"]');
+                    modals.forEach(modal => modal.classList.add('hidden'));
+                }}, 1500);
+            </script>
+        </div>
+        """
+        return HTMLResponse(content=success_html)
+
+    except Exception as e:
+        LOGGER.error(f"Error leaving team {team_id}: {e}")
+        return HTMLResponse(content=f'<div class="text-red-500">Error leaving team: {str(e)}</div>', status_code=400)
 
 
 # ============================================================================ #

@@ -13,9 +13,11 @@ to filter and modify resource content. It can:
 - Add metadata to resources
 """
 
+# Standard
 import re
 from urllib.parse import urlparse
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -242,6 +244,7 @@ class ResourceFilterPlugin(Plugin):
             # Update content if it was modified
             if filtered_text != original_text:
                 # Create new content object with filtered text
+                # First-Party
                 from mcpgateway.models import ResourceContent
                 modified_content = ResourceContent(
                     type=payload.content.type,

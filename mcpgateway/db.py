@@ -309,6 +309,7 @@ class Permissions:
     TEAMS_READ = "teams.read"
     TEAMS_UPDATE = "teams.update"
     TEAMS_DELETE = "teams.delete"
+    TEAMS_JOIN = "teams.join"
     TEAMS_MANAGE_MEMBERS = "teams.manage_members"
 
     # Tool permissions
@@ -1096,7 +1097,16 @@ class EmailTeamJoinRequest(Base):
         Returns:
             bool: True if the request has expired, False otherwise.
         """
-        return utc_now() > self.expires_at
+        now = utc_now()
+        expires_at = self.expires_at
+
+        # Handle timezone awareness mismatch
+        if now.tzinfo is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        elif now.tzinfo is None and expires_at.tzinfo is not None:
+            now = now.replace(tzinfo=timezone.utc)
+
+        return now > expires_at
 
     def is_pending(self) -> bool:
         """Check if the join request is still pending.

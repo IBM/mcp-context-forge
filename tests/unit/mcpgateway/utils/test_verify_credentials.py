@@ -27,6 +27,7 @@ from __future__ import annotations
 # Standard
 import base64
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -34,7 +35,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 from fastapi.testclient import TestClient
 import jwt
 import pytest
-from unittest.mock import Mock
 
 # First-Party
 from mcpgateway.utils import verify_credentials as vc  # module under test

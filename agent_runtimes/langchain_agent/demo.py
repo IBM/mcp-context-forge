@@ -6,12 +6,14 @@ This script demonstrates how to use the MCP LangChain Agent
 both programmatically and via HTTP API calls.
 """
 
+# Standard
 import asyncio
 import json
 import os
 import sys
-from typing import Dict, Any
+from typing import Any, Dict
 
+# Third-Party
 import httpx
 
 

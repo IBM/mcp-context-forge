@@ -7,8 +7,10 @@ Authors: Mihai Criveti
 Tests for the ResourceFilterPlugin.
 """
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework.models import (
     HookType,

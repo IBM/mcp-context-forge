@@ -10,14 +10,18 @@ pydantic models are required and exercises almost every branch inside
 *mcpgateway.wrapper*.
 """
 
+# Standard
 import asyncio
+import contextlib
+import errno
 import json
 import sys
 import types
-import errno
-import pytest
-import contextlib
 
+# Third-Party
+import pytest
+
+# First-Party
 import mcpgateway.wrapper as wrapper
 
 

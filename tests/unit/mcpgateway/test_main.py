@@ -175,11 +175,10 @@ def test_client(app):
     Also overrides RBAC dependencies to bypass permission checks for tests.
     """
     # First-Party
-    from mcpgateway.main import require_auth
-    from mcpgateway.middleware.rbac import get_current_user_with_permissions
-
     # Mock user object for RBAC system
     from mcpgateway.db import EmailUser
+    from mcpgateway.main import require_auth
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
     mock_user = EmailUser(
         email="test_user@example.com",
         full_name="Test User",
@@ -192,13 +191,21 @@ def test_client(app):
     app.dependency_overrides[require_auth] = lambda: "test_user"
 
     # Patch the auth function used by DocsAuthMiddleware
-    from unittest.mock import patch, AsyncMock
-    from mcpgateway.utils.verify_credentials import require_auth_override
+    # Standard
+    from unittest.mock import AsyncMock, patch
+
+    # Third-Party
     from fastapi import HTTPException, status
+
+    # First-Party
+    from mcpgateway.utils.verify_credentials import require_auth_override
 
     # Create a mock that validates JWT tokens properly
     async def mock_require_auth_override(auth_header=None, jwt_token=None):
+        # Third-Party
         import jwt as jwt_lib
+
+        # First-Party
         from mcpgateway.config import settings
 
         # Try to get token from auth_header or jwt_token
@@ -226,6 +233,7 @@ def test_client(app):
     patcher.start()
 
     # Override the core auth function used by RBAC system
+    # First-Party
     from mcpgateway.auth import get_current_user
     app.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
 
@@ -242,6 +250,7 @@ def test_client(app):
     app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
     # Mock the permission service to always return True for tests
+    # First-Party
     from mcpgateway.services.permission_service import PermissionService
 
     # Store original method

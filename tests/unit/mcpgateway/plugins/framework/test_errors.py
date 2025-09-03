@@ -7,7 +7,10 @@ Authors: Mihai Criveti
 Tests for errors module.
 """
 
+# Third-Party
 import pytest
+
+# First-Party
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 
 

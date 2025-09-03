@@ -8,24 +8,21 @@ Tests for import service implementation.
 """
 
 # Standard
+from datetime import datetime, timedelta, timezone
 import json
-from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.services.import_service import (
-    ImportService, ImportError, ImportValidationError, ImportConflictError,
-    ConflictStrategy, ImportStatus
-)
-from mcpgateway.services.tool_service import ToolNameConflictError
+from mcpgateway.schemas import GatewayCreate, ToolCreate
 from mcpgateway.services.gateway_service import GatewayNameConflictError
-from mcpgateway.services.server_service import ServerNameConflictError
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportError, ImportService, ImportStatus, ImportValidationError
 from mcpgateway.services.prompt_service import PromptNameConflictError
 from mcpgateway.services.resource_service import ResourceURIConflictError
-from mcpgateway.schemas import ToolCreate, GatewayCreate
+from mcpgateway.services.server_service import ServerNameConflictError
+from mcpgateway.services.tool_service import ToolNameConflictError
 
 
 @pytest.fixture
@@ -344,8 +341,9 @@ async def test_validate_import_data_invalid_entity_structure(import_service):
 @pytest.mark.asyncio
 async def test_rekey_auth_data_success(import_service):
     """Test successful authentication data re-keying."""
-    from mcpgateway.utils.services_auth import encode_auth
+    # First-Party
     from mcpgateway.config import settings
+    from mcpgateway.utils.services_auth import encode_auth
 
     # Store original secret
     original_secret = settings.auth_encryption_secret
@@ -595,6 +593,7 @@ async def test_import_service_initialization(import_service):
 @pytest.mark.asyncio
 async def test_import_with_rekey_secret(import_service, mock_db):
     """Test import with authentication re-keying."""
+    # First-Party
     from mcpgateway.utils.services_auth import encode_auth
 
     # Create tool with auth data
@@ -1910,7 +1909,10 @@ async def test_root_conflict_update_or_rename_strategy(import_service):
 @pytest.mark.asyncio
 async def test_gateway_auth_conversion_basic(import_service):
     """Test gateway conversion with basic auth."""
+    # Standard
     import base64
+
+    # First-Party
     from mcpgateway.utils.services_auth import encode_auth
 
     # Create basic auth data
@@ -1934,6 +1936,7 @@ async def test_gateway_auth_conversion_basic(import_service):
 @pytest.mark.asyncio
 async def test_gateway_auth_conversion_bearer(import_service):
     """Test gateway conversion with bearer auth."""
+    # First-Party
     from mcpgateway.utils.services_auth import encode_auth
 
     # Create bearer auth data
@@ -1956,6 +1959,7 @@ async def test_gateway_auth_conversion_bearer(import_service):
 @pytest.mark.asyncio
 async def test_gateway_auth_conversion_authheaders_single(import_service):
     """Test gateway conversion with single custom auth header."""
+    # First-Party
     from mcpgateway.utils.services_auth import encode_auth
 
     # Create auth headers data (single header)
@@ -1979,6 +1983,7 @@ async def test_gateway_auth_conversion_authheaders_single(import_service):
 @pytest.mark.asyncio
 async def test_gateway_auth_conversion_authheaders_multiple(import_service):
     """Test gateway conversion with multiple custom auth headers."""
+    # First-Party
     from mcpgateway.utils.services_auth import encode_auth
 
     # Create auth headers data (multiple headers)
@@ -2018,6 +2023,7 @@ async def test_gateway_auth_conversion_decode_error(import_service):
 @pytest.mark.asyncio
 async def test_gateway_update_auth_conversion(import_service):
     """Test gateway update conversion with auth data."""
+    # First-Party
     from mcpgateway.utils.services_auth import encode_auth
 
     # Test with bearer auth
@@ -2142,7 +2148,10 @@ async def test_resource_update_conversion(import_service):
 @pytest.mark.asyncio
 async def test_gateway_update_auth_conversion_basic_and_headers(import_service):
     """Test gateway update conversion with basic auth and custom headers."""
+    # Standard
     import base64
+
+    # First-Party
     from mcpgateway.utils.services_auth import encode_auth
 
     # Test basic auth in gateway update

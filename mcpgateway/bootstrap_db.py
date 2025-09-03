@@ -142,17 +142,23 @@ async def bootstrap_default_roles() -> None:
                     "name": "team_admin",
                     "description": "Team administrator with team management permissions",
                     "scope": "team",
-                    "permissions": ["teams.read", "teams.update", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": ["teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
                     "is_system_role": True,
                 },
                 {
                     "name": "developer",
                     "description": "Developer with tool and resource access",
                     "scope": "team",
-                    "permissions": ["tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": ["teams.join", "tools.read", "tools.execute", "resources.read", "prompts.read"],
                     "is_system_role": True,
                 },
-                {"name": "viewer", "description": "Read-only access to resources", "scope": "team", "permissions": ["tools.read", "resources.read", "prompts.read"], "is_system_role": True},
+                {
+                    "name": "viewer",
+                    "description": "Read-only access to resources",
+                    "scope": "team",
+                    "permissions": ["teams.join", "tools.read", "resources.read", "prompts.read"],
+                    "is_system_role": True,
+                },
             ]
 
             # Create default roles

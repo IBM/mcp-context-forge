@@ -64,8 +64,11 @@ setup_logging()
 # -------------------------
 def create_test_jwt_token():
     """Create a proper JWT token for testing with required audience and issuer."""
-    import jwt
+    # Standard
     import datetime
+
+    # Third-Party
+    import jwt
 
     expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
     payload = {
@@ -83,8 +86,10 @@ def create_test_jwt_token():
 TEST_JWT_TOKEN = create_test_jwt_token()
 TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
 
+# Local
 # Test user for the updated authentication system
 from tests.utils.rbac_mocks import create_mock_email_user
+
 TEST_USER = create_mock_email_user(
     email="admin@example.com",
     full_name="Test Admin",
@@ -100,10 +105,12 @@ TEST_USER = create_mock_email_user(
 async def client(app_with_temp_db):
     # First-Party
     from mcpgateway.auth import get_current_user
-    from mcpgateway.middleware.rbac import get_current_user_with_permissions
     from mcpgateway.db import get_db
-    from mcpgateway.utils.verify_credentials import require_admin_auth
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
     from mcpgateway.utils.create_jwt_token import get_jwt_token
+    from mcpgateway.utils.verify_credentials import require_admin_auth
+
+    # Local
     from tests.utils.rbac_mocks import create_mock_user_context
 
     # Get the actual test database session from the app

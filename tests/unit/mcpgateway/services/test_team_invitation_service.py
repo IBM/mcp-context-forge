@@ -10,9 +10,9 @@ Comprehensive tests for Team Invitation Service functionality.
 # Standard
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
-import pytest
 
 # Third-Party
+import pytest
 from sqlalchemy.orm import Session
 
 # First-Party

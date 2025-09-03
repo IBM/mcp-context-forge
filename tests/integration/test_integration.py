@@ -34,6 +34,8 @@ import pytest
 from mcpgateway.main import app, require_auth
 from mcpgateway.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import ResourceRead, ServerRead, ToolMetrics, ToolRead
+
+# Local
 from tests.utils.rbac_mocks import MockPermissionService
 
 
@@ -43,8 +45,11 @@ from tests.utils.rbac_mocks import MockPermissionService
 @pytest.fixture
 def test_client() -> TestClient:
     """FastAPI TestClient with proper database setup and auth dependency overridden."""
-    import tempfile
+    # Standard
     import os
+    import tempfile
+
+    # Third-Party
     from _pytest.monkeypatch import MonkeyPatch
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -57,9 +62,11 @@ def test_client() -> TestClient:
     url = f"sqlite:///{path}"
 
     # Patch settings
+    # First-Party
     from mcpgateway.config import settings
     mp.setattr(settings, "database_url", url, raising=False)
 
+    # First-Party
     import mcpgateway.db as db_mod
     import mcpgateway.main as main_mod
 
@@ -77,11 +84,15 @@ def test_client() -> TestClient:
     app.dependency_overrides[require_auth] = lambda: "integration-test-user"
 
     # Also need to override RBAC and basic authentication
-    from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_permission_service, get_db as rbac_get_db
-    from mcpgateway.auth import get_current_user
-
+    # Standard
     # Create mock user for basic auth
     from unittest.mock import MagicMock
+
+    # First-Party
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.middleware.rbac import get_db as rbac_get_db
+    from mcpgateway.middleware.rbac import get_permission_service
     mock_email_user = MagicMock()
     mock_email_user.email = "integration-test-user@example.com"
     mock_email_user.full_name = "Integration Test User"

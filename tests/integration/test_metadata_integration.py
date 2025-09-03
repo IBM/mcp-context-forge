@@ -14,22 +14,25 @@ and UI integration.
 import asyncio
 from datetime import datetime
 import json
-import uuid
 from typing import Dict
+import uuid
 
 # Third-Party
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.db import Base, get_db, Tool as DbTool
+from mcpgateway.db import Base, get_db
+from mcpgateway.db import Tool as DbTool
 from mcpgateway.main import app
 from mcpgateway.schemas import ToolCreate
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.verify_credentials import require_auth
+
+# Local
 from tests.utils.rbac_mocks import MockPermissionService
 
 
@@ -37,11 +40,14 @@ from tests.utils.rbac_mocks import MockPermissionService
 def test_app():
     """Create test app with proper database setup."""
     # Use file-based SQLite database for better compatibility
-    import tempfile
+    # Standard
     import os
+    import tempfile
+    from unittest.mock import MagicMock, patch
+
+    # Third-Party
     from _pytest.monkeypatch import MonkeyPatch
     from sqlalchemy.pool import StaticPool
-    from unittest.mock import MagicMock, patch
 
     mp = MonkeyPatch()
 
@@ -50,9 +56,11 @@ def test_app():
     url = f"sqlite:///{path}"
 
     # Patch settings
+    # First-Party
     from mcpgateway.config import settings
     mp.setattr(settings, "database_url", url, raising=False)
 
+    # First-Party
     import mcpgateway.db as db_mod
     import mcpgateway.main as main_mod
 
@@ -67,8 +75,11 @@ def test_app():
     Base.metadata.create_all(bind=engine)
 
     # Set up comprehensive authentication overrides
-    from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_permission_service, get_db as rbac_get_db
+    # First-Party
     from mcpgateway.auth import get_current_user
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.middleware.rbac import get_db as rbac_get_db
+    from mcpgateway.middleware.rbac import get_permission_service
 
     # Create mock user for basic auth
     mock_email_user = MagicMock()
@@ -250,11 +261,13 @@ class TestMetadataIntegration:
     def test_auth_disabled_metadata(self, client, test_app, auth_headers):
         """Test metadata capture when authentication is disabled."""
         # Import the RBAC dependency that tools endpoint actually uses
+        # First-Party
         from mcpgateway.middleware.rbac import get_current_user_with_permissions
 
         # Override RBAC auth to return anonymous user context
         async def mock_anonymous_user():
             # Need to import here to get the same SessionLocal the test is using
+            # First-Party
             import mcpgateway.db as db_mod
             db_session = db_mod.SessionLocal()
             return {
@@ -351,10 +364,15 @@ class TestMetadataIntegration:
     @pytest.mark.asyncio
     async def test_service_layer_metadata_handling(self, test_app):
         """Test metadata handling at the service layer."""
-        from mcpgateway.utils.metadata_capture import MetadataCapture
+        # Standard
         from types import SimpleNamespace
+
+        # Third-Party
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
+
+        # First-Party
+        from mcpgateway.utils.metadata_capture import MetadataCapture
 
         # Create test database session
         engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})

@@ -9,18 +9,17 @@ Security Cookie Testing.
 This module contains tests for secure cookie configuration and handling.
 """
 
-import pytest
-from fastapi import Response
-from fastapi.testclient import TestClient
+# Standard
 from unittest.mock import patch
 
-from mcpgateway.utils.security_cookies import (
-    set_auth_cookie,
-    clear_auth_cookie,
-    set_session_cookie,
-    clear_session_cookie
-)
+# Third-Party
+from fastapi import Response
+from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.security_cookies import clear_auth_cookie, clear_session_cookie, set_auth_cookie, set_session_cookie
 
 
 class TestSecureCookies:

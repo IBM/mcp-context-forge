@@ -9,9 +9,9 @@ Comprehensive tests for Team Management Service functionality.
 
 # Standard
 from unittest.mock import MagicMock, patch
-import pytest
 
 # Third-Party
+import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -112,10 +112,15 @@ class TestTeamManagementService:
         mock_db.flush.return_value = None
         mock_db.commit.return_value = None
 
+        # Mock the query for existing inactive teams to return None (no existing team)
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
         with patch('mcpgateway.services.team_management_service.EmailTeam') as MockTeam, \
-             patch('mcpgateway.services.team_management_service.EmailTeamMember') as MockMember:
+             patch('mcpgateway.services.team_management_service.EmailTeamMember') as MockMember, \
+             patch('mcpgateway.utils.create_slug.slugify') as mock_slugify:
 
             MockTeam.return_value = mock_team
+            mock_slugify.return_value = "test-team"
 
             result = await service.create_team(
                 name="Test Team",
@@ -143,9 +148,13 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_create_team_database_error(self, service, mock_db):
         """Test team creation with database error."""
+        # Mock the query for existing inactive teams to return None first
+        mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db.add.side_effect = Exception("Database error")
 
-        with patch('mcpgateway.services.team_management_service.EmailTeam'):
+        with patch('mcpgateway.services.team_management_service.EmailTeam'), \
+             patch('mcpgateway.utils.create_slug.slugify') as mock_slugify:
+            mock_slugify.return_value = "test-team"
             with pytest.raises(Exception):
                 await service.create_team(
                     name="Test Team",
@@ -160,12 +169,17 @@ class TestTeamManagementService:
         """Test team creation uses settings defaults."""
         mock_team = MagicMock(spec=EmailTeam)
 
+        # Mock the query for existing inactive teams to return None
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+
         with patch('mcpgateway.services.team_management_service.settings') as mock_settings, \
              patch('mcpgateway.services.team_management_service.EmailTeam') as MockTeam, \
-             patch('mcpgateway.services.team_management_service.EmailTeamMember'):
+             patch('mcpgateway.services.team_management_service.EmailTeamMember'), \
+             patch('mcpgateway.utils.create_slug.slugify') as mock_slugify:
 
             mock_settings.max_members_per_team = 50
             MockTeam.return_value = mock_team
+            mock_slugify.return_value = "test-team"
 
             await service.create_team(
                 name="Test Team",
@@ -176,6 +190,49 @@ class TestTeamManagementService:
             MockTeam.assert_called_once()
             call_kwargs = MockTeam.call_args[1]
             assert call_kwargs['max_members'] == 50
+
+    @pytest.mark.asyncio
+    async def test_create_team_reactivates_existing_inactive_team(self, service, mock_db):
+        """Test that creating a team with same name as inactive team reactivates it."""
+        # Mock existing inactive team
+        mock_existing_team = MagicMock(spec=EmailTeam)
+        mock_existing_team.id = "existing_team_id"
+        mock_existing_team.name = "Old Team Name"
+        mock_existing_team.is_active = False
+
+        # Mock existing inactive membership
+        mock_existing_membership = MagicMock(spec=EmailTeamMember)
+        mock_existing_membership.team_id = "existing_team_id"
+        mock_existing_membership.user_email = "admin@example.com"
+        mock_existing_membership.is_active = False
+
+        # Setup mock queries to return existing inactive team and membership
+        mock_queries = [mock_existing_team, mock_existing_membership]
+        mock_db.query.return_value.filter.return_value.first.side_effect = mock_queries
+
+        with patch('mcpgateway.utils.create_slug.slugify') as mock_slugify, \
+             patch('mcpgateway.services.team_management_service.utc_now') as mock_utc_now:
+
+            mock_slugify.return_value = "test-team"
+            mock_utc_now.return_value = "2023-01-01T00:00:00Z"
+
+            result = await service.create_team(
+                name="Test Team",
+                description="A reactivated team",
+                created_by="admin@example.com",
+                visibility="public"
+            )
+
+            # Verify the existing team was reactivated with new details
+            assert result == mock_existing_team
+            assert mock_existing_team.name == "Test Team"
+            assert mock_existing_team.description == "A reactivated team"
+            assert mock_existing_team.visibility == "public"
+            assert mock_existing_team.is_active is True
+
+            # Verify existing membership was reactivated
+            assert mock_existing_membership.role == "owner"
+            assert mock_existing_membership.is_active is True
 
     # =========================================================================
     # Team Retrieval Tests

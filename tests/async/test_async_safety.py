@@ -7,10 +7,13 @@ Authors: Mihai Criveti
 Comprehensive async safety tests for mcpgateway.
 """
 
-from typing import Any, List
-import pytest
+# Standard
 import asyncio
 import time
+from typing import Any, List
+
+# Third-Party
+import pytest
 
 
 class TestAsyncSafety:

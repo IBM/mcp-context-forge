@@ -73,6 +73,7 @@ class TestEndpointErrorHandling:
         """Test resource endpoints with various error conditions."""
         # Test resource not found scenario
         with patch("mcpgateway.main.resource_service.read_resource") as mock_read:
+            # First-Party
             from mcpgateway.services.resource_service import ResourceNotFoundError
             mock_read.side_effect = ResourceNotFoundError("Resource not found")
 
@@ -149,6 +150,7 @@ class TestApplicationStartupPaths:
                 service.shutdown = AsyncMock()
 
             # Test lifespan without plugin manager
+            # First-Party
             from mcpgateway.main import lifespan
             async with lifespan(app):
                 pass
@@ -237,6 +239,7 @@ class TestUtilityFunctions:
         mock_settings.port = 4444
 
         with patch("mcpgateway.main.ResilientHttpClient") as mock_client:
+            # Standard
             from types import SimpleNamespace
 
             mock_instance = mock_client.return_value
@@ -282,6 +285,7 @@ class TestUtilityFunctions:
         """Test server toggle endpoint edge cases."""
         with patch("mcpgateway.main.server_service.toggle_server_status") as mock_toggle:
             # Create a proper ServerRead model response
+            # First-Party
             from mcpgateway.schemas import ServerRead
 
             mock_server_data = {
@@ -324,11 +328,14 @@ class TestUtilityFunctions:
 @pytest.fixture
 def test_client(app):
     """Test client with auth override for testing protected endpoints."""
+    # Standard
     from unittest.mock import patch
+
+    # First-Party
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.db import EmailUser
     from mcpgateway.main import require_auth
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
-    from mcpgateway.db import EmailUser
-    from mcpgateway.auth import get_current_user
 
     # Mock user object for RBAC system
     mock_user = EmailUser(
@@ -363,6 +370,7 @@ def test_client(app):
     app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
     # Mock the permission service to always return True for tests
+    # First-Party
     from mcpgateway.services.permission_service import PermissionService
     if not hasattr(PermissionService, '_original_check_permission'):
         PermissionService._original_check_permission = PermissionService.check_permission

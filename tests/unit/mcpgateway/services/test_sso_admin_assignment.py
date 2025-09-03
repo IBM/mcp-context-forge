@@ -2,10 +2,10 @@
 """Test SSO admin privilege assignment functionality."""
 
 # Standard
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import pytest
 from sqlalchemy.orm import Session
 
 # First-Party

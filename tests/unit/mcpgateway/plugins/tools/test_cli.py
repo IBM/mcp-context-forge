@@ -10,12 +10,10 @@ Tests for the mcpplugins CLI module (plugins/tools/cli.py).
 # Future
 from __future__ import annotations
 
-# Standard
-import yaml
-
 # Third-Party
 import pytest
 from typer.testing import CliRunner
+import yaml
 
 # First-Party
 import mcpgateway.plugins.tools.cli as cli

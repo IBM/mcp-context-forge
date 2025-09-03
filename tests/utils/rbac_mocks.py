@@ -192,11 +192,12 @@ def create_rbac_dependency_overrides() -> Dict:
         Dict: Dictionary mapping dependencies to mock implementations
     """
     # Import here to avoid circular imports
+    # First-Party
+    from mcpgateway.auth import get_current_user, get_db
     from mcpgateway.middleware.rbac import (
         get_current_user_with_permissions,
         get_permission_service,
     )
-    from mcpgateway.auth import get_current_user, get_db
 
     return {
         get_current_user_with_permissions: mock_get_current_user_with_permissions,
@@ -326,6 +327,7 @@ def setup_rbac_mocks_for_app(app, custom_user_context: Optional[Dict] = None):
             print(f"DEBUG: custom_user_mock called with args={args}, kwargs={kwargs}")
             return custom_user_context
 
+        # First-Party
         from mcpgateway.middleware.rbac import get_current_user_with_permissions
         overrides[get_current_user_with_permissions] = custom_user_mock
 
@@ -340,6 +342,7 @@ def patch_rbac_decorators():
     Returns:
         Dict: Original functions for restoration later
     """
+    # First-Party
     import mcpgateway.middleware.rbac as rbac_module
 
     # Store original functions
@@ -363,6 +366,7 @@ def restore_rbac_decorators(originals: Dict):
     Args:
         originals: Dictionary of original functions returned by patch_rbac_decorators
     """
+    # First-Party
     import mcpgateway.middleware.rbac as rbac_module
 
     rbac_module.require_permission = originals['require_permission']
@@ -379,11 +383,12 @@ def teardown_rbac_mocks_for_app(app):
     Args:
         app: FastAPI application instance
     """
+    # First-Party
+    from mcpgateway.auth import get_current_user, get_db
     from mcpgateway.middleware.rbac import (
         get_current_user_with_permissions,
         get_permission_service,
     )
-    from mcpgateway.auth import get_current_user, get_db
 
     # Remove the specific RBAC-related overrides
     rbac_dependencies = [

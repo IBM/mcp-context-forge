@@ -6,16 +6,18 @@ Authors: Teryl Taylor
 
 Unit tests for plugin registry.
 """
+# Standard
+from unittest.mock import AsyncMock, patch
+
 # Third-Party
 import pytest
 
 # First-Party
+from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 from mcpgateway.plugins.framework.models import HookType, PluginConfig
-from mcpgateway.plugins.framework.base import Plugin
-from unittest.mock import AsyncMock, patch
+from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 
 
 @pytest.mark.asyncio

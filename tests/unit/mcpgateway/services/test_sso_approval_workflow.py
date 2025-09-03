@@ -2,11 +2,11 @@
 """Test SSO user approval workflow functionality."""
 
 # Standard
-import pytest
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import pytest
 from sqlalchemy.orm import Session
 
 # First-Party

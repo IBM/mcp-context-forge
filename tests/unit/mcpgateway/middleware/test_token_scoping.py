@@ -7,16 +7,16 @@ This module tests the token scoping middleware, particularly the security fixes 
 """
 
 # Standard
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException, Request, status
 import jwt
+import pytest
 
 # First-Party
-from mcpgateway.middleware.token_scoping import TokenScopingMiddleware
 from mcpgateway.db import Permissions
+from mcpgateway.middleware.token_scoping import TokenScopingMiddleware
 
 
 class TestTokenScopingMiddleware:

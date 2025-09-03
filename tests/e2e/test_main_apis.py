@@ -50,29 +50,26 @@ from typing import AsyncGenerator, Optional
 from unittest.mock import MagicMock, patch
 
 # Third-Party
-from httpx import AsyncClient
 from fastapi import Request
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from httpx import AsyncClient
 
 # --- Test Auth Header: Use a real JWT for authenticated requests ---
 import jwt
 import pytest
 import pytest_asyncio
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-# Test utilities - must import BEFORE mcpgateway modules
-from tests.utils.rbac_mocks import (
-    setup_rbac_mocks_for_app,
-    teardown_rbac_mocks_for_app,
-    patch_rbac_decorators,
-    restore_rbac_decorators
-)
-
+# First-Party
 # Completely replace RBAC decorators with no-op versions
 import mcpgateway.middleware.rbac as rbac_module
+
+# Local
+# Test utilities - must import BEFORE mcpgateway modules
+from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators, setup_rbac_mocks_for_app, teardown_rbac_mocks_for_app
+
 
 def noop_decorator(*args, **kwargs):
     """No-op decorator that just returns the function unchanged."""
@@ -90,8 +87,10 @@ rbac_module.require_permission = noop_decorator
 rbac_module.require_admin_permission = noop_decorator
 rbac_module.require_any_permission = noop_decorator
 
+# Standard
 # Patch bootstrap_db to prevent it from running during tests
 from unittest.mock import patch as mock_patch
+
 with mock_patch('mcpgateway.bootstrap_db.main'):
     # First-Party
     from mcpgateway.config import settings
@@ -161,8 +160,9 @@ async def temp_db():
 
     # Import all model classes to ensure they're registered with Base.metadata
     # This is necessary for create_all() to create all tables
-    import mcpgateway.models  # Import all model definitions
+    # First-Party
     import mcpgateway.db  # Import email auth models and other db models
+    import mcpgateway.models  # Import all model definitions
 
     # Create all tables - use create_all for test environment to avoid migration conflicts
     Base.metadata.create_all(bind=engine)
@@ -182,11 +182,13 @@ async def temp_db():
 
     # Override authentication for all tests
     # First-Party
-    from mcpgateway.utils.verify_credentials import require_auth, require_admin_auth
-    from mcpgateway.utils.create_jwt_token import get_jwt_token
     from mcpgateway.auth import get_current_user
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
-    from tests.utils.rbac_mocks import create_mock_user_context, create_mock_email_user
+    from mcpgateway.utils.create_jwt_token import get_jwt_token
+    from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth
+
+    # Local
+    from tests.utils.rbac_mocks import create_mock_email_user, create_mock_user_context
 
     def override_auth():
         return TEST_USER
@@ -223,7 +225,10 @@ async def temp_db():
         return test_user_context
 
     # Create a mock PermissionService that always grants permission
+    # First-Party
     from mcpgateway.middleware.rbac import get_permission_service
+
+    # Local
     from tests.utils.rbac_mocks import MockPermissionService
 
     def mock_get_permission_service(*args, **kwargs):
@@ -473,6 +478,7 @@ class TestProtocolAPIs:
             # TODO: Fix RBAC mocking to make this test properly pass
             if response.status_code == 422:
                 # Skip this test for now due to RBAC decorator issues
+                # Third-Party
                 import pytest
                 pytest.skip("RBAC decorator issue - endpoint expects args/kwargs parameters")
 
@@ -492,6 +498,7 @@ class TestProtocolAPIs:
             # TODO: Fix RBAC mocking to make this test properly pass
             if response.status_code == 422:
                 # Skip this test for now due to RBAC decorator issues
+                # Third-Party
                 import pytest
                 pytest.skip("RBAC decorator issue - endpoint expects args/kwargs parameters")
 
@@ -510,6 +517,7 @@ class TestServerAPIs:
         # TODO: Fix RBAC mocking to make this test properly pass
         if response.status_code == 422:
             # Skip this test for now due to RBAC decorator issues
+            # Third-Party
             import pytest
             pytest.skip("RBAC decorator issue - endpoint expects args/kwargs parameters")
 
@@ -546,6 +554,7 @@ class TestServerAPIs:
         # TODO: Fix RBAC mocking to make this test properly pass
         if response.status_code == 422:
             # Skip this test for now due to RBAC decorator issues
+            # Third-Party
             import pytest
             pytest.skip("RBAC decorator issue - endpoint expects args/kwargs parameters")
 
@@ -1785,9 +1794,9 @@ class TestAuthentication:
         """Test that protected endpoints require authentication when auth is enabled."""
         # First, let's remove ALL auth overrides to test real auth behavior
         # First-Party
-        from mcpgateway.utils.verify_credentials import require_auth
-        from mcpgateway.middleware.rbac import get_current_user_with_permissions
         from mcpgateway.auth import get_current_user
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+        from mcpgateway.utils.verify_credentials import require_auth
 
         # Remove all auth-related overrides temporarily
         original_overrides = {}

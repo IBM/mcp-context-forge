@@ -13,7 +13,7 @@ import json
 import os
 import signal
 import sys
-from unittest.mock import AsyncMock, MagicMock, Mock, patch, call
+from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -21,21 +21,21 @@ import pytest
 # First-Party
 from mcpgateway.reverse_proxy import (
     ConnectionState,
-    MessageType,
-    ReverseProxyClient,
-    StdioProcess,
-    parse_args,
-    main,
-    run,
-    ENV_GATEWAY,
-    ENV_TOKEN,
-    ENV_RECONNECT_DELAY,
-    ENV_MAX_RETRIES,
-    ENV_LOG_LEVEL,
-    DEFAULT_RECONNECT_DELAY,
-    DEFAULT_MAX_RETRIES,
     DEFAULT_KEEPALIVE_INTERVAL,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_RECONNECT_DELAY,
     DEFAULT_REQUEST_TIMEOUT,
+    ENV_GATEWAY,
+    ENV_LOG_LEVEL,
+    ENV_MAX_RETRIES,
+    ENV_RECONNECT_DELAY,
+    ENV_TOKEN,
+    main,
+    MessageType,
+    parse_args,
+    ReverseProxyClient,
+    run,
+    StdioProcess,
 )
 
 
@@ -515,6 +515,7 @@ class TestReverseProxyClient:
 
         # Import the actual exception class
         try:
+            # Third-Party
             from websockets.exceptions import ConnectionClosed
             mock_connection.__aiter__.side_effect = ConnectionClosed(None, None)
         except ImportError:
@@ -985,5 +986,6 @@ class TestConstants:
 # Helper function for mocking file operations
 def mock_open(read_data=""):
     """Create a mock for open() that returns read_data."""
+    # Standard
     from unittest.mock import mock_open as _mock_open
     return _mock_open(read_data=read_data)

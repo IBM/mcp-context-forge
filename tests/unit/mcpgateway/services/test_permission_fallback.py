@@ -2,10 +2,10 @@
 """Test permission fallback functionality for regular users."""
 
 # Standard
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -103,6 +103,7 @@ class TestPermissionFallback:
     @pytest.mark.asyncio
     async def test_platform_admin_virtual_user_recognition(self, permission_service):
         """Test that platform admin virtual user is recognized by RBAC checks."""
+        # First-Party
         from mcpgateway.config import settings
 
         platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
@@ -120,6 +121,7 @@ class TestPermissionFallback:
     @pytest.mark.asyncio
     async def test_platform_admin_check_admin_permission(self, permission_service):
         """Test that platform admin passes check_admin_permission even when virtual."""
+        # First-Party
         from mcpgateway.config import settings
 
         platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")

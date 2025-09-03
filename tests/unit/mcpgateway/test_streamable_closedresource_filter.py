@@ -5,10 +5,13 @@ These tests validate that normal client disconnects (anyio.ClosedResourceError)
 do not spam ERROR logs via the upstream MCP logger.
 """
 
+# Standard
 import logging
 
+# Third-Party
 import anyio
 
+# First-Party
 from mcpgateway.services.logging_service import LoggingService
 
 

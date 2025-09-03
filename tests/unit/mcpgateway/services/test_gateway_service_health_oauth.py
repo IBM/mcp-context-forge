@@ -44,6 +44,7 @@ def _make_execute_result(*, scalar=None, scalars_list=None):
 @pytest.fixture(autouse=True)
 def _bypass_validation(monkeypatch):
     """Bypass Pydantic validation for mock objects."""
+    # First-Party
     from mcpgateway.schemas import GatewayRead
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))
 

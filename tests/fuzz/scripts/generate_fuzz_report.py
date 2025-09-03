@@ -7,12 +7,13 @@ Authors: Mihai Criveti
 
 Generate comprehensive fuzzing report for MCP Gateway.
 """
+# Standard
+from datetime import datetime
 import json
 import os
-import sys
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any, Optional
+import sys
+from typing import Any, Dict, List, Optional
 
 
 def collect_hypothesis_stats() -> Dict[str, Any]:

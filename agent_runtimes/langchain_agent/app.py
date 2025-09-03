@@ -1,41 +1,28 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-import json
-import time
-import uuid
-from typing import List, Dict, Any, Optional, AsyncGenerator
-from datetime import datetime
+# Standard
 import asyncio
+from datetime import datetime
+import json
 import logging
+import time
+from typing import Any, AsyncGenerator, Dict, List, Optional
+import uuid
+
+# Third-Party
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 try:
-    from .models import (
-        ChatCompletionRequest,
-        ChatCompletionResponse,
-        ChatCompletionChoice,
-        ChatMessage,
-        Usage,
-        HealthResponse,
-        ReadyResponse,
-        ToolListResponse
-    )
+    # Local
     from .agent_langchain import LangchainMCPAgent
     from .config import get_settings
+    from .models import ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, HealthResponse, ReadyResponse, ToolListResponse, Usage
 except ImportError:
-    from models import (
-        ChatCompletionRequest,
-        ChatCompletionResponse,
-        ChatCompletionChoice,
-        ChatMessage,
-        Usage,
-        HealthResponse,
-        ReadyResponse,
-        ToolListResponse
-    )
+    # Third-Party
     from agent_langchain import LangchainMCPAgent
     from config import get_settings
+    from models import ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, HealthResponse, ReadyResponse, ToolListResponse, Usage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -307,5 +294,6 @@ async def agent_to_agent(request: Dict[str, Any]):
         }
 
 if __name__ == "__main__":
+    # Third-Party
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
