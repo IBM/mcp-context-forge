@@ -1,0 +1,209 @@
+# MCP Gateway v0.7.0 - Edge Cases and Error Conditions
+# Edge case testing and error handling validation
+# Focus: Boundary conditions, error scenarios, and recovery
+
+worksheet_name: "Edge Cases"
+description: "Edge case testing including error conditions, boundary values, and recovery scenarios"
+priority: "MEDIUM"
+estimated_time: "60-90 minutes"
+
+headers:
+  - "Test ID"
+  - "Edge Case Category"
+  - "Scenario"
+  - "Test Steps"
+  - "Expected Behavior"
+  - "Actual Behavior"
+  - "Recovery Method"
+  - "Status"
+  - "Tester"
+  - "Date"
+  - "Severity"
+  - "Comments"
+
+tests:
+  - test_id: "EDGE-001"
+    category: "Empty Database"
+    scenario: "Fresh installation on empty database"
+    steps: |
+      1. Delete existing database file
+      2. Run migration: python3 -m mcpgateway.bootstrap_db
+      3. Check system initialization
+      4. Verify admin user and team creation
+    expected: "System initializes correctly from completely empty state"
+    recovery: "Bootstrap migration process"
+    severity: "Low"
+
+  - test_id: "EDGE-002"
+    category: "Network Interruption"
+    scenario: "Network connection lost during operation"
+    steps: |
+      1. Start long-running operation (large export)
+      2. Disconnect network interface
+      3. Wait 30 seconds
+      4. Reconnect network
+      5. Check operation recovery
+    expected: "Graceful error handling, operation retry or proper failure"
+    recovery: "Retry mechanism or user notification"
+    severity: "Medium"
+
+  - test_id: "EDGE-003"
+    category: "Orphaned Resources"
+    scenario: "Resources without team assignments"
+    steps: |
+      1. Manually set team_id to NULL: UPDATE tools SET team_id = NULL WHERE id = 'test-id';
+      2. Navigate to admin UI tools section
+      3. Check tool visibility
+      4. Run fix script: python3 scripts/fix_multitenancy_0_7_0_resources.py
+      5. Verify resource assignment
+    expected: "Fix script successfully assigns orphaned resources to admin team"
+    recovery: "Fix script execution"
+    severity: "High"
+
+  - test_id: "EDGE-004"
+    category: "Large Payloads"
+    scenario: "Oversized request payloads"
+    steps: |
+      1. Create very large JSON payload (>10MB)
+      2. Send to tool creation endpoint
+      3. Check request size limits enforced
+      4. Verify proper error handling
+    expected: "Request size limits enforced gracefully"
+    recovery: "Error message with size limit info"
+    severity: "Medium"
+
+  - test_id: "EDGE-005"
+    category: "Malformed Data"
+    scenario: "Invalid JSON and parameter formats"
+    steps: |
+      1. Send malformed JSON to API endpoints
+      2. Send invalid parameter types
+      3. Test with missing required fields
+      4. Check validation error responses
+    expected: "Input validation rejects malformed data with helpful errors"
+    recovery: "Validation error messages"
+    severity: "Medium"
+
+  - test_id: "EDGE-006"
+    category: "Resource Conflicts"
+    scenario: "Name conflicts and duplicate identifiers"
+    steps: |
+      1. Create team with existing name
+      2. Try creating tool with existing name in same team
+      3. Test unique constraint enforcement
+      4. Check conflict resolution
+    expected: "Unique constraints enforced, conflicts handled gracefully"
+    recovery: "Conflict error messages"
+    severity: "Medium"
+
+  - test_id: "EDGE-007"
+    category: "Session Management"
+    scenario: "Session expiry and timeout handling"
+    steps: |
+      1. Login and get JWT token
+      2. Wait for token expiry (or manually expire)
+      3. Try using expired token
+      4. Test session refresh workflow
+    expected: "Expired tokens rejected, refresh workflow available"
+    recovery: "Token refresh or re-authentication"
+    severity: "Medium"
+
+  - test_id: "EDGE-008"
+    category: "Database Connection"
+    scenario: "Database becomes unavailable"
+    steps: |
+      1. Start gateway normally
+      2. Stop database service
+      3. Try API operations
+      4. Restart database
+      5. Check connection recovery
+    expected: "Graceful error handling, automatic reconnection"
+    recovery: "Connection pool recovery"
+    severity: "High"
+
+  - test_id: "EDGE-009"
+    category: "Disk Space"
+    scenario: "Insufficient disk space"
+    steps: |
+      1. Fill disk space (test environment only)
+      2. Try creating resources
+      3. Try database operations
+      4. Check error handling
+    expected: "Disk space errors handled gracefully"
+    recovery: "Clear error messages"
+    severity: "Medium"
+
+  - test_id: "EDGE-010"
+    category: "Unicode and Special Characters"
+    scenario: "International characters and special symbols"
+    steps: |
+      1. Create team with Unicode name: 测试团队
+      2. Create tool with emoji: 🔧 Test Tool
+      3. Test special characters in descriptions
+      4. Verify proper encoding/decoding
+    expected: "Unicode and special characters handled correctly"
+    recovery: "UTF-8 encoding support"
+    severity: "Low"
+
+  - test_id: "EDGE-011"
+    category: "Rapid State Changes"
+    scenario: "Quick successive operations on same resource"
+    steps: |
+      1. Create tool
+      2. Rapidly update tool multiple times
+      3. Delete and recreate quickly
+      4. Check state consistency
+    expected: "State consistency maintained, no race conditions"
+    recovery: "Locking mechanisms"
+    severity: "Medium"
+
+  - test_id: "EDGE-012"
+    category: "Migration Interruption"
+    scenario: "Migration process fails or is interrupted"
+    steps: |
+      1. Start migration
+      2. Interrupt process (Ctrl+C)
+      3. Check database state
+      4. Try re-running migration
+      5. Verify recovery
+    expected: "Migration can be safely restarted or rolled back"
+    recovery: "Migration rollback or resume"
+    severity: "Critical"
+
+  - test_id: "EDGE-013"
+    category: "Team Limits"
+    scenario: "Exceeding team member or resource limits"
+    steps: |
+      1. Set low team limits in configuration
+      2. Try exceeding member limits
+      3. Try exceeding resource limits
+      4. Check limit enforcement
+    expected: "Limits enforced with clear error messages"
+    recovery: "Quota management interface"
+    severity: "Medium"
+
+  - test_id: "EDGE-014"
+    category: "Cross-Database Migration"
+    scenario: "Migrating data between SQLite and PostgreSQL"
+    steps: |
+      1. Setup data in SQLite
+      2. Export configuration
+      3. Switch to PostgreSQL
+      4. Run migration
+      5. Import configuration
+      6. Verify data integrity
+    expected: "Data migrates correctly between database types"
+    recovery: "Export/import workflow"
+    severity: "High"
+
+  - test_id: "EDGE-015"
+    category: "Clock Skew"
+    scenario: "Time synchronization issues"
+    steps: |
+      1. Change system clock
+      2. Test token expiration
+      3. Test audit logging timestamps
+      4. Check time-based operations
+    expected: "Time-based operations handle clock differences gracefully"
+    recovery: "UTC normalization"
+    severity: "Low"

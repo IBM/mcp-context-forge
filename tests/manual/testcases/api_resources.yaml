@@ -1,0 +1,132 @@
+# MCP Gateway v0.7.0 - Resources API Tests
+# Resource management and content testing
+# Focus: Resource CRUD, content handling, and team access control
+
+worksheet_name: "API Resources"
+description: "Complete resource management API testing including upload, download, and team permissions"
+priority: "HIGH"
+estimated_time: "30-60 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Actual Status"
+  - "Actual Response"
+  - "Status"
+  - "Tester"
+  - "Comments"
+
+tests:
+  - test_id: "RES-001"
+    endpoint: "/resources"
+    method: "GET"
+    description: "List available resources with team filtering"
+    curl_command: 'curl http://localhost:4444/resources -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of resources accessible to user based on team membership"
+
+  - test_id: "RES-002"
+    endpoint: "/resources"
+    method: "POST"
+    description: "Create new resource"
+    curl_command: 'curl -X POST http://localhost:4444/resources -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"test-api-resource","description":"Resource created via API","uri":"file://test-data.txt","mime_type":"text/plain","content":"Sample test content"}'
+    expected_status: 201
+    expected_response: "Resource created successfully with automatic team assignment"
+
+  - test_id: "RES-003"
+    endpoint: "/resources/{id}"
+    method: "GET"
+    description: "Get resource details and metadata"
+    curl_command: 'curl http://localhost:4444/resources/{RESOURCE_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Resource details with metadata, team, and access info"
+
+  - test_id: "RES-004"
+    endpoint: "/resources/{id}"
+    method: "PUT"
+    description: "Update resource metadata"
+    curl_command: 'curl -X PUT http://localhost:4444/resources/{RESOURCE_ID} -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"updated-resource-name","description":"Updated via API testing"}'
+    expected_status: 200
+    expected_response: "Resource metadata updated successfully"
+
+  - test_id: "RES-005"
+    endpoint: "/resources/{id}"
+    method: "DELETE"
+    description: "Delete resource"
+    curl_command: 'curl -X DELETE http://localhost:4444/resources/{RESOURCE_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 204
+    expected_response: "Resource deleted successfully"
+
+  - test_id: "RES-006"
+    endpoint: "/resources/{id}/content"
+    method: "GET"
+    description: "Get resource content data"
+    curl_command: 'curl http://localhost:4444/resources/{RESOURCE_ID}/content -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Resource content data in appropriate format"
+
+  - test_id: "RES-007"
+    endpoint: "/resources/{id}/content"
+    method: "PUT"
+    description: "Update resource content"
+    curl_command: 'curl -X PUT http://localhost:4444/resources/{RESOURCE_ID}/content -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"content":"Updated resource content data"}'
+    expected_status: 200
+    expected_response: "Resource content updated successfully"
+
+  - test_id: "RES-008"
+    endpoint: "/resources/templates"
+    method: "GET"
+    description: "List available resource templates"
+    curl_command: 'curl http://localhost:4444/resources/templates -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of available resource templates"
+
+  - test_id: "RES-009"
+    endpoint: "/resources/search"
+    method: "GET"
+    description: "Search resources by name or content"
+    curl_command: 'curl "http://localhost:4444/resources/search?q=test&type=text" -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Search results with team-based filtering"
+
+  - test_id: "RES-010"
+    endpoint: "/resources/{id}/subscribe"
+    method: "POST"
+    description: "Subscribe to resource updates"
+    curl_command: 'curl -X POST http://localhost:4444/resources/{RESOURCE_ID}/subscribe -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Subscription created for resource updates"
+
+  - test_id: "RES-011"
+    endpoint: "/resources/import"
+    method: "POST"
+    description: "Bulk import resources"
+    curl_command: 'curl -X POST http://localhost:4444/resources/import -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"resources":[{"name":"bulk-resource","uri":"file://bulk-data.txt","mime_type":"text/plain"}]}'
+    expected_status: 201
+    expected_response: "Resources imported successfully"
+
+  - test_id: "RES-012"
+    endpoint: "/resources/export"
+    method: "GET"
+    description: "Export resources as JSON"
+    curl_command: 'curl http://localhost:4444/resources/export -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Resources exported with team context"

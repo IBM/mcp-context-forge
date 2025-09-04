@@ -1,172 +1,188 @@
-# 🧪 MCP Gateway v0.7.0 - Manual Testing Suite
+# 🧪 MCP Gateway v0.7.0 - YAML-Based Manual Testing Suite
 
-**Complete manual testing for post-migration validation**
+**Maintainable, scalable manual testing with YAML test definitions**
 
-## 📁 Directory Contents
+## 📁 Clean Directory Structure
 
-### 🧪 **Test Files** (Run Individually)
-| File | Purpose | Priority | Time |
-|------|---------|----------|------|
-| `setup_instructions.py` | Environment setup | CRITICAL | 30-60 min |
-| `migration_tests.py` | **Migration validation (MAIN TEST)** | CRITICAL | 60-90 min |
-| `admin_ui_tests.py` | Admin UI testing | CRITICAL | 60-120 min |
-| `api_authentication_tests.py` | Authentication API | HIGH | 30-60 min |
-| `api_teams_tests.py` | Teams API | HIGH | 30-60 min |
-| `api_servers_tests.py` | Servers API | HIGH | 45-90 min |
-| `database_tests.py` | Database compatibility | HIGH | 60-120 min |
-| `security_tests.py` | Security testing | MEDIUM | 90-180 min |
+### 🧪 **YAML Test Definitions** (`testcases/` directory)
+| File | Purpose | Tests | Priority |
+|------|---------|-------|----------|
+| `testcases/setup_instructions.yaml` | Environment setup | 17 | CRITICAL |
+| `testcases/migration_tests.yaml` | **Migration validation (MAIN TEST)** | 8 | CRITICAL |
+| `testcases/admin_ui_tests.yaml` | Admin UI testing | 10 | CRITICAL |
+| `testcases/api_authentication.yaml` | Authentication API | 10 | HIGH |
+| `testcases/api_teams.yaml` | Teams API | 10 | HIGH |
+| `testcases/api_servers.yaml` | Servers API | 10 | HIGH |
+| `testcases/security_tests.yaml` | Security testing | 10 | HIGH |
 
-### 🎯 **Coordination Files**
+### 🎯 **Generation & Output**
 | File | Purpose |
 |------|---------|
-| `run_all_tests.py` | Master test coordinator |
-| `generate_test_plan.sh` | **Excel generator entrypoint** |
-| `generate_test_plan_xlsx.py` | Excel generator (Python) |
-
-### 📊 **Output Files**
-| File | Purpose |
-|------|---------|
-| `test-plan.xlsx` | **Complete Excel test plan (8 worksheets, 54 tests)** |
+| `generate_test_plan.py` | **Single generator script** |
+| `test-plan.xlsx` | Generated Excel file |
 | `README.md` | This documentation |
 
 ## 🚀 **Quick Start**
 
 ### **Generate Excel Test Plan**
 ```bash
-# Generate clean Excel file from Python test files
-./generate_test_plan.sh
+# Generate Excel file from YAML definitions
+python3 generate_test_plan.py
 
-# Result: test-plan.xlsx (ready for 10 testers)
+# Result: test-plan.xlsx (clean, formatted, no corruption)
 ```
 
-### **For Testers - Option 1: Excel File**
+### **Use Excel File**
 ```bash
-# Open the generated Excel file
-open test-plan.xlsx  # or double-click in file manager
+# Open generated Excel file
+open test-plan.xlsx
 
-# Follow worksheets in order:
-# 1. Setup Instructions
-# 2. Migration Tests (MAIN TEST - server visibility)  
-# 3. Admin UI Tests
-# 4. API Authentication
-# 5. API Teams
-# 6. API Servers
-# 7. Database Tests
-# 8. Security Tests
+# Features:
+# - 7+ worksheets with complete test data
+# - Excel table formatting for filtering/sorting
+# - Priority color coding (Critical/High/Medium)
+# - Tester tracking columns
+# - Complete step-by-step instructions
 ```
 
-### **For Testers - Option 2: Python Files**
+### **Update Tests**
 ```bash
-# Run individual test areas
-python3 setup_instructions.py        # Environment setup
-python3 migration_tests.py           # Critical migration tests
-python3 admin_ui_tests.py            # UI validation (server visibility)
+# Edit YAML files to modify tests
+vi testcases/migration_tests.yaml         # Edit migration tests
+vi testcases/api_authentication.yaml      # Edit auth API tests
 
-# Get help for any test file
-python3 <test_file>.py --help
+# Regenerate Excel
+python3 generate_test_plan.py             # Fresh Excel with updates
 ```
 
-### **For Testers - Option 3: Coordinated**
-```bash
-# Interactive test coordination
-python3 run_all_tests.py
+## 🎯 **Key Advantages**
 
-# Quick critical tests only
-python3 run_all_tests.py --critical-only
+### ✅ **Maintainable**
+- **YAML files**: Easy to read and edit
+- **One file per worksheet**: Clean separation of concerns
+- **Version controllable**: Track changes in individual files
+- **No Excel editing**: Update YAML, regenerate Excel
+
+### ✅ **Scalable**
+- **Add new worksheets**: Create new YAML file
+- **Modify tests**: Edit YAML and regenerate
+- **Bulk updates**: Script-friendly YAML format
+- **Template driven**: Consistent test structure
+
+### ✅ **Tester Friendly**
+- **Clean Excel output**: No corruption issues
+- **Table filtering**: Excel tables for easy sorting
+- **Complete instructions**: Step-by-step guidance
+- **Progress tracking**: Status, tester, date columns
+
+## 📋 **YAML File Structure**
+
+Each YAML file follows this structure:
+
+```yaml
+worksheet_name: "Test Area Name"
+description: "What this worksheet tests"
+priority: "CRITICAL|HIGH|MEDIUM|LOW"
+estimated_time: "Time estimate"
+
+headers:
+  - "Test ID"
+  - "Description"
+  - "Steps"
+  - "Expected"
+  - "Status"
+  - "Tester"
+  # ... more columns
+
+tests:
+  - test_id: "TEST-001"
+    description: "Test description"
+    steps: |
+      1. Step one
+      2. Step two
+    expected: "Expected result"
+    priority: "CRITICAL"
+    # ... more fields
 ```
 
 ## 🎯 **Main Migration Test**
 
-**THE KEY TEST**: Verify old servers are visible after migration
+**Focus**: Verify old servers are visible after migration
 
-**Primary Test Files**:
-- `migration_tests.py` → **MIG-003**: "OLD SERVERS VISIBLE"
-- `admin_ui_tests.py` → **UI-003**: "Server List View"  
-- `test-plan.xlsx` → **Migration Tests** worksheet
+**Key Files**:
+- `migration_tests.yaml` → **MIG-003**: "OLD SERVERS VISIBLE"
+- `admin_ui_tests.yaml` → **UI-003**: "Server List View"
 
-**What to validate**:
-1. ✅ Admin UI shows all servers (including pre-migration)
-2. ✅ Server details are accessible
-3. ✅ No empty server list
+**Critical Test**: Ensure all pre-migration servers appear in admin UI
 
-## 📋 **Test Execution Guide**
+## 👥 **For 10 Testers**
 
-### **For New Testers**
-1. **Setup**: `python3 setup_instructions.py` (interactive guide)
-2. **Migration**: `python3 migration_tests.py` (critical validation)
-3. **UI**: `python3 admin_ui_tests.py` (main server visibility test)
-4. **APIs**: Run remaining test files as time permits
-
-### **For Experienced Testers** 
-1. **Excel**: Open `test-plan.xlsx` and work through worksheets
-2. **Filter**: Use Excel table filtering for specific test areas
-3. **Critical**: Focus on CRITICAL priority tests first
-
-### **For Test Coordinators**
-1. **Generate**: `./generate_test_plan.sh` (create fresh Excel)
-2. **Assign**: Distribute test files to 10 testers
-3. **Track**: Collect JSON result files from testers
-4. **Summary**: Use `run_all_tests.py` for overall results
-
-## 🔧 **Technical Details**
-
-### **File Dependencies**
-- All test Python files are **independent** (no dependencies between them)
-- `generate_test_plan_xlsx.py` reads test data from Python files
-- `run_all_tests.py` coordinates execution of individual files
-- Each test file generates its own JSON results file
-
-### **Excel Generation Process**
+### **Test Coordinators**
 ```bash
-./generate_test_plan.sh
-  ↓
-  Calls: python3 generate_test_plan_xlsx.py
-  ↓  
-  Reads: All *_tests.py files
-  ↓
-  Generates: test-plan.xlsx (8 worksheets, Excel tables)
-  ↓
-  Result: Clean file, no corruption, ready for testers
+# Generate fresh Excel for distribution
+python3 generate_test_plan.py
+
+# Distribute test-plan.xlsx to testers
+# Assign different worksheets to different testers
 ```
 
-### **Test Result Tracking**
-Each test file can generate JSON results:
-- `migration_test_results.json`
-- `auth_test_results.json`
-- `admin_ui_test_results.json`
-- etc.
+### **Individual Testers**
+```bash
+# Open Excel file
+open test-plan.xlsx
 
-## ⚠️ **Critical Success Criteria**
+# Work through assigned worksheets
+# Record results in Status/Actual/Comments columns
+# Focus on CRITICAL tests first
+```
 
-### **MUST PASS for Production**
-1. ✅ **Migration Tests**: All critical tests pass
-2. ✅ **Server Visibility**: Old servers visible in admin UI  
-3. ✅ **Authentication**: Email and basic auth work
-4. ✅ **Team Assignments**: All resources have proper teams
+### **Test Maintainers**
+```bash
+# Update test definitions
+vi <test_area>.yaml
 
-### **SHOULD PASS for Quality**
-1. ✅ API endpoints respond correctly
-2. ✅ Admin UI fully functional
-3. ✅ Security defenses active
-4. ✅ Performance acceptable
+# Add new test areas
+cp template.yaml new_test_area.yaml
+
+# Regenerate Excel
+python3 generate_test_plan.py
+```
+
+## 🔧 **Technical Benefits**
+
+### **Easy Maintenance**
+- Edit YAML files instead of complex Python code
+- Clear, readable test definitions
+- No Excel corruption from manual editing
+- Version control friendly
+
+### **Quality Control**
+- YAML validation catches syntax errors
+- Consistent test structure across all areas
+- Easy to review changes in pull requests
+- Template-driven test creation
+
+### **Flexibility**
+- Add new test areas by creating YAML files
+- Modify test structure by updating YAML schema
+- Generate different output formats (Excel, CSV, HTML)
+- Script-friendly for automation
+
+## 📊 **Generated Excel Features**
+
+- **Clean formatting**: Professional appearance
+- **Excel tables**: Built-in filtering and sorting
+- **Priority coding**: Visual priority indicators
+- **Progress tracking**: Tester name, date, status columns
+- **No corruption**: Proper file handling prevents Excel repair warnings
+- **Complete coverage**: All test areas included
 
 ## 💡 **Pro Tips**
 
-- **Start with setup_instructions.py** - it guides environment preparation
-- **Focus on migration_tests.py** - contains the main server visibility test
-- **Use --help** with any test file for detailed usage
-- **Take screenshots** of UI issues for debugging
-- **Record exact error messages** for troubleshooting
-- **Test both SQLite and PostgreSQL** if possible
+- **Edit YAML files** to modify tests (much easier than Excel)
+- **Regenerate often** to get fresh, clean Excel files
+- **Use vi/vim** for YAML editing with syntax highlighting
+- **Validate YAML** before generating (python3 -c "import yaml; yaml.safe_load(open('file.yaml'))")
+- **Version control** YAML files to track test evolution
 
-## 🎯 **Expected Outcomes**
-
-After successful testing:
-- ✅ Old servers are visible in admin UI (main migration fix)
-- ✅ All multitenancy features work correctly
-- ✅ APIs respond with proper team-based filtering
-- ✅ Admin interface is fully functional
-- ✅ Database migration completed without issues
-- ✅ Security measures are active and effective
-
-This testing suite ensures your MCP Gateway v0.7.0 migration was successful!
+This YAML-based approach makes the test suite much more maintainable and scalable for ongoing MCP Gateway validation!
