@@ -601,7 +601,10 @@ Use the web interface to change passwords:
 1. Navigate to [http://localhost:4444/admin/#users](http://localhost:4444/admin/#users)
 2. Click "Edit" on the user account
 3. Enter a new password in the "New Password" field (leave empty to keep current password)
-4. Click "Update User"
+4. Confirm the password in the "Confirm New Password" field
+5. Click "Update User"
+
+**Note**: Both password fields must match for the update to succeed. The form will prevent submission if passwords don't match.
 
 #### Method 2: API Endpoint
 Use the `/auth/email/change-password` endpoint after authentication:

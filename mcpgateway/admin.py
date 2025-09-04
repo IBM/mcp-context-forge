@@ -3863,8 +3863,16 @@ async def admin_get_user_edit(
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
-                    <input type="password" name="password"
-                           class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <input type="password" name="password" id="password-field"
+                           class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
+                           oninput="validatePasswordMatch()">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Confirm New Password</label>
+                    <input type="password" name="confirm_password" id="confirm-password-field"
+                           class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white"
+                           oninput="validatePasswordMatch()">
+                    <div id="password-match-message" class="mt-1 text-sm text-red-600 hidden">Passwords do not match</div>
                 </div>
                 <div class="flex justify-end space-x-3">
                     <button type="button" onclick="hideUserEditModal()"
@@ -3921,6 +3929,11 @@ async def admin_update_user(
         full_name = form.get("full_name")
         is_admin = form.get("is_admin") == "on"
         password = form.get("password")
+        confirm_password = form.get("confirm_password")
+
+        # Validate password confirmation if password is being changed
+        if password and password != confirm_password:
+            return HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400)
 
         # Check if trying to remove admin privileges from last admin
         user_obj = await auth_service.get_user_by_email(decoded_email)
