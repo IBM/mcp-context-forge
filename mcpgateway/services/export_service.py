@@ -159,6 +159,7 @@ class ExportService:
             include_inactive: Whether to include inactive entities
             include_dependencies: Whether to include dependent entities automatically
             exported_by: Username of the person performing the export
+            root_path: Root path for constructing API endpoints
 
         Returns:
             Dict containing the complete export data in the specified schema format
@@ -347,6 +348,7 @@ class ExportService:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive servers
+            root_path: Root path for constructing API endpoints
 
         Returns:
             List of exported server dictionaries

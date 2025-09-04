@@ -7677,6 +7677,7 @@ async def admin_export_configuration(
     Export gateway configuration via Admin UI.
 
     Args:
+        request: FastAPI request object for extracting root path
         types: Comma-separated entity types to include
         exclude_types: Comma-separated entity types to exclude
         tags: Comma-separated tags to filter by

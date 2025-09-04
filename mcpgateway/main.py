@@ -3596,6 +3596,7 @@ async def export_configuration(
     Export gateway configuration to JSON format.
 
     Args:
+        request: FastAPI request object for extracting root path
         export_format: Export format (currently only 'json' supported)
         types: Comma-separated list of entity types to include (tools,gateways,servers,prompts,resources,roots)
         exclude_types: Comma-separated list of entity types to exclude
