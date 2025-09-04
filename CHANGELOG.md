@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 - Configuration export/import tools
 - Comprehensive verification and troubleshooting
 
+**🔑 Password Management**: After migration, platform admin password must be changed using the API endpoint `/auth/email/change-password`. The `PLATFORM_ADMIN_PASSWORD` environment variable is only used during initial setup.
+
 ### Added
 
 #### **🔐 Authentication & Authorization System**
@@ -34,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **Complete RBAC System** (#283) - Platform Admin, Team Owner, Team Member roles with full multi-tenancy support
 * **Enhanced JWT Tokens** (#87) - JWT tokens with team context, scoped permissions, and per-user expiry
 * **Password Policy Engine** (#426) - Configurable security requirements with password complexity rules
+* **Password Change API** - Secure `/auth/email/change-password` endpoint for changing user passwords with old password verification
 * **Multi-Provider SSO Framework** (#220, #278, #859) - GitHub, Google, and IBM Security Verify integration
 * **Per-Virtual-Server API Keys** (#282) - Scoped access tokens for individual virtual servers
 

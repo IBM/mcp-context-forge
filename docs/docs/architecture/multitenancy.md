@@ -589,6 +589,81 @@ sequenceDiagram
     end
 ```
 
+## Password Management
+
+### Changing Platform Admin Password
+
+The platform admin password can be changed using several methods:
+
+#### Method 1: Admin UI (Easiest)
+Use the web interface to change passwords:
+
+1. Navigate to [http://localhost:4444/admin/#users](http://localhost:4444/admin/#users)
+2. Click "Edit" on the user account
+3. Enter a new password in the "New Password" field (leave empty to keep current password)
+4. Click "Update User"
+
+#### Method 2: API Endpoint
+Use the `/auth/email/change-password` endpoint after authentication:
+
+```bash
+# First, get a JWT token by logging in
+curl -X POST "http://localhost:4444/auth/email/login" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@example.com",
+    "password": "current_password"
+  }'
+
+# Use the returned JWT token to change password
+curl -X POST "http://localhost:4444/auth/email/change-password" \
+  -H "Authorization: Bearer " \
+  -H "Content-Type: application/json" \
+  -d '{
+    "old_password": "current_password",
+    "new_password": "new_secure_password"
+  }'
+```
+
+#### Method 3: Environment Variable + Migration
+1. Update `PLATFORM_ADMIN_PASSWORD` in your `.env` file
+2. Run database migration to apply the change:
+   ```bash
+   alembic upgrade head
+   ```
+
+**Note**: This method only works during initial setup. After the admin user exists, the environment variable is ignored.
+
+#### Method 4: Direct Database Update
+For emergency password resets, you can update the database directly:
+
+```bash
+# Using the application's password service
+python3 -c "
+from mcpgateway.services.argon2_service import Argon2PasswordService
+from mcpgateway.db import SessionLocal
+from mcpgateway.models import EmailUser
+
+service = Argon2PasswordService()
+hashed = service.hash_password('new_password')
+
+with SessionLocal() as db:
+    user = db.query(EmailUser).filter(EmailUser.email == 'admin@example.com').first()
+    if user:
+        user.password_hash = hashed
+        db.commit()
+        print('Password updated successfully')
+    else:
+        print('Admin user not found')
+"
+```
+
+### Password Security Requirements
+- Minimum 8 characters (enforced by application)
+- Uses Argon2id hashing algorithm for secure storage
+- Password change events are logged in the audit trail
+- Failed login attempts are tracked and can trigger account lockout
+
 ### Role-Based UI Experience
 
 The user interface adapts based on the user's assigned roles:
