@@ -11296,10 +11296,14 @@ window.rejectJoinRequest = rejectJoinRequest;
  * Validate password match in user edit form
  */
 function validatePasswordMatch() {
-    const passwordField = document.getElementById('password-field');
-    const confirmPasswordField = document.getElementById('confirm-password-field');
-    const messageElement = document.getElementById('password-match-message');
-    const submitButton = document.querySelector('#user-edit-modal-content button[type="submit"]');
+    const passwordField = document.getElementById("password-field");
+    const confirmPasswordField = document.getElementById(
+        "confirm-password-field",
+    );
+    const messageElement = document.getElementById("password-match-message");
+    const submitButton = document.querySelector(
+        '#user-edit-modal-content button[type="submit"]',
+    );
 
     if (!passwordField || !confirmPasswordField || !messageElement) {
         return;
@@ -11309,19 +11313,22 @@ function validatePasswordMatch() {
     const confirmPassword = confirmPasswordField.value;
 
     // Only show validation if both fields have content or if confirm field has content
-    if ((password.length > 0 || confirmPassword.length > 0) && password !== confirmPassword) {
-        messageElement.classList.remove('hidden');
-        confirmPasswordField.classList.add('border-red-500');
+    if (
+        (password.length > 0 || confirmPassword.length > 0) &&
+        password !== confirmPassword
+    ) {
+        messageElement.classList.remove("hidden");
+        confirmPasswordField.classList.add("border-red-500");
         if (submitButton) {
             submitButton.disabled = true;
-            submitButton.classList.add('opacity-50', 'cursor-not-allowed');
+            submitButton.classList.add("opacity-50", "cursor-not-allowed");
         }
     } else {
-        messageElement.classList.add('hidden');
-        confirmPasswordField.classList.remove('border-red-500');
+        messageElement.classList.add("hidden");
+        confirmPasswordField.classList.remove("border-red-500");
         if (submitButton) {
             submitButton.disabled = false;
-            submitButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            submitButton.classList.remove("opacity-50", "cursor-not-allowed");
         }
     }
 }
