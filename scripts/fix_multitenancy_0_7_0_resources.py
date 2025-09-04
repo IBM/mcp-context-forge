@@ -23,7 +23,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 try:
-    from mcpgateway.db import SessionLocal, EmailUser, EmailTeam, Server, Tool, Resource
+    from mcpgateway.db import SessionLocal, EmailUser, EmailTeam, Server, Tool, Resource, Prompt, Gateway, A2AAgent
     from mcpgateway.config import settings
     from sqlalchemy import text
 except ImportError as e:
@@ -71,7 +71,10 @@ def fix_unassigned_resources():
             resource_types = [
                 ("servers", Server),
                 ("tools", Tool),
-                ("resources", Resource)
+                ("resources", Resource),
+                ("prompts", Prompt),
+                ("gateways", Gateway),
+                ("a2a_agents", A2AAgent)
             ]
 
             total_fixed = 0

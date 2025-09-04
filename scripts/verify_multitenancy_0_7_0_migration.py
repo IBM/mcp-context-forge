@@ -9,7 +9,7 @@ the new team-based system.
 Checks:
 - Platform admin user creation
 - Personal team setup
-- Resource team assignments (servers, tools, resources)
+- Resource team assignments (servers, tools, resources, prompts, gateways, a2a_agents)
 - Visibility settings
 - Team membership
 
@@ -28,7 +28,7 @@ sys.path.insert(0, str(project_root))
 try:
     from mcpgateway.db import (
         SessionLocal, EmailUser, EmailTeam, EmailTeamMember,
-        Server, Tool, Resource, Role, UserRole
+        Server, Tool, Resource, Prompt, Gateway, A2AAgent, Role, UserRole
     )
     from mcpgateway.config import settings
     from sqlalchemy import text
@@ -93,7 +93,10 @@ def verify_migration():
             resource_types = [
                 ("Servers", Server),
                 ("Tools", Tool),
-                ("Resources", Resource)
+                ("Resources", Resource),
+                ("Prompts", Prompt),
+                ("Gateways", Gateway),
+                ("A2A Agents", A2AAgent)
             ]
 
             for resource_name, resource_model in resource_types:
@@ -178,7 +181,10 @@ def verify_migration():
             resource_models = [
                 ("Server", Server),
                 ("Tool", Tool),
-                ("Resource", Resource)
+                ("Resource", Resource),
+                ("Prompt", Prompt),
+                ("Gateway", Gateway),
+                ("A2AAgent", A2AAgent)
             ]
 
             for model_name, model_class in resource_models:
