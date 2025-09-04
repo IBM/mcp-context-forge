@@ -2184,6 +2184,45 @@
                         name spaces and tag formats.
                       </p>
                       <p><strong>Maximum:</strong> 200 tools per import</p>
+                      <div class="mt-3 p-3 bg-gray-50 dark:bg-gray-700 rounded border">
+                        <div class="flex justify-between items-center mb-2">
+                          <strong class="text-xs">Sample JSON Template:</strong>
+                          <button onclick="downloadSampleJSON()" class="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-xs underline">
+                            📥 Download Sample
+                          </button>
+                        </div>
+                        <pre class="text-xs overflow-x-auto"><code id="sample-json">[
+  {
+    "name": "weather-api",
+    "displayName": "Weather API Tool",
+    "url": "https://api.openweathermap.org/data/2.5/weather",
+    "integration_type": "REST",
+    "request_type": "GET",
+    "description": "Get current weather data for any location",
+    "auth_type": "bearer",
+    "auth_value": "your-openweather-api-key-here",
+    "headers": {
+      "Accept": "application/json",
+      "User-Agent": "MCP-Gateway/1.0"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "q": {"type": "string", "description": "City name"},
+        "units": {"type": "string", "description": "Temperature units"}
+      },
+      "required": ["q"]
+    },
+    "jsonpath_filter": "$.main",
+    "tags": ["weather", "api", "external"]
+  }
+]</code></pre>
+                        <div class="mt-3 text-xs space-y-1">
+                          <p><strong>Auth Types:</strong> basic, bearer, authheaders, oauth, or none</p>
+                          <p><strong>Required Fields:</strong> name, url, integration_type, request_type</p>
+                          <p><strong>Optional Fields:</strong> displayName, description, auth_type, auth_value, headers, input_schema, jsonpath_filter, tags</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -10281,6 +10320,96 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           });
         }
       });
+
+      // Download sample JSON for bulk import
+      function downloadSampleJSON() {
+        const sampleData = [
+          {
+            "name": "weather-api",
+            "displayName": "Weather API Tool",
+            "url": "https://api.openweathermap.org/data/2.5/weather",
+            "integration_type": "REST",
+            "request_type": "GET",
+            "description": "Get current weather data for any location",
+            "auth_type": "bearer",
+            "auth_value": "your-openweather-api-key-here",
+            "headers": {
+              "Accept": "application/json",
+              "User-Agent": "MCP-Gateway/1.0"
+            },
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "q": {"type": "string", "description": "City name, state code and country code divided by comma"},
+                "units": {"type": "string", "description": "Temperature units", "enum": ["standard", "metric", "imperial"], "default": "metric"}
+              },
+              "required": ["q"]
+            },
+            "jsonpath_filter": "$.main",
+            "tags": ["weather", "api", "external"]
+          },
+          {
+            "name": "user-management",
+            "displayName": "User Management API",
+            "url": "https://api.mycompany.com/v1/users",
+            "integration_type": "REST",
+            "request_type": "POST",
+            "description": "Create new user accounts in the system",
+            "auth_type": "basic",
+            "auth_value": "api-username:api-password",
+            "headers": {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "X-API-Version": "1.0"
+            },
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "email": {"type": "string", "format": "email", "description": "User's email address"},
+                "firstName": {"type": "string", "description": "User's first name"},
+                "lastName": {"type": "string", "description": "User's last name"},
+                "role": {"type": "string", "enum": ["user", "admin"], "default": "user"},
+                "department": {"type": "string", "description": "User's department"}
+              },
+              "required": ["email", "firstName", "lastName"]
+            },
+            "tags": ["users", "crud", "internal"]
+          },
+          {
+            "name": "slack-notify",
+            "displayName": "Slack Notification Tool",
+            "url": "https://hooks.slack.com/services/your/webhook/url",
+            "integration_type": "REST",
+            "request_type": "POST",
+            "description": "Send notifications to Slack channels",
+            "auth_type": "authheaders",
+            "auth_value": "Authorization: Bearer xoxb-your-slack-token",
+            "headers": {
+              "Content-Type": "application/json"
+            },
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "channel": {"type": "string", "description": "Slack channel (e.g., #general)"},
+                "text": {"type": "string", "description": "Message text"},
+                "username": {"type": "string", "description": "Bot username", "default": "MCP Gateway"}
+              },
+              "required": ["text"]
+            },
+            "tags": ["notifications", "slack", "communication"]
+          }
+        ];
+
+        const blob = new Blob([JSON.stringify(sampleData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'bulk-import-sample.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
     </script>
   </body>
 </html>
