@@ -21,7 +21,7 @@ This migration includes **2 essential scripts** to help you:
 - **Checks**: Admin user, personal team, resource assignments, visibility settings
 - **When**: Run after migration to confirm everything worked
 
-### `scripts/fix_multitenancy_0_7_0_resources.py`  
+### `scripts/fix_multitenancy_0_7_0_resources.py`
 - **Purpose**: Fix resources missing team assignments after v0.6.0 → v0.7.0 upgrade
 - **Fixes**: Assigns orphaned servers/tools/resources to admin's personal team
 - **When**: Use if verification shows unassigned resources
@@ -54,7 +54,7 @@ make dev  # or however you normally run it
 open http://localhost:4444/admin
 
 # 3. Navigate to Export/Import section
-# 4. Click "Export Configuration" 
+# 4. Click "Export Configuration"
 # 5. Save the JSON file (contains servers, tools, resources, etc.)
 
 # Or use direct API call (if you have a bearer token):
@@ -68,7 +68,7 @@ curl -u admin:changeme \
      -o mcp_config_backup_$(date +%Y%m%d_%H%M%S).json
 ```
 
-**✅ Benefits**: 
+**✅ Benefits**:
 - Preserves all your servers, tools, resources, and settings
 - Can be imported after migration if needed
 - Human-readable JSON format
@@ -106,7 +106,7 @@ grep -E "PLATFORM_ADMIN_EMAIL|PLATFORM_ADMIN_PASSWORD|EMAIL_AUTH_ENABLED" .env
 ```bash
 # Platform Administrator (will be created by migration)
 PLATFORM_ADMIN_EMAIL=your-admin@yourcompany.com
-PLATFORM_ADMIN_PASSWORD=your-secure-password  
+PLATFORM_ADMIN_PASSWORD=your-secure-password
 PLATFORM_ADMIN_FULL_NAME="Your Name"
 
 # Enable email authentication (required for multi-tenancy)
@@ -119,7 +119,7 @@ PERSONAL_TEAM_PREFIX=personal
 
 **💡 Tips**:
 - Use a **real email address** for `PLATFORM_ADMIN_EMAIL` (you'll use this to log in)
-- Choose a **strong password** (minimum 8 characters)  
+- Choose a **strong password** (minimum 8 characters)
 - Set `EMAIL_AUTH_ENABLED=true` to enable the multitenancy features
 
 **🔍 Verify your configuration**:
@@ -154,11 +154,11 @@ make install-dev
 The migration process is automated and handles:
 - Creating multi-tenancy database schema
 - Creating platform admin user and personal team
-- **Migrating existing servers** to the admin's personal team  
+- **Migrating existing servers** to the admin's personal team
 - Setting up default RBAC roles
 
 **⚠️ PREREQUISITE**: Ensure `.env` file is configured with `PLATFORM_ADMIN_EMAIL` etc. (see step 3 above)
-**✅ Configuration**: Uses your `.env` settings automatically 
+**✅ Configuration**: Uses your `.env` settings automatically
 **✅ Database Compatibility**: Works with **SQLite**, **PostgreSQL**, and **MySQL**
 
 ```bash
@@ -186,7 +186,7 @@ python3 scripts/verify_multitenancy_0_7_0_migration.py
 
 This will check:
 - ✅ Platform admin user creation
-- ✅ Personal team creation and membership  
+- ✅ Personal team creation and membership
 - ✅ Resource team assignments
 - ✅ Visibility settings
 - ✅ Database integrity
@@ -199,7 +199,7 @@ This will check:
 
 Old servers should now be visible in the Virtual Servers list. They will be:
 - **Owned by**: Your platform admin user
-- **Assigned to**: Admin's personal team  
+- **Assigned to**: Admin's personal team
 - **Visibility**: Public (visible to all authenticated users)
 
 ### 2. Import Configuration (If Needed)
@@ -286,7 +286,7 @@ This all happens in the consolidated migration `cfc3d6aa0fb2`, so no additional 
 ```
 Old Server (pre-migration):
 ├── team_id: NULL
-├── owner_email: NULL  
+├── owner_email: NULL
 └── visibility: NULL
 
 Migrated Server (post-migration):
@@ -300,7 +300,7 @@ Migrated Server (post-migration):
 Old servers are set to "public" visibility to ensure they remain accessible to all users immediately after migration. You can adjust visibility per resource:
 
 - **Private**: Only the owner can access
-- **Team**: All team members can access  
+- **Team**: All team members can access
 - **Public**: All authenticated users can access
 
 ## Customizing Resource Ownership
@@ -380,7 +380,7 @@ with SessionLocal() as db:
 
 **Root Cause**: `.env` file not properly configured before migration.
 
-**Solution**: 
+**Solution**:
 1. **Check your `.env` configuration**:
    ```bash
    # Verify your settings are loaded
@@ -395,7 +395,7 @@ with SessionLocal() as db:
    ```bash
    # Edit your .env file
    nano .env  # Set PLATFORM_ADMIN_EMAIL=your-email@company.com
-   
+
    # Re-run migration
    python3 -m mcpgateway.bootstrap_db
    ```
@@ -474,7 +474,7 @@ except Exception as e:
 python3 -c "
 from mcpgateway.config import settings
 print(f'Database URL: {settings.database_url}')
-print(f'Admin email: {settings.platform_admin_email}')  
+print(f'Admin email: {settings.platform_admin_email}')
 print(f'Email auth enabled: {settings.email_auth_enabled}')
 "
 
@@ -495,7 +495,7 @@ cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db
 
 # For PostgreSQL
 dropdb mcp
-createdb mcp  
+createdb mcp
 psql -d mcp < mcp_backup_YYYYMMDD_HHMMSS.sql
 
 # For MySQL
@@ -528,13 +528,13 @@ make install-dev
 After completing the migration, verify using the automated verification script:
 
 ```bash
-# Run comprehensive verification  
+# Run comprehensive verification
 python3 scripts/verify_multitenancy_0_7_0_migration.py
 ```
 
 Manual checks (if needed):
 - [ ] Database migration completed without errors
-- [ ] Platform admin user created successfully  
+- [ ] Platform admin user created successfully
 - [ ] Personal team created for admin user
 - [ ] Old servers are visible in Virtual Servers list
 - [ ] Admin UI accessible at `/admin` endpoint
@@ -553,7 +553,7 @@ python3 scripts/fix_multitenancy_0_7_0_resources.py
 If you encounter issues during migration:
 
 1. **Check the logs**: Set `LOG_LEVEL=DEBUG` for verbose output
-2. **Review troubleshooting section** above for common issues  
+2. **Review troubleshooting section** above for common issues
 3. **File an issue**: https://github.com/anthropics/claude-code/issues
 4. **Include information**: Database type, error messages, relevant logs
 
@@ -583,7 +583,7 @@ cp .env.example .env  # then edit with your admin credentials
 # 3. VERIFY CONFIG
 python3 -c "from mcpgateway.config import settings; print(f'Admin: {settings.platform_admin_email}')"
 
-# 4. MIGRATE  
+# 4. MIGRATE
 python3 -m mcpgateway.bootstrap_db
 
 # 5. VERIFY SUCCESS
@@ -595,5 +595,5 @@ python3 scripts/fix_multitenancy_0_7_0_resources.py
 
 ### Important URLs
 - **Admin UI**: http://localhost:4444/admin
-- **Export Config**: http://localhost:4444/admin/export/configuration  
+- **Export Config**: http://localhost:4444/admin/export/configuration
 - **Import Config**: http://localhost:4444/admin/import/configuration

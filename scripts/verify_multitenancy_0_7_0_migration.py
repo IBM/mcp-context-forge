@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """MCP Gateway v0.7.0 Multitenancy Migration Verification
 
-This script verifies that the v0.6.0 → v0.7.0 multitenancy migration 
-completed successfully and that old servers/resources are visible in 
+This script verifies that the v0.6.0 → v0.7.0 multitenancy migration
+completed successfully and that old servers/resources are visible in
 the new team-based system.
 
 Checks:
@@ -27,7 +27,7 @@ sys.path.insert(0, str(project_root))
 
 try:
     from mcpgateway.db import (
-        SessionLocal, EmailUser, EmailTeam, EmailTeamMember, 
+        SessionLocal, EmailUser, EmailTeam, EmailTeamMember,
         Server, Tool, Resource, Role, UserRole
     )
     from mcpgateway.config import settings
@@ -40,16 +40,16 @@ except ImportError as e:
 
 def verify_migration():
     """Verify the multitenancy migration was successful."""
-    
+
     print("🔍 MCP Gateway v0.7.0 Multitenancy Migration Verification")
-    print("📅 Migration: v0.6.0 → v0.7.0")  
+    print("📅 Migration: v0.6.0 → v0.7.0")
     print("=" * 65)
-    
+
     success = True
-    
+
     try:
         with SessionLocal() as db:
-            
+
             # 1. Check admin user exists
             print("\n📋 1. ADMIN USER CHECK")
             admin_email = settings.platform_admin_email
@@ -57,7 +57,7 @@ def verify_migration():
                 EmailUser.email == admin_email,
                 EmailUser.is_admin == True
             ).first()
-            
+
             if admin_user:
                 print(f"   ✅ Admin user found: {admin_user.email}")
                 print(f"      Full name: {admin_user.full_name}")
@@ -66,7 +66,7 @@ def verify_migration():
             else:
                 print(f"   ❌ Admin user not found: {admin_email}")
                 success = False
-            
+
             # 2. Check personal team exists
             print("\n🏢 2. PERSONAL TEAM CHECK")
             if admin_user:
@@ -75,7 +75,7 @@ def verify_migration():
                     EmailTeam.is_personal == True,
                     EmailTeam.is_active == True
                 ).first()
-                
+
                 if personal_team:
                     print(f"   ✅ Personal team found: {personal_team.name}")
                     print(f"      Team ID: {personal_team.id}")
@@ -87,7 +87,7 @@ def verify_migration():
             else:
                 personal_team = None
                 print("   ⚠️  Cannot check personal team (admin user missing)")
-            
+
             # 3. Check resource assignments
             print("\n📦 3. RESOURCE ASSIGNMENT CHECK")
             resource_types = [
@@ -95,7 +95,7 @@ def verify_migration():
                 ("Tools", Tool),
                 ("Resources", Resource)
             ]
-            
+
             for resource_name, resource_model in resource_types:
                 total_count = db.query(resource_model).count()
                 assigned_count = db.query(resource_model).filter(
@@ -104,23 +104,23 @@ def verify_migration():
                     resource_model.visibility != None
                 ).count()
                 unassigned_count = total_count - assigned_count
-                
+
                 print(f"   {resource_name}:")
                 print(f"      Total: {total_count}")
                 print(f"      Assigned to teams: {assigned_count}")
                 print(f"      Unassigned: {unassigned_count}")
-                
+
                 if unassigned_count > 0:
                     print(f"      ❌ {unassigned_count} {resource_name.lower()} lack team assignment!")
                     success = False
-                    
+
                     # Show details of unassigned resources
                     unassigned = db.query(resource_model).filter(
                         (resource_model.team_id == None) |
                         (resource_model.owner_email == None) |
                         (resource_model.visibility == None)
                     ).limit(3).all()
-                    
+
                     for resource in unassigned:
                         name = getattr(resource, 'name', 'Unknown')
                         print(f"         - {name} (ID: {resource.id})")
@@ -129,41 +129,41 @@ def verify_migration():
                         print(f"           visibility: {getattr(resource, 'visibility', 'N/A')}")
                 else:
                     print(f"      ✅ All {resource_name.lower()} properly assigned")
-            
+
             # 4. Check visibility distribution
             if personal_team:
                 print("\n👁️  4. VISIBILITY DISTRIBUTION")
-                
+
                 for resource_name, resource_model in resource_types:
                     if hasattr(resource_model, 'visibility'):
                         visibility_counts = {}
                         resources = db.query(resource_model).all()
-                        
+
                         for resource in resources:
                             vis = getattr(resource, 'visibility', 'unknown')
                             visibility_counts[vis] = visibility_counts.get(vis, 0) + 1
-                        
+
                         print(f"   {resource_name}:")
                         for visibility, count in visibility_counts.items():
                             print(f"      {visibility}: {count}")
-            
-            # 5. Database schema validation  
+
+            # 5. Database schema validation
             print("\n🗄️  5. DATABASE SCHEMA VALIDATION")
-            
+
             # Check if we can access multitenancy models (proves schema exists)
             schema_checks = []
             try:
                 user_count = db.query(EmailUser).count()
-                team_count = db.query(EmailTeam).count() 
+                team_count = db.query(EmailTeam).count()
                 member_count = db.query(EmailTeamMember).count()
                 print(f"   ✅ EmailUser model: {user_count} records")
-                print(f"   ✅ EmailTeam model: {team_count} records") 
+                print(f"   ✅ EmailTeam model: {team_count} records")
                 print(f"   ✅ EmailTeamMember model: {member_count} records")
                 schema_checks.append("core_auth")
             except Exception as e:
                 print(f"   ❌ Core auth models inaccessible: {e}")
                 success = False
-                
+
             try:
                 role_count = db.query(Role).count()
                 user_role_count = db.query(UserRole).count()
@@ -173,23 +173,23 @@ def verify_migration():
             except Exception as e:
                 print(f"   ❌ RBAC models inaccessible: {e}")
                 success = False
-            
+
             # Verify resource models have team attributes
             resource_models = [
                 ("Server", Server),
-                ("Tool", Tool), 
+                ("Tool", Tool),
                 ("Resource", Resource)
             ]
-            
+
             for model_name, model_class in resource_models:
                 try:
                     # Check if model has team attributes
                     sample = db.query(model_class).first()
                     if sample:
                         has_team_id = hasattr(sample, 'team_id')
-                        has_owner_email = hasattr(sample, 'owner_email') 
+                        has_owner_email = hasattr(sample, 'owner_email')
                         has_visibility = hasattr(sample, 'visibility')
-                        
+
                         if has_team_id and has_owner_email and has_visibility:
                             print(f"   ✅ {model_name}: has multitenancy attributes")
                         else:
@@ -204,11 +204,11 @@ def verify_migration():
                 except Exception as e:
                     print(f"   ❌ {model_name}: model access failed - {e}")
                     success = False
-            
+
             if "core_auth" in schema_checks and "rbac" in schema_checks:
                 print("   ✅ Multitenancy schema fully operational")
-            
-            # 6. Team membership check  
+
+            # 6. Team membership check
             print("\n👥 6. TEAM MEMBERSHIP CHECK")
             if admin_user and personal_team:
                 membership = db.query(EmailTeamMember).filter(
@@ -216,7 +216,7 @@ def verify_migration():
                     EmailTeamMember.user_email == admin_user.email,
                     EmailTeamMember.is_active == True
                 ).first()
-                
+
                 if membership:
                     print(f"   ✅ Admin is member of personal team")
                     print(f"      Role: {membership.role}")
@@ -224,13 +224,13 @@ def verify_migration():
                 else:
                     print(f"   ❌ Admin is not a member of personal team")
                     success = False
-            
+
     except Exception as e:
         print(f"\n❌ Verification failed with error: {e}")
         import traceback
         traceback.print_exc()
         return False
-    
+
     print("\n" + "=" * 65)
     if success:
         print("🎉 MIGRATION VERIFICATION: SUCCESS!")
