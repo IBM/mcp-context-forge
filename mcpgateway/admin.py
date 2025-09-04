@@ -2814,6 +2814,9 @@ async def admin_update_team(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
+        # Get root path for URL construction
+        root_path = request.scope.get("root_path", "") if request else ""
+
         # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
@@ -2829,7 +2832,7 @@ async def admin_update_team(
             if is_htmx:
                 return HTMLResponse(content='<div class="text-red-500">Team name is required</div>', status_code=400)
             error_msg = urllib.parse.quote("Team name is required")
-            return RedirectResponse(url=f"/admin/?error={error_msg}#teams", status_code=303)
+            return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
         # Update team
         user_email = getattr(user, "email", None) or str(user)
@@ -2855,7 +2858,7 @@ async def admin_update_team(
             """
             return HTMLResponse(content=success_html)
         # For regular form submission, redirect to admin page with teams section
-        return RedirectResponse(url="/admin/#teams", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Error updating team {team_id}: {e}")
@@ -2867,7 +2870,7 @@ async def admin_update_team(
             return HTMLResponse(content=f'<div class="text-red-500">Error updating team: {str(e)}</div>', status_code=400)
         # For regular form submission, redirect to admin page with error parameter
         error_msg = urllib.parse.quote(f"Error updating team: {str(e)}")
-        return RedirectResponse(url=f"/admin/?error={error_msg}#teams", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/?error={error_msg}#teams", status_code=303)
 
 
 @admin_router.delete("/teams/{team_id}")
@@ -7661,6 +7664,7 @@ async def admin_export_logs(
 
 @admin_router.get("/export/configuration")
 async def admin_export_configuration(
+    request: Request,
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
     tags: Optional[str] = None,
@@ -7706,9 +7710,19 @@ async def admin_export_configuration(
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
+        # Get root path for URL construction
+        root_path = request.scope.get("root_path", "") if request else ""
+
         # Perform export
         export_data = await export_service.export_configuration(
-            db=db, include_types=include_types, exclude_types=exclude_types_list, tags=tags_list, include_inactive=include_inactive, include_dependencies=include_dependencies, exported_by=username
+            db=db,
+            include_types=include_types,
+            exclude_types=exclude_types_list,
+            tags=tags_list,
+            include_inactive=include_inactive,
+            include_dependencies=include_dependencies,
+            exported_by=username,
+            root_path=root_path,
         )
 
         # Generate filename

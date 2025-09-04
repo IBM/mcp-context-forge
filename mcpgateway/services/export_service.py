@@ -147,6 +147,7 @@ class ExportService:
         include_inactive: bool = False,
         include_dependencies: bool = True,
         exported_by: str = "system",
+        root_path: str = "",
     ) -> Dict[str, Any]:
         """Export complete gateway configuration to a standardized format.
 
@@ -202,7 +203,7 @@ class ExportService:
                 export_data["entities"]["gateways"] = await self._export_gateways(db, tags, include_inactive)
 
             if "servers" in entity_types:
-                export_data["entities"]["servers"] = await self._export_servers(db, tags, include_inactive)
+                export_data["entities"]["servers"] = await self._export_servers(db, tags, include_inactive, root_path)
 
             if "prompts" in entity_types:
                 export_data["entities"]["prompts"] = await self._export_prompts(db, tags, include_inactive)
@@ -339,7 +340,7 @@ class ExportService:
 
         return exported_gateways
 
-    async def _export_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool, root_path: str = "") -> List[Dict[str, Any]]:
         """Export virtual servers with their tool associations.
 
         Args:
@@ -358,9 +359,9 @@ class ExportService:
                 "name": server.name,
                 "description": server.description,
                 "tool_ids": list(server.associated_tools),
-                "sse_endpoint": f"/servers/{server.id}/sse",
-                "websocket_endpoint": f"/servers/{server.id}/ws",
-                "jsonrpc_endpoint": f"/servers/{server.id}/jsonrpc",
+                "sse_endpoint": f"{root_path}/servers/{server.id}/sse",
+                "websocket_endpoint": f"{root_path}/servers/{server.id}/ws",
+                "jsonrpc_endpoint": f"{root_path}/servers/{server.id}/jsonrpc",
                 "capabilities": {"tools": {"list_changed": True}, "prompts": {"list_changed": True}},
                 "is_active": server.is_active,
                 "tags": server.tags or [],
@@ -618,7 +619,7 @@ class ExportService:
         for server_id in server_ids:
             try:
                 server = await self.server_service.get_server(db, server_id)
-                server_data = await self._export_servers(db, None, True)
+                server_data = await self._export_servers(db, None, True, root_path="")
                 servers.extend([s for s in server_data if s["name"] == server.name])
             except Exception as e:
                 logger.warning(f"Could not export server {server_id}: {str(e)}")

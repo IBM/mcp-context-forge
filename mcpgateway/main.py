@@ -3227,7 +3227,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
-                        f"http://localhost:{settings.port}/rpc",
+                        f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
                         json=json.loads(data),
                         headers={"Content-Type": "application/json"},
                     )
@@ -3582,6 +3582,7 @@ async def get_entities_by_tag(
 @export_import_router.get("/export", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_configuration(
+    request: Request,
     export_format: str = "json",  # pylint: disable=unused-argument
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
@@ -3629,9 +3630,19 @@ async def export_configuration(
         # Extract username from user (which is now an EmailUser object)
         username = user.email
 
+        # Get root path for URL construction
+        root_path = request.scope.get("root_path", "") if request else ""
+
         # Perform export
         export_data = await export_service.export_configuration(
-            db=db, include_types=include_types, exclude_types=exclude_types_list, tags=tags_list, include_inactive=include_inactive, include_dependencies=include_dependencies, exported_by=username
+            db=db,
+            include_types=include_types,
+            exclude_types=exclude_types_list,
+            tags=tags_list,
+            include_inactive=include_inactive,
+            include_dependencies=include_dependencies,
+            exported_by=username,
+            root_path=root_path,
         )
 
         return export_data
