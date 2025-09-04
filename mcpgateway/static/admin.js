@@ -5730,7 +5730,7 @@ async function testPrompt(promptName) {
         try {
             // Fetch prompt details from the prompts endpoint (view mode)
             const response = await fetch(
-                `/admin/prompts/${encodeURIComponent(promptName)}`,
+                `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`,
                 {
                     method: "GET",
                     headers: {
@@ -5921,7 +5921,7 @@ async function runPromptTest() {
 
         // Call the prompt API endpoint
         const response = await fetch(
-            `/prompts/${encodeURIComponent(promptTestState.currentTestPrompt.name)}`,
+            `${window.ROOT_PATH}/prompts/${encodeURIComponent(promptTestState.currentTestPrompt.name)}`,
             {
                 method: "POST",
                 headers: {
@@ -9284,9 +9284,12 @@ async function fetchToolsForGateway(gatewayId, gatewayName) {
         "inline-block bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm mr-2";
 
     try {
-        const response = await fetch(`/oauth/fetch-tools/${gatewayId}`, {
-            method: "POST",
-        });
+        const response = await fetch(
+            `${window.ROOT_PATH}/oauth/fetch-tools/${gatewayId}`,
+            {
+                method: "POST",
+            },
+        );
 
         const result = await response.json();
 
@@ -9633,12 +9636,15 @@ async function handleExportAll() {
             params.append("include_dependencies", "false");
         }
 
-        const response = await fetch(`/admin/export/configuration?${params}`, {
-            method: "GET",
-            headers: {
-                Authorization: `Bearer ${await getAuthToken()}`,
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/export/configuration?${params}`,
+            {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
             },
-        });
+        );
 
         if (!response.ok) {
             throw new Error(`Export failed: ${response.statusText}`);

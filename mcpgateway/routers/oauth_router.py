@@ -116,6 +116,9 @@ async def oauth_callback(
     """
 
     try:
+        # Get root path for URL construction
+        root_path = request.scope.get("root_path", "") if request else ""
+
         # Extract gateway_id from state parameter
         if "_" not in state:
             return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
@@ -134,7 +137,7 @@ async def oauth_callback(
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p>Error: Gateway not found</p>
-                    <a href="/admin#gateways">Return to Admin Panel</a>
+                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -150,7 +153,7 @@ async def oauth_callback(
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p>Error: Gateway has no OAuth configuration</p>
-                    <a href="/admin#gateways">Return to Admin Panel</a>
+                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -206,7 +209,7 @@ async def oauth_callback(
                 <div id="fetch-status" style="margin-top: 15px;"></div>
             </div>
 
-            <a href="/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
 
             <script>
             async function fetchTools() {{
@@ -218,7 +221,7 @@ async def oauth_callback(
                 statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
 
                 try {{
-                    const response = await fetch('/oauth/fetch-tools/{gateway_id}', {{
+                    const response = await fetch('{root_path}/oauth/fetch-tools/{gateway_id}', {{
                         method: 'POST'
                     }});
 
@@ -282,7 +285,7 @@ async def oauth_callback(
             <h1 class="error">❌ OAuth Authorization Failed</h1>
             <p><strong>Error:</strong> {str(e)}</p>
             <p>Please check your OAuth configuration and try again.</p>
-            <a href="/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
         </html>
         """,
@@ -316,7 +319,7 @@ async def oauth_callback(
             <h1 class="error">❌ OAuth Authorization Failed</h1>
             <p><strong>Unexpected Error:</strong> {str(e)}</p>
             <p>Please contact your administrator for assistance.</p>
-            <a href="/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
         </html>
         """,
