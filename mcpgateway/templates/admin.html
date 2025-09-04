@@ -2121,7 +2121,10 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <div class="flex justify-between items-center mb-4">
-            <h3 class="text-lg font-bold dark:text-gray-200">Add New Tool</h3>
+            <div>
+              <h3 class="text-lg font-bold dark:text-gray-200">Add New Tool from REST API</h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Convert existing REST API to an MCP Tool</p>
+            </div>
 
             <!-- Bulk Import Dropdown -->
             <div class="relative">
@@ -3768,14 +3771,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
-            Add New Gateway
+            Add New MCP Server or Gateway
           </h3>
           <form id="add-gateway-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Name</label
+                  >MCP Server Name</label
                 >
                 <input
                   type="text"
@@ -3787,7 +3790,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >URL</label
+                  >MCP Server URL</label
                 >
                 <input
                   type="url"
