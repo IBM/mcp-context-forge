@@ -13,7 +13,7 @@ headers:
   - "Method"
   - "Agent Type"
   - "Description"
-  - "cURL Command" 
+  - "cURL Command"
   - "Request Body"
   - "Expected Status"
   - "Expected Response"

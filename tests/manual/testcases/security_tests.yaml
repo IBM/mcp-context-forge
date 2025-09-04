@@ -42,7 +42,7 @@ tests:
 
   - test_id: "SEC-002"
     attack_type: "JWT Token Manipulation"
-    target: "Authentication System" 
+    target: "Authentication System"
     risk_level: "Critical"
     attack_steps: |
       1. Obtain valid JWT token through normal login
@@ -73,7 +73,7 @@ tests:
   - test_id: "SEC-004"
     attack_type: "Privilege Escalation"
     target: "RBAC System"
-    risk_level: "Critical" 
+    risk_level: "Critical"
     attack_steps: |
       1. Login as regular user (non-admin)
       2. Attempt to access admin-only endpoints:

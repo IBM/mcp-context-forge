@@ -27,32 +27,32 @@ except ImportError:
 
 def generate_excel_from_yaml():
     """Generate Excel file from YAML test definitions."""
-    
+
     print("📊 GENERATING EXCEL FROM YAML TEST FILES")
     print("=" * 60)
     print("📁 Reading from testcases/ directory")
-    
+
     # Find YAML files in testcases directory
     testcases_dir = Path("testcases")
     if not testcases_dir.exists():
         print("❌ testcases/ directory not found")
         return False
-    
+
     yaml_files = list(testcases_dir.glob("*.yaml"))
     yaml_files = sorted(yaml_files)
-    
+
     if not yaml_files:
         print("❌ No YAML test files found")
         return False
-    
+
     print(f"📄 Found {len(yaml_files)} YAML files:")
     for yf in yaml_files:
         print(f"   📄 {yf.name}")
-    
+
     # Create Excel workbook
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
-    
+
     # Styles
     styles = {
         'title': Font(size=16, bold=True, color="1F4E79"),
@@ -61,42 +61,42 @@ def generate_excel_from_yaml():
         'critical_fill': PatternFill(start_color="C5504B", end_color="C5504B", fill_type="solid"),
         'critical_font': Font(color="FFFFFF", bold=True)
     }
-    
+
     # Process each YAML file
     for yaml_file in yaml_files:
         try:
             with open(yaml_file, 'r') as f:
                 yaml_data = yaml.safe_load(f)
-            
+
             worksheet_name = yaml_data.get('worksheet_name', yaml_file.stem)
             headers = yaml_data.get('headers', [])
             tests = yaml_data.get('tests', [])
-            
+
             print(f"\n   📄 {yaml_file.name} → {worksheet_name}")
             print(f"      📊 {len(tests)} tests")
-            
+
             # Create worksheet
             sheet = wb.create_sheet(worksheet_name)
-            
+
             # Add headers
             for i, header in enumerate(headers, 1):
                 cell = sheet.cell(row=1, column=i, value=header)
                 cell.fill = styles['header_fill']
                 cell.font = styles['header_font']
-            
+
             # Add test data
             for row_idx, test in enumerate(tests, 2):
                 for col_idx, header in enumerate(headers, 1):
                     value = get_yaml_value(test, header)
                     cell = sheet.cell(row=row_idx, column=col_idx, value=value)
-                    
+
                     # Apply formatting
                     if header.lower() == "priority" and value == "CRITICAL":
                         cell.fill = styles['critical_fill']
                         cell.font = styles['critical_font']
                     elif header.lower() == "status":
                         cell.value = "☐"
-            
+
             # Auto-size columns
             for col in range(1, len(headers) + 1):
                 max_len = 0
@@ -106,30 +106,30 @@ def generate_excel_from_yaml():
                         max_len = max(max_len, len(str(val)))
                 width = min(max(max_len + 2, 10), 60)
                 sheet.column_dimensions[get_column_letter(col)].width = width
-            
+
             print(f"      ✅ Created")
-            
+
         except Exception as e:
             print(f"      ❌ Failed: {e}")
-    
+
     # Save file
     output_path = Path("test-plan.xlsx")
-    
+
     try:
         print(f"\n💾 Saving Excel file...")
         wb.save(output_path)
         wb.close()  # CRITICAL: Close properly
-        
+
         print(f"✅ File saved: {output_path}")
-        
+
         # Verify
         test_wb = openpyxl.load_workbook(output_path)
         print(f"✅ Verified: {len(test_wb.worksheets)} worksheets")
         test_wb.close()
-        
+
         print("\n🎊 SUCCESS! Excel generated from YAML files!")
         return True
-        
+
     except Exception as e:
         print(f"❌ Save failed: {e}")
         return False
@@ -137,11 +137,11 @@ def generate_excel_from_yaml():
 
 def get_yaml_value(test, header):
     """Get value from YAML test data for Excel header."""
-    
+
     mappings = {
         "Test ID": "test_id",
         "Priority": "priority",
-        "Component": "component", 
+        "Component": "component",
         "Description": "description",
         "Detailed Steps": "steps",
         "Steps": "steps",
@@ -159,10 +159,10 @@ def get_yaml_value(test, header):
         "Attack Steps": "attack_steps",
         "Expected Defense": "expected_defense"
     }
-    
+
     yaml_key = mappings.get(header, header.lower().replace(' ', '_'))
     value = test.get(yaml_key, "")
-    
+
     # Handle special cases
     if header in ["SQLite", "PostgreSQL"]:
         return "✓" if test.get(f'{header.lower()}_support', True) else "❌"
@@ -170,7 +170,7 @@ def get_yaml_value(test, header):
         return ""  # Empty for tester to fill
     elif header == "Status":
         return "☐"
-    
+
     return str(value) if value else ""
 
 

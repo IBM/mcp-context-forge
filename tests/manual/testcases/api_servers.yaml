@@ -4,7 +4,7 @@
 
 worksheet_name: "API Servers"
 description: "Virtual server management API testing including CRUD and transport endpoints"
-priority: "HIGH" 
+priority: "HIGH"
 estimated_time: "45-90 minutes"
 
 headers:
@@ -44,7 +44,7 @@ tests:
 
   - test_id: "SRV-003"
     endpoint: "/servers/{id}"
-    method: "GET" 
+    method: "GET"
     description: "Get server details and configuration"
     curl_command: 'curl http://localhost:4444/servers/{SERVER_ID} -H "Authorization: Bearer <TOKEN>"'
     request_body: ""

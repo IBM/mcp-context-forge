@@ -1,4 +1,4 @@
-# MCP Gateway v0.7.0 - Export/Import API Tests  
+# MCP Gateway v0.7.0 - Export/Import API Tests
 # Configuration backup and restore testing
 # Focus: Data export/import, backup workflows, and recovery
 
@@ -28,7 +28,7 @@ tests:
     method: "GET"
     operation: "Export"
     description: "Export complete configuration"
-    curl_command: 'curl http://localhost:4444/admin/export/configuration -u admin:changeme -o full_config_export.json'
+    curl_command: "curl http://localhost:4444/admin/export/configuration -u admin:changeme -o full_config_export.json"
     request_body: ""
     expected_status: 200
     expected_response: "JSON file downloaded with complete configuration"
@@ -116,7 +116,7 @@ tests:
     method: "GET"
     operation: "Import"
     description: "Check import operation status"
-    curl_command: 'curl http://localhost:4444/admin/import/status -u admin:changeme'
+    curl_command: "curl http://localhost:4444/admin/import/status -u admin:changeme"
     request_body: ""
     expected_status: 200
     expected_response: "Import operation status and progress"
@@ -127,7 +127,7 @@ tests:
     method: "GET"
     operation: "Export"
     description: "Export system logs"
-    curl_command: 'curl http://localhost:4444/admin/export/logs -u admin:changeme -o system_logs.json'
+    curl_command: "curl http://localhost:4444/admin/export/logs -u admin:changeme -o system_logs.json"
     request_body: ""
     expected_status: 200
     expected_response: "System logs exported as JSON"

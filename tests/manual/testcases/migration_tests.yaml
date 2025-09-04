@@ -9,7 +9,7 @@ estimated_time: "60-90 minutes"
 
 headers:
   - "Test ID"
-  - "Priority" 
+  - "Priority"
   - "Component"
   - "Description"
   - "Detailed Steps"
@@ -40,7 +40,7 @@ tests:
     validation_command: 'python3 -c "from mcpgateway.config import settings; from mcpgateway.db import SessionLocal, EmailUser; db=SessionLocal(); admin=db.query(EmailUser).filter(EmailUser.email==settings.platform_admin_email, EmailUser.is_admin==True).first(); result = \"PASS\" if admin else \"FAIL\"; print(f\"Result: {result}\"); db.close()"'
 
   - test_id: "MIG-002"
-    priority: "CRITICAL" 
+    priority: "CRITICAL"
     component: "Personal Team Creation"
     description: "Verify admin user has personal team created automatically"
     steps: |
@@ -56,7 +56,7 @@ tests:
 
   - test_id: "MIG-003"
     priority: "CRITICAL"
-    component: "Server Visibility Fix" 
+    component: "Server Visibility Fix"
     description: "OLD SERVERS NOW VISIBLE - This is the main issue being fixed"
     steps: |
       1. Open web browser to http://localhost:4444/admin
@@ -91,7 +91,7 @@ tests:
     sqlite_support: true
     postgresql_support: true
 
-  - test_id: "MIG-005" 
+  - test_id: "MIG-005"
     priority: "CRITICAL"
     component: "Email Authentication"
     description: "Email-based authentication functional after migration"
@@ -110,7 +110,7 @@ tests:
 
   - test_id: "MIG-006"
     priority: "HIGH"
-    component: "Basic Auth Compatibility" 
+    component: "Basic Auth Compatibility"
     description: "Basic authentication still works alongside email auth"
     steps: |
       1. Open new browser window
@@ -126,7 +126,7 @@ tests:
   - test_id: "MIG-007"
     priority: "HIGH"
     component: "Database Schema Validation"
-    description: "All multitenancy tables created with proper structure" 
+    description: "All multitenancy tables created with proper structure"
     steps: |
       1. Check multitenancy tables exist:
          SQLite: sqlite3 mcp.db '.tables' | grep email
@@ -148,7 +148,7 @@ tests:
       2. Get authentication token:
          curl -X POST http://localhost:4444/auth/login -H 'Content-Type: application/json' -d '{"email":"<admin-email>","password":"<admin-password>"}'
       3. Test teams API with token:
-         curl -H 'Authorization: Bearer <token>' http://localhost:4444/teams  
+         curl -H 'Authorization: Bearer <token>' http://localhost:4444/teams
       4. Test servers API:
          curl -H 'Authorization: Bearer <token>' http://localhost:4444/servers
       5. Record all HTTP status codes and response content

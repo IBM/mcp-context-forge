@@ -79,7 +79,7 @@ tests:
     required: true
     notes: "This will be your login email"
 
-  - step: "7" 
+  - step: "7"
     action: "Configure Admin Password"
     command: "Set PLATFORM_ADMIN_PASSWORD=<strong-password>"
     expected: "Admin password configured in .env"
@@ -138,7 +138,7 @@ tests:
     notes: "Server startup"
 
   - step: "14"
-    action: "Test Basic Connectivity" 
+    action: "Test Basic Connectivity"
     command: "curl http://localhost:4444/health"
     expected: '{"status":"ok"}'
     troubleshooting: "If fails, check server started correctly"

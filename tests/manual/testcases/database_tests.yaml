@@ -4,7 +4,7 @@
 
 worksheet_name: "Database Tests"
 description: "Complete database compatibility testing for SQLite and PostgreSQL"
-priority: "HIGH" 
+priority: "HIGH"
 estimated_time: "60-120 minutes"
 
 headers:

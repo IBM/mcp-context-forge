@@ -10,13 +10,13 @@ estimated_time: "30-60 minutes"
 headers:
   - "Test ID"
   - "Endpoint"
-  - "Method" 
+  - "Method"
   - "Description"
   - "cURL Command"
   - "Request Body"
   - "Expected Status"
   - "Expected Response"
-  - "Actual Status" 
+  - "Actual Status"
   - "Actual Response"
   - "Status"
   - "Tester"
@@ -40,7 +40,7 @@ tests:
     validation: "Response should include user_id, email, and personal_team_id"
 
   - test_id: "AUTH-002"
-    endpoint: "/auth/login" 
+    endpoint: "/auth/login"
     method: "POST"
     description: "Email authentication login"
     curl_command: 'curl -X POST http://localhost:4444/auth/login -H "Content-Type: application/json"'
@@ -72,7 +72,7 @@ tests:
       - "Try using the token again (should fail)"
       - "Verify token is now invalid"
 
-  - test_id: "AUTH-004" 
+  - test_id: "AUTH-004"
     endpoint: "/auth/refresh"
     method: "POST"
     description: "JWT token refresh"
@@ -104,7 +104,7 @@ tests:
 
   - test_id: "AUTH-006"
     endpoint: "/auth/change-password"
-    method: "POST" 
+    method: "POST"
     description: "Change user password"
     curl_command: 'curl -X POST http://localhost:4444/auth/change-password -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
     request_body: '{"old_password":"changeme","new_password":"NewPassword123"}'
@@ -122,7 +122,7 @@ tests:
     endpoint: "/auth/sso/github"
     method: "GET"
     description: "GitHub SSO authentication initiation"
-    curl_command: 'curl -I http://localhost:4444/auth/sso/github'
+    curl_command: "curl -I http://localhost:4444/auth/sso/github"
     request_body: ""
     expected_status: 302
     expected_response: "Redirect to GitHub OAuth authorization"
@@ -137,14 +137,14 @@ tests:
     endpoint: "/auth/sso/google"
     method: "GET"
     description: "Google SSO authentication initiation"
-    curl_command: 'curl -I http://localhost:4444/auth/sso/google'
+    curl_command: "curl -I http://localhost:4444/auth/sso/google"
     request_body: ""
     expected_status: 302
     expected_response: "Redirect to Google OAuth authorization"
     requires_config: "SSO_GOOGLE_ENABLED=true, Google OAuth app"
     test_steps:
       - "Execute request to Google SSO endpoint"
-      - "Verify HTTP 302 redirect status" 
+      - "Verify HTTP 302 redirect status"
       - "Check Location header contains accounts.google.com"
       - "Verify OAuth parameters in redirect URL"
 

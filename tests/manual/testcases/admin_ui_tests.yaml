@@ -25,7 +25,7 @@ headers:
 tests:
   - test_id: "UI-001"
     ui_section: "Authentication"
-    component: "Login Form" 
+    component: "Login Form"
     action: "Test admin login interface"
     steps: |
       1. Open web browser (Chrome or Firefox recommended)
@@ -46,7 +46,7 @@ tests:
   - test_id: "UI-002"
     ui_section: "Dashboard"
     component: "Main Dashboard View"
-    action: "Navigate and test admin dashboard" 
+    action: "Navigate and test admin dashboard"
     steps: |
       1. After successful login, observe dashboard layout
       2. Count the number of statistics cards displayed
@@ -103,7 +103,7 @@ tests:
 
   - test_id: "UI-005"
     ui_section: "Tools"
-    component: "Tool Registry Interface" 
+    component: "Tool Registry Interface"
     action: "Test tool management and invocation"
     steps: |
       1. Navigate to 'Tools' section
@@ -155,7 +155,7 @@ tests:
       9. Execute the import process
       10. Verify import completion and success
     expected: "Export downloads complete JSON, import processes successfully"
-    browser: "Chrome/Firefox" 
+    browser: "Chrome/Firefox"
     screenshot: "Recommended"
     notes: "Important for backup/restore workflows"
 
