@@ -10,6 +10,7 @@ Tests for external client on stdio.
 from contextlib import AsyncExitStack
 import json
 import os
+import re
 import sys
 from typing import Optional
 
@@ -24,6 +25,7 @@ from mcpgateway.plugins.framework import (
     ConfigLoader,
     GlobalContext,
     PluginConfig,
+    PluginError,
     PluginContext,
     PluginLoader,
     PluginManager,
@@ -46,7 +48,7 @@ async def test_client_load_stdio():
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(name="test_prompt", args = {"text": "That was innovative!"})
-    result = await plugin.prompt_pre_fetch(prompt, PluginContext(request_id="1", server_id="2"))
+    result = await plugin.prompt_pre_fetch(prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
     assert result.violation.description == "A deny word was found in the prompt"
@@ -69,7 +71,7 @@ async def test_client_load_stdio_overrides():
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(name="test_prompt", args = {"text": "That was innovative!"})
-    result = await plugin.prompt_pre_fetch(prompt, PluginContext(request_id="1", server_id="2"))
+    result = await plugin.prompt_pre_fetch(prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
     assert result.violation.description == "A deny word was found in the prompt"
@@ -94,7 +96,7 @@ async def test_client_load_stdio_post_prompt():
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_pre_fetch(prompt, context)
     assert result.modified_payload.args["user"] == "What a yikesshow!"
     config = plugin.config
@@ -210,3 +212,86 @@ async def test_hooks():
     # Assert expected behaviors
     assert result.continue_processing
     await plugin_manager.shutdown()
+
+@pytest.mark.asyncio
+async def test_errors():
+    os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/error_plugin.yaml"
+    os.environ["PYTHONPATH"] = "."
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/error_stdio_external_plugin.yaml")
+    await plugin_manager.initialize()
+    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    global_context = GlobalContext(request_id="1")
+    escaped_regex = re.escape("ValueError('Sadly! Prompt prefetch is broken!')")
+    with pytest.raises(PluginError, match=escaped_regex):
+        await plugin_manager.prompt_pre_fetch(payload, global_context)
+
+    await plugin_manager.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_shared_context_across_pre_post_hooks_multi_plugins():
+    os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/context_multiplugins.yaml"
+    os.environ["PYTHONPATH"] = "."
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/context_stdio_external_plugins.yaml")
+    await manager.initialize()
+    assert manager.initialized
+
+    # Test tool pre-invoke with transformation - use correct tool name from config
+    tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"})
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
+
+    assert len(contexts) == 2
+    ctxs = [contexts[key] for key in contexts.keys()]
+    assert len(ctxs) == 2
+    context1 = ctxs[0]
+    context2 = ctxs[1]
+    assert context1.state
+    assert "key2" in context1.state
+    assert "cp2key1" not in context1.state
+    assert context1.state["key2"] == "value2"
+    assert len(context1.state) == 1
+    assert context1.global_context.state["globkey1"] == "globvalue1"
+    assert "gcp2globkey1" not in context1.global_context.state
+    assert len(context1.global_context.state)
+    assert not context1.global_context.metadata
+
+    assert context2.state
+    assert len(context2.state) == 1
+    assert "cp2key1" in context2.state
+    assert "key2" not in context2.state
+    assert context2.global_context.state["globkey1"] == "globvalue1"
+    assert context2.global_context.state["gcp2globkey1"] == "gcp2globvalue1"
+
+    # Should continue processing with transformations applied
+    assert result.continue_processing
+    assert result.modified_payload is None
+    # Test tool post-invoke with transformation
+    tool_result_payload = ToolPostInvokePayload(name="test_tool", result={"output": "Result was bad", "status": "wrong format"})
+    result, contexts = await manager.tool_post_invoke(tool_result_payload, global_context=global_context, local_contexts=contexts)
+
+    ctxs = [contexts[key] for key in contexts.keys()]
+    assert len(ctxs) == 2
+    context1 = ctxs[0]
+    context2 = ctxs[1]
+    assert context1.state
+    assert len(context1.state) == 2
+    assert context1.state["key3"] == "value3"
+    assert context1.state["key2"] == "value2"
+    assert "cp2key1" not in context1.state
+    assert "cp2key2" not in context1.state
+    assert context1.global_context.state["globkey1"] == "globvalue1"
+    assert context1.global_context.state["gcp2globkey1"] == "gcp2globvalue1"
+    assert "gcp2globkey2" not in context1.global_context.state
+    assert context1.global_context.state["globkey2"] == "globvalue2"
+
+    assert context2.global_context.state["globkey1"] == "globvalue1"
+    assert context2.global_context.state["gcp2globkey1"] == "gcp2globvalue1"
+    assert context2.global_context.state["gcp2globkey2"] == "gcp2globvalue2"
+    assert context2.global_context.state["globkey2"] == "globvalue2"
+
+    assert "key3" not in context2.state
+    assert "key2" not in context2.state
+    assert "cp2key1" in context2.state
+
+    await manager.shutdown()
