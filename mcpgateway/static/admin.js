@@ -11636,9 +11636,9 @@ async function handleSelectiveImport(dryRun = false) {
         showImportProgress(true);
 
         // Collect user selections
-        const selected_entities = collectUserSelections();
+        const selectedEntities = collectUserSelections();
 
-        if (Object.keys(selected_entities).length === 0) {
+        if (Object.keys(selectedEntities).length === 0) {
             showNotification(
                 "❌ Please select at least one item to import",
                 "warning",
@@ -11658,10 +11658,10 @@ async function handleSelectiveImport(dryRun = false) {
             conflict_strategy: conflictStrategy,
             dry_run: dryRun,
             rekey_secret: rekeySecret,
-            selected_entities: selected_entities,
+            selectedEntities,
         };
 
-        console.log("🎯 Selected entities for import:", selected_entities);
+        console.log("🎯 Selected entities for import:", selectedEntities);
 
         const response = await fetch(
             (window.ROOT_PATH || "") + "/admin/import/configuration",
@@ -11713,7 +11713,9 @@ function collectUserSelections() {
         .querySelectorAll(".gateway-checkbox:checked")
         .forEach((checkbox) => {
             const gatewayName = checkbox.dataset.gateway;
-            if (!selections.gateways) selections.gateways = [];
+            if (!selections.gateways) {
+                selections.gateways = [];
+            }
             selections.gateways.push(gatewayName);
         });
 
@@ -11721,7 +11723,9 @@ function collectUserSelections() {
     document.querySelectorAll(".item-checkbox:checked").forEach((checkbox) => {
         const entityType = checkbox.dataset.type;
         const itemId = checkbox.dataset.id;
-        if (!selections[entityType]) selections[entityType] = [];
+        if (!selections[entityType]) {
+            selections[entityType] = [];
+        }
         selections[entityType].push(itemId);
     });
 
