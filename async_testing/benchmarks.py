@@ -2,12 +2,14 @@
 """
 Run async performance benchmarks and output results.
 """
-import asyncio
-import time
-import json
+# Standard
 import argparse
+import asyncio
+import json
 from pathlib import Path
+import time
 from typing import Any, Dict
+
 
 class AsyncBenchmark:
     """Run async performance benchmarks."""

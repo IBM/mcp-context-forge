@@ -27,6 +27,7 @@ from __future__ import annotations
 # Standard
 import base64
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -34,7 +35,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 from fastapi.testclient import TestClient
 import jwt
 import pytest
-from unittest.mock import Mock
 
 # First-Party
 from mcpgateway.utils import verify_credentials as vc  # module under test
@@ -62,10 +62,18 @@ ALGO = "HS256"
 
 def _token(payload: dict, *, exp_delta: int | None = 60, secret: str = SECRET) -> str:
     """Return a signed JWT with optional expiry offset (minutes)."""
+    # Add required audience and issuer claims for compatibility with RBAC system
+    token_payload = payload.copy()
+    token_payload.update({
+        "iss": "mcpgateway",
+        "aud": "mcpgateway-api"
+    })
+
     if exp_delta is not None:
         expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
-        payload = payload | {"exp": int(expire.timestamp())}
-    return jwt.encode(payload, secret, algorithm=ALGO)
+        token_payload["exp"] = int(expire.timestamp())
+
+    return jwt.encode(token_payload, secret, algorithm=ALGO)
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +142,7 @@ async def test_require_auth_header(monkeypatch):
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=tok)
     mock_request = Mock(spec=Request)
     mock_request.headers = {}
+    mock_request.cookies = {}  # Empty cookies dict, not Mock
 
     payload = await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
     assert payload["uid"] == 7
@@ -144,6 +153,7 @@ async def test_require_auth_missing_token(monkeypatch):
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     mock_request = Mock(spec=Request)
     mock_request.headers = {}
+    mock_request.cookies = {}  # Empty cookies dict, not Mock
 
     with pytest.raises(HTTPException) as exc:
         await vc.require_auth(request=mock_request, credentials=None, jwt_token=None)
@@ -223,6 +233,7 @@ async def test_require_auth_override_non_bearer(monkeypatch):
     monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
     mock_request = Mock(spec=Request)
     mock_request.headers = {}
+    mock_request.cookies = {}  # Empty cookies dict, not Mock
 
     # Act
     result = await vc.require_auth_override(auth_header=header)
@@ -287,7 +298,7 @@ def test_client():
 
 def create_test_jwt_token():
     """Create a valid JWT token for integration tests."""
-    return jwt.encode({"sub": "integration-user"}, SECRET, algorithm=ALGO)
+    return _token({"sub": "integration-user"})
 
 
 @pytest.mark.asyncio
@@ -296,8 +307,10 @@ async def test_docs_auth_with_basic_auth_enabled_bearer_still_works(monkeypatch)
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     # Create a valid JWT token
-    token = jwt.encode({"sub": "testuser"}, SECRET, algorithm=ALGO)
+    token = _token({"sub": "testuser"})
     bearer_header = f"Bearer {token}"
     # Bearer auth should STILL work
     result = await vc.require_auth_override(auth_header=bearer_header)
@@ -312,12 +325,14 @@ async def test_docs_both_auth_methods_work_simultaneously(monkeypatch):
     monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
     # Test 1: Basic Auth works
     basic_header = f"Basic {base64.b64encode(b'admin:secret').decode()}"
     result1 = await vc.require_auth_override(auth_header=basic_header)
     assert result1 == "admin"
     # Test 2: Bearer Auth still works
-    token = jwt.encode({"sub": "jwtuser"}, SECRET, algorithm=ALGO)
+    token = _token({"sub": "jwtuser"})
     bearer_header = f"Bearer {token}"
     result2 = await vc.require_auth_override(auth_header=bearer_header)
     assert result2["sub"] == "jwtuser"
@@ -343,6 +358,8 @@ async def test_integration_docs_endpoint_both_auth_methods(test_client, monkeypa
     monkeypatch.setattr("mcpgateway.config.settings.docs_allow_basic_auth", True)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_secret_key", SECRET)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_algorithm", ALGO)
+    monkeypatch.setattr("mcpgateway.config.settings.jwt_audience", "mcpgateway-api")
+    monkeypatch.setattr("mcpgateway.config.settings.jwt_issuer", "mcpgateway")
     # Test with Basic Auth
     basic_creds = base64.b64encode(b"admin:changeme").decode()
     response1 = test_client.get("/docs", headers={"Authorization": f"Basic {basic_creds}"})

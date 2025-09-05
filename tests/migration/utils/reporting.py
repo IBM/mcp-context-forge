@@ -5,13 +5,14 @@ This module provides comprehensive reporting capabilities for migration tests
 including HTML dashboards, JSON reports, and performance visualizations.
 """
 
-import json
-import logging
-import time
+# Standard
 from dataclasses import asdict
 from datetime import datetime
+import json
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+import time
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -864,6 +865,7 @@ class MigrationReportGenerator:
 
 def main():
     """Command-line interface for report generation."""
+    # Standard
     import argparse
     import sys
 

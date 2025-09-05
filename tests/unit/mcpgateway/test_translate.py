@@ -78,7 +78,10 @@ def test_translate_importerror(monkeypatch, translate):
     monkeypatch.setattr(translate, "httpx", None)
 
     # Test that _run_sse_to_stdio raises ImportError when httpx is None
+    # Standard
     import asyncio
+
+    # Third-Party
     import pytest
 
     async def test_sse_without_httpx():
@@ -1392,6 +1395,7 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
             pass
 
     # Mock the import path for CORS middleware
+    # Standard
     import types
     cors_module = types.ModuleType('cors')
     cors_module.CORSMiddleware = MockCORSMiddleware
@@ -1400,6 +1404,7 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
     starlette_module = types.ModuleType('starlette')
     starlette_module.middleware = middleware_module
 
+    # Standard
     import sys
     sys.modules['starlette'] = starlette_module
     sys.modules['starlette.middleware'] = middleware_module

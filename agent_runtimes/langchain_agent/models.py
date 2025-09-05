@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional, Union
+# Standard
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+
+# Third-Party
+from pydantic import BaseModel, Field
+
 
 # OpenAI Chat API Models
 class ChatMessage(BaseModel):

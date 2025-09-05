@@ -64,6 +64,13 @@ recursive-include alembic *.py
 include mcpgateway/cli_export_import.py
 include mcpgateway/services/export_service.py
 include mcpgateway/services/import_service.py
+
+# 📦 Migration scripts (v0.7.0 multitenancy migration tools)
+recursive-include scripts *.py
+
+# 🧪 Testing documentation and plans
+recursive-include tests/manual *.py *.md
+
 # recursive-include deployment *
 # recursive-include mcp-servers *
 recursive-include plugins *.py

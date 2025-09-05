@@ -6,10 +6,16 @@ Authors: Mihai Criveti
 
 Property-based fuzz testing for JSON-RPC validation.
 """
+# Standard
 import json
-from hypothesis import given, strategies as st, settings, example
+
+# Third-Party
+from hypothesis import example, given, settings
+from hypothesis import strategies as st
 import pytest
-from mcpgateway.validation.jsonrpc import validate_request, validate_response, JSONRPCError
+
+# First-Party
+from mcpgateway.validation.jsonrpc import JSONRPCError, validate_request, validate_response
 
 
 class TestJSONRPCRequestFuzzing:

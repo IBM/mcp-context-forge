@@ -47,8 +47,12 @@ services:
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=my-test-key
-      - BASIC_AUTH_USER=admin
-      - BASIC_AUTH_PASSWORD=changeme
+      - JWT_AUDIENCE=mcpgateway-api
+      - JWT_ISSUER=mcpgateway
+      - EMAIL_AUTH_ENABLED=true
+      - PLATFORM_ADMIN_EMAIL=admin@example.com
+      - PLATFORM_ADMIN_PASSWORD=changeme
+      - REQUIRE_TOKEN_EXPIRATION=false
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
       # Security configuration (using defaults)
@@ -326,7 +330,7 @@ services:
   # Auto-registration service - registers fast_time_server with gateway
   ###############################################################################
   register_fast_time:
-    image: python:3.11-slim
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
     networks: [mcpnet]
     depends_on:
       gateway:
@@ -340,50 +344,131 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        echo "Installing MCP Context Forge Gateway..."
-        pip install --quiet mcp-contextforge-gateway
-
-        echo "Installing curl..."
-        apt-get update -qq && apt-get install -y -qq curl
+        echo "Using latest gateway image with current JWT utility..."
 
         echo "Waiting for services to be ready..."
-        # Wait for fast_time_server to be ready
-        for i in {1..30}; do
-          if curl -s -f http://fast_time_server:8080/health > /dev/null 2>&1; then
-            echo "✅ fast_time_server is healthy"
-            break
-          fi
-          echo "Waiting for fast_time_server... ($$i/30)"
-          sleep 2
-        done
+
+        # Wait for gateway to be ready using Python
+        python3 -c "
+        import time
+        import urllib.request
+        import urllib.error
+
+        for i in range(1, 61):
+            try:
+                with urllib.request.urlopen('http://gateway:4444/health', timeout=2) as response:
+                    if response.status == 200:
+                        print('✅ gateway is healthy')
+                        break
+            except:
+                pass
+            print(f'Waiting for gateway... ({i}/60)')
+            time.sleep(2)
+        else:
+            print('❌ Gateway failed to become healthy')
+            exit(1)
+        "
+
+        # Wait for fast_time_server to be ready using Python
+        python3 -c "
+        import time
+        import urllib.request
+        import urllib.error
+
+        for i in range(1, 31):
+            try:
+                with urllib.request.urlopen('http://fast_time_server:8080/health', timeout=2) as response:
+                    if response.status == 200:
+                        print('✅ fast_time_server is healthy')
+                        break
+            except:
+                pass
+            print(f'Waiting for fast_time_server... ({i}/30)')
+            time.sleep(2)
+        else:
+            print('❌ Fast time server failed to become healthy')
+            exit(1)
+        "
 
         echo "Generating JWT token..."
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+        echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>&1)
+        echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
 
-        echo "Registering fast_time_server with gateway..."
-        RESPONSE=$$(curl -s -X POST http://gateway:4444/gateways \
-          -H "Authorization: Bearer $$MCPGATEWAY_BEARER_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d '{"name":"fast_time","url":"http://fast_time_server:8080/sse"}')
+        # Decode the token to verify it has expiration
+        echo "Decoding token to verify claims..."
+        python3 -m mcpgateway.utils.create_jwt_token --decode "$$MCPGATEWAY_BEARER_TOKEN" || echo "Failed to decode token"
 
-        echo "Registration response: $$RESPONSE"
+        # Test authentication first
+        echo "Testing authentication..."
 
-        # Check if registration was successful
-        if echo "$$RESPONSE" | grep -q '"id"'; then
-          echo "✅ Successfully registered fast_time_server"
+        # Use Python to make HTTP requests
+        python3 -c "
+        import urllib.request
+        import urllib.error
+        import json
+        import sys
+        import os
 
-          # Optional: Create a virtual server with the time tools
-          echo "Creating virtual server..."
-          curl -s -X POST http://gateway:4444/servers \
-            -H "Authorization: Bearer $$MCPGATEWAY_BEARER_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"time_server","description":"Fast time tools","associatedTools":["1","2"]}' || true
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
 
-          echo "✅ Setup complete!"
-        else
-          echo "❌ Registration failed"
-          exit 1
-        fi
+        # Test version endpoint without auth
+        print('Checking gateway config...')
+        try:
+            with urllib.request.urlopen('http://gateway:4444/version') as response:
+                data = response.read().decode('utf-8')
+                print(f'Gateway version response (no auth): {data[:200]}')
+        except Exception as e:
+            print(f'Version check failed: {e}')
+
+        # Test version endpoint with auth
+        print('Testing authentication...')
+        try:
+            req = urllib.request.Request('http://gateway:4444/version')
+            req.add_header('Authorization', f'Bearer {token}')
+            with urllib.request.urlopen(req) as response:
+                data = response.read().decode('utf-8')
+                print(f'Auth test response: SUCCESS')
+                print(f'Response preview: {data[:200]}...')
+                auth_success = True
+        except Exception as e:
+            print(f'Auth test response: FAILED - {e}')
+            auth_success = False
+
+        # Register fast_time_server with gateway
+        print('Registering fast_time_server with gateway...')
+        try:
+            payload = json.dumps({'name': 'fast_time', 'url': 'http://fast_time_server:8080/sse'})
+            req = urllib.request.Request('http://gateway:4444/gateways',
+                                        data=payload.encode('utf-8'),
+                                        method='POST')
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+
+            with urllib.request.urlopen(req) as response:
+                data = response.read().decode('utf-8')
+                print(f'Registration response: {data}')
+
+                # Check if registration was successful
+                response_data = json.loads(data)
+                if 'id' in response_data:
+                    print('✅ Successfully registered fast_time_server')
+                    registration_success = True
+                else:
+                    print('❌ Registration failed - no ID in response')
+                    registration_success = False
+
+        except Exception as e:
+            print(f'❌ Registration failed: {e}')
+            registration_success = False
+
+        # Exit with error code if registration failed
+        if not registration_success:
+            sys.exit(1)
+        "
+
+        echo "✅ Setup complete!"
 
   ###############################################################################
   # Hashicorp Terraform MCP Server

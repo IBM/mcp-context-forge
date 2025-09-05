@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """Show current migration testing version configuration."""
 
-from version_config import VersionConfig, get_supported_versions, get_migration_pairs
+# Third-Party
+from version_config import get_migration_pairs, get_supported_versions, VersionConfig
 
 
 def main():

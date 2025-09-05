@@ -77,6 +77,41 @@ if not logging.getLogger().handlers:
 logger = logging.getLogger(__name__)
 
 
+def _normalize_env_list_vars() -> None:
+    """Normalize list-typed env vars to valid JSON arrays.
+
+    Ensures env values parse cleanly when providers expect JSON for complex types.
+    If a value is empty or CSV, convert to a JSON array string.
+    """
+    keys = [
+        "SSO_TRUSTED_DOMAINS",
+        "SSO_AUTO_ADMIN_DOMAINS",
+        "SSO_GITHUB_ADMIN_ORGS",
+        "SSO_GOOGLE_ADMIN_DOMAINS",
+    ]
+    for key in keys:
+        raw = os.environ.get(key)
+        if raw is None:
+            continue
+        s = raw.strip()
+        if not s:
+            os.environ[key] = "[]"
+            continue
+        if s.startswith("["):
+            # Already JSON-like, keep as is
+            try:
+                json.loads(s)
+                continue
+            except Exception:
+                pass
+        # Convert CSV to JSON array
+        items = [item.strip() for item in s.split(",") if item.strip()]
+        os.environ[key] = json.dumps(items)
+
+
+_normalize_env_list_vars()
+
+
 class Settings(BaseSettings):
     """
     MCP Gateway configuration settings.
@@ -130,10 +165,43 @@ class Settings(BaseSettings):
     basic_auth_password: str = "changeme"
     jwt_secret_key: str = "my-test-key"
     jwt_algorithm: str = "HS256"
+    jwt_audience: str = "mcpgateway-api"
+    jwt_issuer: str = "mcpgateway"
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
+
+    # SSO Configuration
+    sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
+    sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")
+    sso_github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
+    sso_github_client_secret: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
+
+    sso_google_enabled: bool = Field(default=False, description="Enable Google OAuth authentication")
+    sso_google_client_id: Optional[str] = Field(default=None, description="Google OAuth client ID")
+    sso_google_client_secret: Optional[str] = Field(default=None, description="Google OAuth client secret")
+
+    sso_ibm_verify_enabled: bool = Field(default=False, description="Enable IBM Security Verify OIDC authentication")
+    sso_ibm_verify_client_id: Optional[str] = Field(default=None, description="IBM Security Verify client ID")
+    sso_ibm_verify_client_secret: Optional[str] = Field(default=None, description="IBM Security Verify client secret")
+    sso_ibm_verify_issuer: Optional[str] = Field(default=None, description="IBM Security Verify OIDC issuer URL")
+
+    sso_okta_enabled: bool = Field(default=False, description="Enable Okta OIDC authentication")
+    sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
+    sso_okta_client_secret: Optional[str] = Field(default=None, description="Okta client secret")
+    sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
+
+    # SSO Settings
+    sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
+    sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
+    sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
+
+    # SSO Admin Assignment Settings
+    sso_auto_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
+    sso_github_admin_orgs: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
+    sso_google_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
+    sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
@@ -149,6 +217,36 @@ class Settings(BaseSettings):
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
+
+    # Email-Based Authentication
+    email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
+    platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
+    platform_admin_password: str = Field(default="changeme", description="Platform administrator password")
+    platform_admin_full_name: str = Field(default="Platform Administrator", description="Platform administrator full name")
+
+    # Argon2id Password Hashing Configuration
+    argon2id_time_cost: int = Field(default=3, description="Argon2id time cost (number of iterations)")
+    argon2id_memory_cost: int = Field(default=65536, description="Argon2id memory cost in KiB")
+    argon2id_parallelism: int = Field(default=1, description="Argon2id parallelism (number of threads)")
+
+    # Password Policy Configuration
+    password_min_length: int = Field(default=8, description="Minimum password length")
+    password_require_uppercase: bool = Field(default=False, description="Require uppercase letters in passwords")
+    password_require_lowercase: bool = Field(default=False, description="Require lowercase letters in passwords")
+    password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
+    password_require_special: bool = Field(default=False, description="Require special characters in passwords")
+
+    # Account Security Configuration
+    max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
+    account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
+
+    # Personal Teams Configuration
+    auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
+    personal_team_prefix: str = Field(default="personal", description="Personal team naming prefix")
+    max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
+    max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
+    invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
+    require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
@@ -503,6 +601,47 @@ Disallow: /
         """
         if info.data and "well_known_security_txt" in info.data:
             return bool(info.data["well_known_security_txt"].strip())
+        return v
+
+    # -------------------------------
+    # Flexible list parsing for envs
+    # -------------------------------
+    @field_validator(
+        "sso_trusted_domains",
+        "sso_auto_admin_domains",
+        "sso_github_admin_orgs",
+        "sso_google_admin_domains",
+        mode="before",
+    )
+    @classmethod
+    def _parse_list_from_env(cls, v):  # type: ignore[override]
+        """Parse list fields from environment values.
+
+        Accepts either JSON arrays (e.g. '["a","b"]') or comma-separated
+        strings (e.g. 'a,b'). Empty or None becomes an empty list.
+
+        Args:
+            v: The value to parse, can be None, list, or string.
+
+        Returns:
+            list: Parsed list of values.
+        """
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    return parsed if isinstance(parsed, list) else []
+                except Exception:
+                    logger.warning("Invalid JSON list in env for list field; falling back to CSV parsing")
+            # CSV fallback
+            return [item.strip() for item in s.split(",") if item.strip()]
         return v
 
     @property

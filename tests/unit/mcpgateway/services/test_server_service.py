@@ -548,6 +548,7 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_register_server_uuid_normalization_standard_format(self, server_service, test_db):
         """Test server registration with standard UUID format (with dashes) normalizes to hex format."""
+        # Standard
         import uuid as uuid_module
 
         # Standard UUID format (with dashes)
@@ -621,6 +622,7 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_register_server_uuid_normalization_hex_format(self, server_service, test_db):
         """Test server registration with hex UUID format works correctly."""
+        # Standard
         import uuid as uuid_module
 
         # Standard UUID that will be normalized
@@ -778,6 +780,7 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_update_server_uuid_normalization(self, server_service, test_db):
         """Test server update with UUID normalization."""
+        # Standard
         import uuid as uuid_module
 
         # Mock existing server
@@ -849,6 +852,7 @@ class TestServerService:
 
     def test_uuid_normalization_edge_cases(self, server_service):
         """Test edge cases in UUID normalization logic."""
+        # Standard
         import uuid as uuid_module
 
         # Test various UUID formats that should all normalize correctly

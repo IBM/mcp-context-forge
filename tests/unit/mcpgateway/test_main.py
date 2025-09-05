@@ -171,20 +171,128 @@ def test_client(app):
     Every FastAPI dependency on ``require_auth`` is overridden to return the
     static user name ``"test_user"``.  This keeps the protected endpoints
     accessible without needing to furnish JWTs in every request.
+
+    Also overrides RBAC dependencies to bypass permission checks for tests.
     """
     # First-Party
+    # Mock user object for RBAC system
+    from mcpgateway.db import EmailUser
     from mcpgateway.main import require_auth
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    mock_user = EmailUser(
+        email="test_user@example.com",
+        full_name="Test User",
+        is_admin=True,  # Give admin privileges for tests
+        is_active=True,
+        auth_provider="test"
+    )
 
+    # Override old auth system
     app.dependency_overrides[require_auth] = lambda: "test_user"
+
+    # Patch the auth function used by DocsAuthMiddleware
+    # Standard
+    from unittest.mock import AsyncMock, patch
+
+    # Third-Party
+    from fastapi import HTTPException, status
+
+    # First-Party
+    from mcpgateway.utils.verify_credentials import require_auth_override
+
+    # Create a mock that validates JWT tokens properly
+    async def mock_require_auth_override(auth_header=None, jwt_token=None):
+        # Third-Party
+        import jwt as jwt_lib
+
+        # First-Party
+        from mcpgateway.config import settings
+
+        # Try to get token from auth_header or jwt_token
+        token = jwt_token
+        if not token and auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]  # Remove "Bearer " prefix
+
+        if not token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization required")
+
+        try:
+            # Try to decode JWT token - use actual settings, skip audience verification for tests
+            payload = jwt_lib.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], options={"verify_aud": False})
+            username = payload.get("sub")
+            if username:
+                return username
+            else:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        except jwt_lib.ExpiredSignatureError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        except jwt_lib.InvalidTokenError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    patcher = patch('mcpgateway.main.require_docs_auth_override', mock_require_auth_override)
+    patcher.start()
+
+    # Override the core auth function used by RBAC system
+    # First-Party
+    from mcpgateway.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
+
+    # Override get_current_user_with_permissions for RBAC system
+    def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
+        return {
+            "email": "test_user@example.com",
+            "full_name": "Test User",
+            "is_admin": True,
+            "ip_address": "127.0.0.1",
+            "user_agent": "test",
+            "db": db
+        }
+    app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
+
+    # Mock the permission service to always return True for tests
+    # First-Party
+    from mcpgateway.services.permission_service import PermissionService
+
+    # Store original method
+    if not hasattr(PermissionService, '_original_check_permission'):
+        PermissionService._original_check_permission = PermissionService.check_permission
+
+    # Mock with correct async signature matching the real method
+    async def mock_check_permission(
+        self,
+        user_email: str,
+        permission: str,
+        resource_type=None,
+        resource_id=None,
+        team_id=None,
+        ip_address=None,
+        user_agent=None
+    ) -> bool:
+        return True
+
+    PermissionService.check_permission = mock_check_permission
+
     client = TestClient(app)
     yield client
+
+    # Clean up overrides and restore original methods
     app.dependency_overrides.pop(require_auth, None)
+    app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_current_user_with_permissions, None)
+    patcher.stop()  # Stop the require_auth_override patch
+    if hasattr(PermissionService, '_original_check_permission'):
+        PermissionService.check_permission = PermissionService._original_check_permission
 
 
 @pytest.fixture
 def mock_jwt_token():
     """Create a valid JWT token for testing."""
-    payload = {"sub": "test_user"}
+    payload = {
+        "sub": "test_user@example.com",
+        "email": "test_user@example.com",
+        "iss": "mcpgateway",
+        "aud": "mcpgateway-api"
+    }
     secret = settings.jwt_secret_key
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
@@ -392,7 +500,11 @@ class TestServerEndpoints:
     def test_create_server_endpoint(self, mock_create, test_client, auth_headers):
         """Test creating a new server."""
         mock_create.return_value = ServerRead(**MOCK_SERVER_READ)
-        req = {"name": "test_server", "description": "A test server"}
+        req = {
+            "server": {"name": "test_server", "description": "A test server"},
+            "team_id": None,
+            "visibility": "private"
+        }
         response = test_client.post("/servers/", json=req, headers=auth_headers)
         assert response.status_code == 201
         mock_create.assert_called_once()
@@ -504,7 +616,11 @@ class TestToolEndpoints:
     @patch("mcpgateway.main.tool_service.register_tool")
     def test_create_tool_endpoint(self, mock_create, test_client, auth_headers):
         mock_create.return_value = MOCK_TOOL_READ_SNAKE
-        req = {"name": "test_tool", "url": "http://example.com", "description": "A test tool"}
+        req = {
+            "tool": {"name": "test_tool", "url": "http://example.com", "description": "A test tool"},
+            "team_id": None,
+            "visibility": "private"
+        }
         response = test_client.post("/tools/", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_create.assert_called_once()
@@ -585,7 +701,11 @@ class TestResourceEndpoints:
         """Test registering a new resource."""
         mock_create.return_value = ResourceRead(**MOCK_RESOURCE_READ)
 
-        req = {"uri": "test/resource", "name": "Test Resource", "description": "A test resource", "content": "Hello world"}  # ← required field
+        req = {
+            "resource": {"uri": "test/resource", "name": "Test Resource", "description": "A test resource", "content": "Hello world"},
+            "team_id": None,
+            "visibility": "private"
+        }
         response = test_client.post("/resources/", json=req, headers=auth_headers)
 
         assert response.status_code == 200  # route returns 200 on success
@@ -740,7 +860,11 @@ class TestPromptEndpoints:
         # Return an actual model instance
         mock_create.return_value = PromptRead(**MOCK_PROMPT_READ)
 
-        req = {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"}
+        req = {
+            "prompt": {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"},
+            "team_id": None,
+            "visibility": "private"
+        }
         response = test_client.post("/prompts/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
@@ -1415,7 +1539,11 @@ class TestErrorHandling:
 
         mock_register.side_effect = ToolNameConflictError("Tool name already exists")
 
-        req = {"name": "existing_tool", "url": "http://example.com"}
+        req = {
+            "tool": {"name": "existing_tool", "url": "http://example.com"},
+            "team_id": None,
+            "visibility": "private"
+        }
         response = test_client.post("/tools/", json=req, headers=auth_headers)
         assert response.status_code == 409
 

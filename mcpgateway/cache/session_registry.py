@@ -50,13 +50,18 @@ Examples:
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 import time
+import traceback
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
+import uuid
 
 # Third-Party
 from fastapi import HTTPException, status
+import jwt
 
 # First-Party
 from mcpgateway import __version__
@@ -1291,22 +1296,73 @@ class SessionRegistry(SessionBackend):
                     "params": params,
                     "id": req_id,
                 }
-                headers = {"Authorization": f"Bearer {user['token']}", "Content-Type": "application/json"}
-                rpc_url = base_url + "/rpc"
+                # Get the token from the current authentication context
+                # The user object doesn't contain the token directly, we need to reconstruct it
+                # Since we don't have access to the original headers here, we need a different approach
+                # We'll extract the token from the session or create a new admin token
+                token = None
+                if hasattr(user, "get") and "auth_token" in user:
+                    token = user["auth_token"]
+                else:
+                    # Fallback: create an admin token for internal RPC calls
+                    now = datetime.now(timezone.utc)
+                    payload = {
+                        "sub": user.get("email", "system"),
+                        "iss": settings.jwt_issuer,
+                        "aud": settings.jwt_audience,
+                        "iat": int(now.timestamp()),
+                        "jti": str(uuid.uuid4()),
+                        "user": {
+                            "email": user.get("email", "system"),
+                            "full_name": user.get("full_name", "System"),
+                            "is_admin": True,  # Internal calls should have admin access
+                            "auth_provider": "internal",
+                        },
+                    }
+                    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                # Extract root URL from base_url (remove /servers/{id} path)
+                parsed_url = urlparse(base_url)
+                # Preserve the path up to the root path (before /servers/{id})
+                path_parts = parsed_url.path.split("/")
+                if "/servers/" in parsed_url.path:
+                    # Find the index of 'servers' and take everything before it
+                    try:
+                        servers_index = path_parts.index("servers")
+                        root_path = "/" + "/".join(path_parts[1:servers_index]).strip("/")
+                        if root_path == "/":
+                            root_path = ""
+                    except ValueError:
+                        root_path = ""
+                else:
+                    root_path = parsed_url.path.rstrip("/")
+
+                root_url = f"{parsed_url.scheme}://{parsed_url.netloc}{root_path}"
+                rpc_url = root_url + "/rpc"
+
+                logger.info(f"SSE RPC: Making call to {rpc_url} with method={method}, params={params}")
+
                 async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
+                    logger.info(f"SSE RPC: Sending request to {rpc_url}")
                     rpc_response = await client.post(
                         url=rpc_url,
                         json=rpc_input,
                         headers=headers,
                     )
+                    logger.info(f"SSE RPC: Got response status {rpc_response.status_code}")
                     result = rpc_response.json()
+                    logger.info(f"SSE RPC: Response content: {result}")
                     result = result.get("result", {})
 
                 response = {"jsonrpc": "2.0", "result": result, "id": req_id}
             except JSONRPCError as e:
+                logger.error(f"SSE RPC: JSON-RPC error: {e}")
                 result = e.to_dict()
                 response = {"jsonrpc": "2.0", "error": result["error"], "id": req_id}
             except Exception as e:
+                logger.error(f"SSE RPC: Exception during RPC call: {type(e).__name__}: {e}")
+                logger.error(f"SSE RPC: Traceback: {traceback.format_exc()}")
                 result = {"code": -32000, "message": "Internal error", "data": str(e)}
                 response = {"jsonrpc": "2.0", "error": result, "id": req_id}
 

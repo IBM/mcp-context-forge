@@ -73,6 +73,16 @@ def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH)
 
     Returns:
         Sanitized header value
+
+    Examples:
+        Remove CRLF and trim length:
+        >>> s = sanitize_header_value('val' + chr(13) + chr(10) + 'more', max_length=6)
+        >>> s
+        'valmor'
+        >>> len(s) <= 6
+        True
+        >>> sanitize_header_value('  spaced  ')
+        'spaced'
     """
     # Remove newlines and carriage returns to prevent header injection
     value = value.replace("\r", "").replace("\n", "")
@@ -94,6 +104,19 @@ def validate_header_name(name: str) -> bool:
 
     Returns:
         True if valid, False otherwise
+
+    Examples:
+        Valid names:
+        >>> validate_header_name('X-Tenant-Id')
+        True
+        >>> validate_header_name('X123-ABC')
+        True
+
+        Invalid names:
+        >>> validate_header_name('Invalid Header:Name')
+        False
+        >>> validate_header_name('Bad@Name')
+        False
     """
     return bool(HEADER_NAME_REGEX.match(name))
 
@@ -153,6 +176,24 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         ...     base_headers = {"Content-Type": "application/json"}
         ...     get_passthrough_headers(request_headers, base_headers, mock_db)
         {'Content-Type': 'application/json'}
+
+        Enabled with allowlist and conflicts:
+        >>> with patch(__name__ + ".settings") as mock_settings:
+        ...     mock_settings.enable_header_passthrough = True
+        ...     mock_settings.default_passthrough_headers = ["X-Tenant-Id", "Authorization"]
+        ...     # Mock DB returns no global override
+        ...     mock_db = Mock()
+        ...     mock_db.query.return_value.first.return_value = None
+        ...     # Gateway with basic auth should block Authorization passthrough
+        ...     gateway = Mock()
+        ...     gateway.passthrough_headers = None
+        ...     gateway.auth_type = "basic"
+        ...     gateway.name = "gw1"
+        ...     req_headers = {"X-Tenant-Id": "acme", "Authorization": "Bearer abc"}
+        ...     base = {"Content-Type": "application/json", "Authorization": "Bearer base"}
+        ...     res = get_passthrough_headers(req_headers, base, mock_db, gateway)
+        ...     ("X-Tenant-Id" in res) and (res["Authorization"] == "Bearer base")
+        True
 
         See comprehensive unit tests in tests/unit/mcpgateway/utils/test_passthrough_headers*.py
         for detailed examples of enabled functionality, conflict detection, and security features.

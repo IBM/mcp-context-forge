@@ -827,3 +827,154 @@ class Gateway(BaseModel):
     url: AnyHttpUrl
     capabilities: ServerCapabilities
     last_seen: Optional[datetime] = None
+
+
+# ===== RBAC Models =====
+
+
+class RBACRole(BaseModel):
+    """Role model for RBAC system.
+
+    Represents roles that can be assigned to users with specific permissions.
+    Supports global, team, and personal scopes with role inheritance.
+
+    Attributes:
+        id: Unique role identifier
+        name: Human-readable role name
+        description: Role description and purpose
+        scope: Role scope ('global', 'team', 'personal')
+        permissions: List of permission strings
+        inherits_from: Parent role ID for inheritance
+        created_by: Email of user who created the role
+        is_system_role: Whether this is a system-defined role
+        is_active: Whether the role is currently active
+        created_at: Role creation timestamp
+        updated_at: Role last modification timestamp
+
+    Examples:
+        >>> from datetime import datetime
+        >>> role = RBACRole(
+        ...     id="role-123",
+        ...     name="team_admin",
+        ...     description="Team administrator with member management rights",
+        ...     scope="team",
+        ...     permissions=["teams.manage_members", "resources.create"],
+        ...     created_by="admin@example.com",
+        ...     created_at=datetime(2023, 1, 1),
+        ...     updated_at=datetime(2023, 1, 1)
+        ... )
+        >>> role.name
+        'team_admin'
+        >>> "teams.manage_members" in role.permissions
+        True
+    """
+
+    id: str = Field(..., description="Unique role identifier")
+    name: str = Field(..., description="Human-readable role name")
+    description: Optional[str] = Field(None, description="Role description and purpose")
+    scope: str = Field(..., description="Role scope", pattern="^(global|team|personal)$")
+    permissions: List[str] = Field(..., description="List of permission strings")
+    inherits_from: Optional[str] = Field(None, description="Parent role ID for inheritance")
+    created_by: str = Field(..., description="Email of user who created the role")
+    is_system_role: bool = Field(False, description="Whether this is a system-defined role")
+    is_active: bool = Field(True, description="Whether the role is currently active")
+    created_at: datetime = Field(..., description="Role creation timestamp")
+    updated_at: datetime = Field(..., description="Role last modification timestamp")
+
+
+class UserRoleAssignment(BaseModel):
+    """User role assignment model.
+
+    Represents the assignment of roles to users in specific scopes (global, team, personal).
+    Includes metadata about who granted the role and when it expires.
+
+    Attributes:
+        id: Unique assignment identifier
+        user_email: Email of the user assigned the role
+        role_id: ID of the assigned role
+        scope: Assignment scope ('global', 'team', 'personal')
+        scope_id: Team ID if team-scoped, None otherwise
+        granted_by: Email of user who granted this role
+        granted_at: Timestamp when role was granted
+        expires_at: Optional expiration timestamp
+        is_active: Whether the assignment is currently active
+
+    Examples:
+        >>> from datetime import datetime
+        >>> user_role = UserRoleAssignment(
+        ...     id="assignment-123",
+        ...     user_email="user@example.com",
+        ...     role_id="team-admin-123",
+        ...     scope="team",
+        ...     scope_id="team-engineering-456",
+        ...     granted_by="admin@example.com",
+        ...     granted_at=datetime(2023, 1, 1)
+        ... )
+        >>> user_role.scope
+        'team'
+        >>> user_role.is_active
+        True
+    """
+
+    id: str = Field(..., description="Unique assignment identifier")
+    user_email: str = Field(..., description="Email of the user assigned the role")
+    role_id: str = Field(..., description="ID of the assigned role")
+    scope: str = Field(..., description="Assignment scope", pattern="^(global|team|personal)$")
+    scope_id: Optional[str] = Field(None, description="Team ID if team-scoped, None otherwise")
+    granted_by: str = Field(..., description="Email of user who granted this role")
+    granted_at: datetime = Field(..., description="Timestamp when role was granted")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiration timestamp")
+    is_active: bool = Field(True, description="Whether the assignment is currently active")
+
+
+class PermissionAudit(BaseModel):
+    """Permission audit log model.
+
+    Records all permission checks for security auditing and compliance.
+    Includes details about the user, permission, resource, and result.
+
+    Attributes:
+        id: Unique audit log entry identifier
+        timestamp: When the permission check occurred
+        user_email: Email of user being checked
+        permission: Permission being checked (e.g., 'tools.create')
+        resource_type: Type of resource (e.g., 'tools', 'teams')
+        resource_id: Specific resource ID if applicable
+        team_id: Team context if applicable
+        granted: Whether permission was granted
+        roles_checked: JSON of roles that were checked
+        ip_address: IP address of the request
+        user_agent: User agent string
+
+    Examples:
+        >>> from datetime import datetime
+        >>> audit_log = PermissionAudit(
+        ...     id=1,
+        ...     timestamp=datetime(2023, 1, 1),
+        ...     user_email="user@example.com",
+        ...     permission="tools.create",
+        ...     resource_type="tools",
+        ...     granted=True,
+        ...     roles_checked={"roles": ["team_admin"]}
+        ... )
+        >>> audit_log.granted
+        True
+        >>> audit_log.permission
+        'tools.create'
+    """
+
+    id: int = Field(..., description="Unique audit log entry identifier")
+    timestamp: datetime = Field(..., description="When the permission check occurred")
+    user_email: Optional[str] = Field(None, description="Email of user being checked")
+    permission: str = Field(..., description="Permission being checked")
+    resource_type: Optional[str] = Field(None, description="Type of resource")
+    resource_id: Optional[str] = Field(None, description="Specific resource ID if applicable")
+    team_id: Optional[str] = Field(None, description="Team context if applicable")
+    granted: bool = Field(..., description="Whether permission was granted")
+    roles_checked: Optional[Dict] = Field(None, description="JSON of roles that were checked")
+    ip_address: Optional[str] = Field(None, description="IP address of the request")
+    user_agent: Optional[str] = Field(None, description="User agent string")
+
+
+# Permission constants are imported from db.py to avoid duplication
+# Use Permissions class from mcpgateway.db instead of duplicate SystemPermissions

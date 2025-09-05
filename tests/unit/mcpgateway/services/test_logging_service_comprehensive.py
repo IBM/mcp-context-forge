@@ -486,8 +486,11 @@ async def test_file_handler_no_folder():
 @pytest.mark.asyncio
 async def test_storage_handler_emit():
     """Test StorageHandler emit function."""
-    from mcpgateway.services.logging_service import StorageHandler
+    # Standard
     from unittest.mock import AsyncMock, MagicMock
+
+    # First-Party
+    from mcpgateway.services.logging_service import StorageHandler
 
     # Create mock storage
     mock_storage = AsyncMock()
@@ -525,6 +528,7 @@ async def test_storage_handler_emit():
 @pytest.mark.asyncio
 async def test_storage_handler_emit_no_storage():
     """Test StorageHandler emit with no storage."""
+    # First-Party
     from mcpgateway.services.logging_service import StorageHandler
 
     handler = StorageHandler(None)
@@ -547,8 +551,11 @@ async def test_storage_handler_emit_no_storage():
 @pytest.mark.asyncio
 async def test_storage_handler_emit_no_loop():
     """Test StorageHandler emit without a running event loop."""
-    from mcpgateway.services.logging_service import StorageHandler
+    # Standard
     from unittest.mock import AsyncMock
+
+    # First-Party
+    from mcpgateway.services.logging_service import StorageHandler
 
     mock_storage = AsyncMock()
     handler = StorageHandler(mock_storage)
@@ -573,8 +580,11 @@ async def test_storage_handler_emit_no_loop():
 @pytest.mark.asyncio
 async def test_storage_handler_emit_format_error():
     """Test StorageHandler emit with format error."""
-    from mcpgateway.services.logging_service import StorageHandler
+    # Standard
     from unittest.mock import AsyncMock, MagicMock
+
+    # First-Party
+    from mcpgateway.services.logging_service import StorageHandler
 
     mock_storage = AsyncMock()
     handler = StorageHandler(mock_storage)
@@ -655,6 +665,7 @@ async def test_get_storage():
 @pytest.mark.asyncio
 async def test_notify_with_storage():
     """Test notify method with storage enabled."""
+    # Standard
     from unittest.mock import AsyncMock
 
     service = LoggingService()

@@ -29,13 +29,14 @@ Structure:
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import os as _os  # local alias to avoid collisions
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
@@ -53,6 +54,7 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 from mcpgateway import __version__
 from mcpgateway.admin import admin_router, set_logging_service
+from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
@@ -60,8 +62,10 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
-from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
+from mcpgateway.middleware.token_scoping import token_scoping_middleware
+from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
@@ -112,7 +116,7 @@ from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_auth, require_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Import the admin routes from the new module
@@ -139,8 +143,15 @@ except RuntimeError:
 else:
     loop.create_task(bootstrap_db())
 
-# Initialize plugin manager as a singleton.
-plugin_manager: PluginManager | None = PluginManager(settings.plugin_config_file) if settings.plugins_enabled else None
+# Initialize plugin manager as a singleton (honor env overrides for tests)
+_env_flag = _os.getenv("PLUGINS_ENABLED")
+if _env_flag is not None:
+    _env_enabled = _env_flag.strip().lower() in {"1", "true", "yes", "on"}
+    _PLUGINS_ENABLED = _env_enabled
+else:
+    _PLUGINS_ENABLED = settings.plugins_enabled
+_config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
+plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
 
 # Initialize services
 tool_service = ToolService()
@@ -172,6 +183,66 @@ session_registry = SessionRegistry(
     session_ttl=settings.session_ttl,
     message_ttl=settings.message_ttl,
 )
+
+
+# Helper function for authentication compatibility
+def get_user_email(user):
+    """Extract email from user object, handling both string and dict formats.
+
+    Args:
+        user: User object, can be either a dict (new RBAC format) or string (legacy format)
+
+    Returns:
+        str: User email address or 'unknown' if not available
+
+    Examples:
+        Test with dictionary user containing email:
+        >>> from mcpgateway import main
+        >>> user_dict = {'email': 'alice@example.com', 'role': 'admin'}
+        >>> main.get_user_email(user_dict)
+        'alice@example.com'
+
+        Test with dictionary user without email:
+        >>> user_dict_no_email = {'username': 'bob', 'role': 'user'}
+        >>> main.get_user_email(user_dict_no_email)
+        'unknown'
+
+        Test with string user (legacy format):
+        >>> user_string = 'charlie@company.com'
+        >>> main.get_user_email(user_string)
+        'charlie@company.com'
+
+        Test with None user:
+        >>> main.get_user_email(None)
+        'unknown'
+
+        Test with empty dictionary:
+        >>> main.get_user_email({})
+        'unknown'
+
+        Test with integer (non-string, non-dict):
+        >>> main.get_user_email(123)
+        '123'
+
+        Test with user object having various data types:
+        >>> user_complex = {'email': 'david@test.org', 'id': 456, 'active': True}
+        >>> main.get_user_email(user_complex)
+        'david@test.org'
+
+        Test with empty string user:
+        >>> main.get_user_email('')
+        'unknown'
+
+        Test with boolean user:
+        >>> main.get_user_email(True)
+        'True'
+        >>> main.get_user_email(False)
+        'unknown'
+    """
+    if isinstance(user, dict):
+        return user.get("email", "unknown")
+    return str(user) if user else "unknown"
+
 
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
@@ -233,6 +304,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await resource_cache.initialize()
         await streamable_http_session.initialize()
         refresh_slugs_on_startup()
+
+        # Bootstrap SSO providers from environment configuration
+        if settings.sso_enabled:
+            try:
+                # First-Party
+                from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
+
+                bootstrap_sso_providers()
+                logger.info("SSO providers bootstrapped successfully")
+            except Exception as e:
+                logger.warning(f"Failed to bootstrap SSO providers: {e}")
 
         logger.info("All services initialized successfully")
 
@@ -454,8 +536,8 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
                 token = request.headers.get("Authorization")
                 cookie_token = request.cookies.get("jwt_token")
 
-                # Simulate what Depends(require_auth) would do
-                await require_auth_override(token, cookie_token)
+                # Use dedicated docs authentication that bypasses global auth settings
+                await require_docs_auth_override(token, cookie_token)
             except HTTPException as e:
                 return JSONResponse(status_code=e.status_code, content={"detail": e.detail}, headers=e.headers if e.headers else None)
 
@@ -561,6 +643,10 @@ app.add_middleware(
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Add token scoping middleware (only when email auth is enabled)
+if settings.email_auth_enabled:
+    app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
@@ -706,6 +792,60 @@ def get_protocol_from_request(request: Request) -> str:
 
     Returns:
         str: The protocol used for the request, either "http" or "https".
+
+    Examples:
+        Test with X-Forwarded-Proto header (proxy scenario):
+        >>> from mcpgateway import main
+        >>> from fastapi import Request
+        >>> from urllib.parse import urlparse
+        >>>
+        >>> # Mock request with X-Forwarded-Proto
+        >>> scope = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'headers': [(b'x-forwarded-proto', b'https')],
+        ...     'server': ('testserver', 80),
+        ...     'path': '/',
+        ... }
+        >>> req = Request(scope)
+        >>> main.get_protocol_from_request(req)
+        'https'
+
+        Test with comma-separated X-Forwarded-Proto:
+        >>> scope_multi = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'headers': [(b'x-forwarded-proto', b'https,http')],
+        ...     'server': ('testserver', 80),
+        ...     'path': '/',
+        ... }
+        >>> req_multi = Request(scope_multi)
+        >>> main.get_protocol_from_request(req_multi)
+        'https'
+
+        Test without X-Forwarded-Proto (direct connection):
+        >>> scope_direct = {
+        ...     'type': 'http',
+        ...     'scheme': 'https',
+        ...     'headers': [],
+        ...     'server': ('testserver', 443),
+        ...     'path': '/',
+        ... }
+        >>> req_direct = Request(scope_direct)
+        >>> main.get_protocol_from_request(req_direct)
+        'https'
+
+        Test with HTTP direct connection:
+        >>> scope_http = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'headers': [],
+        ...     'server': ('testserver', 80),
+        ...     'path': '/',
+        ... }
+        >>> req_http = Request(scope_http)
+        >>> main.get_protocol_from_request(req_http)
+        'http'
     """
     forwarded = request.headers.get("x-forwarded-proto")
     if forwarded:
@@ -723,6 +863,56 @@ def update_url_protocol(request: Request) -> str:
 
     Returns:
         str: The base URL with the correct protocol.
+
+    Examples:
+        Test URL protocol update with HTTPS proxy:
+        >>> from mcpgateway import main
+        >>> from fastapi import Request
+        >>>
+        >>> # Mock request with HTTPS forwarded proto
+        >>> scope_https = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'server': ('example.com', 80),
+        ...     'path': '/',
+        ...     'headers': [(b'x-forwarded-proto', b'https')],
+        ... }
+        >>> req_https = Request(scope_https)
+        >>> url = main.update_url_protocol(req_https)
+        >>> url.startswith('https://example.com')
+        True
+
+        Test URL protocol update with HTTP direct:
+        >>> scope_http = {
+        ...     'type': 'http',
+        ...     'scheme': 'http',
+        ...     'server': ('localhost', 8000),
+        ...     'path': '/',
+        ...     'headers': [],
+        ... }
+        >>> req_http = Request(scope_http)
+        >>> url = main.update_url_protocol(req_http)
+        >>> url.startswith('http://localhost:8000')
+        True
+
+        Test URL protocol update preserves host and port:
+        >>> scope_port = {
+        ...     'type': 'http',
+        ...     'scheme': 'https',
+        ...     'server': ('api.test.com', 443),
+        ...     'path': '/',
+        ...     'headers': [],
+        ... }
+        >>> req_port = Request(scope_port)
+        >>> url = main.update_url_protocol(req_port)
+        >>> 'api.test.com' in url and url.startswith('https://')
+        True
+
+        Test trailing slash removal:
+        >>> # URL should not end with trailing slash
+        >>> url = main.update_url_protocol(req_http)
+        >>> url.endswith('/')
+        False
     """
     parsed = urlparse(str(request.base_url))
     proto = get_protocol_from_request(request)
@@ -733,7 +923,7 @@ def update_url_protocol(request: Request) -> str:
 
 # Protocol APIs #
 @protocol_router.post("/initialize")
-async def initialize(request: Request, user: str = Depends(require_auth)) -> InitializeResult:
+async def initialize(request: Request, user=Depends(get_current_user)) -> InitializeResult:
     """
     Initialize a protocol.
 
@@ -765,7 +955,7 @@ async def initialize(request: Request, user: str = Depends(require_auth)) -> Ini
 
 
 @protocol_router.post("/ping")
-async def ping(request: Request, user: str = Depends(require_auth)) -> JSONResponse:
+async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse:
     """
     Handle a ping request according to the MCP specification.
 
@@ -801,7 +991,7 @@ async def ping(request: Request, user: str = Depends(require_auth)) -> JSONRespo
 
 
 @protocol_router.post("/notifications")
-async def handle_notification(request: Request, user: str = Depends(require_auth)) -> None:
+async def handle_notification(request: Request, user=Depends(get_current_user)) -> None:
     """
     Handles incoming notifications from clients. Depending on the notification method,
     different actions are taken (e.g., logging initialization, cancellation, or messages).
@@ -829,7 +1019,7 @@ async def handle_notification(request: Request, user: str = Depends(require_auth
 
 
 @protocol_router.post("/completion/complete")
-async def handle_completion(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+async def handle_completion(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Handles the completion of tasks by processing a completion request.
 
@@ -842,12 +1032,12 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
         The result of the completion process.
     """
     body = await request.json()
-    logger.debug(f"User {user} sent a completion request")
+    logger.debug(f"User {user['email']} sent a completion request")
     return await completion_service.handle_completion(db, body)
 
 
 @protocol_router.post("/sampling/createMessage")
-async def handle_sampling(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
+async def handle_sampling(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Handles the creation of a new message for sampling.
 
@@ -859,7 +1049,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user:
     Returns:
         The result of the message creation process.
     """
-    logger.debug(f"User {user} sent a sampling request")
+    logger.debug(f"User {user['email']} sent a sampling request")
     body = await request.json()
     return await sampling_handler.create_message(db, body)
 
@@ -869,35 +1059,50 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user:
 ###############
 @server_router.get("", response_model=List[ServerRead])
 @server_router.get("/", response_model=List[ServerRead])
+@require_permission("servers.read")
 async def list_servers(
     include_inactive: bool = False,
     tags: Optional[str] = None,
+    team_id: Optional[str] = None,
+    visibility: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[ServerRead]:
     """
-    Lists all servers in the system, optionally including inactive ones.
+    Lists servers accessible to the user, with team filtering support.
 
     Args:
         include_inactive (bool): Whether to include inactive servers in the response.
         tags (Optional[str]): Comma-separated list of tags to filter by.
+        team_id (Optional[str]): Filter by specific team ID.
+        visibility (Optional[str]): Filter by visibility (private, team, public).
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        List[ServerRead]: A list of server objects.
+        List[ServerRead]: A list of server objects the user has access to.
     """
     # Parse tags parameter if provided
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
-
-    logger.debug(f"User {user} requested server list with tags={tags_list}")
-    return await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
+    # Get user email for team filtering
+    user_email = get_user_email(user)
+    # Use team-filtered server listing
+    if team_id or visibility:
+        data = await server_service.list_servers_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        # Apply tag filtering to team-filtered results if needed
+        if tags_list:
+            data = [server for server in data if any(tag in server.tags for tag in tags_list)]
+    else:
+        # Use existing method for backward compatibility when no team filtering
+        data = await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
+    return data
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
-async def get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ServerRead:
+@require_permission("servers.read")
+async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
@@ -921,16 +1126,21 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user: str = 
 
 @server_router.post("", response_model=ServerRead, status_code=201)
 @server_router.post("/", response_model=ServerRead, status_code=201)
+@require_permission("servers.create")
 async def create_server(
     server: ServerCreate,
+    team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
+    visibility: str = Body("private", description="Server visibility: private, team, public"),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
     Creates a new server.
 
     Args:
         server (ServerCreate): The data for the new server.
+        team_id (Optional[str]): Team ID to assign the server to.
+        visibility (str): Server visibility level (private, team, public).
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -941,8 +1151,21 @@ async def create_server(
         HTTPException: If there is a conflict with the server name or other errors.
     """
     try:
-        logger.debug(f"User {user} is creating a new server")
-        return await server_service.register_server(db, server)
+        # Get user email and handle team assignment
+        user_email = get_user_email(user)
+
+        # If no team specified, get user's personal team
+        if not team_id:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            personal_team = next((team for team in user_teams if team.is_personal), None)
+            team_id = personal_team.id if personal_team else None
+
+        logger.debug(f"User {user_email} is creating a new server for team {team_id}")
+        return await server_service.register_server(db, server, created_by=user_email, team_id=team_id, owner_email=user_email, visibility=visibility)
     except ServerNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
@@ -956,11 +1179,12 @@ async def create_server(
 
 
 @server_router.put("/{server_id}", response_model=ServerRead)
+@require_permission("servers.update")
 async def update_server(
     server_id: str,
     server: ServerUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
     Updates the information of an existing server.
@@ -995,11 +1219,12 @@ async def update_server(
 
 
 @server_router.post("/{server_id}/toggle", response_model=ServerRead)
+@require_permission("servers.update")
 async def toggle_server_status(
     server_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
     Toggles the status of a server (activate or deactivate).
@@ -1026,7 +1251,8 @@ async def toggle_server_status(
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
-async def delete_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+@require_permission("servers.delete")
+async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
@@ -1055,7 +1281,8 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user: str
 
 
 @server_router.get("/{server_id}/sse")
-async def sse_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
+@require_permission("servers.use")
+async def sse_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
     """
     Establishes a Server-Sent Events (SSE) connection for real-time updates about a server.
 
@@ -1093,7 +1320,8 @@ async def sse_endpoint(request: Request, server_id: str, user: str = Depends(req
 
 
 @server_router.post("/{server_id}/message")
-async def message_endpoint(request: Request, server_id: str, user: str = Depends(require_auth)):
+@require_permission("servers.use")
+async def message_endpoint(request: Request, server_id: str, user=Depends(get_current_user_with_permissions)):
     """
     Handles incoming messages for a specific server.
 
@@ -1134,11 +1362,12 @@ async def message_endpoint(request: Request, server_id: str, user: str = Depends
 
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
+@require_permission("servers.read")
 async def server_get_tools(
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[ToolRead]:
     """
     List tools for the server  with an option to include inactive tools.
@@ -1162,11 +1391,12 @@ async def server_get_tools(
 
 
 @server_router.get("/{server_id}/resources", response_model=List[ResourceRead])
+@require_permission("servers.read")
 async def server_get_resources(
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[ResourceRead]:
     """
     List resources for the server with an option to include inactive resources.
@@ -1190,11 +1420,12 @@ async def server_get_resources(
 
 
 @server_router.get("/{server_id}/prompts", response_model=List[PromptRead])
+@require_permission("servers.read")
 async def server_get_prompts(
     server_id: str,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[PromptRead]:
     """
     List prompts for the server with an option to include inactive prompts.
@@ -1222,35 +1453,47 @@ async def server_get_prompts(
 ##################
 @a2a_router.get("", response_model=List[A2AAgentRead])
 @a2a_router.get("/", response_model=List[A2AAgentRead])
+@require_permission("a2a.read")
 async def list_a2a_agents(
     include_inactive: bool = False,
     tags: Optional[str] = None,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, description="Filter by visibility (private, team, public)"),
+    skip: int = Query(0, ge=0, description="Number of agents to skip for pagination"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of agents to return"),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[A2AAgentRead]:
     """
-    Lists all A2A agents in the system, optionally including inactive ones.
+    Lists A2A agents user has access to with team filtering.
 
     Args:
         include_inactive (bool): Whether to include inactive agents in the response.
         tags (Optional[str]): Comma-separated list of tags to filter by.
+        team_id (Optional[str]): Team ID to filter by.
+        visibility (Optional[str]): Visibility level to filter by.
+        skip (int): Number of agents to skip for pagination.
+        limit (int): Maximum number of agents to return.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        List[A2AAgentRead]: A list of A2A agent objects.
+        List[A2AAgentRead]: A list of A2A agent objects the user has access to.
     """
-    # Parse tags parameter if provided
+    # Parse tags parameter if provided (keeping for backward compatibility)
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    logger.debug(f"User {user} requested A2A agent list with tags={tags_list}")
-    return await a2a_service.list_agents(db, include_inactive=include_inactive, tags=tags_list)
+    logger.debug(f"User {user} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}")
+
+    # Use team-aware filtering
+    return await a2a_service.list_agents_for_user(db, user_email=user, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
-async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> A2AAgentRead:
+@require_permission("a2a.read")
+async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
     """
     Retrieves an A2A agent by its ID.
 
@@ -1274,11 +1517,14 @@ async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: str 
 
 @a2a_router.post("", response_model=A2AAgentRead, status_code=201)
 @a2a_router.post("/", response_model=A2AAgentRead, status_code=201)
+@require_permission("a2a.create")
 async def create_a2a_agent(
     agent: A2AAgentCreate,
     request: Request,
+    team_id: Optional[str] = Body(None, description="Team ID to assign agent to"),
+    visibility: str = Body("private", description="Agent visibility: private, team, public"),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
     Creates a new A2A agent.
@@ -1286,6 +1532,8 @@ async def create_a2a_agent(
     Args:
         agent (A2AAgentCreate): The data for the new agent.
         request (Request): The FastAPI request object for metadata extraction.
+        team_id (Optional[str]): Team ID to assign the agent to.
+        visibility (str): Agent visibility level (private, team, public).
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -1296,10 +1544,23 @@ async def create_a2a_agent(
         HTTPException: If there is a conflict with the agent name or other errors.
     """
     try:
-        logger.debug(f"User {user} is creating a new A2A agent")
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
+        # Get user email and handle team assignment
+        user_email = get_user_email(user)
+
+        # If no team specified, get user's personal team
+        if not team_id:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            personal_team = next((team for team in user_teams if team.is_personal), None)
+            team_id = personal_team.id if personal_team else None
+
+        logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
         return await a2a_service.register_agent(
             db,
             agent,
@@ -1309,6 +1570,9 @@ async def create_a2a_agent(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
     except A2AAgentNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -1323,12 +1587,13 @@ async def create_a2a_agent(
 
 
 @a2a_router.put("/{agent_id}", response_model=A2AAgentRead)
+@require_permission("a2a.update")
 async def update_a2a_agent(
     agent_id: str,
     agent: A2AAgentUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
     Updates the information of an existing A2A agent.
@@ -1375,11 +1640,12 @@ async def update_a2a_agent(
 
 
 @a2a_router.post("/{agent_id}/toggle", response_model=A2AAgentRead)
+@require_permission("a2a.update")
 async def toggle_a2a_agent_status(
     agent_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
     Toggles the status of an A2A agent (activate or deactivate).
@@ -1406,7 +1672,8 @@ async def toggle_a2a_agent_status(
 
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
-async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+@require_permission("a2a.delete")
+async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
@@ -1435,12 +1702,13 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user: s
 
 
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
 async def invoke_a2a_agent(
     agent_name: str,
     parameters: Dict[str, Any] = Body(default_factory=dict),
     interaction_type: str = Body(default="query"),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Invokes an A2A agent with the specified parameters.
@@ -1472,23 +1740,28 @@ async def invoke_a2a_agent(
 #############
 @tool_router.get("", response_model=Union[List[ToolRead], List[Dict], Dict, List])
 @tool_router.get("/", response_model=Union[List[ToolRead], List[Dict], Dict, List])
+@require_permission("tools.read")
 async def list_tools(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
     tags: Optional[str] = None,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
-    _: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Union[List[ToolRead], List[Dict], Dict]:
-    """List all registered tools with pagination support.
+    """List all registered tools with team-based filtering and pagination support.
 
     Args:
         cursor: Pagination cursor for fetching the next set of results
         include_inactive: Whether to include inactive tools in the results
         tags: Comma-separated list of tags to filter by (e.g., "api,data")
+        team_id: Optional team ID to filter tools by specific team
+        visibility: Optional visibility filter (private, team, public)
         db: Database session
         apijsonpath: JSON path modifier to filter or transform the response
-        _: Authenticated user
+        user: Authenticated user with permissions
 
     Returns:
         List of tools or modified result based on jsonpath
@@ -1499,8 +1772,19 @@ async def list_tools(
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    # For now just pass the cursor parameter even if not used
-    data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+    # Get user email for team filtering
+    user_email = get_user_email(user)
+
+    # Use team-filtered tool listing
+    if team_id or visibility:
+        data = await tool_service.list_tools_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+
+        # Apply tag filtering to team-filtered results if needed
+        if tags_list:
+            data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
+    else:
+        # Use existing method for backward compatibility when no team filtering
+        data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
     if apijsonpath is None:
         return data
@@ -1512,15 +1796,25 @@ async def list_tools(
 
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
-async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ToolRead:
+@require_permission("tools.create")
+async def create_tool(
+    tool: ToolCreate,
+    request: Request,
+    team_id: Optional[str] = Body(None, description="Team ID to assign tool to"),
+    visibility: str = Body("private", description="Tool visibility: private, team, public"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> ToolRead:
     """
-    Creates a new tool in the system.
+    Creates a new tool in the system with team assignment support.
 
     Args:
         tool (ToolCreate): The data needed to create the tool.
         request (Request): The FastAPI request object for metadata extraction.
+        team_id (Optional[str]): Team ID to assign the tool to.
+        visibility (str): Tool visibility (private, team, public).
         db (Session): The database session dependency.
-        user (str): The authenticated user making the request.
+        user: The authenticated user making the request.
 
     Returns:
         ToolRead: The created tool data.
@@ -1532,7 +1826,20 @@ async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
-        logger.debug(f"User {user} is creating a new tool")
+        # Get user email and handle team assignment
+        user_email = get_user_email(user)
+
+        # If no team specified, get user's personal team
+        if not team_id:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            personal_team = next((team for team in user_teams if team.is_personal), None)
+            team_id = personal_team.id if personal_team else None
+
+        logger.debug(f"User {user_email} is creating a new tool for team {team_id}")
         return await tool_service.register_tool(
             db,
             tool,
@@ -1542,6 +1849,9 @@ async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
@@ -1565,10 +1875,11 @@ async def create_tool(tool: ToolCreate, request: Request, db: Session = Depends(
 
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
+@require_permission("tools.read")
 async def get_tool(
     tool_id: str,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
     apijsonpath: JsonPathModifier = Body(None),
 ) -> Union[ToolRead, Dict]:
     """
@@ -1601,12 +1912,13 @@ async def get_tool(
 
 
 @tool_router.put("/{tool_id}", response_model=ToolRead)
+@require_permission("tools.update")
 async def update_tool(
     tool_id: str,
     tool: ToolUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> ToolRead:
     """
     Updates an existing tool with new data.
@@ -1658,7 +1970,8 @@ async def update_tool(
 
 
 @tool_router.delete("/{tool_id}")
-async def delete_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+@require_permission("tools.delete")
+async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
@@ -1682,11 +1995,12 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user: str = D
 
 
 @tool_router.post("/{tool_id}/toggle")
+@require_permission("tools.update")
 async def toggle_tool_status(
     tool_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Activates or deactivates a tool.
@@ -1720,9 +2034,10 @@ async def toggle_tool_status(
 #################
 # --- Resource templates endpoint - MUST come before variable paths ---
 @resource_router.get("/templates/list", response_model=ListResourceTemplatesResult)
+@require_permission("resources.read")
 async def list_resource_templates(
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> ListResourceTemplatesResult:
     """
     List all available resource templates.
@@ -1741,11 +2056,12 @@ async def list_resource_templates(
 
 
 @resource_router.post("/{resource_id}/toggle")
+@require_permission("resources.update")
 async def toggle_resource_status(
     resource_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Activate or deactivate a resource by its ID.
@@ -1776,47 +2092,64 @@ async def toggle_resource_status(
 
 @resource_router.get("", response_model=List[ResourceRead])
 @resource_router.get("/", response_model=List[ResourceRead])
+@require_permission("resources.read")
 async def list_resources(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
     tags: Optional[str] = None,
+    team_id: Optional[str] = None,
+    visibility: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[ResourceRead]:
     """
-    Retrieve a list of resources.
+    Retrieve a list of resources accessible to the user, with team filtering support.
 
     Args:
         cursor (Optional[str]): Optional cursor for pagination.
         include_inactive (bool): Whether to include inactive resources.
         tags (Optional[str]): Comma-separated list of tags to filter by.
+        team_id (Optional[str]): Filter by specific team ID.
+        visibility (Optional[str]): Filter by visibility (private, team, public).
         db (Session): Database session.
         user (str): Authenticated user.
 
     Returns:
-        List[ResourceRead]: List of resources.
+        List[ResourceRead]: List of resources the user has access to.
     """
     # Parse tags parameter if provided
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    # Get user email for team filtering
+    user_email = get_user_email(user)
 
-    logger.debug(f"User {user} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
-    if cached := resource_cache.get("resource_list"):
-        return cached
-    # Pass the cursor parameter
-    resources = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
-    resource_cache.set("resource_list", resources)
-    return resources
+    # Use team-filtered resource listing
+    if team_id or visibility:
+        data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        # Apply tag filtering to team-filtered results if needed
+        if tags_list:
+            data = [resource for resource in data if any(tag in resource.tags for tag in tags_list)]
+    else:
+        # Use existing method for backward compatibility when no team filtering
+        logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
+        if cached := resource_cache.get("resource_list"):
+            return cached
+        data = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
+        resource_cache.set("resource_list", data)
+    return data
 
 
 @resource_router.post("", response_model=ResourceRead)
 @resource_router.post("/", response_model=ResourceRead)
+@require_permission("resources.create")
 async def create_resource(
     resource: ResourceCreate,
     request: Request,
+    team_id: Optional[str] = Body(None, description="Team ID to assign resource to"),
+    visibility: str = Body("private", description="Resource visibility: private, team, public"),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
     """
     Create a new resource.
@@ -1824,6 +2157,8 @@ async def create_resource(
     Args:
         resource (ResourceCreate): Data for the new resource.
         request (Request): FastAPI request object for metadata extraction.
+        team_id (Optional[str]): Team ID to assign the resource to.
+        visibility (str): Resource visibility level (private, team, public).
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -1833,10 +2168,24 @@ async def create_resource(
     Raises:
         HTTPException: On conflict or validation errors or IntegrityError.
     """
-    logger.debug(f"User {user} is creating a new resource")
     try:
+        # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
+        # Get user email and handle team assignment
+        user_email = get_user_email(user)
+
+        # If no team specified, get user's personal team
+        if not team_id:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            personal_team = next((team for team in user_teams if team.is_personal), None)
+            team_id = personal_team.id if personal_team else None
+
+        logger.debug(f"User {user_email} is creating a new resource for team {team_id}")
         return await resource_service.register_resource(
             db,
             resource,
@@ -1846,6 +2195,9 @@ async def create_resource(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -1861,7 +2213,8 @@ async def create_resource(
 
 
 @resource_router.get("/{uri:path}")
-async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> ResourceContent:
+@require_permission("resources.read")
+async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
     """
     Read a resource by its URI with plugin support.
 
@@ -1872,7 +2225,7 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
         user (str): Authenticated user.
 
     Returns:
-        ResourceContent: The content of the resource.
+        Any: The content of the resource.
 
     Raises:
         HTTPException: If the resource cannot be found or read.
@@ -1889,21 +2242,47 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
 
     try:
         # Call service with context for plugin support
-        content: ResourceContent = await resource_service.read_resource(db, uri, request_id=request_id, user=user, server_id=server_id)
+        content = await resource_service.read_resource(db, uri, request_id=request_id, user=user, server_id=server_id)
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
     resource_cache.set(uri, content)
-    return content
+    # Ensure a plain JSON-serializable structure
+    try:
+        # First-Party
+        from mcpgateway.models import ResourceContent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.models import TextContent  # pylint: disable=import-outside-toplevel
+
+        # If already a ResourceContent, serialize directly
+        if isinstance(content, ResourceContent):
+            return content.model_dump()
+
+        # If TextContent, wrap into resource envelope with text
+        if isinstance(content, TextContent):
+            return {"type": "resource", "uri": uri, "text": content.text}
+    except Exception:
+        pass
+
+    if isinstance(content, bytes):
+        return {"type": "resource", "uri": uri, "blob": content.decode("utf-8", errors="ignore")}
+    if isinstance(content, str):
+        return {"type": "resource", "uri": uri, "text": content}
+
+    # Objects with a 'text' attribute (e.g., mocks) – best-effort mapping
+    if hasattr(content, "text"):
+        return {"type": "resource", "uri": uri, "text": getattr(content, "text")}
+
+    return {"type": "resource", "uri": uri, "text": str(content)}
 
 
 @resource_router.put("/{uri:path}", response_model=ResourceRead)
+@require_permission("resources.update")
 async def update_resource(
     uri: str,
     resource: ResourceUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
     """
     Update a resource identified by its URI.
@@ -1936,7 +2315,8 @@ async def update_resource(
 
 
 @resource_router.delete("/{uri:path}")
-async def delete_resource(uri: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+@require_permission("resources.delete")
+async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a resource by its URI.
 
@@ -1963,7 +2343,8 @@ async def delete_resource(uri: str, db: Session = Depends(get_db), user: str = D
 
 
 @resource_router.post("/subscribe/{uri:path}")
-async def subscribe_resource(uri: str, user: str = Depends(require_auth)) -> StreamingResponse:
+@require_permission("resources.read")
+async def subscribe_resource(uri: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
@@ -1982,11 +2363,12 @@ async def subscribe_resource(uri: str, user: str = Depends(require_auth)) -> Str
 # Prompt APIs #
 ###############
 @prompt_router.post("/{prompt_id}/toggle")
+@require_permission("prompts.update")
 async def toggle_prompt_status(
     prompt_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Toggle the activation status of a prompt.
@@ -2017,42 +2399,61 @@ async def toggle_prompt_status(
 
 @prompt_router.get("", response_model=List[PromptRead])
 @prompt_router.get("/", response_model=List[PromptRead])
+@require_permission("prompts.read")
 async def list_prompts(
     cursor: Optional[str] = None,
     include_inactive: bool = False,
     tags: Optional[str] = None,
+    team_id: Optional[str] = None,
+    visibility: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[PromptRead]:
     """
-    List prompts with optional pagination and inclusion of inactive items.
+    List prompts accessible to the user, with team filtering support.
 
     Args:
         cursor: Cursor for pagination.
         include_inactive: Include inactive prompts.
         tags: Comma-separated list of tags to filter by.
+        team_id: Filter by specific team ID.
+        visibility: Filter by visibility (private, team, public).
         db: Database session.
         user: Authenticated user.
 
     Returns:
-        List of prompt records.
+        List of prompt records the user has access to.
     """
     # Parse tags parameter if provided
     tags_list = None
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    # Get user email for team filtering
+    user_email = get_user_email(user)
 
-    logger.debug(f"User: {user} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-    return await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+    # Use team-filtered prompt listing
+    if team_id or visibility:
+        data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        # Apply tag filtering to team-filtered results if needed
+        if tags_list:
+            data = [prompt for prompt in data if any(tag in prompt.tags for tag in tags_list)]
+    else:
+        # Use existing method for backward compatibility when no team filtering
+        logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
+        data = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+    return data
 
 
 @prompt_router.post("", response_model=PromptRead)
 @prompt_router.post("/", response_model=PromptRead)
+@require_permission("prompts.create")
 async def create_prompt(
     prompt: PromptCreate,
     request: Request,
+    team_id: Optional[str] = Body(None, description="Team ID to assign prompt to"),
+    visibility: str = Body("private", description="Prompt visibility: private, team, public"),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> PromptRead:
     """
     Create a new prompt.
@@ -2060,6 +2461,8 @@ async def create_prompt(
     Args:
         prompt (PromptCreate): Payload describing the prompt to create.
         request (Request): The FastAPI request object for metadata extraction.
+        team_id (Optional[str]): Team ID to assign the prompt to.
+        visibility (str): Prompt visibility level (private, team, public).
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
@@ -2071,11 +2474,24 @@ async def create_prompt(
             * **400 Bad Request** - validation or persistence error raised
                 by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
-    logger.debug(f"User: {user} requested to create prompt: {prompt}")
     try:
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
+        # Get user email and handle team assignment
+        user_email = get_user_email(user)
+
+        # If no team specified, get user's personal team
+        if not team_id:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            personal_team = next((team for team in user_teams if team.is_personal), None)
+            team_id = personal_team.id if personal_team else None
+
+        logger.debug(f"User {user_email} is creating a new prompt for team {team_id}")
         return await prompt_service.register_prompt(
             db,
             prompt,
@@ -2085,6 +2501,9 @@ async def create_prompt(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
     except Exception as e:
         if isinstance(e, PromptNameConflictError):
@@ -2107,11 +2526,12 @@ async def create_prompt(
 
 
 @prompt_router.post("/{name}")
+@require_permission("prompts.read")
 async def get_prompt(
     name: str,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Any:
     """Get a prompt by name with arguments.
 
@@ -2175,10 +2595,11 @@ async def get_prompt(
 
 
 @prompt_router.get("/{name}")
+@require_permission("prompts.read")
 async def get_prompt_no_args(
     name: str,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Any:
     """Get a prompt by name without arguments.
 
@@ -2229,11 +2650,12 @@ async def get_prompt_no_args(
 
 
 @prompt_router.put("/{name}", response_model=PromptRead)
+@require_permission("prompts.update")
 async def update_prompt(
     name: str,
     prompt: PromptUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> PromptRead:
     """
     Update (overwrite) an existing prompt definition.
@@ -2276,7 +2698,8 @@ async def update_prompt(
 
 
 @prompt_router.delete("/{name}")
-async def delete_prompt(name: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+@require_permission("prompts.delete")
+async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a prompt by name.
 
@@ -2313,11 +2736,12 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user: str = De
 # Gateway APIs #
 ################
 @gateway_router.post("/{gateway_id}/toggle")
+@require_permission("gateways.update")
 async def toggle_gateway_status(
     gateway_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Toggle the activation status of a gateway.
@@ -2352,10 +2776,11 @@ async def toggle_gateway_status(
 
 @gateway_router.get("", response_model=List[GatewayRead])
 @gateway_router.get("/", response_model=List[GatewayRead])
+@require_permission("gateways.read")
 async def list_gateways(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[GatewayRead]:
     """
     List all gateways.
@@ -2374,11 +2799,12 @@ async def list_gateways(
 
 @gateway_router.post("", response_model=GatewayRead)
 @gateway_router.post("/", response_model=GatewayRead)
+@require_permission("gateways.create")
 async def register_gateway(
     gateway: GatewayCreate,
     request: Request,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> GatewayRead:
     """
     Register a new gateway.
@@ -2397,6 +2823,23 @@ async def register_gateway(
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
+        # Get user email and handle team assignment
+        user_email = get_user_email(user)
+        team_id = gateway.team_id
+        visibility = gateway.visibility
+
+        # If no team specified, get user's personal team
+        if not team_id:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            personal_team = next((team for team in user_teams if team.is_personal), None)
+            team_id = personal_team.id if personal_team else None
+
+        logger.debug(f"User {user_email} is creating a new gateway for team {team_id}")
+
         return await gateway_service.register_gateway(
             db,
             gateway,
@@ -2404,6 +2847,9 @@ async def register_gateway(
             created_from_ip=metadata["created_from_ip"],
             created_via=metadata["created_via"],
             created_user_agent=metadata["created_user_agent"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
@@ -2422,7 +2868,8 @@ async def register_gateway(
 
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> GatewayRead:
+@require_permission("gateways.read")
+async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> GatewayRead:
     """
     Retrieve a gateway by ID.
 
@@ -2439,11 +2886,12 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str 
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
+@require_permission("gateways.update")
 async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> GatewayRead:
     """
     Update a gateway.
@@ -2479,7 +2927,8 @@ async def update_gateway(
 
 
 @gateway_router.delete("/{gateway_id}")
-async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, str]:
+@require_permission("gateways.delete")
+async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
@@ -2502,7 +2951,7 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user: s
 @root_router.get("", response_model=List[Root])
 @root_router.get("/", response_model=List[Root])
 async def list_roots(
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[Root]:
     """
     Retrieve a list of all registered roots.
@@ -2521,7 +2970,7 @@ async def list_roots(
 @root_router.post("/", response_model=Root)
 async def add_root(
     root: Root,  # Accept JSON body using the Root model from models.py
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Root:
     """
     Add a new root.
@@ -2540,7 +2989,7 @@ async def add_root(
 @root_router.delete("/{uri:path}")
 async def remove_root(
     uri: str,
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, str]:
     """
     Remove a registered root by URI.
@@ -2559,7 +3008,7 @@ async def remove_root(
 
 @root_router.get("/changes")
 async def subscribe_roots_changes(
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> StreamingResponse:
     """
     Subscribe to real-time changes in root list via Server-Sent Events (SSE).
@@ -2579,19 +3028,27 @@ async def subscribe_roots_changes(
 ##################
 @utility_router.post("/rpc/")
 @utility_router.post("/rpc")
-async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):  # revert this back
+async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depends(require_auth)):
     """Handle RPC requests.
 
     Args:
         request (Request): The incoming FastAPI request.
         db (Session): Database session.
-        user (str): The authenticated user.
+        user: The authenticated user (dict with RBAC context).
 
     Returns:
         Response with the RPC result or error.
     """
     try:
-        logger.debug(f"User {user} made an RPC request")
+        # Extract user identifier from either RBAC user object or JWT payload
+        if hasattr(user, "email"):
+            user_id = user.email  # RBAC user object
+        elif isinstance(user, dict):
+            user_id = user.get("sub") or user.get("email") or user.get("username", "unknown")  # JWT payload
+        else:
+            user_id = str(user)  # String username from basic auth
+
+        logger.debug(f"User {user_id} made an RPC request")
         body = await request.json()
         method = body["method"]
         req_id = body.get("id") if "body" in locals() else None
@@ -2634,7 +3091,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user: str 
             request_id = params.get("requestId", None)
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
-            result = await resource_service.read_resource(db, uri, request_id=request_id, user=user)
+            result = await resource_service.read_resource(db, uri, request_id=request_id, user=get_user_email(user))
             if hasattr(result, "model_dump"):
                 result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
             else:
@@ -2770,7 +3227,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 client_args = {"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}
                 async with ResilientHttpClient(client_args=client_args) as client:
                     response = await client.post(
-                        f"http://localhost:{settings.port}/rpc",
+                        f"http://localhost:{settings.port}{settings.app_root_path}/rpc",
                         json=json.loads(data),
                         headers={"Content-Type": "application/json"},
                     )
@@ -2802,7 +3259,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @utility_router.get("/sse")
-async def utility_sse_endpoint(request: Request, user: str = Depends(require_auth)):
+@require_permission("tools.invoke")
+async def utility_sse_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Establish a Server-Sent Events (SSE) connection for real-time updates.
 
@@ -2839,7 +3297,8 @@ async def utility_sse_endpoint(request: Request, user: str = Depends(require_aut
 
 
 @utility_router.post("/message")
-async def utility_message_endpoint(request: Request, user: str = Depends(require_auth)):
+@require_permission("tools.invoke")
+async def utility_message_endpoint(request: Request, user=Depends(get_current_user_with_permissions)):
     """
     Handle a JSON-RPC message directed to a specific SSE session.
 
@@ -2882,7 +3341,8 @@ async def utility_message_endpoint(request: Request, user: str = Depends(require
 
 
 @utility_router.post("/logging/setLevel")
-async def set_log_level(request: Request, user: str = Depends(require_auth)) -> None:
+@require_permission("admin.system_config")
+async def set_log_level(request: Request, user=Depends(get_current_user_with_permissions)) -> None:
     """
     Update the server's log level at runtime.
 
@@ -2904,7 +3364,8 @@ async def set_log_level(request: Request, user: str = Depends(require_auth)) -> 
 # Metrics          #
 ####################
 @metrics_router.get("", response_model=dict)
-async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require_auth)) -> dict:
+@require_permission("admin.metrics")
+async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
     """
     Retrieve aggregated metrics for all entity types (Tools, Resources, Servers, Prompts, A2A Agents).
 
@@ -2937,7 +3398,8 @@ async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require
 
 
 @metrics_router.post("/reset", response_model=dict)
-async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] = None, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> dict:
+@require_permission("admin.metrics")
+async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
     """
     Reset metrics for a specific entity type and optionally a specific entity ID,
     or perform a global reset if no entity is specified.
@@ -3033,11 +3495,12 @@ async def readiness_check(db: Session = Depends(get_db)):
 
 @tag_router.get("", response_model=List[TagInfo])
 @tag_router.get("/", response_model=List[TagInfo])
+@require_permission("tags.read")
 async def list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[TagInfo]:
     """
     Retrieve all unique tags across specified entity types.
@@ -3072,11 +3535,12 @@ async def list_tags(
 
 
 @tag_router.get("/{tag_name}/entities", response_model=List[TaggedEntity])
+@require_permission("tags.read")
 async def get_entities_by_tag(
     tag_name: str,
     entity_types: Optional[str] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> List[TaggedEntity]:
     """
     Get all entities that have a specific tag.
@@ -3116,7 +3580,9 @@ async def get_entities_by_tag(
 
 
 @export_import_router.get("/export", response_model=Dict[str, Any])
+@require_permission("admin.export")
 async def export_configuration(
+    request: Request,
     export_format: str = "json",  # pylint: disable=unused-argument
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
@@ -3124,12 +3590,13 @@ async def export_configuration(
     include_inactive: bool = False,
     include_dependencies: bool = True,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Export gateway configuration to JSON format.
 
     Args:
+        request: FastAPI request object for extracting root path
         export_format: Export format (currently only 'json' supported)
         types: Comma-separated list of entity types to include (tools,gateways,servers,prompts,resources,roots)
         exclude_types: Comma-separated list of entity types to exclude
@@ -3161,12 +3628,22 @@ async def export_configuration(
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
-        # Extract username from user (which could be string or dict with token)
-        username = user if isinstance(user, str) else user.get("username", "unknown")
+        # Extract username from user (which is now an EmailUser object)
+        username = user.email
+
+        # Get root path for URL construction
+        root_path = request.scope.get("root_path", "") if request else ""
 
         # Perform export
         export_data = await export_service.export_configuration(
-            db=db, include_types=include_types, exclude_types=exclude_types_list, tags=tags_list, include_inactive=include_inactive, include_dependencies=include_dependencies, exported_by=username
+            db=db,
+            include_types=include_types,
+            exclude_types=exclude_types_list,
+            tags=tags_list,
+            include_inactive=include_inactive,
+            include_dependencies=include_dependencies,
+            exported_by=username,
+            root_path=root_path,
         )
 
         return export_data
@@ -3180,8 +3657,9 @@ async def export_configuration(
 
 
 @export_import_router.post("/export/selective", response_model=Dict[str, Any])
+@require_permission("admin.export")
 async def export_selective_configuration(
-    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user: str = Depends(require_auth)
+    entity_selections: Dict[str, List[str]] = Body(...), include_dependencies: bool = True, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)
 ) -> Dict[str, Any]:
     """
     Export specific entities by their IDs/names.
@@ -3208,8 +3686,8 @@ async def export_selective_configuration(
     try:
         logger.info(f"User {user} requested selective configuration export")
 
-        # Extract username from user (which could be string or dict with token)
-        username = user if isinstance(user, str) else user.get("username", "unknown")
+        # Extract username from user (which is now an EmailUser object)
+        username = user.email
 
         export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username)
 
@@ -3224,6 +3702,7 @@ async def export_selective_configuration(
 
 
 @export_import_router.post("/import", response_model=Dict[str, Any])
+@require_permission("admin.import")
 async def import_configuration(
     import_data: Dict[str, Any] = Body(...),
     conflict_strategy: str = "update",
@@ -3231,7 +3710,7 @@ async def import_configuration(
     rekey_secret: Optional[str] = None,
     selected_entities: Optional[Dict[str, List[str]]] = None,
     db: Session = Depends(get_db),
-    user: str = Depends(require_auth),
+    user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
     Import configuration data with conflict resolution.
@@ -3260,8 +3739,8 @@ async def import_configuration(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in ConflictStrategy]}")
 
-        # Extract username from user (which could be string or dict with token)
-        username = user if isinstance(user, str) else user.get("username", "unknown")
+        # Extract username from user (which is now an EmailUser object)
+        username = user.email
 
         # Perform import
         import_status = await import_service.import_configuration(
@@ -3285,7 +3764,8 @@ async def import_configuration(
 
 
 @export_import_router.get("/import/status/{import_id}", response_model=Dict[str, Any])
-async def get_import_status(import_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
+@require_permission("admin.import")
+async def get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Get the status of an import operation.
 
@@ -3309,7 +3789,8 @@ async def get_import_status(import_id: str, user: str = Depends(require_auth)) -
 
 
 @export_import_router.get("/import/status", response_model=List[Dict[str, Any]])
-async def list_import_statuses(user: str = Depends(require_auth)) -> List[Dict[str, Any]]:
+@require_permission("admin.import")
+async def list_import_statuses(user=Depends(get_current_user_with_permissions)) -> List[Dict[str, Any]]:
     """
     List all import operation statuses.
 
@@ -3326,7 +3807,8 @@ async def list_import_statuses(user: str = Depends(require_auth)) -> List[Dict[s
 
 
 @export_import_router.post("/import/cleanup", response_model=Dict[str, Any])
-async def cleanup_import_statuses(max_age_hours: int = 24, user: str = Depends(require_auth)) -> Dict[str, Any]:
+@require_permission("admin.import")
+async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Clean up completed import statuses older than specified age.
 
@@ -3368,6 +3850,73 @@ else:
     logger.info("A2A router not included - A2A features disabled")
 
 app.include_router(well_known_router)
+
+# Include Email Authentication router if enabled
+if settings.email_auth_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.auth import auth_router
+        from mcpgateway.routers.email_auth import email_auth_router
+
+        app.include_router(email_auth_router, prefix="/auth/email", tags=["Email Authentication"])
+        app.include_router(auth_router, tags=["Main Authentication"])
+        logger.info("Authentication routers included - Auth enabled")
+
+        # Include SSO router if enabled
+        if settings.sso_enabled:
+            try:
+                # First-Party
+                from mcpgateway.routers.sso import sso_router
+
+                app.include_router(sso_router, tags=["SSO Authentication"])
+                logger.info("SSO router included - SSO authentication enabled")
+            except ImportError as e:
+                logger.error(f"SSO router not available: {e}")
+        else:
+            logger.info("SSO router not included - SSO authentication disabled")
+    except ImportError as e:
+        logger.error(f"Authentication routers not available: {e}")
+else:
+    logger.info("Email authentication router not included - Email auth disabled")
+
+# Include Team Management router if email auth is enabled
+if settings.email_auth_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.teams import teams_router
+
+        app.include_router(teams_router, prefix="/teams", tags=["Teams"])
+        logger.info("Team management router included - Teams enabled with email auth")
+    except ImportError as e:
+        logger.error(f"Team management router not available: {e}")
+else:
+    logger.info("Team management router not included - Email auth disabled")
+
+# Include JWT Token Catalog router if email auth is enabled
+if settings.email_auth_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.tokens import router as tokens_router
+
+        app.include_router(tokens_router, tags=["JWT Token Catalog"])
+        logger.info("JWT Token Catalog router included - Token management enabled with email auth")
+    except ImportError as e:
+        logger.error(f"JWT Token Catalog router not available: {e}")
+else:
+    logger.info("JWT Token Catalog router not included - Email auth disabled")
+
+# Include RBAC router if email auth is enabled
+if settings.email_auth_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.rbac import router as rbac_router
+
+        app.include_router(rbac_router, tags=["RBAC"])
+        logger.info("RBAC router included - Role-based access control enabled")
+    except ImportError as e:
+        logger.error(f"RBAC router not available: {e}")
+else:
+    logger.info("RBAC router not included - Email auth disabled")
 
 # Include OAuth router
 try:

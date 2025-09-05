@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.gateway_service import GatewayNameConflictError, GatewayService
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptService
@@ -332,6 +333,13 @@ class ImportService:
             for entity_type in processing_order:
                 if entity_type in entities:
                     await self._process_entities(db, entity_type, entities[entity_type], conflict_strategy, dry_run, rekey_secret, status, selected_entities)
+                    # Flush after each entity type to make records visible for associations
+                    if not dry_run:
+                        db.flush()
+
+            # Assign all imported items to user's team with public visibility (after all entities processed)
+            if not dry_run:
+                await self._assign_imported_items_to_team(db, imported_by)
 
             # Mark as completed
             status.status = "completed"
@@ -393,6 +401,26 @@ class ImportService:
 
         Returns:
             Total number of entities to process
+
+        Examples:
+            No selection counts all entities:
+            >>> svc = ImportService()
+            >>> entities = {
+            ...     'tools': [{"name": "t1"}, {"name": "t2"}],
+            ...     'resources': [{"uri": "/r1"}],
+            ... }
+            >>> svc._calculate_total_entities(entities, selected_entities=None)
+            3
+
+            Selection for a subset by name/identifier:
+            >>> selected = {'tools': ['t2'], 'resources': ['/r1']}
+            >>> svc._calculate_total_entities(entities, selected)
+            2
+
+            Selection for only a type (empty list means all of that type):
+            >>> selected = {'tools': []}
+            >>> svc._calculate_total_entities(entities, selected)
+            2
         """
         if selected_entities:
             total = 0
@@ -500,6 +528,27 @@ class ImportService:
 
         Raises:
             ImportError: If re-encryption fails
+
+        Examples:
+            Returns original entity when no auth data present:
+            >>> svc = ImportService()
+            >>> svc._has_auth_data({'name': 'x'})
+            False
+            >>> import asyncio
+            >>> asyncio.run(svc._rekey_auth_data({'name': 'x'}, 'new'))
+            {'name': 'x'}
+
+            Rekeys when auth data is present (encode/decode patched):
+            >>> from unittest.mock import patch
+            >>> data = {'name': 'x', 'auth_value': 'enc_old'}
+            >>> async def run():
+            ...     with patch('mcpgateway.services.import_service.decode_auth', return_value='plain'):
+            ...         with patch('mcpgateway.services.import_service.encode_auth', return_value='enc_new'):
+            ...             return await svc._rekey_auth_data(dict(data), 'new-secret')
+            ...
+            >>> result = asyncio.run(run())
+            >>> result['auth_value']
+            'enc_new'
         """
         if not self._has_auth_data(entity_data):
             return entity_data
@@ -705,7 +754,7 @@ class ImportService:
             return
 
         try:
-            create_data = self._convert_to_server_create(server_data)
+            create_data = await self._convert_to_server_create(db, server_data)
 
             try:
                 await self.server_service.register_server(db, create_data)
@@ -722,7 +771,7 @@ class ImportService:
                         servers = await self.server_service.list_servers(db, include_inactive=True)
                         existing_server = next((s for s in servers if s.name == server_name), None)
                         if existing_server:
-                            update_data = self._convert_to_server_update(server_data)
+                            update_data = await self._convert_to_server_update(db, server_data)
                             await self.server_service.update_server(db, existing_server.id, update_data)
                             status.updated_entities += 1
                             logger.debug(f"Updated server: {server_name}")
@@ -1032,27 +1081,77 @@ class ImportService:
             **auth_kwargs,
         )
 
-    def _convert_to_server_create(self, server_data: Dict[str, Any]) -> ServerCreate:
-        """Convert import data to ServerCreate schema.
+    async def _convert_to_server_create(self, db: Session, server_data: Dict[str, Any]) -> ServerCreate:
+        """Convert import data to ServerCreate schema, resolving tool references.
 
         Args:
+            db: Database session
             server_data: Server data dictionary from import
 
         Returns:
-            ServerCreate schema object
+            ServerCreate schema object with resolved tool IDs
         """
-        return ServerCreate(name=server_data["name"], description=server_data.get("description"), associated_tools=server_data.get("tool_ids", []), tags=server_data.get("tags", []))
+        # Resolve tool references (could be names or IDs) to current tool IDs
+        tool_references = server_data.get("tool_ids", []) or server_data.get("associated_tools", [])
+        resolved_tool_ids = []
 
-    def _convert_to_server_update(self, server_data: Dict[str, Any]) -> ServerUpdate:
-        """Convert import data to ServerUpdate schema.
+        if tool_references:
+            # Get all tools to resolve references
+            all_tools = await self.tool_service.list_tools(db, include_inactive=True)
+
+            for tool_ref in tool_references:
+                # Try to find tool by ID first, then by name
+                found_tool = None
+
+                # Try exact ID match
+                found_tool = next((t for t in all_tools if t.id == tool_ref), None)
+
+                # If not found, try by original_name or name
+                if not found_tool:
+                    found_tool = next((t for t in all_tools if t.original_name == tool_ref), None)
+
+                if not found_tool:
+                    found_tool = next((t for t in all_tools if hasattr(t, "name") and t.name == tool_ref), None)
+
+                if found_tool:
+                    resolved_tool_ids.append(found_tool.id)
+                    logger.debug(f"Resolved tool reference '{tool_ref}' to ID {found_tool.id}")
+                else:
+                    logger.warning(f"Could not resolve tool reference: {tool_ref}")
+                    # Don't include unresolvable references
+
+        return ServerCreate(name=server_data["name"], description=server_data.get("description"), associated_tools=resolved_tool_ids, tags=server_data.get("tags", []))
+
+    async def _convert_to_server_update(self, db: Session, server_data: Dict[str, Any]) -> ServerUpdate:
+        """Convert import data to ServerUpdate schema, resolving tool references.
 
         Args:
+            db: Database session
             server_data: Server data dictionary from import
 
         Returns:
-            ServerUpdate schema object
+            ServerUpdate schema object with resolved tool IDs
         """
-        return ServerUpdate(name=server_data.get("name"), description=server_data.get("description"), associated_tools=server_data.get("tool_ids"), tags=server_data.get("tags"))
+        # Resolve tool references same as create method
+        tool_references = server_data.get("tool_ids", []) or server_data.get("associated_tools", [])
+        resolved_tool_ids = []
+
+        if tool_references:
+            all_tools = await self.tool_service.list_tools(db, include_inactive=True)
+
+            for tool_ref in tool_references:
+                found_tool = next((t for t in all_tools if t.id == tool_ref), None)
+                if not found_tool:
+                    found_tool = next((t for t in all_tools if t.original_name == tool_ref), None)
+                if not found_tool:
+                    found_tool = next((t for t in all_tools if hasattr(t, "name") and t.name == tool_ref), None)
+
+                if found_tool:
+                    resolved_tool_ids.append(found_tool.id)
+                else:
+                    logger.warning(f"Could not resolve tool reference for update: {tool_ref}")
+
+        return ServerUpdate(name=server_data.get("name"), description=server_data.get("description"), associated_tools=resolved_tool_ids if resolved_tool_ids else None, tags=server_data.get("tags"))
 
     def _convert_to_prompt_create(self, prompt_data: Dict[str, Any]) -> PromptCreate:
         """Convert import data to PromptCreate schema.
@@ -1169,3 +1268,327 @@ class ImportService:
             removed += 1
 
         return removed
+
+    async def preview_import(self, db: Session, import_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Preview import file to show what would be imported with smart categorization.
+
+        Args:
+            db: Database session
+            import_data: The validated import data
+
+        Returns:
+            Dictionary with categorized items for selective import UI
+
+        Examples:
+            >>> service = ImportService()
+            >>> # This would return a structure for the UI to build selection interface
+        """
+        self.validate_import_data(import_data)
+
+        entities = import_data.get("entities", {})
+        preview = {
+            "summary": {"total_items": sum(len(items) for items in entities.values()), "by_type": {entity_type: len(items) for entity_type, items in entities.items()}},
+            "items": {},
+            "bundles": {},
+            "conflicts": {},
+            "dependencies": {},
+        }
+
+        # Categorize each entity type
+        for entity_type, entity_list in entities.items():
+            preview["items"][entity_type] = []
+
+            for entity in entity_list:
+                item_info = await self._analyze_import_item(db, entity_type, entity)
+                preview["items"][entity_type].append(item_info)
+
+        # Find gateway bundles (gateways + their tools/resources/prompts)
+        if "gateways" in entities:
+            preview["bundles"] = self._find_gateway_bundles(entities)
+
+        # Find server dependencies
+        if "servers" in entities:
+            preview["dependencies"] = self._find_server_dependencies(entities)
+
+        # Detect conflicts with existing items
+        preview["conflicts"] = await self._detect_import_conflicts(db, entities)
+
+        return preview
+
+    async def _analyze_import_item(self, db: Session, entity_type: str, entity: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze a single import item for the preview.
+
+        Args:
+            db: Database session
+            entity_type: Type of entity
+            entity: Entity data
+
+        Returns:
+            Item analysis with metadata for UI selection
+        """
+        item_name = self._get_entity_identifier(entity_type, entity)
+
+        # Basic item info
+        item_info = {
+            "id": item_name,
+            "name": entity.get("name", item_name),
+            "type": entity_type,
+            "is_gateway_item": bool(entity.get("gateway_name") or entity.get("gateway_id")),
+            "is_custom": not bool(entity.get("gateway_name") or entity.get("gateway_id")),
+            "description": entity.get("description", ""),
+        }
+
+        # Check if it conflicts with existing items
+        try:
+            if entity_type == "tools":
+                existing = await self.tool_service.list_tools(db)
+                item_info["conflicts_with"] = any(t.original_name == item_name for t in existing)
+            elif entity_type == "gateways":
+                existing = await self.gateway_service.list_gateways(db)
+                item_info["conflicts_with"] = any(g.name == item_name for g in existing)
+            elif entity_type == "servers":
+                existing = await self.server_service.list_servers(db)
+                item_info["conflicts_with"] = any(s.name == item_name for s in existing)
+            elif entity_type == "prompts":
+                existing = await self.prompt_service.list_prompts(db)
+                item_info["conflicts_with"] = any(p.name == item_name for p in existing)
+            elif entity_type == "resources":
+                existing = await self.resource_service.list_resources(db)
+                item_info["conflicts_with"] = any(r.uri == item_name for r in existing)
+            else:
+                item_info["conflicts_with"] = False
+        except Exception:
+            item_info["conflicts_with"] = False
+
+        # Add metadata for smart selection
+        if entity_type == "servers":
+            item_info["dependencies"] = {"tools": entity.get("associated_tools", []), "resources": entity.get("associated_resources", []), "prompts": entity.get("associated_prompts", [])}
+
+        return item_info
+
+    def _find_gateway_bundles(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """Find gateway bundles (gateway + associated tools/resources/prompts).
+
+        Args:
+            entities: All entities from import data
+
+        Returns:
+            Gateway bundle information for UI
+        """
+        bundles = {}
+
+        if "gateways" not in entities:
+            return bundles
+
+        for gateway in entities["gateways"]:
+            gateway_name = gateway.get("name", "")
+            bundle_items = {"tools": [], "resources": [], "prompts": []}
+
+            # Find items that belong to this gateway
+            for entity_type in ["tools", "resources", "prompts"]:
+                if entity_type in entities:
+                    for item in entities[entity_type]:
+                        item_gateway = item.get("gateway_name") or item.get("gateway_id")
+                        if item_gateway == gateway_name:
+                            item_name = self._get_entity_identifier(entity_type, item)
+                            bundle_items[entity_type].append({"id": item_name, "name": item.get("name", item_name), "description": item.get("description", "")})
+
+            if any(bundle_items.values()):  # Only add if gateway has items
+                bundles[gateway_name] = {
+                    "gateway": {"name": gateway_name, "description": gateway.get("description", "")},
+                    "items": bundle_items,
+                    "total_items": sum(len(items) for items in bundle_items.values()),
+                }
+
+        return bundles
+
+    def _find_server_dependencies(self, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """Find server dependencies for smart selection.
+
+        Args:
+            entities: All entities from import data
+
+        Returns:
+            Server dependency information for UI
+        """
+        dependencies = {}
+
+        if "servers" not in entities:
+            return dependencies
+
+        for server in entities["servers"]:
+            server_name = server.get("name", "")
+            deps = {"tools": server.get("associated_tools", []), "resources": server.get("associated_resources", []), "prompts": server.get("associated_prompts", [])}
+
+            if any(deps.values()):  # Only add if server has dependencies
+                dependencies[server_name] = {
+                    "server": {"name": server_name, "description": server.get("description", "")},
+                    "requires": deps,
+                    "total_dependencies": sum(len(items) for items in deps.values()),
+                }
+
+        return dependencies
+
+    async def _detect_import_conflicts(self, db: Session, entities: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Detect conflicts between import items and existing database items.
+
+        Args:
+            db: Database session
+            entities: Import entities
+
+        Returns:
+            Dictionary of conflicts by entity type
+        """
+        conflicts = {}
+
+        try:
+            # Check tool conflicts
+            if "tools" in entities:
+                existing_tools = await self.tool_service.list_tools(db)
+                existing_names = {t.original_name for t in existing_tools}
+
+                tool_conflicts = []
+                for tool in entities["tools"]:
+                    tool_name = tool.get("name", "")
+                    if tool_name in existing_names:
+                        tool_conflicts.append({"name": tool_name, "type": "name_conflict", "description": tool.get("description", "")})
+
+                if tool_conflicts:
+                    conflicts["tools"] = tool_conflicts
+
+            # Check gateway conflicts
+            if "gateways" in entities:
+                existing_gateways = await self.gateway_service.list_gateways(db)
+                existing_names = {g.name for g in existing_gateways}
+
+                gateway_conflicts = []
+                for gateway in entities["gateways"]:
+                    gateway_name = gateway.get("name", "")
+                    if gateway_name in existing_names:
+                        gateway_conflicts.append({"name": gateway_name, "type": "name_conflict", "description": gateway.get("description", "")})
+
+                if gateway_conflicts:
+                    conflicts["gateways"] = gateway_conflicts
+
+            # Add other entity types as needed...
+
+        except Exception as e:
+            logger.warning(f"Could not detect all conflicts: {e}")
+
+        return conflicts
+
+    async def _get_user_context(self, db: Session, imported_by: str) -> Optional[Dict[str, Any]]:
+        """Get user context for import team assignment.
+
+        Args:
+            db: Database session
+            imported_by: Email of importing user
+
+        Returns:
+            User context dict or None if not found
+        """
+        try:
+            user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
+            if not user:
+                logger.warning(f"Could not find importing user: {imported_by}")
+                return None
+
+            personal_team = user.get_personal_team()
+            if not personal_team:
+                logger.warning(f"User {imported_by} has no personal team")
+                return None
+
+            return {"user_email": user.email, "team_id": personal_team.id, "team_name": personal_team.name}
+        except Exception as e:
+            logger.error(f"Failed to get user context: {e}")
+            return None
+
+    def _add_multitenancy_context(self, entity_data: Dict[str, Any], user_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Add team and visibility context to entity data for import.
+
+        Args:
+            entity_data: Original entity data
+            user_context: User context with team information
+
+        Returns:
+            Entity data enhanced with multitenancy fields
+        """
+        # Create copy to avoid modifying original
+        enhanced_data = dict(entity_data)
+
+        # Add team assignment (assign to importing user's personal team)
+        if not enhanced_data.get("team_id"):
+            enhanced_data["team_id"] = user_context["team_id"]
+
+        if not enhanced_data.get("owner_email"):
+            enhanced_data["owner_email"] = user_context["user_email"]
+
+        # Set visibility: use export value if present, otherwise default to 'public'
+        # This supports pre-0.7.0 exports that don't have visibility field
+        if not enhanced_data.get("visibility"):
+            enhanced_data["visibility"] = "public"  # Default to public for backward compatibility
+
+        # Add import tracking
+        if not enhanced_data.get("federation_source"):
+            enhanced_data["federation_source"] = f"imported-by-{user_context['user_email']}"
+
+        logger.debug(f"Enhanced entity with multitenancy: team_id={enhanced_data['team_id']}, visibility={enhanced_data['visibility']}")
+        return enhanced_data
+
+    async def _assign_imported_items_to_team(self, db: Session, imported_by: str) -> None:
+        """Assign imported items without team assignment to the importer's personal team.
+
+        Args:
+            db: Database session
+            imported_by: Email of user who performed the import
+        """
+        try:
+            # Find the importing user and their personal team
+            user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
+            if not user:
+                logger.warning(f"Could not find importing user {imported_by} - skipping team assignment")
+                return
+
+            personal_team = user.get_personal_team()
+            if not personal_team:
+                logger.warning(f"User {imported_by} has no personal team - skipping team assignment")
+                return
+
+            logger.info(f"Assigning orphaned imported items to {imported_by}'s team: {personal_team.name}")
+
+            # Resource types to check
+            resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
+
+            total_assigned = 0
+
+            for resource_name, resource_model in resource_types:
+                try:
+                    # Find items without team assignment (recently imported)
+                    unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None))).all()
+
+                    if unassigned:
+                        logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to user team")
+
+                        for item in unassigned:
+                            item.team_id = personal_team.id
+                            item.owner_email = user.email
+                            # Set imported items to public for better visibility
+                            item.visibility = "public"
+                            if hasattr(item, "federation_source") and not item.federation_source:
+                                item.federation_source = f"imported-by-{imported_by}"
+
+                        total_assigned += len(unassigned)
+
+                except Exception as e:
+                    logger.error(f"Failed to assign {resource_name} to team: {e}")
+                    continue
+
+            if total_assigned > 0:
+                db.commit()
+                logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with public visibility")
+            else:
+                logger.debug("No orphaned imported items found")
+
+        except Exception as e:
+            logger.error(f"Failed to assign imported items to team: {e}")
+            # Don't fail the import for team assignment issues

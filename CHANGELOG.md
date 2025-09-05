@@ -6,6 +6,275 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [Unreleased] - Enterprise Multi-Tenancy System
+
+### Overview
+
+**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming MCP Gateway from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration.
+
+**Impact:** Complete architectural transformation enabling secure team collaboration, enterprise SSO integration, and scalable multi-tenant deployments.
+
+### 🚀 **Migration Guide**
+
+**⚠️ IMPORTANT**: This is a **major architectural change** requiring database migration.
+
+**📖 Complete migration instructions**: See **[MIGRATION-0.7.0.md](./MIGRATION-0.7.0.md)** for detailed upgrade guidance from v0.6.0 to v0.7.0.
+
+**📋 Migration includes**:
+- Automated database schema upgrade
+- Team assignment for existing servers/resources
+- Platform admin user creation
+- Configuration export/import tools
+- Comprehensive verification and troubleshooting
+
+**🔑 Password Management**: After migration, platform admin password must be changed using the API endpoint `/auth/email/change-password`. The `PLATFORM_ADMIN_PASSWORD` environment variable is only used during initial setup.
+
+### Added
+
+#### **🔐 Authentication & Authorization System**
+* **Email-based Authentication** (#544) - Complete user authentication system with Argon2id password hashing replacing basic auth
+* **Complete RBAC System** (#283) - Platform Admin, Team Owner, Team Member roles with full multi-tenancy support
+* **Enhanced JWT Tokens** (#87) - JWT tokens with team context, scoped permissions, and per-user expiry
+* **Password Policy Engine** (#426) - Configurable security requirements with password complexity rules
+* **Password Change API** - Secure `/auth/email/change-password` endpoint for changing user passwords with old password verification
+* **Multi-Provider SSO Framework** (#220, #278, #859) - GitHub, Google, and IBM Security Verify integration
+* **Per-Virtual-Server API Keys** (#282) - Scoped access tokens for individual virtual servers
+
+#### **👥 Team Management System**
+* **Personal Teams Auto-Creation** - Every user automatically gets a personal team on registration
+* **Multi-Team Membership** - Users can belong to multiple teams with different roles (owner/member)
+* **Team Invitation System** - Email-based invitations with secure tokens and expiration
+* **Team Visibility Controls** - Private/Public team discovery and cross-team collaboration
+* **Team Administration** - Complete team lifecycle management via API and Admin UI
+
+#### **🔒 Resource Scoping & Visibility**
+* **Three-Tier Resource Visibility System**:
+  - **Private**: Owner-only access
+  - **Team**: Team member access
+  - **Public**: Cross-team access for collaboration
+* **Applied to All Resource Types**: Tools, Servers, Resources, Prompts, A2A Agents
+* **Team-Scoped API Endpoints** with proper access validation and filtering
+* **Cross-Team Resource Discovery** for public resources
+
+#### **🏗️ Platform Administration**
+* **Platform Admin Role** separate from team roles for system-wide management
+* **Domain-Based Auto-Assignment** via SSO (SSO_AUTO_ADMIN_DOMAINS)
+* **Enterprise Domain Trust** (SSO_TRUSTED_DOMAINS) for controlled access
+* **System-Wide Team Management** for administrators
+
+#### **🗄️ Database & Infrastructure**
+* **Complete Multi-Tenant Database Schema** with proper indexing and performance optimization
+* **Team-Based Query Filtering** for performance and security
+* **Automated Migration Strategy** from single-tenant to multi-tenant with rollback support
+* **All APIs Redesigned** to be team-aware with backward compatibility
+
+#### **🔧 Configuration & Security**
+* **Database Connection Pool Configuration** - Optimized settings for multi-tenant workloads:
+  ```bash
+  # New .env.example settings for performance:
+  DB_POOL_SIZE=50              # Maximum persistent connections (default: 200, SQLite capped at 50)
+  DB_MAX_OVERFLOW=20           # Additional connections beyond pool_size (default: 10, SQLite capped at 20)
+  DB_POOL_TIMEOUT=30           # Seconds to wait for connection before timeout (default: 30)
+  DB_POOL_RECYCLE=3600         # Seconds before recreating connection (default: 3600)
+  ```
+* **Enhanced JWT Configuration** - Audience, issuer claims, and improved token validation:
+  ```bash
+  # New JWT configuration options:
+  JWT_AUDIENCE=mcpgateway-api      # JWT audience claim for token validation
+  JWT_ISSUER=mcpgateway           # JWT issuer claim for token validation
+  ```
+* **Account Security Configuration** - Lockout policies and failed login attempt limits:
+  ```bash
+  # New security policy settings:
+  MAX_FAILED_LOGIN_ATTEMPTS=5              # Maximum failed attempts before lockout
+  ACCOUNT_LOCKOUT_DURATION_MINUTES=30      # Account lockout duration in minutes
+  ```
+
+### Changed
+
+#### **🔄 Authentication Migration**
+* **Username to Email Migration** - All authentication now uses email addresses instead of usernames
+  ```bash
+  # OLD (v0.6.0 and earlier):
+  python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key
+
+  # NEW (v0.7.0+):
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+  ```
+* **JWT Token Format Enhanced** - Tokens now include team context and scoped permissions
+* **API Authentication Updated** - All examples and documentation updated to use email-based authentication
+
+#### **📊 Database Schema Evolution**
+* **New Multi-Tenant Tables**: email_users, email_teams, email_team_members, email_team_invitations, **token_usage_logs**
+* **Token Management Tables**: email_api_tokens, token_usage_logs, token_revocations - Complete API token lifecycle tracking
+* **Extended Resource Tables** - All resource tables now include team_id, owner_email, visibility columns
+* **Performance Indexing** - Strategic indexes on team_id, owner_email, visibility for optimal query performance
+
+#### **🚀 API Enhancements**
+* **New Authentication Endpoints** - Email registration/login and SSO provider integration
+* **New Team Management Endpoints** - Complete CRUD operations for teams and memberships
+* **Enhanced Resource Endpoints** - All resource endpoints support team-scoping parameters
+* **Backward Compatibility** - Existing API endpoints remain functional with feature flags
+
+### Security
+
+* **Data Isolation** - Team-scoped queries prevent cross-tenant data access
+* **Resource Ownership** - Every resource has owner_email and team_id validation
+* **Visibility Enforcement** - Private/Team/Public visibility strictly enforced
+* **Secure Tokens** - Invitation tokens with expiration and single-use validation
+* **Domain Restrictions** - Corporate domain enforcement via SSO_TRUSTED_DOMAINS
+* **MFA Support** - Automatic enforcement of SSO provider MFA policies
+
+### Documentation
+
+* **Architecture Documentation** - `docs/docs/architecture/multitenancy.md` - Complete multi-tenancy architecture guide
+* **SSO Integration Tutorials**:
+  - `docs/docs/manage/sso.md` - General SSO configuration guide
+  - `docs/docs/manage/sso-github-tutorial.md` - GitHub SSO integration tutorial
+  - `docs/docs/manage/sso-google-tutorial.md` - Google SSO integration tutorial
+  - `docs/docs/manage/sso-ibm-tutorial.md` - IBM Security Verify integration tutorial
+  - `docs/docs/manage/sso-okta-tutorial.md` - Okta SSO integration tutorial
+* **Configuration Reference** - Complete environment variable documentation with examples
+* **Migration Guide** - Single-tenant to multi-tenant upgrade path with troubleshooting
+* **API Reference** - Team-scoped endpoint documentation with usage examples
+
+### Infrastructure
+
+* **Team-Based Indexing** - Optimized database queries for multi-tenant workloads
+* **Connection Pooling** - Enhanced configuration for enterprise scale
+* **Migration Scripts** - Automated Alembic migrations with rollback support
+* **Performance Monitoring** - Team-scoped metrics and observability
+
+### Migration Guide
+
+#### **Environment Configuration Updates**
+Update your `.env` file with the new multi-tenancy settings:
+
+```bash
+#####################################
+# Email-Based Authentication
+#####################################
+
+# Enable email-based authentication system
+EMAIL_AUTH_ENABLED=true
+
+# Platform admin user (bootstrap from environment)
+PLATFORM_ADMIN_EMAIL=admin@example.com
+PLATFORM_ADMIN_PASSWORD=changeme
+PLATFORM_ADMIN_FULL_NAME=Platform Administrator
+
+# Argon2id Password Hashing Configuration
+ARGON2ID_TIME_COST=3
+ARGON2ID_MEMORY_COST=65536
+ARGON2ID_PARALLELISM=1
+
+# Password Policy Configuration
+PASSWORD_MIN_LENGTH=8
+PASSWORD_REQUIRE_UPPERCASE=false
+PASSWORD_REQUIRE_LOWERCASE=false
+PASSWORD_REQUIRE_NUMBERS=false
+PASSWORD_REQUIRE_SPECIAL=false
+
+#####################################
+# Personal Teams Configuration
+#####################################
+
+# Enable automatic personal team creation for new users
+AUTO_CREATE_PERSONAL_TEAMS=true
+
+# Personal team naming prefix
+PERSONAL_TEAM_PREFIX=personal
+
+# Team Limits
+MAX_TEAMS_PER_USER=50
+MAX_MEMBERS_PER_TEAM=100
+
+# Team Invitation Settings
+INVITATION_EXPIRY_DAYS=7
+REQUIRE_EMAIL_VERIFICATION_FOR_INVITES=true
+
+#####################################
+# SSO Configuration (Optional)
+#####################################
+
+# Master SSO switch - enable Single Sign-On authentication
+SSO_ENABLED=false
+
+# GitHub OAuth Configuration
+SSO_GITHUB_ENABLED=false
+# SSO_GITHUB_CLIENT_ID=your-github-client-id
+# SSO_GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Google OAuth Configuration
+SSO_GOOGLE_ENABLED=false
+# SSO_GOOGLE_CLIENT_ID=your-google-client-id.googleusercontent.com
+# SSO_GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# IBM Security Verify OIDC Configuration
+SSO_IBM_VERIFY_ENABLED=false
+# SSO_IBM_VERIFY_CLIENT_ID=your-ibm-verify-client-id
+# SSO_IBM_VERIFY_CLIENT_SECRET=your-ibm-verify-client-secret
+# SSO_IBM_VERIFY_ISSUER=https://your-tenant.verify.ibm.com/oidc/endpoint/default
+```
+
+#### **Database Migration**
+Database migrations run automatically on startup:
+```bash
+# Backup your database first
+cp mcp.db mcp.db.backup
+
+# Migrations run automatically when you start the server
+make dev  # Migrations execute automatically, then server starts
+
+# Or for production
+make serve  # Migrations execute automatically, then production server starts
+```
+
+#### **JWT Token Generation Updates**
+All JWT token generation now uses email addresses:
+```bash
+# Generate development tokens
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret my-test-key)
+
+# For API testing
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://127.0.0.1:4444/version | jq
+```
+
+### Breaking Changes
+
+* **Database Schema** - New tables and extended resource tables (backward compatible with feature flags)
+* **Authentication System** - Migration from username to email-based authentication
+  - **Action Required**: Update JWT token generation to use email addresses instead of usernames
+  - **Action Required**: Update `.env` with new authentication configuration
+* **API Changes** - New endpoints added, existing endpoints enhanced with team parameters
+  - **Backward Compatible**: Existing endpoints work with new team-scoping parameters
+* **Configuration** - New required environment variables for multi-tenancy features
+  - **Action Required**: Copy updated `.env.example` to `.env` and configure multi-tenancy settings
+
+### Issues Closed
+
+**Primary Epic:**
+- Closes #860 - [EPIC]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping
+
+**Core Security & Authentication:**
+- Closes #544 - Database-Backed User Authentication with Argon2id (replace BASIC auth)
+- Closes #283 - Role-Based Access Control (RBAC) - User/Team/Global Scopes for full multi-tenancy support
+- Closes #426 - Configurable Password and Secret Policy Engine
+- Closes #87 - Epic: Secure JWT Token Catalog with Per-User Expiry and Revocation
+- Closes #282 - Per-Virtual-Server API Keys with Scoped Access
+
+**SSO Integration:**
+- Closes #220 - Authentication & Authorization - SSO + Identity-Provider Integration
+- Closes #278 - Authentication & Authorization - Google SSO Integration Tutorial
+- Closes #859 - Authentication & Authorization - IBM Security Verify Enterprise SSO Integration
+
+**Future Foundation:**
+- Provides foundation for #706 - ABAC Virtual Server Support (RBAC foundation implemented)
+
+---
+
 ## [0.6.0] - 2025-08-22 - Security, Scale & Smart Automation
 
 ### Overview

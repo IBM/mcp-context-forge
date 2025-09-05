@@ -9,11 +9,12 @@ Usage:
     python3 tests/migration/add_version.py 0.7.0
 """
 
-import sys
+# Standard
+from datetime import datetime
 import json
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, Any
+import sys
+from typing import Any, Dict
 
 
 def show_instructions(new_version: str):

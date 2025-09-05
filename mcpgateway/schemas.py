@@ -29,7 +29,7 @@ import re
 from typing import Any, Dict, List, Literal, Optional, Self, Union
 
 # Third-Party
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
 from mcpgateway.config import settings
@@ -68,6 +68,22 @@ def to_camel_case(s: str) -> str:
         'LeadingUnderscore'
         >>> to_camel_case("trailing_underscore_")
         'trailingUnderscore'
+        >>> to_camel_case("multiple_words_here")
+        'multipleWordsHere'
+        >>> to_camel_case("api_key_value")
+        'apiKeyValue'
+        >>> to_camel_case("user_id")
+        'userId'
+        >>> to_camel_case("created_at")
+        'createdAt'
+        >>> to_camel_case("team_member_role")
+        'teamMemberRole'
+        >>> to_camel_case("oauth_client_id")
+        'oauthClientId'
+        >>> to_camel_case("jwt_token")
+        'jwtToken'
+        >>> to_camel_case("a2a_agent_name")
+        'a2aAgentName'
     """
     return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
@@ -83,9 +99,21 @@ def encode_datetime(v: datetime) -> str:
         str: The ISO 8601 formatted string representation of the datetime object.
 
     Examples:
-        >>> from datetime import datetime
+        >>> from datetime import datetime, timezone
         >>> encode_datetime(datetime(2023, 5, 22, 14, 30, 0))
         '2023-05-22T14:30:00'
+        >>> encode_datetime(datetime(2024, 12, 25, 9, 15, 30))
+        '2024-12-25T09:15:30'
+        >>> encode_datetime(datetime(2025, 1, 1, 0, 0, 0))
+        '2025-01-01T00:00:00'
+        >>> # Test with timezone
+        >>> dt_utc = datetime(2023, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        >>> encode_datetime(dt_utc)
+        '2023-06-15T12:00:00+00:00'
+        >>> # Test microseconds
+        >>> dt_micro = datetime(2023, 7, 20, 16, 45, 30, 123456)
+        >>> encode_datetime(dt_micro)
+        '2023-07-20T16:45:30.123456'
     """
     return v.isoformat()
 
@@ -167,6 +195,39 @@ class ToolMetrics(BaseModelWithConfigDict):
         max_response_time (Optional[float]): Maximum response time in seconds.
         avg_response_time (Optional[float]): Average response time in seconds.
         last_execution_time (Optional[datetime]): Timestamp of the most recent invocation.
+
+    Examples:
+        >>> from datetime import datetime
+        >>> metrics = ToolMetrics(
+        ...     total_executions=100,
+        ...     successful_executions=95,
+        ...     failed_executions=5,
+        ...     failure_rate=0.05,
+        ...     min_response_time=0.1,
+        ...     max_response_time=2.5,
+        ...     avg_response_time=0.8
+        ... )
+        >>> metrics.total_executions
+        100
+        >>> metrics.failure_rate
+        0.05
+        >>> metrics.successful_executions + metrics.failed_executions == metrics.total_executions
+        True
+        >>> # Test with minimal data
+        >>> minimal_metrics = ToolMetrics(
+        ...     total_executions=10,
+        ...     successful_executions=8,
+        ...     failed_executions=2,
+        ...     failure_rate=0.2
+        ... )
+        >>> minimal_metrics.min_response_time is None
+        True
+        >>> # Test model dump functionality
+        >>> data = metrics.model_dump()
+        >>> isinstance(data, dict)
+        True
+        >>> data['total_executions']
+        100
     """
 
     total_executions: int = Field(..., description="Total number of tool invocations")
@@ -347,6 +408,11 @@ class ToolCreate(BaseModel):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the tool")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the tool owner")
+    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -964,6 +1030,11 @@ class ToolRead(BaseModelWithConfigDict):
     federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
     version: Optional[int] = Field(1, description="Entity version for change tracking")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+
 
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
@@ -1147,6 +1218,11 @@ class ResourceCreate(BaseModel):
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the resource owner")
+    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -1266,6 +1342,11 @@ class ResourceUpdate(BaseModelWithConfigDict):
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the resource")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the resource owner")
+    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -1400,6 +1481,11 @@ class ResourceRead(BaseModelWithConfigDict):
     import_batch_id: Optional[str] = Field(None, description="UUID of bulk import batch")
     federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
     version: Optional[int] = Field(1, description="Entity version for change tracking")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -1646,6 +1732,11 @@ class PromptCreate(BaseModel):
     arguments: List[PromptArgument] = Field(default_factory=list, description="List of arguments for the template")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
+    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -1761,6 +1852,11 @@ class PromptUpdate(BaseModelWithConfigDict):
 
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the prompt")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
+    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -1873,6 +1969,11 @@ class PromptRead(BaseModelWithConfigDict):
     federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
     version: Optional[int] = Field(1, description="Entity version for change tracking")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+
 
 class PromptInvocation(BaseModelWithConfigDict):
     """Schema for prompt invocation requests.
@@ -1972,6 +2073,11 @@ class GatewayCreate(BaseModel):
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
+
+    # Team scoping fields for resource organization
+    team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
+    owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
+    visibility: str = Field(default="public", description="Gateway visibility: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -2211,6 +2317,11 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
 
+    # Team scoping fields for resource organization
+    team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
+    owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
+    visibility: Optional[str] = Field(None, description="Gateway visibility: private, team, or public")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -2446,6 +2557,11 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
+
+    # Team scoping fields for resource organization
+    team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
+    owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
+    visibility: str = Field(default="private", description="Gateway visibility: private, team, or public")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -2899,6 +3015,11 @@ class ServerCreate(BaseModel):
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the server owner")
+    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -2963,6 +3084,39 @@ class ServerCreate(BaseModel):
             return [item.strip() for item in v.split(",") if item.strip()]
         return v
 
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str) -> str:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value
+
+        Raises:
+            ValueError: If visibility is invalid
+        """
+        if v not in ["private", "team", "public"]:
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
+
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate team ID format.
+
+        Args:
+            v: Team ID to validate
+
+        Returns:
+            Validated team ID
+        """
+        if v is not None:
+            return SecurityValidator.validate_uuid(v, "team_id")
+        return v
+
 
 class ServerUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing server.
@@ -2975,6 +3129,11 @@ class ServerUpdate(BaseModelWithConfigDict):
     description: Optional[str] = Field(None, description="Server description")
     icon: Optional[str] = Field(None, description="URL for the server's icon")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the server")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the server owner")
+    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -3128,6 +3287,11 @@ class ServerRead(BaseModelWithConfigDict):
     federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
     version: Optional[int] = Field(1, description="Entity version for change tracking")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+
     @model_validator(mode="before")
     @classmethod
     def populate_associated_ids(cls, values):
@@ -3259,6 +3423,8 @@ class A2AAgentCreate(BaseModel):
         auth_type (Optional[str]): Type of authentication ("api_key", "oauth", "bearer", etc.).
         auth_value (Optional[str]): Authentication credentials (will be encrypted).
         tags (List[str]): Tags for categorizing the agent.
+        team_id (Optional[str]): Team ID for resource organization.
+        visibility (str): Visibility level ("private", "team", "public").
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -3273,6 +3439,11 @@ class A2AAgentCreate(BaseModel):
     auth_type: Optional[str] = Field(None, description="Type of authentication")
     auth_value: Optional[str] = Field(None, description="Authentication credentials")
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the agent owner")
+    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -3347,6 +3518,39 @@ class A2AAgentCreate(BaseModel):
         SecurityValidator.validate_json_depth(v)
         return v
 
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: str) -> str:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value
+
+        Raises:
+            ValueError: If visibility is invalid
+        """
+        if v not in ["private", "team", "public"]:
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
+
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate team ID format.
+
+        Args:
+            v: Team ID to validate
+
+        Returns:
+            Validated team ID
+        """
+        if v is not None:
+            return SecurityValidator.validate_uuid(v, "team_id")
+        return v
+
 
 class A2AAgentUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing A2A agent.
@@ -3364,6 +3568,11 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     auth_type: Optional[str] = Field(None, description="Type of authentication")
     auth_value: Optional[str] = Field(None, description="Authentication credentials")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the agent")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="Team ID for resource organization")
+    owner_email: Optional[str] = Field(None, description="Email of the agent owner")
+    visibility: Optional[str] = Field(None, description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -3442,6 +3651,39 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
         SecurityValidator.validate_json_depth(v)
         return v
 
+    @field_validator("visibility")
+    @classmethod
+    def validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        """Validate visibility level.
+
+        Args:
+            v: Visibility value to validate
+
+        Returns:
+            Validated visibility value
+
+        Raises:
+            ValueError: If visibility is invalid
+        """
+        if v is not None and v not in ["private", "team", "public"]:
+            raise ValueError("Visibility must be one of: private, team, public")
+        return v
+
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_id(cls, v: Optional[str]) -> Optional[str]:
+        """Validate team ID format.
+
+        Args:
+            v: Team ID to validate
+
+        Returns:
+            Validated team ID
+        """
+        if v is not None:
+            return SecurityValidator.validate_uuid(v, "team_id")
+        return v
+
 
 class A2AAgentRead(BaseModelWithConfigDict):
     """Schema for reading A2A agent information.
@@ -3488,6 +3730,11 @@ class A2AAgentRead(BaseModelWithConfigDict):
     federation_source: Optional[str] = Field(None, description="Source gateway for federated entities")
     version: Optional[int] = Field(1, description="Entity version for change tracking")
 
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+
 
 class A2AAgentInvocation(BaseModelWithConfigDict):
     """Schema for A2A agent invocation requests.
@@ -3531,3 +3778,1369 @@ class A2AAgentInvocation(BaseModelWithConfigDict):
         """
         SecurityValidator.validate_json_depth(v)
         return v
+
+
+# ---------------------------------------------------------------------------
+# Email-Based Authentication Schemas
+# ---------------------------------------------------------------------------
+
+
+class EmailLoginRequest(BaseModel):
+    """Request schema for email login.
+
+    Attributes:
+        email: User's email address
+        password: User's password
+
+    Examples:
+        >>> request = EmailLoginRequest(email="user@example.com", password="secret123")
+        >>> request.email
+        'user@example.com'
+        >>> request.password
+        'secret123'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: EmailStr = Field(..., description="User's email address")
+    password: str = Field(..., min_length=1, description="User's password")
+
+
+class EmailRegistrationRequest(BaseModel):
+    """Request schema for user registration.
+
+    Attributes:
+        email: User's email address
+        password: User's password
+        full_name: Optional full name for display
+
+    Examples:
+        >>> request = EmailRegistrationRequest(
+        ...     email="new@example.com",
+        ...     password="secure123",
+        ...     full_name="New User"
+        ... )
+        >>> request.email
+        'new@example.com'
+        >>> request.full_name
+        'New User'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: EmailStr = Field(..., description="User's email address")
+    password: str = Field(..., min_length=8, description="User's password")
+    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        """Validate password meets minimum requirements.
+
+        Args:
+            v: Password string to validate
+
+        Returns:
+            str: Validated password
+
+        Raises:
+            ValueError: If password doesn't meet requirements
+        """
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters long")
+        return v
+
+
+class ChangePasswordRequest(BaseModel):
+    """Request schema for password change.
+
+    Attributes:
+        old_password: Current password for verification
+        new_password: New password to set
+
+    Examples:
+        >>> request = ChangePasswordRequest(
+        ...     old_password="old_secret",
+        ...     new_password="new_secure_password"
+        ... )
+        >>> request.old_password
+        'old_secret'
+        >>> request.new_password
+        'new_secure_password'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    old_password: str = Field(..., min_length=1, description="Current password")
+    new_password: str = Field(..., min_length=8, description="New password")
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        """Validate new password meets minimum requirements.
+
+        Args:
+            v: New password string to validate
+
+        Returns:
+            str: Validated new password
+
+        Raises:
+            ValueError: If new password doesn't meet requirements
+        """
+        if len(v) < 8:
+            raise ValueError("New password must be at least 8 characters long")
+        return v
+
+
+class EmailUserResponse(BaseModel):
+    """Response schema for user information.
+
+    Attributes:
+        email: User's email address
+        full_name: User's full name
+        is_admin: Whether user has admin privileges
+        is_active: Whether account is active
+        auth_provider: Authentication provider used
+        created_at: Account creation timestamp
+        last_login: Last successful login timestamp
+        email_verified: Whether email is verified
+
+    Examples:
+        >>> user = EmailUserResponse(
+        ...     email="user@example.com",
+        ...     full_name="Test User",
+        ...     is_admin=False,
+        ...     is_active=True,
+        ...     auth_provider="local",
+        ...     created_at=datetime.now(),
+        ...     last_login=None,
+        ...     email_verified=False
+        ... )
+        >>> user.email
+        'user@example.com'
+        >>> user.is_admin
+        False
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    email: str = Field(..., description="User's email address")
+    full_name: Optional[str] = Field(None, description="User's full name")
+    is_admin: bool = Field(..., description="Whether user has admin privileges")
+    is_active: bool = Field(..., description="Whether account is active")
+    auth_provider: str = Field(..., description="Authentication provider")
+    created_at: datetime = Field(..., description="Account creation timestamp")
+    last_login: Optional[datetime] = Field(None, description="Last successful login")
+    email_verified: bool = Field(False, description="Whether email is verified")
+
+    @classmethod
+    def from_email_user(cls, user) -> "EmailUserResponse":
+        """Create response from EmailUser model.
+
+        Args:
+            user: EmailUser model instance
+
+        Returns:
+            EmailUserResponse: Response schema instance
+        """
+        return cls(
+            email=user.email,
+            full_name=user.full_name,
+            is_admin=user.is_admin,
+            is_active=user.is_active,
+            auth_provider=user.auth_provider,
+            created_at=user.created_at,
+            last_login=user.last_login,
+            email_verified=user.is_email_verified(),
+        )
+
+
+class AuthenticationResponse(BaseModel):
+    """Response schema for successful authentication.
+
+    Attributes:
+        access_token: JWT token for API access
+        token_type: Type of token (always 'bearer')
+        expires_in: Token expiration time in seconds
+        user: User information
+
+    Examples:
+        >>> from datetime import datetime
+        >>> response = AuthenticationResponse(
+        ...     access_token="jwt.token.here",
+        ...     token_type="bearer",
+        ...     expires_in=3600,
+        ...     user=EmailUserResponse(
+        ...         email="user@example.com",
+        ...         full_name="Test User",
+        ...         is_admin=False,
+        ...         is_active=True,
+        ...         auth_provider="local",
+        ...         created_at=datetime.now(),
+        ...         last_login=None,
+        ...         email_verified=False
+        ...     )
+        ... )
+        >>> response.token_type
+        'bearer'
+        >>> response.user.email
+        'user@example.com'
+    """
+
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: int = Field(..., description="Token expiration in seconds")
+    user: EmailUserResponse = Field(..., description="User information")
+
+
+class AuthEventResponse(BaseModel):
+    """Response schema for authentication events.
+
+    Attributes:
+        id: Event ID
+        timestamp: Event timestamp
+        user_email: User's email address
+        event_type: Type of authentication event
+        success: Whether the event was successful
+        ip_address: Client IP address
+        failure_reason: Reason for failure (if applicable)
+
+    Examples:
+        >>> from datetime import datetime
+        >>> event = AuthEventResponse(
+        ...     id=1,
+        ...     timestamp=datetime.now(),
+        ...     user_email="user@example.com",
+        ...     event_type="login",
+        ...     success=True,
+        ...     ip_address="192.168.1.1",
+        ...     failure_reason=None
+        ... )
+        >>> event.event_type
+        'login'
+        >>> event.success
+        True
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int = Field(..., description="Event ID")
+    timestamp: datetime = Field(..., description="Event timestamp")
+    user_email: Optional[str] = Field(None, description="User's email address")
+    event_type: str = Field(..., description="Type of authentication event")
+    success: bool = Field(..., description="Whether the event was successful")
+    ip_address: Optional[str] = Field(None, description="Client IP address")
+    failure_reason: Optional[str] = Field(None, description="Reason for failure")
+
+
+class UserListResponse(BaseModel):
+    """Response schema for user list.
+
+    Attributes:
+        users: List of users
+        total_count: Total number of users
+        limit: Request limit
+        offset: Request offset
+
+    Examples:
+        >>> user_list = UserListResponse(
+        ...     users=[],
+        ...     total_count=0,
+        ...     limit=10,
+        ...     offset=0
+        ... )
+        >>> user_list.total_count
+        0
+        >>> len(user_list.users)
+        0
+    """
+
+    users: list[EmailUserResponse] = Field(..., description="List of users")
+    total_count: int = Field(..., description="Total number of users")
+    limit: int = Field(..., description="Request limit")
+    offset: int = Field(..., description="Request offset")
+
+
+class AdminUserCreateRequest(BaseModel):
+    """Request schema for admin user creation.
+
+    Attributes:
+        email: User's email address
+        password: User's password
+        full_name: Optional full name
+        is_admin: Whether user should have admin privileges
+
+    Examples:
+        >>> request = AdminUserCreateRequest(
+        ...     email="admin@example.com",
+        ...     password="admin_password",
+        ...     full_name="Admin User",
+        ...     is_admin=True
+        ... )
+        >>> request.email
+        'admin@example.com'
+        >>> request.is_admin
+        True
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: EmailStr = Field(..., description="User's email address")
+    password: str = Field(..., min_length=8, description="User's password")
+    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+    is_admin: bool = Field(default=False, description="Whether user has admin privileges")
+
+
+class AdminUserUpdateRequest(BaseModel):
+    """Request schema for admin user updates.
+
+    Attributes:
+        full_name: User's full name
+        is_admin: Whether user has admin privileges
+        is_active: Whether account is active
+
+    Examples:
+        >>> request = AdminUserUpdateRequest(
+        ...     full_name="Updated Name",
+        ...     is_admin=True,
+        ...     is_active=True
+        ... )
+        >>> request.full_name
+        'Updated Name'
+        >>> request.is_admin
+        True
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+    is_admin: Optional[bool] = Field(None, description="Whether user has admin privileges")
+    is_active: Optional[bool] = Field(None, description="Whether account is active")
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response schema.
+
+    Attributes:
+        error: Error type
+        message: Human-readable error message
+        details: Additional error details
+
+    Examples:
+        >>> error = ErrorResponse(
+        ...     error="authentication_failed",
+        ...     message="Invalid email or password",
+        ...     details=None
+        ... )
+        >>> error.error
+        'authentication_failed'
+        >>> error.message
+        'Invalid email or password'
+    """
+
+    error: str = Field(..., description="Error type")
+    message: str = Field(..., description="Human-readable error message")
+    details: Optional[dict] = Field(None, description="Additional error details")
+
+
+class SuccessResponse(BaseModel):
+    """Standard success response schema.
+
+    Attributes:
+        success: Whether operation was successful
+        message: Human-readable success message
+
+    Examples:
+        >>> response = SuccessResponse(
+        ...     success=True,
+        ...     message="Password changed successfully"
+        ... )
+        >>> response.success
+        True
+        >>> response.message
+        'Password changed successfully'
+    """
+
+    success: bool = Field(True, description="Operation success status")
+    message: str = Field(..., description="Human-readable success message")
+
+
+# ---------------------------------------------------------------------------
+# Team Management Schemas
+# ---------------------------------------------------------------------------
+
+
+class TeamCreateRequest(BaseModel):
+    """Schema for creating a new team.
+
+    Attributes:
+        name: Team display name
+        slug: URL-friendly team identifier (optional, auto-generated if not provided)
+        description: Team description
+        visibility: Team visibility level
+        max_members: Maximum number of members allowed
+
+    Examples:
+        >>> request = TeamCreateRequest(
+        ...     name="Engineering Team",
+        ...     description="Software development team"
+        ... )
+        >>> request.name
+        'Engineering Team'
+        >>> request.visibility
+        'private'
+        >>> request.slug is None
+        True
+        >>>
+        >>> # Test with all fields
+        >>> full_request = TeamCreateRequest(
+        ...     name="DevOps Team",
+        ...     slug="devops-team",
+        ...     description="Infrastructure and deployment team",
+        ...     visibility="public",
+        ...     max_members=50
+        ... )
+        >>> full_request.slug
+        'devops-team'
+        >>> full_request.max_members
+        50
+        >>> full_request.visibility
+        'public'
+        >>>
+        >>> # Test validation
+        >>> try:
+        ...     TeamCreateRequest(name="   ", description="test")
+        ... except ValueError as e:
+        ...     "empty" in str(e).lower()
+        True
+        >>>
+        >>> # Test slug validation
+        >>> try:
+        ...     TeamCreateRequest(name="Test", slug="Invalid_Slug")
+        ... except ValueError:
+        ...     True
+        True
+        >>>
+        >>> # Test valid slug patterns
+        >>> valid_slug = TeamCreateRequest(name="Test", slug="valid-slug-123")
+        >>> valid_slug.slug
+        'valid-slug-123'
+    """
+
+    name: str = Field(..., min_length=1, max_length=255, description="Team display name")
+    slug: Optional[str] = Field(None, min_length=2, max_length=255, pattern="^[a-z0-9-]+$", description="URL-friendly team identifier")
+    description: Optional[str] = Field(None, max_length=1000, description="Team description")
+    visibility: Literal["private", "public"] = Field("private", description="Team visibility level")
+    max_members: Optional[int] = Field(None, ge=1, le=1000, description="Maximum number of team members")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate team name.
+
+        Args:
+            v: Team name to validate
+
+        Returns:
+            str: Validated and stripped team name
+
+        Raises:
+            ValueError: If team name is empty
+        """
+        if not v.strip():
+            raise ValueError("Team name cannot be empty")
+        return v.strip()
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, v: Optional[str]) -> Optional[str]:
+        """Validate team slug.
+
+        Args:
+            v: Team slug to validate
+
+        Returns:
+            Optional[str]: Validated and formatted slug or None
+
+        Raises:
+            ValueError: If slug format is invalid
+        """
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if not re.match(r"^[a-z0-9-]+$", v):
+            raise ValueError("Slug must contain only lowercase letters, numbers, and hyphens")
+        if v.startswith("-") or v.endswith("-"):
+            raise ValueError("Slug cannot start or end with hyphens")
+        return v
+
+
+class TeamUpdateRequest(BaseModel):
+    """Schema for updating a team.
+
+    Attributes:
+        name: Team display name
+        description: Team description
+        visibility: Team visibility level
+        max_members: Maximum number of members allowed
+
+    Examples:
+        >>> request = TeamUpdateRequest(
+        ...     name="Updated Engineering Team",
+        ...     description="Updated description"
+        ... )
+        >>> request.name
+        'Updated Engineering Team'
+    """
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255, description="Team display name")
+    description: Optional[str] = Field(None, max_length=1000, description="Team description")
+    visibility: Optional[Literal["private", "public"]] = Field(None, description="Team visibility level")
+    max_members: Optional[int] = Field(None, ge=1, le=1000, description="Maximum number of team members")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate team name.
+
+        Args:
+            v: Team name to validate
+
+        Returns:
+            Optional[str]: Validated and stripped team name or None
+
+        Raises:
+            ValueError: If team name is empty
+        """
+        if v is not None:
+            if not v.strip():
+                raise ValueError("Team name cannot be empty")
+            return v.strip()
+        return v
+
+
+class TeamResponse(BaseModel):
+    """Schema for team response data.
+
+    Attributes:
+        id: Team UUID
+        name: Team display name
+        slug: URL-friendly team identifier
+        description: Team description
+        created_by: Email of team creator
+        is_personal: Whether this is a personal team
+        visibility: Team visibility level
+        max_members: Maximum number of members allowed
+        member_count: Current number of team members
+        created_at: Team creation timestamp
+        updated_at: Last update timestamp
+        is_active: Whether the team is active
+
+    Examples:
+        >>> team = TeamResponse(
+        ...     id="team-123",
+        ...     name="Engineering Team",
+        ...     slug="engineering-team",
+        ...     created_by="admin@example.com",
+        ...     is_personal=False,
+        ...     visibility="private",
+        ...     member_count=5,
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc),
+        ...     is_active=True
+        ... )
+        >>> team.name
+        'Engineering Team'
+    """
+
+    id: str = Field(..., description="Team UUID")
+    name: str = Field(..., description="Team display name")
+    slug: str = Field(..., description="URL-friendly team identifier")
+    description: Optional[str] = Field(None, description="Team description")
+    created_by: str = Field(..., description="Email of team creator")
+    is_personal: bool = Field(..., description="Whether this is a personal team")
+    visibility: str = Field(..., description="Team visibility level")
+    max_members: Optional[int] = Field(None, description="Maximum number of members allowed")
+    member_count: int = Field(..., description="Current number of team members")
+    created_at: datetime = Field(..., description="Team creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    is_active: bool = Field(..., description="Whether the team is active")
+
+
+class TeamMemberResponse(BaseModel):
+    """Schema for team member response data.
+
+    Attributes:
+        id: Member UUID
+        team_id: Team UUID
+        user_email: Member email address
+        role: Member role in the team
+        joined_at: When the member joined
+        invited_by: Email of user who invited this member
+        is_active: Whether the membership is active
+
+    Examples:
+        >>> member = TeamMemberResponse(
+        ...     id="member-123",
+        ...     team_id="team-123",
+        ...     user_email="user@example.com",
+        ...     role="member",
+        ...     joined_at=datetime.now(timezone.utc),
+        ...     is_active=True
+        ... )
+        >>> member.role
+        'member'
+    """
+
+    id: str = Field(..., description="Member UUID")
+    team_id: str = Field(..., description="Team UUID")
+    user_email: str = Field(..., description="Member email address")
+    role: str = Field(..., description="Member role in the team")
+    joined_at: datetime = Field(..., description="When the member joined")
+    invited_by: Optional[str] = Field(None, description="Email of user who invited this member")
+    is_active: bool = Field(..., description="Whether the membership is active")
+
+
+class TeamInviteRequest(BaseModel):
+    """Schema for inviting users to a team.
+
+    Attributes:
+        email: Email address of user to invite
+        role: Role to assign to the user
+
+    Examples:
+        >>> invite = TeamInviteRequest(
+        ...     email="newuser@example.com",
+        ...     role="member"
+        ... )
+        >>> invite.email
+        'newuser@example.com'
+    """
+
+    email: EmailStr = Field(..., description="Email address of user to invite")
+    role: Literal["owner", "member"] = Field("member", description="Role to assign to the user")
+
+
+class TeamInvitationResponse(BaseModel):
+    """Schema for team invitation response data.
+
+    Attributes:
+        id: Invitation UUID
+        team_id: Team UUID
+        team_name: Team display name
+        email: Email address of invited user
+        role: Role the user will have when they accept
+        invited_by: Email of user who sent the invitation
+        invited_at: When the invitation was sent
+        expires_at: When the invitation expires
+        token: Invitation token
+        is_active: Whether the invitation is active
+        is_expired: Whether the invitation has expired
+
+    Examples:
+        >>> invitation = TeamInvitationResponse(
+        ...     id="invite-123",
+        ...     team_id="team-123",
+        ...     team_name="Engineering Team",
+        ...     email="newuser@example.com",
+        ...     role="member",
+        ...     invited_by="admin@example.com",
+        ...     invited_at=datetime.now(timezone.utc),
+        ...     expires_at=datetime.now(timezone.utc),
+        ...     token="invitation-token",
+        ...     is_active=True,
+        ...     is_expired=False
+        ... )
+        >>> invitation.role
+        'member'
+    """
+
+    id: str = Field(..., description="Invitation UUID")
+    team_id: str = Field(..., description="Team UUID")
+    team_name: str = Field(..., description="Team display name")
+    email: str = Field(..., description="Email address of invited user")
+    role: str = Field(..., description="Role the user will have when they accept")
+    invited_by: str = Field(..., description="Email of user who sent the invitation")
+    invited_at: datetime = Field(..., description="When the invitation was sent")
+    expires_at: datetime = Field(..., description="When the invitation expires")
+    token: str = Field(..., description="Invitation token")
+    is_active: bool = Field(..., description="Whether the invitation is active")
+    is_expired: bool = Field(..., description="Whether the invitation has expired")
+
+
+class TeamMemberUpdateRequest(BaseModel):
+    """Schema for updating a team member's role.
+
+    Attributes:
+        role: New role for the team member
+
+    Examples:
+        >>> update = TeamMemberUpdateRequest(role="member")
+        >>> update.role
+        'member'
+    """
+
+    role: Literal["owner", "member"] = Field(..., description="New role for the team member")
+
+
+class TeamListResponse(BaseModel):
+    """Schema for team list response.
+
+    Attributes:
+        teams: List of teams
+        total: Total number of teams
+
+    Examples:
+        >>> response = TeamListResponse(teams=[], total=0)
+        >>> response.total
+        0
+    """
+
+    teams: List[TeamResponse] = Field(..., description="List of teams")
+    total: int = Field(..., description="Total number of teams")
+
+
+class TeamDiscoveryResponse(BaseModel):
+    """Schema for public team discovery response.
+
+    Provides limited metadata about public teams for discovery purposes.
+
+    Attributes:
+        id: Team ID
+        name: Team name
+        description: Team description
+        member_count: Number of members
+        created_at: Team creation timestamp
+        is_joinable: Whether the current user can join this team
+    """
+
+    id: str = Field(..., description="Team ID")
+    name: str = Field(..., description="Team name")
+    description: Optional[str] = Field(None, description="Team description")
+    member_count: int = Field(..., description="Number of team members")
+    created_at: datetime = Field(..., description="Team creation timestamp")
+    is_joinable: bool = Field(..., description="Whether the current user can join this team")
+
+
+class TeamJoinRequest(BaseModel):
+    """Schema for requesting to join a public team.
+
+    Attributes:
+        message: Optional message to team owners
+    """
+
+    message: Optional[str] = Field(None, description="Optional message to team owners", max_length=500)
+
+
+class TeamJoinRequestResponse(BaseModel):
+    """Schema for team join request response.
+
+    Attributes:
+        id: Join request ID
+        team_id: Target team ID
+        team_name: Target team name
+        user_email: Requesting user email
+        message: Request message
+        status: Request status (pending, approved, rejected)
+        requested_at: Request timestamp
+        expires_at: Request expiration timestamp
+    """
+
+    id: str = Field(..., description="Join request ID")
+    team_id: str = Field(..., description="Target team ID")
+    team_name: str = Field(..., description="Target team name")
+    user_email: str = Field(..., description="Requesting user email")
+    message: Optional[str] = Field(None, description="Request message")
+    status: str = Field(..., description="Request status")
+    requested_at: datetime = Field(..., description="Request timestamp")
+    expires_at: datetime = Field(..., description="Request expiration")
+
+
+# API Token Management Schemas
+
+
+class TokenScopeRequest(BaseModel):
+    """Schema for token scoping configuration.
+
+    Attributes:
+        server_id: Optional server ID limitation
+        permissions: List of permission scopes
+        ip_restrictions: List of IP address/CIDR restrictions
+        time_restrictions: Time-based access limitations
+        usage_limits: Rate limiting and quota settings
+
+    Examples:
+        >>> scope = TokenScopeRequest(
+        ...     server_id="server-123",
+        ...     permissions=["tools.read", "resources.read"],
+        ...     ip_restrictions=["192.168.1.0/24"]
+        ... )
+        >>> scope.server_id
+        'server-123'
+    """
+
+    server_id: Optional[str] = Field(None, description="Limit token to specific server")
+    permissions: List[str] = Field(default_factory=list, description="Permission scopes")
+    ip_restrictions: List[str] = Field(default_factory=list, description="IP address restrictions")
+    time_restrictions: Dict[str, Any] = Field(default_factory=dict, description="Time-based restrictions")
+    usage_limits: Dict[str, Any] = Field(default_factory=dict, description="Usage limits and quotas")
+
+
+class TokenCreateRequest(BaseModel):
+    """Schema for creating a new API token.
+
+    Attributes:
+        name: Human-readable token name
+        description: Optional token description
+        expires_in_days: Optional expiry in days
+        scope: Optional token scoping configuration
+        tags: Optional organizational tags
+
+    Examples:
+        >>> request = TokenCreateRequest(
+        ...     name="Production Access",
+        ...     description="Read-only production access",
+        ...     expires_in_days=30,
+        ...     tags=["production", "readonly"]
+        ... )
+        >>> request.name
+        'Production Access'
+    """
+
+    name: str = Field(..., description="Human-readable token name", min_length=1, max_length=255)
+    description: Optional[str] = Field(None, description="Token description", max_length=1000)
+    expires_in_days: Optional[int] = Field(None, description="Expiry in days", ge=1, le=365)
+    scope: Optional[TokenScopeRequest] = Field(None, description="Token scoping configuration")
+    tags: List[str] = Field(default_factory=list, description="Organizational tags")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
+
+
+class TokenUpdateRequest(BaseModel):
+    """Schema for updating an existing API token.
+
+    Attributes:
+        name: New token name
+        description: New token description
+        scope: New token scoping configuration
+        tags: New organizational tags
+
+    Examples:
+        >>> request = TokenUpdateRequest(
+        ...     name="Updated Token Name",
+        ...     description="Updated description"
+        ... )
+        >>> request.name
+        'Updated Token Name'
+    """
+
+    name: Optional[str] = Field(None, description="New token name", min_length=1, max_length=255)
+    description: Optional[str] = Field(None, description="New token description", max_length=1000)
+    scope: Optional[TokenScopeRequest] = Field(None, description="New token scoping configuration")
+    tags: Optional[List[str]] = Field(None, description="New organizational tags")
+
+
+class TokenResponse(BaseModel):
+    """Schema for API token response.
+
+    Attributes:
+        id: Token ID
+        name: Token name
+        description: Token description
+        server_id: Server scope limitation
+        resource_scopes: Permission scopes
+        ip_restrictions: IP restrictions
+        time_restrictions: Time-based restrictions
+        usage_limits: Usage limits
+        created_at: Creation timestamp
+        expires_at: Expiry timestamp
+        last_used: Last usage timestamp
+        is_active: Active status
+        tags: Organizational tags
+
+    Examples:
+        >>> from datetime import datetime
+        >>> token = TokenResponse(
+        ...     id="token-123",
+        ...     name="Test Token",
+        ...     description="Test description",
+        ...     user_email="test@example.com",
+        ...     server_id=None,
+        ...     resource_scopes=["tools.read"],
+        ...     ip_restrictions=[],
+        ...     time_restrictions={},
+        ...     usage_limits={},
+        ...     created_at=datetime.now(),
+        ...     expires_at=None,
+        ...     last_used=None,
+        ...     is_active=True,
+        ...     tags=[]
+        ... )
+        >>> token.name
+        'Test Token'
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Token ID")
+    name: str = Field(..., description="Token name")
+    description: Optional[str] = Field(None, description="Token description")
+    user_email: str = Field(..., description="Token creator's email")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped tokens")
+    server_id: Optional[str] = Field(None, description="Server scope limitation")
+    resource_scopes: List[str] = Field(..., description="Permission scopes")
+    ip_restrictions: List[str] = Field(..., description="IP restrictions")
+    time_restrictions: Dict[str, Any] = Field(..., description="Time-based restrictions")
+    usage_limits: Dict[str, Any] = Field(..., description="Usage limits")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    expires_at: Optional[datetime] = Field(None, description="Expiry timestamp")
+    last_used: Optional[datetime] = Field(None, description="Last usage timestamp")
+    is_active: bool = Field(..., description="Active status")
+    is_revoked: bool = Field(False, description="Whether token is revoked")
+    revoked_at: Optional[datetime] = Field(None, description="Revocation timestamp")
+    revoked_by: Optional[str] = Field(None, description="Email of user who revoked token")
+    revocation_reason: Optional[str] = Field(None, description="Reason for revocation")
+    tags: List[str] = Field(..., description="Organizational tags")
+
+
+class TokenCreateResponse(BaseModel):
+    """Schema for token creation response.
+
+    Attributes:
+        token: Token information
+        access_token: The actual token string (only returned on creation)
+
+    Examples:
+        >>> from datetime import datetime
+        >>> token_info = TokenResponse(
+        ...     id="token-123", name="Test Token", description=None,
+        ...     user_email="test@example.com", server_id=None, resource_scopes=[], ip_restrictions=[],
+        ...     time_restrictions={}, usage_limits={}, created_at=datetime.now(),
+        ...     expires_at=None, last_used=None, is_active=True, tags=[]
+        ... )
+        >>> response = TokenCreateResponse(
+        ...     token=token_info,
+        ...     access_token="abc123xyz"
+        ... )
+        >>> response.access_token
+        'abc123xyz'
+    """
+
+    token: TokenResponse = Field(..., description="Token information")
+    access_token: str = Field(..., description="The actual token string")
+
+
+class TokenListResponse(BaseModel):
+    """Schema for token list response.
+
+    Attributes:
+        tokens: List of tokens
+        total: Total number of tokens
+        limit: Request limit
+        offset: Request offset
+
+    Examples:
+        >>> response = TokenListResponse(
+        ...     tokens=[],
+        ...     total=0,
+        ...     limit=10,
+        ...     offset=0
+        ... )
+        >>> response.total
+        0
+    """
+
+    tokens: List[TokenResponse] = Field(..., description="List of tokens")
+    total: int = Field(..., description="Total number of tokens")
+    limit: int = Field(..., description="Request limit")
+    offset: int = Field(..., description="Request offset")
+
+
+class TokenRevokeRequest(BaseModel):
+    """Schema for token revocation.
+
+    Attributes:
+        reason: Optional reason for revocation
+
+    Examples:
+        >>> request = TokenRevokeRequest(reason="Security incident")
+        >>> request.reason
+        'Security incident'
+    """
+
+    reason: Optional[str] = Field(None, description="Reason for revocation", max_length=255)
+
+
+class TokenUsageStatsResponse(BaseModel):
+    """Schema for token usage statistics.
+
+    Attributes:
+        period_days: Number of days analyzed
+        total_requests: Total number of requests
+        successful_requests: Number of successful requests
+        blocked_requests: Number of blocked requests
+        success_rate: Success rate percentage
+        average_response_time_ms: Average response time
+        top_endpoints: Most accessed endpoints
+
+    Examples:
+        >>> stats = TokenUsageStatsResponse(
+        ...     period_days=30,
+        ...     total_requests=100,
+        ...     successful_requests=95,
+        ...     blocked_requests=5,
+        ...     success_rate=0.95,
+        ...     average_response_time_ms=150.5,
+        ...     top_endpoints=[("/tools", 50), ("/resources", 30)]
+        ... )
+        >>> stats.success_rate
+        0.95
+    """
+
+    period_days: int = Field(..., description="Number of days analyzed")
+    total_requests: int = Field(..., description="Total number of requests")
+    successful_requests: int = Field(..., description="Number of successful requests")
+    blocked_requests: int = Field(..., description="Number of blocked requests")
+    success_rate: float = Field(..., description="Success rate (0-1)")
+    average_response_time_ms: float = Field(..., description="Average response time in milliseconds")
+    top_endpoints: List[tuple[str, int]] = Field(..., description="Most accessed endpoints with counts")
+
+
+# ===== RBAC Schemas =====
+
+
+class RoleCreateRequest(BaseModel):
+    """Schema for creating a new role.
+
+    Attributes:
+        name: Unique role name
+        description: Role description
+        scope: Role scope (global, team, personal)
+        permissions: List of permission strings
+        inherits_from: Optional parent role ID
+        is_system_role: Whether this is a system role
+
+    Examples:
+        >>> request = RoleCreateRequest(
+        ...     name="team_admin",
+        ...     description="Team administrator with member management",
+        ...     scope="team",
+        ...     permissions=["teams.manage_members", "resources.create"]
+        ... )
+        >>> request.name
+        'team_admin'
+    """
+
+    name: str = Field(..., description="Unique role name", max_length=255)
+    description: Optional[str] = Field(None, description="Role description")
+    scope: str = Field(..., description="Role scope", pattern="^(global|team|personal)$")
+    permissions: List[str] = Field(..., description="List of permission strings")
+    inherits_from: Optional[str] = Field(None, description="Parent role ID for inheritance")
+    is_system_role: Optional[bool] = Field(False, description="Whether this is a system role")
+
+
+class RoleUpdateRequest(BaseModel):
+    """Schema for updating an existing role.
+
+    Attributes:
+        name: Optional new name
+        description: Optional new description
+        permissions: Optional new permissions list
+        inherits_from: Optional new parent role
+        is_active: Optional active status
+
+    Examples:
+        >>> request = RoleUpdateRequest(
+        ...     description="Updated role description",
+        ...     permissions=["new.permission"]
+        ... )
+        >>> request.description
+        'Updated role description'
+    """
+
+    name: Optional[str] = Field(None, description="Role name", max_length=255)
+    description: Optional[str] = Field(None, description="Role description")
+    permissions: Optional[List[str]] = Field(None, description="List of permission strings")
+    inherits_from: Optional[str] = Field(None, description="Parent role ID for inheritance")
+    is_active: Optional[bool] = Field(None, description="Whether role is active")
+
+
+class RoleResponse(BaseModel):
+    """Schema for role response.
+
+    Attributes:
+        id: Role identifier
+        name: Role name
+        description: Role description
+        scope: Role scope
+        permissions: List of permissions
+        effective_permissions: All permissions including inherited
+        inherits_from: Parent role ID
+        created_by: Creator email
+        is_system_role: Whether system role
+        is_active: Whether role is active
+        created_at: Creation timestamp
+        updated_at: Update timestamp
+
+    Examples:
+        >>> role = RoleResponse(
+        ...     id="role-123",
+        ...     name="admin",
+        ...     scope="global",
+        ...     permissions=["*"],
+        ...     effective_permissions=["*"],
+        ...     created_by="admin@example.com",
+        ...     is_system_role=True,
+        ...     is_active=True,
+        ...     created_at=datetime.now(),
+        ...     updated_at=datetime.now()
+        ... )
+        >>> role.name
+        'admin'
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Role identifier")
+    name: str = Field(..., description="Role name")
+    description: Optional[str] = Field(None, description="Role description")
+    scope: str = Field(..., description="Role scope")
+    permissions: List[str] = Field(..., description="Direct permissions")
+    effective_permissions: Optional[List[str]] = Field(None, description="All permissions including inherited")
+    inherits_from: Optional[str] = Field(None, description="Parent role ID")
+    created_by: str = Field(..., description="Creator email")
+    is_system_role: bool = Field(..., description="Whether system role")
+    is_active: bool = Field(..., description="Whether role is active")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Update timestamp")
+
+
+class UserRoleAssignRequest(BaseModel):
+    """Schema for assigning a role to a user.
+
+    Attributes:
+        role_id: Role to assign
+        scope: Assignment scope
+        scope_id: Team ID if team-scoped
+        expires_at: Optional expiration timestamp
+
+    Examples:
+        >>> request = UserRoleAssignRequest(
+        ...     role_id="role-123",
+        ...     scope="team",
+        ...     scope_id="team-456"
+        ... )
+        >>> request.scope
+        'team'
+    """
+
+    role_id: str = Field(..., description="Role ID to assign")
+    scope: str = Field(..., description="Assignment scope", pattern="^(global|team|personal)$")
+    scope_id: Optional[str] = Field(None, description="Team ID if team-scoped")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiration timestamp")
+
+
+class UserRoleResponse(BaseModel):
+    """Schema for user role assignment response.
+
+    Attributes:
+        id: Assignment identifier
+        user_email: User email
+        role_id: Role identifier
+        role_name: Role name for convenience
+        scope: Assignment scope
+        scope_id: Team ID if applicable
+        granted_by: Who granted the role
+        granted_at: When role was granted
+        expires_at: Optional expiration
+        is_active: Whether assignment is active
+
+    Examples:
+        >>> user_role = UserRoleResponse(
+        ...     id="assignment-123",
+        ...     user_email="user@example.com",
+        ...     role_id="role-456",
+        ...     role_name="team_admin",
+        ...     scope="team",
+        ...     scope_id="team-789",
+        ...     granted_by="admin@example.com",
+        ...     granted_at=datetime.now(),
+        ...     is_active=True
+        ... )
+        >>> user_role.scope
+        'team'
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Assignment identifier")
+    user_email: str = Field(..., description="User email")
+    role_id: str = Field(..., description="Role identifier")
+    role_name: Optional[str] = Field(None, description="Role name for convenience")
+    scope: str = Field(..., description="Assignment scope")
+    scope_id: Optional[str] = Field(None, description="Team ID if applicable")
+    granted_by: str = Field(..., description="Who granted the role")
+    granted_at: datetime = Field(..., description="When role was granted")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiration")
+    is_active: bool = Field(..., description="Whether assignment is active")
+
+
+class PermissionCheckRequest(BaseModel):
+    """Schema for permission check request.
+
+    Attributes:
+        user_email: User to check
+        permission: Permission to verify
+        resource_type: Optional resource type
+        resource_id: Optional resource ID
+        team_id: Optional team context
+
+    Examples:
+        >>> request = PermissionCheckRequest(
+        ...     user_email="user@example.com",
+        ...     permission="tools.create",
+        ...     resource_type="tools"
+        ... )
+        >>> request.permission
+        'tools.create'
+    """
+
+    user_email: str = Field(..., description="User email to check")
+    permission: str = Field(..., description="Permission to verify")
+    resource_type: Optional[str] = Field(None, description="Resource type")
+    resource_id: Optional[str] = Field(None, description="Resource ID")
+    team_id: Optional[str] = Field(None, description="Team context")
+
+
+class PermissionCheckResponse(BaseModel):
+    """Schema for permission check response.
+
+    Attributes:
+        user_email: User checked
+        permission: Permission checked
+        granted: Whether permission was granted
+        checked_at: When check was performed
+        checked_by: Who performed the check
+
+    Examples:
+        >>> response = PermissionCheckResponse(
+        ...     user_email="user@example.com",
+        ...     permission="tools.create",
+        ...     granted=True,
+        ...     checked_at=datetime.now(),
+        ...     checked_by="admin@example.com"
+        ... )
+        >>> response.granted
+        True
+    """
+
+    user_email: str = Field(..., description="User email checked")
+    permission: str = Field(..., description="Permission checked")
+    granted: bool = Field(..., description="Whether permission was granted")
+    checked_at: datetime = Field(..., description="When check was performed")
+    checked_by: str = Field(..., description="Who performed the check")
+
+
+class PermissionListResponse(BaseModel):
+    """Schema for available permissions list.
+
+    Attributes:
+        all_permissions: List of all available permissions
+        permissions_by_resource: Permissions grouped by resource type
+        total_count: Total number of permissions
+
+    Examples:
+        >>> response = PermissionListResponse(
+        ...     all_permissions=["users.create", "tools.read"],
+        ...     permissions_by_resource={"users": ["users.create"], "tools": ["tools.read"]},
+        ...     total_count=2
+        ... )
+        >>> response.total_count
+        2
+    """
+
+    all_permissions: List[str] = Field(..., description="All available permissions")
+    permissions_by_resource: Dict[str, List[str]] = Field(..., description="Permissions by resource type")
+    total_count: int = Field(..., description="Total number of permissions")
+
+
+# ==============================================================================
+# SSO Authentication Schemas
+# ==============================================================================
+
+
+class SSOProviderResponse(BaseModelWithConfigDict):
+    """Response schema for SSO provider information.
+
+    Attributes:
+        id: Provider identifier (e.g., 'github', 'google')
+        name: Provider name
+        display_name: Human-readable display name
+        provider_type: Type of provider ('oauth2', 'oidc')
+        is_enabled: Whether provider is currently enabled
+        authorization_url: OAuth authorization URL (optional)
+
+    Examples:
+        >>> provider = SSOProviderResponse(
+        ...     id="github",
+        ...     name="github",
+        ...     display_name="GitHub",
+        ...     provider_type="oauth2",
+        ...     is_enabled=True
+        ... )
+        >>> provider.id
+        'github'
+    """
+
+    id: str = Field(..., description="Provider identifier")
+    name: str = Field(..., description="Provider name")
+    display_name: str = Field(..., description="Human-readable display name")
+    provider_type: Optional[str] = Field(None, description="Provider type (oauth2, oidc)")
+    is_enabled: Optional[bool] = Field(None, description="Whether provider is enabled")
+    authorization_url: Optional[str] = Field(None, description="OAuth authorization URL")
+
+
+class SSOLoginResponse(BaseModelWithConfigDict):
+    """Response schema for SSO login initiation.
+
+    Attributes:
+        authorization_url: URL to redirect user for authentication
+        state: CSRF state parameter for validation
+
+    Examples:
+        >>> login = SSOLoginResponse(
+        ...     authorization_url="https://github.com/login/oauth/authorize?...",
+        ...     state="csrf-token-123"
+        ... )
+        >>> "github.com" in login.authorization_url
+        True
+    """
+
+    authorization_url: str = Field(..., description="OAuth authorization URL")
+    state: str = Field(..., description="CSRF state parameter")
+
+
+class SSOCallbackResponse(BaseModelWithConfigDict):
+    """Response schema for SSO authentication callback.
+
+    Attributes:
+        access_token: JWT access token for authenticated user
+        token_type: Token type (always 'bearer')
+        expires_in: Token expiration time in seconds
+        user: User information from SSO provider
+
+    Examples:
+        >>> callback = SSOCallbackResponse(
+        ...     access_token="jwt.token.here",
+        ...     token_type="bearer",
+        ...     expires_in=3600,
+        ...     user={"email": "user@example.com", "full_name": "User"}
+        ... )
+        >>> callback.token_type
+        'bearer'
+    """
+
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: int = Field(..., description="Token expiration in seconds")
+    user: Dict[str, Any] = Field(..., description="User information")
