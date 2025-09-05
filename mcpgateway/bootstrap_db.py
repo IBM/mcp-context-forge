@@ -40,6 +40,7 @@ from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import Base
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -261,11 +262,15 @@ async def main() -> None:
         cfg.attributes["connection"] = conn
         cfg.set_main_option("sqlalchemy.url", settings.database_url)
 
-        inspect(conn)
+        insp = inspect(conn)
 
-        # Always use Alembic for schema management (no ORM create_all path)
-        logger.info("Running Alembic migrations to ensure schema is up to date")
-        command.upgrade(cfg, "head")
+        if "gateways" not in insp.get_table_names():
+            logger.info("Empty DB detected - creating baseline schema")
+            Base.metadata.create_all(bind=conn)
+            command.stamp(cfg, "head")
+        else:
+            logger.info("Running Alembic migrations to ensure schema is up to date")
+            command.upgrade(cfg, "head")
 
     # Post-upgrade normalization passes
     updated = normalize_team_visibility()
