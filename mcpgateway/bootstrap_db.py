@@ -9,10 +9,8 @@ The script:
 
 1. Creates a synchronous SQLAlchemy ``Engine`` from ``settings.database_url``.
 2. Looks for an *alembic.ini* two levels up from this file to drive migrations.
-3. If the database is still empty (no ``gateways`` table), it:
-   - builds the base schema with ``Base.metadata.create_all()``
-   - stamps the migration head so Alembic knows it is up-to-date
-4. Otherwise, it applies any outstanding Alembic revisions.
+3. Applies Alembic migrations (``alembic upgrade head``) to create or update the schema.
+4. Runs post-upgrade normalization tasks and bootstraps admin/roles as configured.
 5. Logs a **"Database ready"** message on success.
 
 It is intended to be invoked via ``python3 -m mcpgateway.bootstrap_db`` or
@@ -42,7 +40,6 @@ from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import Base
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -264,14 +261,11 @@ async def main() -> None:
         cfg.attributes["connection"] = conn
         cfg.set_main_option("sqlalchemy.url", settings.database_url)
 
-        insp = inspect(conn)
+        inspect(conn)
 
-        if "gateways" not in insp.get_table_names():
-            logger.info("Empty DB detected - creating baseline schema")
-            Base.metadata.create_all(bind=conn)
-            command.stamp(cfg, "head")
-        else:
-            command.upgrade(cfg, "head")
+        # Always use Alembic for schema management (no ORM create_all path)
+        logger.info("Running Alembic migrations to ensure schema is up to date")
+        command.upgrade(cfg, "head")
 
     # Post-upgrade normalization passes
     updated = normalize_team_visibility()
@@ -285,6 +279,73 @@ async def main() -> None:
 
     # Bootstrap default RBAC roles after admin user is created
     await bootstrap_default_roles()
+
+    # Assign orphaned resources to admin personal team after all setup is complete
+    await bootstrap_resource_assignments()
+
+
+async def bootstrap_resource_assignments() -> None:
+    """Assign orphaned resources to the platform admin's personal team.
+
+    This ensures existing resources (from pre-multitenancy versions) are
+    visible in the new team-based UI by assigning them to the admin's
+    personal team with public visibility.
+    """
+    if not settings.email_auth_enabled:
+        logger.info("Email authentication disabled - skipping resource assignment")
+        return
+
+    try:
+        # First-Party
+        from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool
+
+        with SessionLocal() as db:
+            # Find admin user and their personal team
+            admin_user = db.query(EmailUser).filter(EmailUser.email == settings.platform_admin_email, EmailUser.is_admin == True).first()
+
+            if not admin_user:
+                logger.warning("Admin user not found - skipping resource assignment")
+                return
+
+            personal_team = admin_user.get_personal_team()
+            if not personal_team:
+                logger.warning("Admin personal team not found - skipping resource assignment")
+                return
+
+            logger.info(f"Assigning orphaned resources to admin team: {personal_team.name}")
+
+            # Resource types to process
+            resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
+
+            total_assigned = 0
+
+            for resource_name, resource_model in resource_types:
+                try:
+                    # Find unassigned resources
+                    unassigned = db.query(resource_model).filter((resource_model.team_id == None) | (resource_model.owner_email == None) | (resource_model.visibility == None)).all()
+
+                    if unassigned:
+                        logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to admin team")
+
+                        for resource in unassigned:
+                            resource.team_id = personal_team.id
+                            resource.owner_email = admin_user.email
+                            resource.visibility = "public"  # Make visible to all users
+
+                        db.commit()
+                        total_assigned += len(unassigned)
+
+                except Exception as e:
+                    logger.error(f"Failed to assign {resource_name}: {e}")
+                    continue
+
+            if total_assigned > 0:
+                logger.info(f"Successfully assigned {total_assigned} orphaned resources to admin team")
+            else:
+                logger.info("No orphaned resources found - all resources have team assignments")
+
+    except Exception as e:
+        logger.error(f"Failed to bootstrap resource assignments: {e}")
 
 
 if __name__ == "__main__":

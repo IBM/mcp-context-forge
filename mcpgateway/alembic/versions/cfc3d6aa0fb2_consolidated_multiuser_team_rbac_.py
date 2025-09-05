@@ -58,10 +58,9 @@ def upgrade() -> None:
     existing_tables = inspector.get_table_names()
 
     if not inspector.has_table("gateways"):
-        print("Fresh database detected. Skipping schema migration - tables will be created by SQLAlchemy.")
-        return
-
-    print("Existing database detected. Applying multitenancy schema migration...")
+        print("Fresh database detected. Creating complete multitenancy schema...")
+    else:
+        print("Existing database detected. Applying multitenancy schema migration...")
 
     # ===============================
     # STEP 1: Core User Authentication Tables
@@ -132,20 +131,9 @@ def upgrade() -> None:
         try:
             existing_constraints = [c["name"] for c in inspector.get_check_constraints("email_teams")]
             if "ck_email_teams_visibility" not in existing_constraints:
-                # Normalize existing data to satisfy the constraint before adding it
-                try:
-                    op.execute(
-                        sa.text(
-                            """
-                            UPDATE email_teams
-                            SET visibility = 'private'
-                            WHERE visibility IS NULL
-                               OR visibility NOT IN ('private', 'public')
-                            """
-                        )
-                    )
-                except Exception as e:
-                    print(f"Warning: Could not normalize email_teams.visibility values: {e}")
+                print("Adding visibility constraint to existing email_teams table...")
+                # Note: Data normalization will be handled by bootstrap_db.py
+                # to avoid mixing DML with DDL operations
 
                 # Use batch mode for SQLite compatibility
                 with op.batch_alter_table("email_teams", schema=None) as batch_op:
@@ -251,7 +239,7 @@ def upgrade() -> None:
             "token_revocations",
             sa.Column("jti", sa.String(36), nullable=False, comment="JWT ID of revoked token"),
             sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now(), comment="Revocation timestamp"),
-            sa.Column("revoked_by", sa.String(255), nullable=True, comment="Email of user who revoked token"),
+            sa.Column("revoked_by", sa.String(255), nullable=False, comment="Email of user who revoked token"),
             sa.Column("reason", sa.String(255), nullable=True, comment="Reason for revocation"),
             # Constraints
             sa.PrimaryKeyConstraint("jti"),
@@ -299,7 +287,7 @@ def upgrade() -> None:
             sa.Column("name", sa.String(length=255), nullable=False),
             sa.Column("description", sa.Text(), nullable=True),
             sa.Column("scope", sa.String(length=20), nullable=False),
-            sa.Column("permissions", sa.Text(), nullable=False),  # JSON as text for cross-DB compatibility
+            sa.Column("permissions", sa.JSON(), nullable=False),  # JSON type for proper validation
             sa.Column("inherits_from", sa.String(length=36), nullable=True),
             sa.Column("created_by", sa.String(length=255), nullable=False),
             sa.Column("is_system_role", sa.Boolean(), nullable=False),
@@ -345,7 +333,7 @@ def upgrade() -> None:
             sa.Column("resource_id", sa.String(length=255), nullable=True),
             sa.Column("team_id", sa.String(length=36), nullable=True),
             sa.Column("granted", sa.Boolean(), nullable=False),
-            sa.Column("roles_checked", sa.Text(), nullable=True),  # JSON as text for cross-DB compatibility
+            sa.Column("roles_checked", sa.JSON(), nullable=True),  # JSON type for proper validation
             sa.Column("ip_address", sa.String(length=45), nullable=True),
             sa.Column("user_agent", sa.Text(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
@@ -375,10 +363,10 @@ def upgrade() -> None:
             sa.Column("token_url", sa.String(500), nullable=False),
             sa.Column("userinfo_url", sa.String(500), nullable=False),
             sa.Column("issuer", sa.String(500), nullable=True),
-            sa.Column("trusted_domains", sa.Text, nullable=False, server_default=sa.text("'[]'")),  # JSON as text for cross-DB compatibility
+            sa.Column("trusted_domains", sa.JSON(), nullable=False, server_default=sa.text("'[]'")),  # JSON type for proper validation
             sa.Column("scope", sa.String(200), nullable=False, server_default=sa.text("'openid profile email'")),
             sa.Column("auto_create_users", sa.Boolean, nullable=False, server_default=sa.true()),
-            sa.Column("team_mapping", sa.Text, nullable=False, server_default=sa.text("'{}'")),  # JSON as text for cross-DB compatibility
+            sa.Column("team_mapping", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),  # JSON type for proper validation
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         )
@@ -389,9 +377,9 @@ def upgrade() -> None:
             "sso_auth_sessions",
             sa.Column("id", sa.String(36), primary_key=True),
             sa.Column("provider_id", sa.String(50), nullable=False),
-            sa.Column("state", sa.String(255), nullable=False, unique=True),
-            sa.Column("code_verifier", sa.String(255), nullable=True),
-            sa.Column("nonce", sa.String(255), nullable=True),
+            sa.Column("state", sa.String(128), nullable=False, unique=True),
+            sa.Column("code_verifier", sa.String(128), nullable=True),
+            sa.Column("nonce", sa.String(128), nullable=True),
             sa.Column("redirect_uri", sa.String(500), nullable=False),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("user_email", sa.String(255), nullable=True),
@@ -403,17 +391,17 @@ def upgrade() -> None:
         op.create_table(
             "pending_user_approvals",
             sa.Column("id", sa.String(36), primary_key=True),
-            sa.Column("email", sa.String(255), nullable=False),
-            sa.Column("provider_id", sa.String(50), nullable=False),
-            sa.Column("provider_user_id", sa.String(255), nullable=True),
-            sa.Column("full_name", sa.String(255), nullable=True),
-            sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
+            sa.Column("email", sa.String(255), nullable=False, unique=True),
+            sa.Column("full_name", sa.String(255), nullable=False),
+            sa.Column("auth_provider", sa.String(50), nullable=False),
+            sa.Column("sso_metadata", sa.JSON(), nullable=True),
             sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-            sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("reviewed_by", sa.String(255), nullable=True),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-            sa.Column("notes", sa.Text, nullable=True),
-            sa.UniqueConstraint("email", "provider_id", name="uq_pending_approval"),
+            sa.Column("approved_by", sa.String(255), nullable=True),
+            sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("status", sa.String(20), nullable=False, server_default=sa.text("'pending'")),
+            sa.Column("rejection_reason", sa.Text, nullable=True),
+            sa.Column("admin_notes", sa.Text, nullable=True),
         )
 
         # Ensure index on email for quick lookup (safe on both SQLite/PostgreSQL)
