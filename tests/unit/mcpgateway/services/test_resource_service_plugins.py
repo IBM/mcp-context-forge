@@ -7,11 +7,15 @@ Authors: Mihai Criveti
 Tests for ResourceService plugin integration.
 """
 
+# Standard
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# Third-Party
 import pytest
 from sqlalchemy.orm import Session
 
+# First-Party
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework.models import (
     PluginViolation,

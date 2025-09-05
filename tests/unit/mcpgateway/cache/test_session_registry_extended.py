@@ -13,13 +13,15 @@ including import error handling, backend edge cases, and error scenarios.
 from __future__ import annotations
 
 # Standard
-import sys
-import json
-import time
-import logging
-from unittest.mock import patch, AsyncMock, Mock
-import pytest
 import asyncio
+import json
+import logging
+import sys
+import time
+from unittest.mock import AsyncMock, Mock, patch
+
+# Third-Party
+import pytest
 
 # First-Party
 from mcpgateway.cache.session_registry import SessionRegistry
@@ -31,7 +33,10 @@ class TestImportErrors:
     def test_redis_import_error_flag(self):
         """Test REDIS_AVAILABLE flag when redis import fails."""
         with patch.dict(sys.modules, {'redis.asyncio': None}):
+            # Standard
             import importlib
+
+            # First-Party
             import mcpgateway.cache.session_registry
             importlib.reload(mcpgateway.cache.session_registry)
 
@@ -41,7 +46,10 @@ class TestImportErrors:
     def test_sqlalchemy_import_error_flag(self):
         """Test SQLALCHEMY_AVAILABLE flag when sqlalchemy import fails."""
         with patch.dict(sys.modules, {'sqlalchemy': None}):
+            # Standard
             import importlib
+
+            # First-Party
             import mcpgateway.cache.session_registry
             importlib.reload(mcpgateway.cache.session_registry)
 

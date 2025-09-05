@@ -357,10 +357,11 @@ async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_list_prompts_with_server_id(monkeypatch):
     """Test list_prompts returns prompts for a server_id."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
     # Third-Party
     from mcp.types import PromptArgument
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var
 
     mock_db = MagicMock()
     mock_prompt = MagicMock()
@@ -391,7 +392,7 @@ async def test_list_prompts_with_server_id(monkeypatch):
 async def test_list_prompts_no_server_id(monkeypatch):
     """Test list_prompts returns prompts when no server_id is set."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var
 
     mock_db = MagicMock()
     mock_prompt = MagicMock()
@@ -420,7 +421,7 @@ async def test_list_prompts_no_server_id(monkeypatch):
 async def test_list_prompts_exception_with_server_id(monkeypatch, caplog):
     """Test list_prompts returns [] and logs exception when server_id is set."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var
 
     mock_db = MagicMock()
 
@@ -443,7 +444,7 @@ async def test_list_prompts_exception_with_server_id(monkeypatch, caplog):
 async def test_list_prompts_exception_no_server_id(monkeypatch, caplog):
     """Test list_prompts returns [] and logs exception when no server_id."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var
 
     mock_db = MagicMock()
 
@@ -470,10 +471,11 @@ async def test_list_prompts_exception_no_server_id(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_get_prompt_success(monkeypatch):
     """Test get_prompt returns prompt result on success."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, types
     # Third-Party
     from mcp.types import PromptMessage, TextContent
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, types
 
     mock_db = MagicMock()
     # Create proper PromptMessage structure
@@ -566,6 +568,7 @@ async def test_get_prompt_outer_exception(monkeypatch, caplog):
     """Test get_prompt returns [] and logs exception from outer try-catch."""
     # Standard
     from contextlib import asynccontextmanager
+
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import get_prompt
 
@@ -592,7 +595,7 @@ async def test_get_prompt_outer_exception(monkeypatch, caplog):
 async def test_list_resources_with_server_id(monkeypatch):
     """Test list_resources returns resources for a server_id."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var
 
     mock_db = MagicMock()
     mock_resource = MagicMock()
@@ -623,7 +626,7 @@ async def test_list_resources_with_server_id(monkeypatch):
 async def test_list_resources_no_server_id(monkeypatch):
     """Test list_resources returns resources when no server_id is set."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var
 
     mock_db = MagicMock()
     mock_resource = MagicMock()
@@ -653,7 +656,7 @@ async def test_list_resources_no_server_id(monkeypatch):
 async def test_list_resources_exception_with_server_id(monkeypatch, caplog):
     """Test list_resources returns [] and logs exception when server_id is set."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var
 
     mock_db = MagicMock()
 
@@ -676,7 +679,7 @@ async def test_list_resources_exception_with_server_id(monkeypatch, caplog):
 async def test_list_resources_exception_no_server_id(monkeypatch, caplog):
     """Test list_resources returns [] and logs exception when no server_id."""
     # First-Party
-    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service
+    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var
 
     mock_db = MagicMock()
 
@@ -703,10 +706,11 @@ async def test_list_resources_exception_no_server_id(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_read_resource_success(monkeypatch):
     """Test read_resource returns resource content on success."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
     # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -728,10 +732,11 @@ async def test_read_resource_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_resource_no_content(monkeypatch, caplog):
     """Test read_resource returns [] and logs warning if no content."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
     # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -754,10 +759,11 @@ async def test_read_resource_no_content(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_read_resource_no_result(monkeypatch, caplog):
     """Test read_resource returns [] and logs warning if no result."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
     # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
 
     mock_db = MagicMock()
 
@@ -778,10 +784,11 @@ async def test_read_resource_no_result(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_read_resource_service_exception(monkeypatch, caplog):
     """Test read_resource returns [] and logs exception from service."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
     # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
 
     mock_db = MagicMock()
 
@@ -804,10 +811,12 @@ async def test_read_resource_outer_exception(monkeypatch, caplog):
     """Test read_resource returns [] and logs exception from outer try-catch."""
     # Standard
     from contextlib import asynccontextmanager
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import read_resource
+
     # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import read_resource
 
     # Cause an exception during get_db context management
     @asynccontextmanager
@@ -1079,10 +1088,11 @@ async def test_session_manager_wrapper_handle_streamable_http(monkeypatch):
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http_no_server_id(monkeypatch):
     """Test handle_streamable_http without server_id match in path."""
-    # First-Party
-    from mcpgateway.transports.streamablehttp_transport import server_id_var
     # Standard
     from contextlib import asynccontextmanager
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import server_id_var
 
     async def send(msg):
         sent.append(msg)

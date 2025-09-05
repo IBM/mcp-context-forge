@@ -35,6 +35,10 @@ MCPGATEWAY_AUTH_ENABLED=true
 MCPGATEWAY_AUTH_USERNAME=custom-username  # Change from default
 MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 
+# Platform admin user (auto-created during bootstrap)
+PLATFORM_ADMIN_EMAIL=admin@yourcompany.com  # Change from default
+PLATFORM_ADMIN_PASSWORD=secure-admin-password  # Use secrets manager
+
 # Set environment for security defaults
 ENVIRONMENT=production
 
@@ -49,7 +53,52 @@ COOKIE_SAMESITE=strict
 CORS_ALLOW_CREDENTIALS=true
 ```
 
-### 3. Network Security
+#### Platform Admin Security Notes
+
+The platform admin user (`PLATFORM_ADMIN_EMAIL`) is automatically created during database bootstrap with full administrative privileges. This user:
+
+- Has access to all RBAC-protected endpoints
+- Can manage users, teams, and system configuration
+- Is recognized by both database-persisted and virtual authentication flows
+- Should use a strong, unique email and password in production
+
+### 3. Token Scoping Security
+
+The gateway supports fine-grained token scoping to restrict token access to specific servers, permissions, IP ranges, and time windows. This provides defense-in-depth security for API access.
+
+#### Server-Scoped Tokens
+
+Server-scoped tokens are restricted to specific MCP servers and cannot access admin endpoints:
+
+```bash
+# Generate server-scoped token (example)
+python3 -m mcpgateway.utils.create_jwt_token \
+  --username user@example.com \
+  --scopes '{"server_id": "my-specific-server"}'
+```
+
+**Security Features:**
+- Server-scoped tokens **cannot access `/admin`** endpoints (security hardening)
+- Only truly public endpoints (`/health`, `/metrics`, `/docs`) bypass server restrictions
+- RBAC permission checks still apply to all endpoints
+
+#### Permission-Scoped Tokens
+
+Tokens can be restricted to specific permission sets:
+
+```bash
+# Generate permission-scoped token
+python3 -m mcpgateway.utils.create_jwt_token \
+  --username user@example.com \
+  --scopes '{"permissions": ["tools.read", "resources.read"]}'
+```
+
+**Canonical Permissions Used:**
+- `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute`
+- `resources.create`, `resources.read`, `resources.update`, `resources.delete`
+- `admin.system_config`, `admin.user_management`, `admin.security_audit`
+
+### 4. Network Security
 
 - [ ] Configure TLS/HTTPS with valid certificates
 - [ ] Implement firewall rules and network policies

@@ -34,7 +34,7 @@ Most wrappers / servers will need at least:
 
 ```bash
 export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1   # one or many
-export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 ```
 
 If you point Inspector **directly** at a Gateway SSE stream, pass the header:

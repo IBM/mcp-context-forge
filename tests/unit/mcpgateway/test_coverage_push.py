@@ -8,12 +8,12 @@ Focused tests to push coverage to 75%.
 """
 
 # Standard
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Third-Party
-import pytest
-from fastapi.testclient import TestClient
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
+import pytest
 
 # First-Party
 from mcpgateway.main import app, require_api_key
@@ -58,11 +58,8 @@ def test_app_basic_properties():
 
 def test_error_handlers():
     """Test error handler functions exist."""
-    from mcpgateway.main import (
-        validation_exception_handler,
-        request_validation_exception_handler,
-        database_exception_handler
-    )
+    # First-Party
+    from mcpgateway.main import database_exception_handler, request_validation_exception_handler, validation_exception_handler
 
     # Test handlers exist and are callable
     assert callable(validation_exception_handler)
@@ -72,6 +69,7 @@ def test_error_handlers():
 
 def test_middleware_classes():
     """Test middleware classes can be instantiated."""
+    # First-Party
     from mcpgateway.main import DocsAuthMiddleware, MCPPathRewriteMiddleware
 
     # Test DocsAuthMiddleware
@@ -85,6 +83,7 @@ def test_middleware_classes():
 
 def test_mcp_path_rewrite_middleware():
     """Test MCPPathRewriteMiddleware initialization."""
+    # First-Party
     from mcpgateway.main import MCPPathRewriteMiddleware
 
     app_mock = MagicMock()
@@ -95,11 +94,8 @@ def test_mcp_path_rewrite_middleware():
 
 def test_service_instances():
     """Test that service instances exist."""
-    from mcpgateway.main import (
-        tool_service, resource_service, prompt_service,
-        gateway_service, root_service, completion_service,
-        export_service, import_service
-    )
+    # First-Party
+    from mcpgateway.main import completion_service, export_service, gateway_service, import_service, prompt_service, resource_service, root_service, tool_service
 
     # Test all services exist
     assert tool_service is not None
@@ -114,11 +110,8 @@ def test_service_instances():
 
 def test_router_instances():
     """Test that router instances exist."""
-    from mcpgateway.main import (
-        protocol_router, tool_router, resource_router,
-        prompt_router, gateway_router, root_router,
-        export_import_router
-    )
+    # First-Party
+    from mcpgateway.main import export_import_router, gateway_router, prompt_router, protocol_router, resource_router, root_router, tool_router
 
     # Test all routers exist
     assert protocol_router is not None
@@ -132,6 +125,7 @@ def test_router_instances():
 
 def test_database_dependency():
     """Test database dependency function."""
+    # First-Party
     from mcpgateway.main import get_db
 
     # Test function exists and is generator
@@ -141,6 +135,7 @@ def test_database_dependency():
 
 def test_cors_settings():
     """Test CORS configuration."""
+    # First-Party
     from mcpgateway.main import cors_origins
 
     assert isinstance(cors_origins, list)
@@ -148,6 +143,7 @@ def test_cors_settings():
 
 def test_template_and_static_setup():
     """Test template and static file setup."""
+    # First-Party
     from mcpgateway.main import templates
 
     assert templates is not None
@@ -156,7 +152,8 @@ def test_template_and_static_setup():
 
 def test_feature_flags():
     """Test feature flag variables."""
-    from mcpgateway.main import UI_ENABLED, ADMIN_API_ENABLED
+    # First-Party
+    from mcpgateway.main import ADMIN_API_ENABLED, UI_ENABLED
 
     assert isinstance(UI_ENABLED, bool)
     assert isinstance(ADMIN_API_ENABLED, bool)
@@ -164,6 +161,7 @@ def test_feature_flags():
 
 def test_lifespan_function_exists():
     """Test lifespan function exists."""
+    # First-Party
     from mcpgateway.main import lifespan
 
     assert callable(lifespan)
@@ -171,6 +169,7 @@ def test_lifespan_function_exists():
 
 def test_cache_instances():
     """Test cache instances exist."""
+    # First-Party
     from mcpgateway.main import resource_cache, session_registry
 
     assert resource_cache is not None

@@ -10,15 +10,19 @@ This module tests the performance impact and browser/tool compatibility
 of the security implementation.
 """
 
-import pytest
+# Standard
+import re
 import time
+from unittest.mock import patch
+
+# Third-Party
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from unittest.mock import patch
-import re
+import pytest
 
-from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
+# First-Party
 from mcpgateway.config import settings
+from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
 
 class TestPerformanceImpact:
@@ -212,6 +216,7 @@ class TestStaticAnalysisToolCompatibility:
     def test_csp_meta_tag_format(self):
         """Test CSP meta tag format for static analysis tools."""
         # This tests the meta tag in admin.html indirectly
+        # First-Party
         from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
         app = FastAPI()
@@ -286,6 +291,7 @@ class TestCORSPerformanceAndCompatibility:
 
     def test_cors_origin_matching_performance(self):
         """Test CORS origin matching doesn't impact performance."""
+        # Third-Party
         from fastapi.middleware.cors import CORSMiddleware
 
         # Create app with many allowed origins
@@ -451,6 +457,7 @@ class TestContentTypeCompatibility:
 
         @app.get("/test")
         def test_endpoint():
+            # Third-Party
             from fastapi import Response
             return Response(content=content, media_type=content_type)
 
@@ -477,6 +484,7 @@ class TestContentTypeCompatibility:
         def binary_endpoint():
             # Simulate binary content (like images, PDFs, etc.)
             binary_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+            # Third-Party
             from fastapi import Response
             return Response(content=binary_data, media_type="image/png")
 

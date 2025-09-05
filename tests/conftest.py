@@ -22,6 +22,14 @@ from sqlalchemy.pool import StaticPool
 from mcpgateway.config import Settings
 from mcpgateway.db import Base
 
+# Local
+# Test utilities - import before mcpgateway modules
+from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
+
+# Skip session-level RBAC patching for now - let individual tests handle it
+# _session_rbac_originals = patch_rbac_decorators()
+
+
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -82,6 +90,7 @@ def app():
     url = f"sqlite:///{path}"
 
     # 2) patch settings
+    # First-Party
     from mcpgateway.config import settings
     mp.setattr(settings, "database_url", url, raising=False)
 
@@ -94,6 +103,7 @@ def app():
     mp.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
 
     # 4) patch the already‑imported main module **without reloading**
+    # First-Party
     import mcpgateway.main as main_mod
     mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     # (patch engine too if your code references it)
@@ -196,3 +206,9 @@ def app_with_temp_db():
     engine.dispose()
     os.close(fd)
     os.unlink(path)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Restore RBAC decorators at the end of the test session."""
+    # restore_rbac_decorators(_session_rbac_originals)
+    pass

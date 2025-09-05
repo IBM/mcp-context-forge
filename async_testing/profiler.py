@@ -2,16 +2,20 @@
 """
 Comprehensive async performance profiler for mcpgateway.
 """
+# Standard
+import argparse
 import asyncio
 import cProfile
-import pstats
-import time
-import aiohttp
-import websockets
-import argparse
 import json
 from pathlib import Path
-from typing import Dict, List, Any, Union
+import pstats
+import time
+from typing import Any, Dict, List, Union
+
+# Third-Party
+import aiohttp
+import websockets
+
 
 class AsyncProfiler:
     """Profile async operations in mcpgateway."""

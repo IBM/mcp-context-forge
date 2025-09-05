@@ -6,11 +6,14 @@ Authors: Mihai Criveti
 
 Extended tests for plugin manager to achieve 100% coverage.
 """
+# Standard
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.manager import PluginManager
@@ -22,8 +25,8 @@ from mcpgateway.plugins.framework.models import (
     PluginConfig,
     PluginContext,
     PluginMode,
-    PluginViolation,
     PluginResult,
+    PluginViolation,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ToolPostInvokePayload,
@@ -452,8 +455,9 @@ async def test_manager_shutdown_behavior():
 @pytest.mark.asyncio
 async def test_manager_payload_size_validation():
     """Test payload size validation functionality."""
-    from mcpgateway.plugins.framework.manager import PayloadSizeError, MAX_PAYLOAD_SIZE, PluginExecutor
-    from mcpgateway.plugins.framework.models import PromptPrehookPayload, PromptPosthookPayload
+    # First-Party
+    from mcpgateway.plugins.framework.manager import MAX_PAYLOAD_SIZE, PayloadSizeError, PluginExecutor
+    from mcpgateway.plugins.framework.models import PromptPosthookPayload, PromptPrehookPayload
 
     # Test payload size validation directly on executor (covers lines 252, 258)
     executor = PluginExecutor[PromptPrehookPayload]()
@@ -467,7 +471,8 @@ async def test_manager_payload_size_validation():
         executor._validate_payload_size(large_prompt)
 
     # Test large result payload (covers line 258)
-    from mcpgateway.models import PromptResult, Message, TextContent, Role
+    # First-Party
+    from mcpgateway.models import Message, PromptResult, Role, TextContent
     large_text = "y" * (MAX_PAYLOAD_SIZE + 1)
     message = Message(role=Role.USER, content=TextContent(type="text", text=large_text))
     large_result = PromptResult(messages=[message])
@@ -495,8 +500,9 @@ async def test_manager_initialization_edge_cases():
     await manager.shutdown()
 
     # Test plugin instantiation failure (covers lines 495-501)
-    from mcpgateway.plugins.framework.models import PluginConfig, PluginMode, PluginSettings
+    # First-Party
     from mcpgateway.plugins.framework.loader.plugin import PluginLoader
+    from mcpgateway.plugins.framework.models import PluginConfig, PluginMode, PluginSettings
 
     manager2 = PluginManager()
     manager2._config = Config(
@@ -550,8 +556,11 @@ async def test_manager_initialization_edge_cases():
 @pytest.mark.asyncio
 async def test_manager_context_cleanup():
     """Test context cleanup functionality."""
-    from mcpgateway.plugins.framework.manager import CONTEXT_MAX_AGE
+    # Standard
     import time
+
+    # First-Party
+    from mcpgateway.plugins.framework.manager import CONTEXT_MAX_AGE
 
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
     await manager.initialize()
@@ -598,13 +607,20 @@ def test_manager_constructor_context_init():
 @pytest.mark.asyncio
 async def test_base_plugin_coverage():
     """Test base plugin functionality for complete coverage."""
+    # First-Party
+    from mcpgateway.models import Message, PromptResult, Role, TextContent
     from mcpgateway.plugins.framework.base import Plugin, PluginRef
-    from mcpgateway.plugins.framework.models import PluginConfig, HookType, PluginMode
     from mcpgateway.plugins.framework.models import (
-        PluginContext, GlobalContext, PromptPrehookPayload, PromptPosthookPayload,
-        ToolPreInvokePayload, ToolPostInvokePayload
+        GlobalContext,
+        HookType,
+        PluginConfig,
+        PluginContext,
+        PluginMode,
+        PromptPosthookPayload,
+        PromptPrehookPayload,
+        ToolPostInvokePayload,
+        ToolPreInvokePayload,
     )
-    from mcpgateway.models import PromptResult, Message, TextContent, Role
 
     # Test plugin with tags property (covers line 130)
     config = PluginConfig(
@@ -659,10 +675,9 @@ async def test_base_plugin_coverage():
 @pytest.mark.asyncio
 async def test_plugin_types_coverage():
     """Test plugin types functionality for complete coverage."""
-    from mcpgateway.plugins.framework.models import (
-        PluginContext, PluginViolation
-    )
+    # First-Party
     from mcpgateway.plugins.framework.errors import PluginViolationError
+    from mcpgateway.plugins.framework.models import PluginContext, PluginViolation
 
     # Test PluginContext state methods (covers lines 266, 275)
     plugin_ctx = PluginContext(request_id="test", user="testuser")
@@ -701,8 +716,9 @@ async def test_plugin_types_coverage():
 @pytest.mark.asyncio
 async def test_plugin_loader_return_none():
     """Test plugin loader return None case."""
+    # First-Party
     from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-    from mcpgateway.plugins.framework.models import PluginConfig, HookType
+    from mcpgateway.plugins.framework.models import HookType, PluginConfig
 
     loader = PluginLoader()
 
@@ -727,6 +743,7 @@ async def test_plugin_loader_return_none():
 
 def test_plugin_violation_setter_validation():
     """Test PluginViolation plugin_name setter validation."""
+    # First-Party
     from mcpgateway.plugins.framework.models import PluginViolation
 
     violation = PluginViolation(

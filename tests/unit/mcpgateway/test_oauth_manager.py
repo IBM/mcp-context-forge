@@ -7,14 +7,19 @@ Authors: Mihai Criveti
 Unit tests for OAuth Manager and Token Storage Service.
 """
 
-import pytest
+# Standard
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+# Third-Party
 import aiohttp
-from mcpgateway.services.oauth_manager import OAuthManager, OAuthError
+import pytest
+
+# First-Party
+from mcpgateway.db import OAuthToken
+from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.utils.oauth_encryption import OAuthEncryption
-from mcpgateway.db import OAuthToken
 
 
 class TestOAuthManager:
@@ -2552,6 +2557,7 @@ class TestOAuthEncryption:
         encryption = OAuthEncryption("test_key")
 
         # Create base64 data that's long enough but not encrypted
+        # Standard
         import base64
         fake_data = b"a" * 40  # 40 bytes of 'a'
         base64_fake = base64.urlsafe_b64encode(fake_data).decode()
@@ -2579,6 +2585,7 @@ class TestOAuthEncryption:
 
     def test_get_oauth_encryption_function(self):
         """Test the get_oauth_encryption utility function."""
+        # First-Party
         from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 
         encryption = get_oauth_encryption("test_secret")

@@ -1383,7 +1383,8 @@ install-web-linters:
 	@npm install --no-save \
 		htmlhint \
 		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
-		eslint eslint-config-standard \
+		eslint eslint-config-standard eslint-plugin-import eslint-plugin-n eslint-plugin-promise \
+		eslint-plugin-prettier eslint-config-prettier \
 		retire \
 		prettier \
 		jshint \

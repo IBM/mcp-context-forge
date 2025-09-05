@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign In - MCP Gateway</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            animation: {
+              "gradient-x": "gradient-x 15s ease infinite",
+              float: "float 6s ease-in-out infinite",
+              "pulse-soft": "pulse-soft 2s ease-in-out infinite",
+              "slide-up": "slide-up 0.8s ease-out",
+              "fade-in": "fade-in 1s ease-out",
+              "scale-pulse": "scale-pulse 4s ease-in-out infinite",
+            },
+            keyframes: {
+              "gradient-x": {
+                "0%, 100%": {
+                  "background-size": "200% 200%",
+                  "background-position": "left center",
+                },
+                "50%": {
+                  "background-size": "200% 200%",
+                  "background-position": "right center",
+                },
+              },
+              float: {
+                "0%, 100%": { transform: "translateY(0px)" },
+                "50%": { transform: "translateY(-20px)" },
+              },
+              "pulse-soft": {
+                "0%, 100%": { opacity: 1 },
+                "50%": { opacity: 0.8 },
+              },
+              "slide-up": {
+                "0%": { transform: "translateY(30px)", opacity: 0 },
+                "100%": { transform: "translateY(0)", opacity: 1 },
+              },
+              "fade-in": {
+                "0%": { opacity: 0 },
+                "100%": { opacity: 1 },
+              },
+              "scale-pulse": {
+                "0%, 100%": { transform: "scale(1)" },
+                "50%": { transform: "scale(1.05)" },
+              },
+            },
+          },
+        },
+      };
+    </script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+  </head>
+  <body class="h-full bg-gray-50 dark:bg-gray-900 overflow-hidden">
+    <!-- Main Split Layout -->
+    <div class="min-h-screen flex">
+      <!-- Left Side - Login Form -->
+      <div
+        class="flex-1 flex flex-col justify-center py-6 px-4 sm:px-6 lg:px-8 bg-white dark:bg-gray-900 relative overflow-hidden"
+      >
+        <!-- Subtle background decoration -->
+        <div
+          class="absolute inset-0 bg-gradient-to-br from-blue-50/50 to-indigo-100/30 dark:from-gray-800/50 dark:to-gray-700/30"
+        ></div>
+        <div
+          class="absolute top-10 left-10 w-32 h-32 bg-gradient-to-br from-indigo-200/30 to-purple-200/30 dark:from-indigo-800/30 dark:to-purple-800/30 rounded-full animate-float"
+        ></div>
+        <div
+          class="absolute bottom-20 right-10 w-24 h-24 bg-gradient-to-br from-purple-200/30 to-blue-200/30 dark:from-purple-800/30 dark:to-blue-800/30 rounded-full animate-float"
+          style="animation-delay: 2s"
+        ></div>
+
+        <div class="sm:mx-auto sm:w-full sm:max-w-md relative z-10">
+          <!-- Login Card -->
+          <div
+            class="bg-white/90 dark:bg-gray-800/90 backdrop-blur-xl py-6 px-6 shadow-2xl rounded-2xl border border-gray-200/50 dark:border-gray-700/50 animate-slide-up"
+            style="animation-delay: 0.2s"
+          >
+            <!-- Error messages -->
+            <div
+              id="error-message"
+              class="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 rounded-xl text-sm hidden"
+            >
+              <div class="flex items-center">
+                <i class="fas fa-exclamation-circle mr-2"></i>
+                <span id="error-text"></span>
+              </div>
+            </div>
+
+            <!-- SSO Providers Section -->
+            <div id="sso-section" class="mb-6">
+              <div class="text-center mb-6">
+                <p
+                  class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide"
+                >
+                  Continue with
+                </p>
+              </div>
+              <div class="space-y-3" id="sso-providers">
+                <!-- SSO buttons will be dynamically added here -->
+              </div>
+            </div>
+
+            <!-- Divider -->
+            <div class="relative my-6" id="divider">
+              <div class="absolute inset-0 flex items-center">
+                <div
+                  class="w-full border-t border-gray-300 dark:border-gray-600"
+                ></div>
+              </div>
+              <div class="relative flex justify-center text-sm">
+                <span
+                  class="px-4 bg-white/90 dark:bg-gray-800/90 text-gray-500 dark:text-gray-400 font-medium"
+                  >Or continue with email</span
+                >
+              </div>
+            </div>
+
+            <!-- Email/Password Form -->
+            <form
+              class="space-y-4"
+              action="{{ root_path }}/admin/login"
+              method="post"
+            >
+              <div>
+                <label
+                  for="email"
+                  class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  <i class="fas fa-envelope mr-2 text-gray-400"></i>Email
+                  address
+                </label>
+                <input
+                  id="email"
+                  name="email"
+                  type="email"
+                  autocomplete="email"
+                  required
+                  placeholder="Enter your email"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-gray-700/50 dark:text-white transition-all duration-200 backdrop-blur-sm"
+                />
+              </div>
+
+              <div>
+                <label
+                  for="password"
+                  class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  <i class="fas fa-lock mr-2 text-gray-400"></i>Password
+                </label>
+                <div class="relative">
+                  <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autocomplete="current-password"
+                    required
+                    placeholder="Enter your password"
+                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-gray-700/50 dark:text-white transition-all duration-200 backdrop-blur-sm pr-10"
+                  />
+                  <button
+                    type="button"
+                    onclick="togglePassword()"
+                    class="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  >
+                    <i id="password-icon" class="fas fa-eye"></i>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                class="w-full flex justify-center items-center py-2 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200"
+              >
+                <i class="fas fa-sign-in-alt mr-2"></i>
+                Sign In
+              </button>
+            </form>
+
+            <!-- Footer -->
+            <div class="mt-4 text-center">
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                <i class="fas fa-shield-alt mr-1"></i>
+                Secured by MCP Gateway Authentication
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Side - Feature Showcase -->
+      <div
+        class="flex-1 bg-gradient-to-br from-indigo-600 via-purple-600 to-blue-700 dark:from-indigo-900 dark:via-purple-900 dark:to-blue-900 relative overflow-hidden flex items-center justify-center"
+      >
+        <!-- Integrated background pattern -->
+        <div class="absolute inset-0 opacity-10">
+          <div
+            class="absolute inset-0"
+            style="
+              background-image: url('data:image/svg+xml,%3Csvg width=&quot;40&quot; height=&quot;40&quot; viewBox=&quot;0 0 40 40&quot; xmlns=&quot;http://www.w3.org/2000/svg&quot;%3E%3Cg fill=&quot;%23ffffff&quot; fill-opacity=&quot;0.1&quot;%3E%3Cpath d=&quot;M20 20c0-5.5-4.5-10-10-10s-10 4.5-10 10 4.5 10 10 10 10-4.5 10-10zm10 0c0-5.5-4.5-10-10-10s-10 4.5-10 10 4.5 10 10 10 10-4.5 10-10z&quot;/%3E%3C/g%3E%3C/svg%3E');
+            "
+          ></div>
+        </div>
+
+        <!-- Subtle floating accents -->
+        <div
+          class="absolute top-16 right-16 w-2 h-2 bg-white/20 rounded-full animate-pulse-soft"
+        ></div>
+        <div
+          class="absolute bottom-24 left-16 w-1 h-1 bg-white/30 rounded-full animate-pulse-soft"
+          style="animation-delay: 1s"
+        ></div>
+        <div
+          class="absolute top-1/3 right-32 w-1.5 h-1.5 bg-white/25 rounded-full animate-pulse-soft"
+          style="animation-delay: 2s"
+        ></div>
+
+        <!-- Main content container -->
+        <div class="relative z-10 max-w-2xl px-6 py-4">
+          <!-- Compact Hero -->
+          <div class="text-center mb-4">
+            <div class="flex items-center justify-center mb-3">
+              <div
+                class="inline-flex items-center justify-center w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg mr-3 animate-scale-pulse"
+              >
+                <img
+                  src="{{ root_path }}/static/logo.png"
+                  alt="MCP Gateway"
+                  class="w-6 h-6 rounded-lg"
+                  onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';"
+                />
+                <i
+                  class="fas fa-network-wired text-white text-sm"
+                  style="display: none"
+                ></i>
+              </div>
+              <h2 class="text-2xl font-bold text-white">
+                <a
+                  href="https://github.com/IBM/mcp-context-forge"
+                  target="_blank"
+                  class="hover:opacity-80 transition-opacity"
+                  >Context Forge MCP & AI Gateway</a
+                >
+              </h2>
+            </div>
+            <p class="text-sm text-blue-100 opacity-90">
+              MCP, A2A and REST gateway with advanced security & observability
+            </p>
+          </div>
+
+          <!-- Feature Groups -->
+          <div class="space-y-6">
+            <!-- Core Platform Features -->
+            <div>
+              <h3
+                class="text-xs font-semibold text-blue-200 uppercase tracking-wide mb-3 text-center"
+              >
+                Core Platform
+              </h3>
+              <div class="grid grid-cols-3 gap-3">
+                <div
+                  class="bg-white/8 backdrop-blur-sm rounded-lg p-3 border border-white/10 hover:bg-white/12 transition-all duration-300 group"
+                >
+                  <div
+                    class="w-6 h-6 bg-gradient-to-br from-yellow-400 to-orange-500 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"
+                  >
+                    <i class="fas fa-network-wired text-white text-xs"></i>
+                  </div>
+                  <h4 class="text-xs font-semibold text-white mb-1">
+                    Federation
+                  </h4>
+                  <p class="text-xs text-blue-100 leading-relaxed">
+                    Multi-gateway networks with auto-discovery
+                  </p>
+                </div>
+
+                <div
+                  class="bg-white/8 backdrop-blur-sm rounded-lg p-3 border border-white/10 hover:bg-white/12 transition-all duration-300 group"
+                >
+                  <div
+                    class="w-6 h-6 bg-gradient-to-br from-green-400 to-emerald-500 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"
+                  >
+                    <i class="fas fa-server text-white text-xs"></i>
+                  </div>
+                  <h4 class="text-xs font-semibold text-white mb-1">
+                    Virtual Servers
+                  </h4>
+                  <p class="text-xs text-blue-100 leading-relaxed">
+                    Compose custom MCP endpoints
+                  </p>
+                </div>
+
+                <div
+                  class="bg-white/8 backdrop-blur-sm rounded-lg p-3 border border-white/10 hover:bg-white/12 transition-all duration-300 group"
+                >
+                  <div
+                    class="w-6 h-6 bg-gradient-to-br from-purple-400 to-pink-500 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"
+                  >
+                    <i class="fas fa-exchange-alt text-white text-xs"></i>
+                  </div>
+                  <h4 class="text-xs font-semibold text-white mb-1">
+                    Multi-Transport
+                  </h4>
+                  <p class="text-xs text-blue-100 leading-relaxed">
+                    HTTP, WebSocket, SSE protocols
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Enterprise Features -->
+            <div>
+              <h3
+                class="text-xs font-semibold text-blue-200 uppercase tracking-wide mb-3 text-center"
+              >
+                Enterprise Ready
+              </h3>
+              <div class="grid grid-cols-3 gap-3">
+                <div
+                  class="bg-white/8 backdrop-blur-sm rounded-lg p-3 border border-white/10 hover:bg-white/12 transition-all duration-300 group"
+                >
+                  <div
+                    class="w-6 h-6 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"
+                  >
+                    <i class="fas fa-shield-alt text-white text-xs"></i>
+                  </div>
+                  <h4 class="text-xs font-semibold text-white mb-1">
+                    Security
+                  </h4>
+                  <p class="text-xs text-blue-100 leading-relaxed">
+                    JWT auth, rate limiting, PII & OPA plugins
+                  </p>
+                </div>
+
+                <div
+                  class="bg-white/8 backdrop-blur-sm rounded-lg p-3 border border-white/10 hover:bg-white/12 transition-all duration-300 group"
+                >
+                  <div
+                    class="w-6 h-6 bg-gradient-to-br from-red-400 to-pink-500 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"
+                  >
+                    <i class="fas fa-chart-line text-white text-xs"></i>
+                  </div>
+                  <h4 class="text-xs font-semibold text-white mb-1">
+                    Observability
+                  </h4>
+                  <p class="text-xs text-blue-100 leading-relaxed">
+                    Metrics & comprehensive logging
+                  </p>
+                </div>
+
+                <div
+                  class="bg-white/8 backdrop-blur-sm rounded-lg p-3 border border-white/10 hover:bg-white/12 transition-all duration-300 group"
+                >
+                  <div
+                    class="w-6 h-6 bg-gradient-to-br from-teal-400 to-cyan-500 rounded-lg flex items-center justify-center mb-2 group-hover:scale-110 transition-transform"
+                  >
+                    <i class="fas fa-robot text-white text-xs"></i>
+                  </div>
+                  <h4 class="text-xs font-semibold text-white mb-1">
+                    A2A Agents
+                  </h4>
+                  <p class="text-xs text-blue-100 leading-relaxed">
+                    AI agent integration & workflows
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom accent -->
+          <div class="mt-4 text-center">
+            <div class="inline-flex items-center space-x-4 text-blue-100/80">
+              <div class="flex items-center space-x-1">
+                <i class="fas fa-check-circle text-green-300 text-xs"></i>
+                <span class="text-xs">Production Ready</span>
+              </div>
+              <div class="flex items-center space-x-1">
+                <i class="fas fa-bolt text-yellow-300 text-xs"></i>
+                <span class="text-xs">High Performance</span>
+              </div>
+              <div class="flex items-center space-x-1">
+                <i class="fas fa-lock text-blue-300 text-xs"></i>
+                <span class="text-xs">Secure by Design</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Initialize ROOT_PATH for JavaScript URL composition
+      window.ROOT_PATH = {{ root_path | tojson }};
+
+      // SSO Provider configurations with branding
+      const ssoProviders = {
+        github: {
+          name: "GitHub",
+          icon: "fab fa-github",
+          bgColor:
+            "bg-gray-800 hover:bg-gray-900 dark:bg-gray-700 dark:hover:bg-gray-600",
+          textColor: "text-white",
+        },
+        google: {
+          name: "Google",
+          icon: "fab fa-google",
+          bgColor:
+            "bg-white hover:bg-gray-50 dark:bg-gray-700 dark:hover:bg-gray-600",
+          textColor: "text-gray-700 dark:text-white",
+          border: "border border-gray-300 dark:border-gray-600",
+        },
+        ibm_verify: {
+          name: "IBM Security Verify",
+          icon: "fas fa-building",
+          bgColor:
+            "bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800",
+          textColor: "text-white",
+        },
+        okta: {
+          name: "Okta",
+          icon: "fas fa-id-card",
+          bgColor:
+            "bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700",
+          textColor: "text-white",
+        },
+      };
+
+      // Initialize page
+      document.addEventListener("DOMContentLoaded", async function () {
+        await loadSSOProviders();
+        handleErrorMessages();
+        setupAnimations();
+      });
+
+      // Load available SSO providers
+      async function loadSSOProviders() {
+        try {
+          const response = await fetch(window.ROOT_PATH + "/auth/sso/providers");
+
+          if (response.status === 404) {
+            // SSO not enabled, hide SSO section
+            document.getElementById("sso-section").style.display = "none";
+            document.getElementById("divider").style.display = "none";
+            return;
+          }
+
+          if (!response.ok) throw new Error("Failed to load SSO providers");
+
+          const providers = await response.json();
+          const ssoContainer = document.getElementById("sso-providers");
+
+          if (providers.length === 0) {
+            document.getElementById("sso-section").style.display = "none";
+            document.getElementById("divider").style.display = "none";
+            return;
+          }
+
+          providers.forEach((provider) => {
+            const config = ssoProviders[provider.id];
+            if (!config) return;
+
+            const button = document.createElement("button");
+            button.type = "button";
+            button.onclick = () => initiateSSO(provider.id);
+            button.className = `w-full flex justify-center items-center py-3 px-4 rounded-xl font-medium transition-all duration-200 transform hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${config.bgColor} ${config.textColor} ${config.border || ""}`;
+
+            button.innerHTML = `
+                    <i class="${config.icon} mr-3 text-lg"></i>
+                    Continue with ${config.name}
+                    <i class="fas fa-arrow-right ml-auto opacity-0 group-hover:opacity-100 transition-opacity duration-200"></i>
+                `;
+
+            button.classList.add("group");
+            ssoContainer.appendChild(button);
+          });
+        } catch (error) {
+          console.error("Failed to load SSO providers:", error);
+          // Hide SSO section on error
+          document.getElementById("sso-section").style.display = "none";
+          document.getElementById("divider").style.display = "none";
+        }
+      }
+
+      // Initiate SSO authentication
+      async function initiateSSO(providerId) {
+        try {
+          const redirectUri =
+            window.location.origin + window.ROOT_PATH + `/auth/sso/callback/${providerId}`;
+          const response = await fetch(
+            window.ROOT_PATH + `/auth/sso/login/${providerId}?redirect_uri=${encodeURIComponent(redirectUri)}`,
+          );
+
+          if (!response.ok) throw new Error("Failed to initiate SSO");
+
+          const data = await response.json();
+          window.location.href = data.authorization_url;
+        } catch (error) {
+          console.error("SSO initiation failed:", error);
+          showError(
+            "SSO authentication failed. Please try again or use email/password.",
+          );
+        }
+      }
+
+      // Handle error messages from URL parameters
+      function handleErrorMessages() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const error = urlParams.get("error");
+
+        if (error) {
+          let errorMessage = "Login failed";
+          switch (error) {
+            case "missing_fields":
+              errorMessage = "Please provide both email and password";
+              break;
+            case "invalid_credentials":
+              errorMessage = "Invalid email or password";
+              break;
+            case "admin_required":
+              errorMessage = "Admin privileges required";
+              break;
+            case "server_error":
+              errorMessage = "Server error. Please try again";
+              break;
+            case "sso_failed":
+              errorMessage = "SSO authentication failed. Please try again";
+              break;
+            case "sso_cancelled":
+              errorMessage = "SSO authentication was cancelled";
+              break;
+            default:
+              errorMessage = error
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (l) => l.toUpperCase());
+          }
+          showError(errorMessage);
+        }
+      }
+
+      // Show error message
+      function showError(message) {
+        const errorDiv = document.getElementById("error-message");
+        const errorText = document.getElementById("error-text");
+        errorText.textContent = message;
+        errorDiv.classList.remove("hidden");
+
+        // Auto-hide after 10 seconds
+        setTimeout(() => {
+          errorDiv.classList.add("hidden");
+        }, 10000);
+      }
+
+      // Toggle password visibility
+      function togglePassword() {
+        const passwordField = document.getElementById("password");
+        const passwordIcon = document.getElementById("password-icon");
+
+        if (passwordField.type === "password") {
+          passwordField.type = "text";
+          passwordIcon.classList.remove("fa-eye");
+          passwordIcon.classList.add("fa-eye-slash");
+        } else {
+          passwordField.type = "password";
+          passwordIcon.classList.remove("fa-eye-slash");
+          passwordIcon.classList.add("fa-eye");
+        }
+      }
+
+      // Setup subtle animations
+      function setupAnimations() {
+        // Add focus animations to inputs
+        const inputs = document.querySelectorAll("input");
+        inputs.forEach((input) => {
+          input.addEventListener("focus", function () {
+            this.parentNode.classList.add("scale-105");
+          });
+          input.addEventListener("blur", function () {
+            this.parentNode.classList.remove("scale-105");
+          });
+        });
+
+        // Add loading state to form submission
+        const form = document.querySelector("form");
+        form.addEventListener("submit", function () {
+          const submitBtn = form.querySelector('button[type="submit"]');
+          submitBtn.innerHTML =
+            '<i class="fas fa-spinner fa-spin mr-2"></i>Signing in...';
+          submitBtn.disabled = true;
+        });
+      }
+
+      // Handle SSO callback success
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("sso") === "success") {
+        // Redirect to admin panel after successful SSO
+        setTimeout(() => {
+          window.location.href = window.ROOT_PATH + "/admin";
+        }, 1000);
+      }
+    </script>
+  </body>
+</html>

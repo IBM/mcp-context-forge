@@ -1588,6 +1588,7 @@ async def test_generate_response_jsonrpc_error(registry: SessionRegistry):
     message = {"method": "test_method", "id": 1, "params": {}}
 
     # Mock ResilientHttpClient to raise JSONRPCError
+    # First-Party
     from mcpgateway.validation.jsonrpc import JSONRPCError
 
     class MockAsyncClient:
@@ -1657,6 +1658,7 @@ async def test_generate_response_general_exception(registry: SessionRegistry):
 @pytest.mark.asyncio
 async def test_session_backend_docstring_examples():
     """Test the docstring examples in SessionBackend."""
+    # First-Party
     from mcpgateway.cache.session_registry import SessionBackend
 
     # Test memory backend example

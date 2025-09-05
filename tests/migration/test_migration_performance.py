@@ -5,12 +5,16 @@ This module provides comprehensive performance testing for database migrations
 including benchmarking, stress testing, and resource monitoring.
 """
 
+# Standard
 import logging
-import pytest
-import time
 from pathlib import Path
+import time
 
-from .utils.data_seeder import DataSeeder, DataGenerationConfig
+# Third-Party
+import pytest
+
+# Local
+from .utils.data_seeder import DataGenerationConfig, DataSeeder
 from .utils.schema_validator import SchemaValidator
 
 logger = logging.getLogger(__name__)
@@ -455,6 +459,7 @@ class TestMigrationPerformance:
             logger.info("")
 
         # Save benchmark results for comparison
+        # Standard
         import json
         benchmark_file = Path("tests/migration/reports/benchmark_results.json")
         benchmark_file.parent.mkdir(parents=True, exist_ok=True)

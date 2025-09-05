@@ -19,6 +19,7 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import json
+import os
 import re
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
@@ -30,7 +31,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import case, delete, desc, Float, func, not_, select
+from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -47,6 +48,7 @@ from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginVio
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -136,9 +138,15 @@ class ToolInvocationError(ToolError):
 
     Examples:
         >>> from mcpgateway.services.tool_service import ToolInvocationError
-        >>> err = ToolInvocationError("Failed to invoke tool")
+        >>> err = ToolInvocationError("Tool execution failed")
         >>> str(err)
-        'Failed to invoke tool'
+        'Tool execution failed'
+        >>> isinstance(err, ToolError)
+        True
+        >>> # Test with detailed error
+        >>> detailed_err = ToolInvocationError("Network timeout after 30 seconds")
+        >>> "timeout" in str(detailed_err)
+        True
         >>> isinstance(err, ToolError)
         True
     """
@@ -170,7 +178,15 @@ class ToolService:
         """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
-        self._plugin_manager: PluginManager | None = PluginManager() if settings.plugins_enabled else None
+        # Initialize plugin manager with env overrides to ease testing
+        env_flag = os.getenv("PLUGINS_ENABLED")
+        if env_flag is not None:
+            env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
+            plugins_enabled = env_enabled
+        else:
+            plugins_enabled = settings.plugins_enabled
+        config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
+        self._plugin_manager: PluginManager | None = PluginManager(config_file) if plugins_enabled else None
         self.oauth_manager = OAuthManager(
             request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
@@ -331,8 +347,11 @@ class ToolService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: str = "private",
     ) -> ToolRead:
-        """Register a new tool.
+        """Register a new tool with team support.
 
         Args:
             db: Database session.
@@ -343,6 +362,9 @@ class ToolService:
             created_user_agent: User agent of creation request.
             import_batch_id: UUID for bulk import operations.
             federation_source: Source gateway for federated tools.
+            team_id: Optional team ID to assign tool to.
+            owner_email: Optional owner email for tool ownership.
+            visibility: Tool visibility (private, team, public).
 
         Returns:
             Created tool information.
@@ -407,6 +429,10 @@ class ToolService:
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
                 version=1,
+                # Team scoping fields
+                team_id=team_id,
+                owner_email=owner_email or created_by,
+                visibility=visibility,
             )
             db.add(db_tool)
             db.commit()
@@ -507,6 +533,75 @@ class ToolService:
         logger.debug(f"Listing server tools for server_id={server_id} with include_inactive={include_inactive}, cursor={cursor}")
         if not include_inactive:
             query = query.where(DbTool.enabled)
+        tools = db.execute(query).scalars().all()
+        return [self._convert_tool_to_read(t) for t in tools]
+
+    async def list_tools_for_user(
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+    ) -> List[ToolRead]:
+        """
+        List tools user has access to with team filtering.
+
+        Args:
+            db: Database session
+            user_email: Email of the user requesting tools
+            team_id: Optional team ID to filter by specific team
+            visibility: Optional visibility filter (private, team, public)
+            include_inactive: Whether to include inactive tools
+            skip: Number of tools to skip for pagination
+            limit: Maximum number of tools to return
+
+        Returns:
+            List[ToolRead]: Tools the user has access to
+        """
+
+        # Build query following existing patterns from list_tools()
+        query = select(DbTool)
+
+        # Apply active/inactive filter
+        if not include_inactive:
+            query = query.where(DbTool.enabled.is_(True))
+
+        if team_id:
+            # Filter by specific team
+            query = query.where(DbTool.team_id == team_id)
+
+            # Validate user has access to team
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id not in team_ids:
+                return []  # No access to team
+        else:
+            # Get user's accessible teams
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            # Build access conditions following existing patterns
+
+            access_conditions = []
+
+            # 1. User's personal resources (owner_email matches)
+            access_conditions.append(DbTool.owner_email == user_email)
+
+            # 2. Team resources where user is member
+            if team_ids:
+                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+
+            # 3. Public resources (if visibility allows)
+            access_conditions.append(DbTool.visibility == "public")
+
+            query = query.where(or_(*access_conditions))
+
+        # Apply visibility filter if specified
+        if visibility:
+            query = query.where(DbTool.visibility == visibility)
+
+        # Apply pagination following existing patterns
+        query = query.offset(skip).limit(limit)
+
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
 

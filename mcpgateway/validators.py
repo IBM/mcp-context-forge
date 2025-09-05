@@ -98,6 +98,55 @@ class SecurityValidator:
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            Basic HTML escaping:
+
+            >>> SecurityValidator.sanitize_display_text('Hello World', 'test')
+            'Hello World'
+            >>> SecurityValidator.sanitize_display_text('Hello <b>World</b>', 'test')
+            'Hello &lt;b&gt;World&lt;/b&gt;'
+
+            Empty/None handling:
+
+            >>> SecurityValidator.sanitize_display_text('', 'test')
+            ''
+            >>> SecurityValidator.sanitize_display_text(None, 'test') #doctest: +SKIP
+
+            Dangerous script patterns:
+
+            >>> SecurityValidator.sanitize_display_text('alert();', 'test')
+            'alert();'
+            >>> SecurityValidator.sanitize_display_text('javascript:alert(1)', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains script patterns that may cause display issues
+
+            Polyglot attack patterns:
+
+            >>> SecurityValidator.sanitize_display_text('"; alert()', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains potentially dangerous character sequences
+            >>> SecurityValidator.sanitize_display_text('-->test', 'test')
+            '--&gt;test'
+            >>> SecurityValidator.sanitize_display_text('--><script>', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains HTML tags that may cause display issues
+            >>> SecurityValidator.sanitize_display_text('String.fromCharCode(65)', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains potentially dangerous character sequences
+
+            Safe character escaping:
+
+            >>> SecurityValidator.sanitize_display_text('User & Admin', 'test')
+            'User &amp; Admin'
+            >>> SecurityValidator.sanitize_display_text('Quote: "Hello"', 'test')
+            'Quote: &quot;Hello&quot;'
+            >>> SecurityValidator.sanitize_display_text("Quote: 'Hello'", 'test')
+            'Quote: &#x27;Hello&#x27;'
         """
         if not value:
             return value
@@ -144,10 +193,54 @@ class SecurityValidator:
         Examples:
             >>> SecurityValidator.validate_name('valid_name')
             'valid_name'
-            >>> SecurityValidator.validate_name('Invalid Name!')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
+            >>> SecurityValidator.validate_name('valid_name-123')
+            'valid_name-123'
+            >>> SecurityValidator.validate_name('valid_name_test')
+            'valid_name_test'
+            >>> SecurityValidator.validate_name('Test Name')
+            'Test Name'
+            >>> try:
+            ...     SecurityValidator.validate_name('Invalid Name!')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name('')
+            ... except ValueError as e:
+            ...     'cannot be empty' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name('name<script>')
+            ... except ValueError as e:
+            ...     'HTML special characters' in str(e) or 'can only contain' in str(e)
+            True
+
+            Test length limit (line 181):
+
+            >>> long_name = 'a' * 256
+            >>> try:
+            ...     SecurityValidator.validate_name(long_name)
+            ... except ValueError as e:
+            ...     'exceeds maximum length' in str(e)
+            True
+
+            Test HTML special characters (line 178):
+
+            >>> try:
+            ...     SecurityValidator.validate_name('name"test')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name("name'test")
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name('name/test')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -182,10 +275,54 @@ class SecurityValidator:
         Examples:
             >>> SecurityValidator.validate_identifier('valid_id', 'ID')
             'valid_id'
-            >>> SecurityValidator.validate_identifier('Invalid/ID', 'ID')
-            Traceback (most recent call last):
-                ...
-            ValueError: ...
+            >>> SecurityValidator.validate_identifier('valid.id.123', 'ID')
+            'valid.id.123'
+            >>> SecurityValidator.validate_identifier('valid-id_test', 'ID')
+            'valid-id_test'
+            >>> SecurityValidator.validate_identifier('test123', 'ID')
+            'test123'
+            >>> try:
+            ...     SecurityValidator.validate_identifier('Invalid/ID', 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier('', 'ID')
+            ... except ValueError as e:
+            ...     'cannot be empty' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier('id<script>', 'ID')
+            ... except ValueError as e:
+            ...     'HTML special characters' in str(e) or 'can only contain' in str(e)
+            True
+
+            Test HTML special characters (line 233):
+
+            >>> try:
+            ...     SecurityValidator.validate_identifier('id"test', 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier("id'test", 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier('id/test', 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+
+            Test length limit (line 236):
+
+            >>> long_id = 'a' * 256
+            >>> try:
+            ...     SecurityValidator.validate_identifier(long_id, 'ID')
+            ... except ValueError as e:
+            ...     'exceeds maximum length' in str(e)
+            True
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -223,7 +360,7 @@ class SecurityValidator:
             >>> SecurityValidator.validate_uri('..', 'URI')
             Traceback (most recent call last):
                 ...
-            ValueError: ...
+            ValueError: URI cannot contain directory traversal sequences ('..')
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -262,7 +399,39 @@ class SecurityValidator:
             >>> SecurityValidator.validate_tool_name('1tool')
             Traceback (most recent call last):
                 ...
-            ValueError: ...
+            ValueError: Tool name must start with a letter and contain only letters, numbers, and underscore
+
+            Test HTML special characters (line 310):
+
+            >>> try:
+            ...     SecurityValidator.validate_tool_name('tool<script>')
+            ... except ValueError as e:
+            ...     'must start with a letter' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_tool_name('tool"test')
+            ... except ValueError as e:
+            ...     'must start with a letter' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_tool_name("tool'test")
+            ... except ValueError as e:
+            ...     'must start with a letter' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_tool_name('tool/test')
+            ... except ValueError as e:
+            ...     'must start with a letter' in str(e)
+            True
+
+            Test length limit (line 313):
+
+            >>> long_tool_name = 'a' * 256
+            >>> try:
+            ...     SecurityValidator.validate_tool_name(long_tool_name)
+            ... except ValueError as e:
+            ...     'exceeds maximum length' in str(e)
+            True
         """
         if not value:
             raise ValueError("Tool name cannot be empty")
@@ -300,7 +469,42 @@ class SecurityValidator:
             >>> SecurityValidator.validate_uuid('invalid-uuid')
             Traceback (most recent call last):
                 ...
-            ValueError: ...
+            ValueError: UUID must be a valid UUID format
+
+            Test empty UUID (line 340):
+
+            >>> SecurityValidator.validate_uuid('')
+            ''
+
+            Test normalized UUID format (lines 344-346):
+
+            >>> SecurityValidator.validate_uuid('550E8400-E29B-41D4-A716-446655440000')
+            '550e8400-e29b-41d4-a716-446655440000'
+            >>> SecurityValidator.validate_uuid('550e8400e29b41d4a716446655440000')
+            '550e8400-e29b-41d4-a716-446655440000'
+
+            Test various invalid UUID formats (line 347-348):
+
+            >>> try:
+            ...     SecurityValidator.validate_uuid('not-a-uuid')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716-446655440000-extra')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_uuid('gggggggg-gggg-gggg-gggg-gggggggggggg')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
         """
         if not value:
             return value
@@ -325,6 +529,102 @@ class SecurityValidator:
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            Empty template handling:
+
+            >>> SecurityValidator.validate_template('')
+            ''
+            >>> SecurityValidator.validate_template(None) #doctest: +SKIP
+
+            Safe Jinja2 templates:
+
+            >>> SecurityValidator.validate_template('Hello {{ name }}')
+            'Hello {{ name }}'
+            >>> SecurityValidator.validate_template('{% if condition %}text{% endif %}')
+            '{% if condition %}text{% endif %}'
+            >>> SecurityValidator.validate_template('{{ username }}')
+            '{{ username }}'
+
+            Dangerous HTML tags blocked:
+
+            >>> SecurityValidator.validate_template('Hello <script>alert(1)</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains HTML tags that may interfere with proper display
+            >>> SecurityValidator.validate_template('Test <iframe src="evil.com"></iframe>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains HTML tags that may interfere with proper display
+            >>> SecurityValidator.validate_template('<form action="/evil"></form>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains HTML tags that may interfere with proper display
+
+            Event handlers blocked:
+
+            >>> SecurityValidator.validate_template('<div onclick="evil()">Test</div>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains event handlers that may cause display issues
+            >>> SecurityValidator.validate_template('onload = "alert(1)"')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains event handlers that may cause display issues
+
+            SSTI prevention patterns:
+
+            >>> SecurityValidator.validate_template('{{ __import__ }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ config }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{% import os %}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 7*7 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 10/2 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 5+5 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 10-5 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+
+            Other template injection patterns:
+
+            >>> SecurityValidator.validate_template('${evil}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('#{evil}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('%{evil}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+
+            Length limit testing:
+
+            >>> long_template = 'a' * 65537
+            >>> SecurityValidator.validate_template(long_template)
+            Traceback (most recent call last):
+                ...
+            ValueError: Template exceeds maximum length of 65536
         """
         if not value:
             return value
@@ -375,12 +675,164 @@ class SecurityValidator:
             ValueError: When input is not acceptable
 
         Examples:
+            Valid URLs:
+
             >>> SecurityValidator.validate_url('https://example.com')
             'https://example.com'
+            >>> SecurityValidator.validate_url('http://example.com')
+            'http://example.com'
+            >>> SecurityValidator.validate_url('ws://example.com')
+            'ws://example.com'
+            >>> SecurityValidator.validate_url('wss://example.com')
+            'wss://example.com'
+            >>> SecurityValidator.validate_url('https://example.com:8080/path')
+            'https://example.com:8080/path'
+            >>> SecurityValidator.validate_url('https://example.com/path?query=value')
+            'https://example.com/path?query=value'
+
+            Empty URL handling:
+
+            >>> SecurityValidator.validate_url('')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL cannot be empty
+
+            Length validation:
+
+            >>> long_url = 'https://example.com/' + 'a' * 2100
+            >>> SecurityValidator.validate_url(long_url)
+            Traceback (most recent call last):
+                ...
+            ValueError: URL exceeds maximum length of 2048
+
+            Scheme validation:
+
             >>> SecurityValidator.validate_url('ftp://example.com')
             Traceback (most recent call last):
                 ...
-            ValueError: ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('file:///etc/passwd')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('javascript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('data:text/plain,hello')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('vbscript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('about:blank')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('chrome://settings')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('mailto:test@example.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            IPv6 URL blocking:
+
+            >>> SecurityValidator.validate_url('https://[::1]:8080/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IPv6 address which is not supported
+            >>> SecurityValidator.validate_url('https://[2001:db8::1]/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IPv6 address which is not supported
+
+            Protocol-relative URL blocking:
+
+            >>> SecurityValidator.validate_url('//example.com/path')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            Line break injection:
+
+            >>> SecurityValidator.validate_url('https://example.com\\rHost: evil.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains line breaks which are not allowed
+            >>> SecurityValidator.validate_url('https://example.com\\nHost: evil.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains line breaks which are not allowed
+
+            Space validation:
+
+            >>> SecurityValidator.validate_url('https://exam ple.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains spaces which are not allowed in URLs
+            >>> SecurityValidator.validate_url('https://example.com/path?query=hello world')
+            'https://example.com/path?query=hello world'
+
+            Malformed URLs:
+
+            >>> SecurityValidator.validate_url('https://')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL is not a valid URL
+            >>> SecurityValidator.validate_url('not-a-url')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            Restricted IP addresses:
+
+            >>> SecurityValidator.validate_url('https://0.0.0.0/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains invalid IP address (0.0.0.0)
+            >>> SecurityValidator.validate_url('https://169.254.169.254/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains restricted IP address
+
+            Invalid port numbers:
+
+            >>> SecurityValidator.validate_url('https://example.com:0/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains invalid port number
+            >>> try:
+            ...     SecurityValidator.validate_url('https://example.com:65536/')
+            ... except ValueError as e:
+            ...     'Port out of range' in str(e) or 'invalid port' in str(e)
+            True
+
+            Credentials in URL:
+
+            >>> SecurityValidator.validate_url('https://user:pass@example.com/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains credentials which are not allowed
+            >>> SecurityValidator.validate_url('https://user@example.com/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains credentials which are not allowed
+
+            XSS patterns in URLs:
+
+            >>> SecurityValidator.validate_url('https://example.com/<script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_url('https://example.com?param=javascript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains unsupported or potentially dangerous protocol
         """
         if not value:
             raise ValueError(f"{field_name} cannot be empty")
@@ -476,6 +928,69 @@ class SecurityValidator:
 
         Raises:
             ValueError: If the value contains XSS patterns.
+
+        Examples:
+            Safe strings pass validation:
+
+            >>> SecurityValidator.validate_no_xss('Hello World', 'test_field')
+            >>> SecurityValidator.validate_no_xss('User: admin@example.com', 'email')
+            >>> SecurityValidator.validate_no_xss('Price: $10.99', 'price')
+
+            Empty/None strings are considered safe:
+
+            >>> SecurityValidator.validate_no_xss('', 'empty_field')
+            >>> SecurityValidator.validate_no_xss(None, 'none_field') #doctest: +SKIP
+
+            Dangerous HTML tags trigger validation errors:
+
+            >>> SecurityValidator.validate_no_xss('<script>alert(1)</script>', 'test_field')
+            Traceback (most recent call last):
+                ...
+            ValueError: test_field contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<iframe src="evil.com"></iframe>', 'content')
+            Traceback (most recent call last):
+                ...
+            ValueError: content contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<object data="malware.swf"></object>', 'data')
+            Traceback (most recent call last):
+                ...
+            ValueError: data contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<embed src="evil.swf">', 'embed')
+            Traceback (most recent call last):
+                ...
+            ValueError: embed contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<link rel="stylesheet" href="evil.css">', 'style')
+            Traceback (most recent call last):
+                ...
+            ValueError: style contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<meta http-equiv="refresh" content="0;url=evil.com">', 'meta')
+            Traceback (most recent call last):
+                ...
+            ValueError: meta contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<base href="http://evil.com">', 'base')
+            Traceback (most recent call last):
+                ...
+            ValueError: base contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<form action="evil.php">', 'form')
+            Traceback (most recent call last):
+                ...
+            ValueError: form contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<img src="x" onerror="alert(1)">', 'image')
+            Traceback (most recent call last):
+                ...
+            ValueError: image contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<svg onload="alert(1)"></svg>', 'svg')
+            Traceback (most recent call last):
+                ...
+            ValueError: svg contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<video src="x" onerror="alert(1)"></video>', 'video')
+            Traceback (most recent call last):
+                ...
+            ValueError: video contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<audio src="x" onerror="alert(1)"></audio>', 'audio')
+            Traceback (most recent call last):
+                ...
+            ValueError: audio contains HTML tags that may cause security issues
         """
         if not value:
             return  # Empty values are considered safe
@@ -568,6 +1083,92 @@ class SecurityValidator:
 
         Raises:
             ValueError: When input is not acceptable
+
+        Examples:
+            Empty/None handling:
+
+            >>> SecurityValidator.validate_mime_type('')
+            ''
+            >>> SecurityValidator.validate_mime_type(None) #doctest: +SKIP
+
+            Valid standard MIME types:
+
+            >>> SecurityValidator.validate_mime_type('text/plain')
+            'text/plain'
+            >>> SecurityValidator.validate_mime_type('application/json')
+            'application/json'
+            >>> SecurityValidator.validate_mime_type('image/jpeg')
+            'image/jpeg'
+            >>> SecurityValidator.validate_mime_type('text/html')
+            'text/html'
+            >>> SecurityValidator.validate_mime_type('application/pdf')
+            'application/pdf'
+
+            Valid vendor-specific MIME types:
+
+            >>> SecurityValidator.validate_mime_type('application/x-custom')
+            'application/x-custom'
+            >>> SecurityValidator.validate_mime_type('text/x-log')
+            'text/x-log'
+
+            Valid MIME types with suffixes:
+
+            >>> SecurityValidator.validate_mime_type('application/vnd.api+json')
+            'application/vnd.api+json'
+            >>> SecurityValidator.validate_mime_type('image/svg+xml')
+            'image/svg+xml'
+
+            Invalid MIME type formats:
+
+            >>> SecurityValidator.validate_mime_type('invalid')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text/')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('/plain')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text//plain')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text/plain/extra')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text plain')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('<text/plain>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+
+            Disallowed MIME types (not in whitelist - line 620):
+
+            >>> try:
+            ...     SecurityValidator.validate_mime_type('application/evil')
+            ... except ValueError as e:
+            ...     'not in the allowed list' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_mime_type('text/evil')
+            ... except ValueError as e:
+            ...     'not in the allowed list' in str(e)
+            True
+
+            Test MIME type with parameters (line 618):
+
+            >>> try:
+            ...     SecurityValidator.validate_mime_type('application/evil; charset=utf-8')
+            ... except ValueError as e:
+            ...     'Invalid MIME type format' in str(e)
+            True
         """
         if not value:
             return value

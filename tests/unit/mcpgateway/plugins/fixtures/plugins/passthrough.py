@@ -8,6 +8,7 @@ Passthrough plugin.
 """
 
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginContext,
@@ -24,6 +25,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+
 
 class PassThroughPlugin(Plugin):
     """A simple pass through plugin."""

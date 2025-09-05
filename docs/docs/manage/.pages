@@ -13,6 +13,11 @@ nav:
   - proxy.md
   - oauth.md
   - securing.md
+  - sso.md
+  - sso-github-tutorial.md
+  - sso-google-tutorial.md
+  - sso-ibm-tutorial.md
+  - sso-okta-tutorial.md
   - tuning.md
   - ui-customization.md
   - upgrade.md

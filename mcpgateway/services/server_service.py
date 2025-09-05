@@ -182,6 +182,27 @@ class ServerService:
 
         Returns:
             ServerRead: The Pydantic model representing the server, including aggregated metrics.
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timezone
+            >>> svc = ServerService()
+            >>> now = datetime.now(timezone.utc)
+            >>> # Fake metric objects
+            >>> m1 = SimpleNamespace(is_success=True, response_time=0.2, timestamp=now)
+            >>> m2 = SimpleNamespace(is_success=False, response_time=0.4, timestamp=now)
+            >>> server = SimpleNamespace(
+            ...     id='s1', name='S', description=None, icon=None,
+            ...     created_at=now, updated_at=now, is_active=True,
+            ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
+            ...     tags=[], metrics=[m1, m2],
+            ...     tools=[], resources=[], prompts=[], a2a_agents=[]
+            ... )
+            >>> result = svc._convert_server_to_read(server)
+            >>> result.metrics.total_executions
+            2
+            >>> result.metrics.successful_executions
+            1
         """
         server_dict = server.__dict__.copy()
         server_dict.pop("_sa_instance_state", None)
@@ -261,7 +282,9 @@ class ServerService:
             "a2a_agents": a2a_agents or [],
         }
 
-    async def register_server(self, db: Session, server_in: ServerCreate) -> ServerRead:
+    async def register_server(
+        self, db: Session, server_in: ServerCreate, created_by: Optional[str] = None, team_id: Optional[str] = None, owner_email: Optional[str] = None, visibility: str = "private"
+    ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
 
@@ -279,6 +302,10 @@ class ServerService:
             db (Session): The SQLAlchemy database session.
             server_in (ServerCreate): The server creation schema containing server details and lists of
                 associated tool, resource, and prompt IDs (as strings).
+            created_by (Optional[str]): Email of the user creating the server, used for ownership tracking.
+            team_id (Optional[str]): Team ID to assign the server to.
+            owner_email (Optional[str]): Email of the user who owns this server.
+            visibility (str): Server visibility level (private, team, public).
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -314,6 +341,10 @@ class ServerService:
                 icon=server_in.icon,
                 is_active=True,
                 tags=server_in.tags or [],
+                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
+                team_id=getattr(server_in, "team_id", None) or team_id,
+                owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
+                visibility=getattr(server_in, "visibility", None) or visibility,
             )
 
             # Set custom UUID if provided
@@ -434,6 +465,79 @@ class ServerService:
                 tag_conditions.append(func.json_contains(DbServer.tags, f'"{tag}"'))
             if tag_conditions:
                 query = query.where(func.or_(*tag_conditions))
+
+        servers = db.execute(query).scalars().all()
+        return [self._convert_server_to_read(s) for s in servers]
+
+    async def list_servers_for_user(
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+    ) -> List[ServerRead]:
+        """
+        List servers user has access to with team filtering.
+
+        Args:
+            db: Database session
+            user_email: Email of the user requesting servers
+            team_id: Optional team ID to filter by specific team
+            visibility: Optional visibility filter (private, team, public)
+            include_inactive: Whether to include inactive servers
+            skip: Number of servers to skip for pagination
+            limit: Maximum number of servers to return
+
+        Returns:
+            List[ServerRead]: Servers the user has access to
+        """
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        # Build query following existing patterns from list_servers()
+        query = select(DbServer)
+
+        # Apply active/inactive filter
+        if not include_inactive:
+            query = query.where(DbServer.is_active)
+
+        if team_id:
+            # Filter by specific team
+            query = query.where(DbServer.team_id == team_id)
+
+            # Validate user has access to team
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id not in team_ids:
+                return []  # No access to team
+        else:
+            # Get user's accessible teams
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            # Build access conditions following existing patterns
+            # Third-Party
+            from sqlalchemy import and_, or_  # pylint: disable=import-outside-toplevel
+
+            access_conditions = []
+
+            # 1. User's personal resources (owner_email matches)
+            access_conditions.append(DbServer.owner_email == user_email)
+
+            # 2. Team resources where user is member
+            if team_ids:
+                access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
+
+            # 3. Public resources (if visibility allows)
+            access_conditions.append(DbServer.visibility == "public")
+
+            query = query.where(or_(*access_conditions))
+
+        # Apply visibility filter if specified
+        if visibility:
+            query = query.where(DbServer.visibility == visibility)
+
+        # Apply pagination following existing patterns
+        query = query.offset(skip).limit(limit)
 
         servers = db.execute(query).scalars().all()
         return [self._convert_server_to_read(s) for s in servers]

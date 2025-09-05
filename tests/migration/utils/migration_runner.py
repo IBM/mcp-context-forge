@@ -5,13 +5,15 @@ This module orchestrates migration testing scenarios across different
 MCP Gateway versions with detailed logging and validation.
 """
 
+# Standard
+from dataclasses import dataclass, field
 import json
 import logging
-import time
-from dataclasses import dataclass, field
 from pathlib import Path
+import time
 from typing import Dict, List, Optional, Tuple
 
+# Local
 from .container_manager import ContainerManager
 
 logger = logging.getLogger(__name__)
@@ -309,6 +311,7 @@ class MigrationTestRunner:
         base_url = f"http://localhost:{port}"
 
         # Seed data using REST API
+        # Third-Party
         import requests
         session = requests.Session()
         session.timeout = 10
@@ -358,6 +361,7 @@ class MigrationTestRunner:
         base_url = f"http://localhost:{port}"
 
         # Count records using REST API
+        # Third-Party
         import requests
         session = requests.Session()
         session.timeout = 10

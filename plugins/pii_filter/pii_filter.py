@@ -10,9 +10,9 @@ and their responses, including SSNs, credit cards, emails, phone numbers, and mo
 """
 
 # Standard
-import re
 from enum import Enum
-from typing import Any, Pattern, Dict, List, Tuple
+import re
+from typing import Any, Dict, List, Pattern, Tuple
 
 # Third-Party
 from pydantic import BaseModel, Field
@@ -27,10 +27,10 @@ from mcpgateway.plugins.framework import (
     PromptPosthookResult,
     PromptPrehookPayload,
     PromptPrehookResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
 )
 from mcpgateway.services.logging_service import LoggingService
 
@@ -455,11 +455,14 @@ class PIIDetector:
                 return self.config.redaction_text
 
         elif strategy == MaskingStrategy.HASH:
+            # Standard
             import hashlib
             return f"[HASH:{hashlib.sha256(value.encode()).hexdigest()[:8]}]"
 
         elif strategy == MaskingStrategy.TOKENIZE:
+            # Standard
             import uuid
+
             # In production, you'd store the mapping
             return f"[TOKEN:{uuid.uuid4().hex[:8]}]"
 
@@ -862,6 +865,7 @@ class PIIFilterPlugin(Plugin):
 
             # Try to parse as JSON and process nested content
             try:
+                # Standard
                 import json
                 parsed_json = json.loads(data)
                 json_modified, json_detections = self._process_nested_data_for_pii(parsed_json, f"{path}(json)", all_detections)
@@ -890,6 +894,7 @@ class PIIFilterPlugin(Plugin):
                     json_path = f"{current_path}(json)"
                     if any(path.startswith(json_path) for path in all_detections.keys()):
                         try:
+                            # Standard
                             import json
                             parsed_json = json.loads(value)
                             # Apply masking to the parsed JSON
@@ -921,6 +926,7 @@ class PIIFilterPlugin(Plugin):
                     json_path = f"{current_path}(json)"
                     if any(path.startswith(json_path) for path in all_detections.keys()):
                         try:
+                            # Standard
                             import json
                             parsed_json = json.loads(item)
                             # Apply masking to the parsed JSON

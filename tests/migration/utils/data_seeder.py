@@ -5,13 +5,14 @@ This module provides comprehensive test data generation and seeding
 capabilities for validating data integrity across migrations.
 """
 
+# Standard
+from dataclasses import dataclass
 import json
 import logging
+from pathlib import Path
 import random
 import string
 import time
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
@@ -517,6 +518,7 @@ class DataSeeder:
 
         for version in versions:
             # Create a copy of the base dataset
+            # Standard
             import copy
             dataset = copy.deepcopy(base_dataset)
 

@@ -4,18 +4,22 @@
 Startup script for the MCP Langchain Agent
 """
 
+# Standard
 import asyncio
 import logging
-import sys
 from pathlib import Path
+import sys
 
-import uvicorn
+# Third-Party
 from dotenv import load_dotenv
+import uvicorn
 
 try:
-    from .config import get_settings, validate_environment, get_example_env
+    # Local
+    from .config import get_example_env, get_settings, validate_environment
 except ImportError:
-    from config import get_settings, validate_environment, get_example_env
+    # Third-Party
+    from config import get_example_env, get_settings, validate_environment
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +60,7 @@ def setup_environment():
 async def test_agent_initialization():
     """Test that the agent can be initialized"""
     try:
+        # Local
         from .agent_langchain import LangchainMCPAgent
 
         settings = get_settings()

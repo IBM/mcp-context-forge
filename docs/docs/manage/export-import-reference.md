@@ -181,7 +181,7 @@ mcpgateway import backup.json --include "tools:*"
 
 ### "Authentication Error"
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
 ```
 
 ### "Gateway Connection Failed"

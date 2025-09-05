@@ -29,7 +29,7 @@
 - `make clean`: Remove caches, build artefacts, venv, coverage, docs, certs.
 
 MCP helpers
-- JWT token: `python -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret KEY`.
+- JWT token: `python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY`.
 - Expose stdio server: `python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000`.
 
 ## Coding Style & Naming Conventions

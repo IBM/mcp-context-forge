@@ -5,12 +5,16 @@ This module tests database migrations using PostgreSQL via docker-compose
 stacks across different MCP Gateway versions with comprehensive validation.
 """
 
+# Standard
 import logging
-import pytest
-import time
 from pathlib import Path
+import time
 
-from .utils.data_seeder import DataSeeder, DataGenerationConfig
+# Third-Party
+import pytest
+
+# Local
+from .utils.data_seeder import DataGenerationConfig, DataSeeder
 from .utils.schema_validator import SchemaValidator
 
 logger = logging.getLogger(__name__)
@@ -413,6 +417,7 @@ class TestPostgreSQLMigrations:
         base_url = f"http://localhost:{port}"
 
         # Seed data using REST API
+        # Third-Party
         import requests
         session = requests.Session()
         session.timeout = 15
@@ -462,6 +467,7 @@ class TestPostgreSQLMigrations:
                     f"print(resp.read().decode())"
                 ], capture_output=True)
 
+                # Standard
                 import json
                 data = json.loads(result.stdout.strip())
 

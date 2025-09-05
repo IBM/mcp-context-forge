@@ -9,7 +9,7 @@ Simple tests to boost coverage to 75%.
 
 # Standard
 import sys
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -34,8 +34,11 @@ def test_exception_classes():
 @pytest.mark.asyncio
 async def test_export_command_basic_structure():
     """Test export command basic structure without execution."""
-    from mcpgateway.cli_export_import import export_command
+    # Standard
     import argparse
+
+    # First-Party
+    from mcpgateway.cli_export_import import export_command
 
     # Create minimal args structure
     args = argparse.Namespace(
@@ -59,10 +62,13 @@ async def test_export_command_basic_structure():
 @pytest.mark.asyncio
 async def test_import_command_basic_structure():
     """Test import command basic structure without execution."""
-    from mcpgateway.cli_export_import import import_command
+    # Standard
     import argparse
-    import tempfile
     import json
+    import tempfile
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     # Create test file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -89,6 +95,7 @@ async def test_import_command_basic_structure():
 
 def test_cli_export_import_constants():
     """Test CLI module constants and basic imports."""
+    # First-Party
     from mcpgateway.cli_export_import import logger
 
     # Test logger exists
@@ -100,6 +107,7 @@ def test_cli_export_import_constants():
 @pytest.mark.asyncio
 async def test_make_authenticated_request_structure():
     """Test make_authenticated_request basic structure."""
+    # First-Party
     from mcpgateway.cli_export_import import make_authenticated_request
 
     # Mock auth token to return None (no auth configured)
@@ -110,8 +118,11 @@ async def test_make_authenticated_request_structure():
 
 def test_import_command_file_not_found():
     """Test import command with non-existent file."""
-    from mcpgateway.cli_export_import import import_command
+    # Standard
     import argparse
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     # Args with non-existent file
     args = argparse.Namespace(
@@ -124,6 +135,7 @@ def test_import_command_file_not_found():
     )
 
     # Should exit with error
+    # Standard
     import asyncio
     with pytest.raises(SystemExit) as exc_info:
         asyncio.run(import_command(args))
@@ -133,6 +145,7 @@ def test_import_command_file_not_found():
 
 def test_cli_module_imports():
     """Test CLI module can be imported and has expected attributes."""
+    # First-Party
     import mcpgateway.cli_export_import as cli_module
 
     # Test required functions exist

@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """Pytest configuration and fixtures for MCP LangChain Agent tests."""
 
+# Standard
 import os
-import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import AsyncMock, Mock
+
+# Third-Party
 from fastapi.testclient import TestClient
+import pytest
 
 # Set test environment variables before any imports
 os.environ["OPENAI_API_KEY"] = "test-key"

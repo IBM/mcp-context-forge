@@ -12,13 +12,7 @@ import pytest
 # First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import (
-    GlobalContext,
-    PromptPosthookPayload,
-    PromptPrehookPayload,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload
-)
+from mcpgateway.plugins.framework.models import GlobalContext, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 

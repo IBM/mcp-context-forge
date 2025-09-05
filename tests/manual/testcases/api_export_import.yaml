@@ -1,0 +1,145 @@
+# MCP Gateway v0.7.0 - Export/Import API Tests
+# Configuration backup and restore testing
+# Focus: Data export/import, backup workflows, and recovery
+
+worksheet_name: "API Export Import"
+description: "Complete configuration export/import API testing for backup and restore workflows"
+priority: "MEDIUM"
+estimated_time: "30-60 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Operation"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Status"
+  - "Tester"
+  - "File Required"
+  - "Comments"
+
+tests:
+  - test_id: "EXP-001"
+    endpoint: "/admin/export/configuration"
+    method: "GET"
+    operation: "Export"
+    description: "Export complete configuration"
+    curl_command: "curl http://localhost:4444/admin/export/configuration -u admin:changeme -o full_config_export.json"
+    request_body: ""
+    expected_status: 200
+    expected_response: "JSON file downloaded with complete configuration"
+    file_required: "None"
+
+  - test_id: "EXP-002"
+    endpoint: "/admin/export/configuration"
+    method: "GET"
+    operation: "Export"
+    description: "Export servers only"
+    curl_command: 'curl "http://localhost:4444/admin/export/configuration?types=servers" -u admin:changeme -o servers_only_export.json'
+    request_body: ""
+    expected_status: 200
+    expected_response: "JSON file with servers only"
+    file_required: "None"
+
+  - test_id: "EXP-003"
+    endpoint: "/admin/export/configuration"
+    method: "GET"
+    operation: "Export"
+    description: "Export with team filtering"
+    curl_command: 'curl "http://localhost:4444/admin/export/configuration?team_id={TEAM_ID}" -u admin:changeme -o team_export.json'
+    request_body: ""
+    expected_status: 200
+    expected_response: "JSON file with team-specific resources only"
+    file_required: "None"
+
+  - test_id: "EXP-004"
+    endpoint: "/admin/export/selective"
+    method: "POST"
+    operation: "Export"
+    description: "Selective entity export"
+    curl_command: 'curl -X POST http://localhost:4444/admin/export/selective -u admin:changeme -H "Content-Type: application/json"'
+    request_body: '{"entity_selections":{"servers":["server-id-1","server-id-2"],"tools":["tool-id-1"]},"include_dependencies":true}'
+    expected_status: 200
+    expected_response: "JSON with selected entities and their dependencies"
+    file_required: "None"
+
+  - test_id: "IMP-001"
+    endpoint: "/admin/import/configuration"
+    method: "POST"
+    operation: "Import"
+    description: "Import complete configuration"
+    curl_command: 'curl -X POST http://localhost:4444/admin/import/configuration -u admin:changeme -H "Content-Type: application/json" -d @full_config_export.json'
+    request_body: "JSON configuration file"
+    expected_status: 200
+    expected_response: "Configuration imported successfully"
+    file_required: "full_config_export.json"
+
+  - test_id: "IMP-002"
+    endpoint: "/admin/import/configuration"
+    method: "POST"
+    operation: "Import"
+    description: "Import with merge mode"
+    curl_command: 'curl -X POST http://localhost:4444/admin/import/configuration -u admin:changeme -H "Content-Type: application/json"'
+    request_body: '{"mode":"merge","data":"<JSON_CONFIG>","team_assignment":"auto"}'
+    expected_status: 200
+    expected_response: "Configuration merged without overwriting existing"
+    file_required: "Config JSON data"
+
+  - test_id: "IMP-003"
+    endpoint: "/admin/import/configuration"
+    method: "POST"
+    operation: "Import"
+    description: "Import with replace mode"
+    curl_command: 'curl -X POST http://localhost:4444/admin/import/configuration -u admin:changeme -H "Content-Type: application/json"'
+    request_body: '{"mode":"replace","data":"<JSON_CONFIG>","backup_existing":true}'
+    expected_status: 200
+    expected_response: "Configuration replaced, existing data backed up"
+    file_required: "Config JSON data"
+
+  - test_id: "IMP-004"
+    endpoint: "/admin/import/validate"
+    method: "POST"
+    operation: "Import"
+    description: "Validate import data before import"
+    curl_command: 'curl -X POST http://localhost:4444/admin/import/validate -u admin:changeme -H "Content-Type: application/json" -d @config_to_validate.json'
+    request_body: "JSON configuration to validate"
+    expected_status: 200
+    expected_response: "Validation results with any errors or warnings"
+    file_required: "config_to_validate.json"
+
+  - test_id: "IMP-005"
+    endpoint: "/admin/import/status"
+    method: "GET"
+    operation: "Import"
+    description: "Check import operation status"
+    curl_command: "curl http://localhost:4444/admin/import/status -u admin:changeme"
+    request_body: ""
+    expected_status: 200
+    expected_response: "Import operation status and progress"
+    file_required: "None"
+
+  - test_id: "EXP-005"
+    endpoint: "/admin/export/logs"
+    method: "GET"
+    operation: "Export"
+    description: "Export system logs"
+    curl_command: "curl http://localhost:4444/admin/export/logs -u admin:changeme -o system_logs.json"
+    request_body: ""
+    expected_status: 200
+    expected_response: "System logs exported as JSON"
+    file_required: "None"
+
+  - test_id: "BULK-001"
+    endpoint: "/admin/bulk-import"
+    method: "POST"
+    operation: "Import"
+    description: "Bulk import multiple entity types"
+    curl_command: 'curl -X POST http://localhost:4444/admin/bulk-import -u admin:changeme -H "Content-Type: application/json"'
+    request_body: '{"tools":[{"name":"bulk-tool-1","schema":{"type":"object"}}],"resources":[{"name":"bulk-resource-1","uri":"file://bulk.txt"}]}'
+    expected_status: 201
+    expected_response: "Bulk import completed with summary"
+    file_required: "None"

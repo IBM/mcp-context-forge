@@ -1,0 +1,140 @@
+# MCP Gateway v0.7.0 - Tools API Tests
+# Tool management and invocation testing
+# Focus: Tool CRUD operations, invocation, and team-based access
+
+worksheet_name: "API Tools"
+description: "Complete tool management API testing including creation, invocation, and team scoping"
+priority: "HIGH"
+estimated_time: "45-90 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Actual Status"
+  - "Actual Response"
+  - "Status"
+  - "Tester"
+  - "Comments"
+
+tests:
+  - test_id: "TOOL-001"
+    endpoint: "/tools"
+    method: "GET"
+    description: "List available tools with team filtering"
+    curl_command: 'curl http://localhost:4444/tools -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of tools filtered by team permissions"
+    test_steps:
+      - "Get valid JWT token"
+      - "Execute tools list request"
+      - "Verify HTTP 200 status"
+      - "Check response contains tools array"
+      - "Verify team-based filtering applied"
+      - "Check tool metadata includes team, owner, visibility"
+
+  - test_id: "TOOL-002"
+    endpoint: "/tools"
+    method: "POST"
+    description: "Create new tool"
+    curl_command: 'curl -X POST http://localhost:4444/tools -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"test-api-tool","description":"Tool created via API","schema":{"type":"object","properties":{"input":{"type":"string","description":"Input parameter"}},"required":["input"]}}'
+    expected_status: 201
+    expected_response: "Tool created successfully with team assignment"
+
+  - test_id: "TOOL-003"
+    endpoint: "/tools/{id}"
+    method: "GET"
+    description: "Get tool details and schema"
+    curl_command: 'curl http://localhost:4444/tools/{TOOL_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Tool details with complete schema definition"
+
+  - test_id: "TOOL-004"
+    endpoint: "/tools/{id}"
+    method: "PUT"
+    description: "Update tool configuration"
+    curl_command: 'curl -X PUT http://localhost:4444/tools/{TOOL_ID} -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"updated-tool-name","description":"Updated via API testing"}'
+    expected_status: 200
+    expected_response: "Tool updated successfully"
+
+  - test_id: "TOOL-005"
+    endpoint: "/tools/{id}"
+    method: "DELETE"
+    description: "Delete tool"
+    curl_command: 'curl -X DELETE http://localhost:4444/tools/{TOOL_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 204
+    expected_response: "Tool deleted successfully"
+
+  - test_id: "TOOL-006"
+    endpoint: "/tools/{id}/invoke"
+    method: "POST"
+    description: "Invoke tool execution"
+    curl_command: 'curl -X POST http://localhost:4444/tools/{TOOL_ID}/invoke -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"arguments":{"input":"test data for tool execution"}}'
+    expected_status: 200
+    expected_response: "Tool execution result with output"
+    critical: true
+
+  - test_id: "TOOL-007"
+    endpoint: "/tools/{id}/schema"
+    method: "GET"
+    description: "Get tool schema definition"
+    curl_command: 'curl http://localhost:4444/tools/{TOOL_ID}/schema -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Tool schema in JSON Schema format"
+
+  - test_id: "TOOL-008"
+    endpoint: "/tools/search"
+    method: "GET"
+    description: "Search tools by name or description"
+    curl_command: 'curl "http://localhost:4444/tools/search?q=time&limit=10" -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Search results matching query with team filtering"
+
+  - test_id: "TOOL-009"
+    endpoint: "/tools/import"
+    method: "POST"
+    description: "Bulk import tools"
+    curl_command: 'curl -X POST http://localhost:4444/tools/import -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"tools":[{"name":"bulk-import-test","description":"Bulk imported tool","schema":{"type":"object","properties":{"test":{"type":"string"}}}}]}'
+    expected_status: 201
+    expected_response: "Tools imported successfully with team assignments"
+
+  - test_id: "TOOL-010"
+    endpoint: "/tools/export"
+    method: "GET"
+    description: "Export tools as JSON"
+    curl_command: 'curl http://localhost:4444/tools/export -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Tools exported as JSON with team context"
+
+  - test_id: "TOOL-011"
+    endpoint: "/tools/{id}/history"
+    method: "GET"
+    description: "Get tool execution history"
+    curl_command: 'curl http://localhost:4444/tools/{TOOL_ID}/history -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Tool execution history and metrics"
+
+  - test_id: "TOOL-012"
+    endpoint: "/tools/{id}/validate"
+    method: "POST"
+    description: "Validate tool schema and configuration"
+    curl_command: 'curl -X POST http://localhost:4444/tools/{TOOL_ID}/validate -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Tool validation results and any warnings"

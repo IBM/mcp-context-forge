@@ -106,6 +106,18 @@ class TagService:
             >>> asyncio.run(test_with_tags())
             True
 
+            >>> # include_entities=True path
+            >>> from types import SimpleNamespace
+            >>> entity = SimpleNamespace(id='1', name='E', description='d', tags=['api'])
+            >>> mock_result2 = MagicMock()
+            >>> mock_result2.scalars.return_value = [entity]
+            >>> mock_db.execute.return_value = mock_result2
+            >>> async def test_with_entities():
+            ...     tags = await service.get_all_tags(mock_db, entity_types=["tools"], include_entities=True)
+            ...     return len(tags) == 1 and tags[0].entities[0].name == 'E'
+            >>> asyncio.run(test_with_entities())
+            True
+
         Raises:
             SQLAlchemyError: If database query fails
             ValidationError: If invalid entity types are processed
@@ -385,11 +397,15 @@ class TagService:
             >>> # Mock tag count results
             >>> mock_db.execute.return_value.scalars.return_value.all.return_value = [2, 1, 3]  # 3 entities with 2, 1, 3 tags each
             >>>
-            >>> # Test tag counting (synchronous version for doctest)
-            >>> def test_counts():
-            ...     # Simulate the method logic
-            ...     return {'tools': 6, 'resources': 0, 'prompts': 0, 'servers': 0, 'gateways': 0}
-            >>> counts = test_counts()
+            >>> # Execute method with mocked responses (same values reused for simplicity)
+            >>> class _Res:
+            ...     def scalars(self):
+            ...         class _S:
+            ...             def all(self_inner):
+            ...                 return [2, 1, 3]
+            ...         return _S()
+            >>> mock_db.execute.return_value = _Res()
+            >>> counts = asyncio.run(service.get_tag_counts(mock_db))
             >>> counts['tools']
             6
             >>> all(isinstance(v, int) for v in counts.values())

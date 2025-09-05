@@ -7,17 +7,23 @@ Authors: Mihai Criveti
 
 Coverage-guided fuzzing for configuration parsing using Atheris.
 """
-import atheris
-import sys
+# Standard
 import os
+import sys
 import tempfile
+
+# Third-Party
+import atheris
 
 # Ensure the project is in the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 try:
-    from mcpgateway.config import Settings, get_settings
+    # Third-Party
     from pydantic import ValidationError
+
+    # First-Party
+    from mcpgateway.config import get_settings, Settings
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

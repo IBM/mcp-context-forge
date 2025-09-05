@@ -29,7 +29,35 @@ logger = logging.getLogger(__name__)
 
 
 class TokenStorageService:
-    """Manages OAuth token storage and retrieval."""
+    """Manages OAuth token storage and retrieval.
+
+    Examples:
+        >>> service = TokenStorageService(None)  # Mock DB for doctest
+        >>> service.db is None
+        True
+        >>> service.encryption is not None or service.encryption is None  # Encryption may or may not be available
+        True
+        >>> # Test token expiration calculation
+        >>> from datetime import datetime, timedelta
+        >>> expires_in = 3600  # 1 hour
+        >>> now = datetime.utcnow()
+        >>> expires_at = now + timedelta(seconds=expires_in)
+        >>> expires_at > now
+        True
+        >>> # Test scope list handling
+        >>> scopes = ["read", "write", "admin"]
+        >>> isinstance(scopes, list)
+        True
+        >>> "read" in scopes
+        True
+        >>> # Test token encryption detection
+        >>> short_token = "abc123"
+        >>> len(short_token) < 100
+        True
+        >>> encrypted_token = "gAAAAABh" + "x" * 100
+        >>> len(encrypted_token) > 100
+        True
+    """
 
     def __init__(self, db: Session):
         """Initialize Token Storage Service.
@@ -146,6 +174,33 @@ class TokenStorageService:
 
         Returns:
             Valid access token or None if no valid token available
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timedelta
+            >>> svc = TokenStorageService(None)
+            >>> svc.encryption = None  # simplify for doctest
+            >>> future = datetime.utcnow() + timedelta(seconds=3600)
+            >>> rec = SimpleNamespace(gateway_id='g1', user_id='u1', access_token='tok', refresh_token=None, expires_at=future)
+            >>> class _Res:
+            ...     def scalar_one_or_none(self):
+            ...         return rec
+            >>> class _DB:
+            ...     def execute(self, *_args, **_kw):
+            ...         return _Res()
+            >>> svc.db = _DB()
+            >>> import asyncio
+            >>> asyncio.run(svc.get_any_valid_token('g1'))
+            'tok'
+            >>> # Expired record returns None
+            >>> past = datetime.utcnow() - timedelta(seconds=1)
+            >>> rec2 = SimpleNamespace(gateway_id='g1', user_id='u1', access_token='tok', refresh_token=None, expires_at=past)
+            >>> class _Res2:
+            ...     def scalar_one_or_none(self):
+            ...         return rec2
+            >>> svc.db.execute = lambda *_a, **_k: _Res2()
+            >>> asyncio.run(svc.get_any_valid_token('g1')) is None
+            True
         """
         try:
             # Get any token for this gateway
@@ -207,6 +262,23 @@ class TokenStorageService:
 
         Returns:
             True if token is expired or near expiration
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timedelta
+            >>> svc = TokenStorageService(None)
+            >>> future = datetime.utcnow() + timedelta(seconds=600)
+            >>> past = datetime.utcnow() - timedelta(seconds=10)
+            >>> rec_future = SimpleNamespace(expires_at=future)
+            >>> rec_past = SimpleNamespace(expires_at=past)
+            >>> svc._is_token_expired(rec_future, threshold_seconds=300)  # 10 min ahead, 5 min threshold
+            False
+            >>> svc._is_token_expired(rec_future, threshold_seconds=900)  # 10 min ahead, 15 min threshold
+            True
+            >>> svc._is_token_expired(rec_past, threshold_seconds=0)
+            True
+            >>> svc._is_token_expired(SimpleNamespace(expires_at=None))
+            True
         """
         if not token_record.expires_at:
             return True
@@ -222,6 +294,27 @@ class TokenStorageService:
 
         Returns:
             Token information dictionary or None if not found
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from datetime import datetime, timedelta
+            >>> svc = TokenStorageService(None)
+            >>> now = datetime.utcnow()
+            >>> future = now + timedelta(seconds=60)
+            >>> rec = SimpleNamespace(user_id='u1', token_type='bearer', expires_at=future, scopes=['s1'], created_at=now, updated_at=now)
+            >>> class _Res:
+            ...     def scalar_one_or_none(self):
+            ...         return rec
+            >>> class _DB:
+            ...     def execute(self, *_args, **_kw):
+            ...         return _Res()
+            >>> svc.db = _DB()
+            >>> import asyncio
+            >>> info = asyncio.run(svc.get_token_info('g1', 'u1'))
+            >>> info['user_id']
+            'u1'
+            >>> isinstance(info['is_expired'], bool)
+            True
         """
         try:
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.user_id == user_id)).scalar_one_or_none()
@@ -252,6 +345,22 @@ class TokenStorageService:
 
         Returns:
             True if tokens were revoked successfully
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from unittest.mock import MagicMock
+            >>> svc = TokenStorageService(MagicMock())
+            >>> rec = SimpleNamespace()
+            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = rec
+            >>> svc.db.delete = lambda obj: None
+            >>> svc.db.commit = lambda: None
+            >>> import asyncio
+            >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
+            True
+            >>> # Not found
+            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = None
+            >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
+            False
         """
         try:
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.user_id == user_id)).scalar_one_or_none()
@@ -277,6 +386,17 @@ class TokenStorageService:
 
         Returns:
             Number of tokens cleaned up
+
+        Examples:
+            >>> from types import SimpleNamespace
+            >>> from unittest.mock import MagicMock
+            >>> svc = TokenStorageService(MagicMock())
+            >>> svc.db.execute.return_value.scalars.return_value.all.return_value = [SimpleNamespace(), SimpleNamespace()]
+            >>> svc.db.delete = lambda obj: None
+            >>> svc.db.commit = lambda: None
+            >>> import asyncio
+            >>> asyncio.run(svc.cleanup_expired_tokens(1))
+            2
         """
         try:
             cutoff_date = datetime.utcnow() - timedelta(days=max_age_days)

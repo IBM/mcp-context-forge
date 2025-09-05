@@ -6,8 +6,11 @@ Authors: Mihai Criveti
 
 Schemathesis-based API endpoint fuzzing.
 """
-import pytest
+# Third-Party
 from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.main import app
 
 
@@ -123,6 +126,7 @@ class TestAPIFuzzingCustom:
 
     def test_concurrent_request_fuzzing(self):
         """Test concurrent requests to check for race conditions."""
+        # Standard
         import threading
         import time
 

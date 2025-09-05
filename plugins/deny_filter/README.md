@@ -81,7 +81,7 @@ curl -X POST http://localhost:8000/prompts/test_prompt \
 Here's a prompt that trips the checks:
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
@@ -100,7 +100,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 ## CURL Command to Test
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 
 # Then test with a prompt containing deny words
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \

@@ -1,0 +1,184 @@
+# MCP Gateway v0.7.0 - Teams API Tests
+# Team management endpoint testing
+# Focus: Multi-tenancy team operations
+
+worksheet_name: "API Teams"
+description: "Complete team management API testing including CRUD operations and membership"
+priority: "HIGH"
+estimated_time: "30-60 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Actual Status"
+  - "Actual Response"
+  - "Status"
+  - "Tester"
+  - "Comments"
+
+tests:
+  - test_id: "TEAM-001"
+    endpoint: "/teams"
+    method: "GET"
+    description: "List user's teams"
+    curl_command: 'curl http://localhost:4444/teams -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of teams user belongs to"
+    test_steps:
+      - "Get JWT token from login first"
+      - "Execute teams list request"
+      - "Verify HTTP 200 status"
+      - "Check response is JSON array"
+      - "Verify personal team is included"
+      - "Check team data includes name, id, visibility"
+
+  - test_id: "TEAM-002"
+    endpoint: "/teams"
+    method: "POST"
+    description: "Create new team"
+    curl_command: 'curl -X POST http://localhost:4444/teams -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"Manual Test Team","description":"Team created during manual testing","visibility":"private","max_members":20}'
+    expected_status: 201
+    expected_response: "Team created successfully with generated ID"
+    test_steps:
+      - "Prepare team creation data"
+      - "Execute team creation request"
+      - "Verify HTTP 201 status"
+      - "Check response contains team ID"
+      - "Verify team appears in teams list"
+      - "Save team ID for subsequent tests"
+
+  - test_id: "TEAM-003"
+    endpoint: "/teams/{id}"
+    method: "GET"
+    description: "Get team details"
+    curl_command: 'curl http://localhost:4444/teams/{TEAM_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Team details with member information"
+    test_steps:
+      - "Use team ID from creation test or personal team"
+      - "Request team details"
+      - "Verify HTTP 200 status"
+      - "Check response includes team metadata"
+      - "Verify member list is included"
+      - "Check permissions are enforced"
+
+  - test_id: "TEAM-004"
+    endpoint: "/teams/{id}"
+    method: "PUT"
+    description: "Update team information"
+    curl_command: 'curl -X PUT http://localhost:4444/teams/{TEAM_ID} -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"name":"Updated Team Name","description":"Updated during manual testing"}'
+    expected_status: 200
+    expected_response: "Team updated successfully"
+    test_steps:
+      - "Use team ID from creation test"
+      - "Prepare update data"
+      - "Execute team update request"
+      - "Verify HTTP 200 status"
+      - "Check team details show updated information"
+      - "Verify only team owners can update"
+
+  - test_id: "TEAM-005"
+    endpoint: "/teams/{id}"
+    method: "DELETE"
+    description: "Delete team"
+    curl_command: 'curl -X DELETE http://localhost:4444/teams/{TEAM_ID} -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 204
+    expected_response: "Team deleted successfully (or 403 if personal team)"
+    test_steps:
+      - "Use test team ID (not personal team)"
+      - "Execute team deletion request"
+      - "Verify appropriate HTTP status"
+      - "Check team no longer exists"
+      - "Test that personal teams cannot be deleted"
+      - "Verify team resources are handled properly"
+
+  - test_id: "TEAM-006"
+    endpoint: "/teams/{id}/members"
+    method: "GET"
+    description: "List team members"
+    curl_command: 'curl http://localhost:4444/teams/{TEAM_ID}/members -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of team members with roles"
+    test_steps:
+      - "Use valid team ID"
+      - "Request member list"
+      - "Verify HTTP 200 status"
+      - "Check members array in response"
+      - "Verify member roles (owner/member)"
+      - "Check join dates and status"
+
+  - test_id: "TEAM-007"
+    endpoint: "/teams/{id}/members"
+    method: "POST"
+    description: "Add team member"
+    curl_command: 'curl -X POST http://localhost:4444/teams/{TEAM_ID}/members -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"user_email":"newmember@example.com","role":"member"}'
+    expected_status: 201
+    expected_response: "Member added to team successfully"
+    test_steps:
+      - "Create test user first (if needed)"
+      - "Prepare member addition data"
+      - "Execute add member request"
+      - "Verify HTTP 201 status"
+      - "Check member appears in member list"
+      - "Verify only team owners can add members"
+
+  - test_id: "TEAM-008"
+    endpoint: "/teams/{id}/invitations"
+    method: "GET"
+    description: "List team invitations"
+    curl_command: 'curl http://localhost:4444/teams/{TEAM_ID}/invitations -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Array of pending invitations"
+    test_steps:
+      - "Use valid team ID"
+      - "Request invitations list"
+      - "Verify HTTP 200 status"
+      - "Check invitations array"
+      - "Verify invitation details (email, role, status)"
+      - "Test permissions (team owners only)"
+
+  - test_id: "TEAM-009"
+    endpoint: "/teams/{id}/invitations"
+    method: "POST"
+    description: "Create team invitation"
+    curl_command: 'curl -X POST http://localhost:4444/teams/{TEAM_ID}/invitations -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"email":"invitee@example.com","role":"member","message":"Join our testing team!"}'
+    expected_status: 201
+    expected_response: "Invitation created and sent"
+    test_steps:
+      - "Prepare invitation data"
+      - "Execute invitation creation"
+      - "Verify HTTP 201 status"
+      - "Check invitation created in database"
+      - "Verify email sent (if email configured)"
+      - "Test invitation token functionality"
+
+  - test_id: "TEAM-010"
+    endpoint: "/teams/{id}/leave"
+    method: "POST"
+    description: "Leave team"
+    curl_command: 'curl -X POST http://localhost:4444/teams/{TEAM_ID}/leave -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Successfully left team (or 403 if personal team)"
+    test_steps:
+      - "Use non-personal team ID"
+      - "Execute leave team request"
+      - "Verify appropriate response"
+      - "Check user no longer in member list"
+      - "Test that personal teams cannot be left"
+      - "Verify access to team resources is removed"

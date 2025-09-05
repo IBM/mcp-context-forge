@@ -122,7 +122,7 @@
 
 ???+ example "🔑 How do I generate and use a JWT token?"
     ```bash
-    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin -exp 0 --secret my-test-key)
+    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com -exp 0 --secret my-test-key)
     curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/tools
     ```
 

@@ -28,7 +28,6 @@ import pytest
 # First-Party
 from mcpgateway.translate import _build_fastapi, _PubSub, _run_stdio_to_sse, StdIOEndpoint
 
-
 # Test configuration
 TEST_PORT = 19999  # Use high port to avoid conflicts
 TEST_HOST = "127.0.0.1"
@@ -90,6 +89,7 @@ while True:
 """
 
     # Write script to temp file
+    # Standard
     import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(echo_script)
@@ -98,6 +98,7 @@ while True:
     yield f"{sys.executable} {script_path}"
 
     # Cleanup
+    # Standard
     import os
     os.unlink(script_path)
 

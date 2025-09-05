@@ -1,22 +1,26 @@
 # -*- coding: utf-8 -*-
+# Standard
 import asyncio
 import json
 import logging
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
+# Third-Party
 from langchain.agents import AgentExecutor, create_openai_functions_agent
 from langchain.tools import Tool
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import BaseTool
-from langchain_core.language_models.chat_models import BaseChatModel
-from pydantic import BaseModel, Field
 
 # LLM Provider imports
-from langchain_openai import ChatOpenAI, AzureChatOpenAI
+from langchain_openai import AzureChatOpenAI, ChatOpenAI
+from pydantic import BaseModel, Field
+
 try:
-    from langchain_community.chat_models import BedrockChat, ChatOllama
+    # Third-Party
     from langchain_anthropic import ChatAnthropic
+    from langchain_community.chat_models import BedrockChat, ChatOllama
 except ImportError:
     # Optional dependencies - will be checked at runtime
     BedrockChat = None
@@ -24,9 +28,11 @@ except ImportError:
     ChatAnthropic = None
 
 try:
+    # Local
     from .mcp_client import MCPClient, ToolDef
     from .models import AgentConfig
 except ImportError:
+    # Third-Party
     from mcp_client import MCPClient, ToolDef
     from models import AgentConfig
 
@@ -391,4 +397,5 @@ Always strive to be helpful, accurate, and honest in your responses."""
         """Stream agent response asynchronously"""
         if not self._initialized:
             raise RuntimeError("Agent not initialized. Call initialize() first.")
+        # Standard
         import asyncio

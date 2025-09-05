@@ -8,7 +8,7 @@ Integration tests for tag endpoints.
 """
 
 # Standard
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -18,14 +18,53 @@ import pytest
 from mcpgateway.main import app, require_auth
 from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
 
+# Local
+from tests.utils.rbac_mocks import MockPermissionService
+
 
 @pytest.fixture
 def test_client() -> TestClient:
     """FastAPI TestClient with auth dependency overridden."""
     app.dependency_overrides[require_auth] = lambda: "integration-test-user"
-    client = TestClient(app)
-    yield client
-    app.dependency_overrides.pop(require_auth, None)
+
+    # Also need to override RBAC authentication
+    # First-Party
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.middleware.rbac import get_db as rbac_get_db
+    from mcpgateway.middleware.rbac import get_permission_service
+
+    async def mock_user_with_permissions():
+        """Mock user context for RBAC."""
+        return {
+            "email": "integration-test-user@example.com",
+            "full_name": "Integration Test User",
+            "is_admin": True,
+            "ip_address": "127.0.0.1",
+            "user_agent": "test-client",
+            "db": MagicMock(),  # Tags endpoints may not need real DB session
+        }
+
+    def mock_get_permission_service(*args, **kwargs):
+        """Return a mock permission service that always grants access."""
+        return MockPermissionService(always_grant=True)
+
+    def override_get_db():
+        """Override database dependency to return a mock database."""
+        return MagicMock()  # Simple mock for tags endpoints
+
+    # Patch the PermissionService class to always return our mock
+    with patch('mcpgateway.middleware.rbac.PermissionService', MockPermissionService):
+        app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
+        app.dependency_overrides[get_permission_service] = mock_get_permission_service
+        app.dependency_overrides[rbac_get_db] = override_get_db
+
+        client = TestClient(app)
+        yield client
+
+        app.dependency_overrides.pop(require_auth, None)
+        app.dependency_overrides.pop(get_current_user_with_permissions, None)
+        app.dependency_overrides.pop(get_permission_service, None)
+        app.dependency_overrides.pop(rbac_get_db, None)
 
 
 def test_list_tags_all_entities(test_client):

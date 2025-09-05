@@ -13,6 +13,8 @@ docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
+  -e JWT_AUDIENCE=mcpgateway-api \
+  -e JWT_ISSUER=mcpgateway \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \

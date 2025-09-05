@@ -39,11 +39,42 @@ logger = logging.getLogger(__name__)
 
 
 class ExportError(Exception):
-    """Base class for export-related errors."""
+    """Base class for export-related errors.
+
+    Examples:
+        >>> try:
+        ...     raise ExportError("General export error")
+        ... except ExportError as e:
+        ...     str(e)
+        'General export error'
+        >>> try:
+        ...     raise ExportError("Export failed")
+        ... except Exception as e:
+        ...     isinstance(e, ExportError)
+        True
+    """
 
 
 class ExportValidationError(ExportError):
-    """Raised when export data validation fails."""
+    """Raised when export data validation fails.
+
+    Examples:
+        >>> try:
+        ...     raise ExportValidationError("Invalid export format")
+        ... except ExportValidationError as e:
+        ...     str(e)
+        'Invalid export format'
+        >>> try:
+        ...     raise ExportValidationError("Schema validation failed")
+        ... except ExportError as e:
+        ...     isinstance(e, ExportError)  # Should inherit from ExportError
+        True
+        >>> try:
+        ...     raise ExportValidationError("Missing required field")
+        ... except Exception as e:
+        ...     isinstance(e, ExportValidationError)
+        True
+    """
 
 
 class ExportService:
@@ -58,6 +89,36 @@ class ExportService:
 
     The service only exports locally configured entities, excluding dynamic content
     from federated sources to ensure exports contain only configuration data.
+
+    Examples:
+        >>> service = ExportService()
+        >>> hasattr(service, 'gateway_service')
+        True
+        >>> hasattr(service, 'tool_service')
+        True
+        >>> hasattr(service, 'resource_service')
+        True
+        >>> # Test entity type validation
+        >>> valid_types = ["tools", "gateways", "servers", "prompts", "resources", "roots"]
+        >>> "tools" in valid_types
+        True
+        >>> "invalid_type" in valid_types
+        False
+        >>> # Test filtering logic
+        >>> include_types = ["tools", "servers"]
+        >>> exclude_types = ["gateways"]
+        >>> "tools" in include_types and "tools" not in exclude_types
+        True
+        >>> "gateways" in include_types and "gateways" not in exclude_types
+        False
+        >>> # Test tag filtering
+        >>> entity_tags = ["production", "api"]
+        >>> filter_tags = ["production"]
+        >>> any(tag in entity_tags for tag in filter_tags)
+        True
+        >>> filter_tags = ["development"]
+        >>> any(tag in entity_tags for tag in filter_tags)
+        False
     """
 
     def __init__(self):
@@ -86,6 +147,7 @@ class ExportService:
         include_inactive: bool = False,
         include_dependencies: bool = True,
         exported_by: str = "system",
+        root_path: str = "",
     ) -> Dict[str, Any]:
         """Export complete gateway configuration to a standardized format.
 
@@ -97,6 +159,7 @@ class ExportService:
             include_inactive: Whether to include inactive entities
             include_dependencies: Whether to include dependent entities automatically
             exported_by: Username of the person performing the export
+            root_path: Root path for constructing API endpoints
 
         Returns:
             Dict containing the complete export data in the specified schema format
@@ -141,7 +204,7 @@ class ExportService:
                 export_data["entities"]["gateways"] = await self._export_gateways(db, tags, include_inactive)
 
             if "servers" in entity_types:
-                export_data["entities"]["servers"] = await self._export_servers(db, tags, include_inactive)
+                export_data["entities"]["servers"] = await self._export_servers(db, tags, include_inactive, root_path)
 
             if "prompts" in entity_types:
                 export_data["entities"]["prompts"] = await self._export_prompts(db, tags, include_inactive)
@@ -278,13 +341,14 @@ class ExportService:
 
         return exported_gateways
 
-    async def _export_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool) -> List[Dict[str, Any]]:
+    async def _export_servers(self, db: Session, tags: Optional[List[str]], include_inactive: bool, root_path: str = "") -> List[Dict[str, Any]]:
         """Export virtual servers with their tool associations.
 
         Args:
             db: Database session
             tags: Filter by tags
             include_inactive: Include inactive servers
+            root_path: Root path for constructing API endpoints
 
         Returns:
             List of exported server dictionaries
@@ -297,9 +361,9 @@ class ExportService:
                 "name": server.name,
                 "description": server.description,
                 "tool_ids": list(server.associated_tools),
-                "sse_endpoint": f"/servers/{server.id}/sse",
-                "websocket_endpoint": f"/servers/{server.id}/ws",
-                "jsonrpc_endpoint": f"/servers/{server.id}/jsonrpc",
+                "sse_endpoint": f"{root_path}/servers/{server.id}/sse",
+                "websocket_endpoint": f"{root_path}/servers/{server.id}/ws",
+                "jsonrpc_endpoint": f"{root_path}/servers/{server.id}/jsonrpc",
                 "capabilities": {"tools": {"list_changed": True}, "prompts": {"list_changed": True}},
                 "is_active": server.is_active,
                 "tags": server.tags or [],
@@ -557,7 +621,7 @@ class ExportService:
         for server_id in server_ids:
             try:
                 server = await self.server_service.get_server(db, server_id)
-                server_data = await self._export_servers(db, None, True)
+                server_data = await self._export_servers(db, None, True, root_path="")
                 servers.extend([s for s in server_data if s["name"] == server.name])
             except Exception as e:
                 logger.warning(f"Could not export server {server_id}: {str(e)}")

@@ -70,7 +70,7 @@ jobs:
               vulture mcpgateway --min-confidence 80
 
           - id: pylint
-            setup: pip install pylint
+            setup: pip install pylint pylint-pydantic
             cmd: pylint mcpgateway --errors-only --fail-under=10
 
           - id: interrogate

@@ -91,10 +91,12 @@ class TestPromptServiceExtended:
         # Test method exists and is async
         assert hasattr(service, 'register_prompt')
         assert callable(getattr(service, 'register_prompt'))
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.register_prompt)
 
         # Test method parameters
+        # Standard
         import inspect
         sig = inspect.signature(service.register_prompt)
         assert 'db' in sig.parameters
@@ -126,6 +128,7 @@ class TestPromptServiceExtended:
         # Test method exists and is async
         assert hasattr(service, 'get_prompt')
         assert callable(getattr(service, 'get_prompt'))
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.get_prompt)
 
@@ -135,6 +138,7 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method signature
+        # Standard
         import inspect
         sig = inspect.signature(service.get_prompt)
         assert 'name' in sig.parameters
@@ -148,6 +152,7 @@ class TestPromptServiceExtended:
         # Test method exists and is async
         assert hasattr(service, 'update_prompt')
         assert callable(getattr(service, 'update_prompt'))
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.update_prompt)
 
@@ -157,6 +162,7 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method parameters
+        # Standard
         import inspect
         sig = inspect.signature(service.update_prompt)
         assert 'name' in sig.parameters
@@ -187,6 +193,7 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method is async
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.toggle_prompt_status)
 
@@ -198,6 +205,7 @@ class TestPromptServiceExtended:
         # Test method exists and is async
         assert hasattr(service, 'delete_prompt')
         assert callable(getattr(service, 'delete_prompt'))
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.delete_prompt)
 
@@ -207,6 +215,7 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method parameters
+        # Standard
         import inspect
         sig = inspect.signature(service.delete_prompt)
         assert 'name' in sig.parameters
@@ -220,6 +229,7 @@ class TestPromptServiceExtended:
         # Test method exists and is async (get_prompt does the rendering)
         assert hasattr(service, 'get_prompt')
         assert callable(getattr(service, 'get_prompt'))
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.get_prompt)
 
@@ -232,6 +242,7 @@ class TestPromptServiceExtended:
         assert hasattr(service, '_plugin_manager')
 
         # Test method parameters
+        # Standard
         import inspect
         sig = inspect.signature(service.get_prompt)
         assert 'name' in sig.parameters
@@ -245,6 +256,7 @@ class TestPromptServiceExtended:
         # Test method exists and is async
         assert hasattr(service, 'aggregate_metrics')
         assert callable(getattr(service, 'aggregate_metrics'))
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.aggregate_metrics)
 
@@ -256,6 +268,7 @@ class TestPromptServiceExtended:
         # Test method exists and is async
         assert hasattr(service, 'reset_metrics')
         assert callable(getattr(service, 'reset_metrics'))
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.reset_metrics)
 
@@ -265,6 +278,7 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method signature
+        # Standard
         import inspect
         sig = inspect.signature(service.get_prompt_details)
         assert 'name' in sig.parameters

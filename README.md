@@ -270,7 +270,7 @@ BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
 
 # 3️⃣  Generate a bearer token & smoke-test the API
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
@@ -300,7 +300,7 @@ mcpgateway.exe --host 0.0.0.0 --port 4444
 
 # 4️⃣  Bearer token and smoke-test
 $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-    --username admin --exp 10080 --secret my-test-key
+    --username admin@example.com --exp 10080 --secret my-test-key
 
 curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
      http://127.0.0.1:4444/version | jq
@@ -452,7 +452,7 @@ docker logs -f mcpgateway
 
 # Generating an API key
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.6.0 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** (user `admin` / pass `changeme`).
@@ -569,7 +569,7 @@ podman run -d --name mcpgateway \
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
-  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 --secret my-test-key
+  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com -e 10080 --secret my-test-key
   ```
 * **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
 
@@ -600,7 +600,7 @@ The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while ke
 
 ```bash
 # Set environment variables
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
 export MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}
 export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
 export MCP_TOOL_CALL_TIMEOUT=120
@@ -1010,6 +1010,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | `APP_ROOT_PATH` | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
 | `TEMPLATES_DIR` | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
 | `STATIC_DIR`    | Path to static files                     | `mcpgateway/static`    | path                   |
+| `PROTOCOL_VERSION` | MCP protocol version supported          | `2025-03-26`           | string                 |
 
 > 💡 Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
 
@@ -1019,11 +1020,17 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 | --------------------- | ---------------------------------------------------------------- | ------------- | ---------- |
 | `BASIC_AUTH_USER`     | Username for Admin UI login and HTTP Basic authentication        | `admin`       | string     |
 | `BASIC_AUTH_PASSWORD` | Password for Admin UI login and HTTP Basic authentication        | `changeme`    | string     |
+| `PLATFORM_ADMIN_EMAIL` | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string |
 | `AUTH_REQUIRED`       | Require authentication for all API routes                        | `true`        | bool       |
 | `JWT_SECRET_KEY`      | Secret key used to **sign JWT tokens** for API access            | `my-test-key` | string     |
 | `JWT_ALGORITHM`       | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based) | `HS256`       | PyJWT algs |
+| `JWT_AUDIENCE`        | JWT audience claim for token validation                           | `mcpgateway-api` | string  |
+| `JWT_ISSUER`          | JWT issuer claim for token validation                             | `mcpgateway`  | string     |
 | `TOKEN_EXPIRY`        | Expiry of generated JWTs in minutes                              | `10080`       | int > 0    |
+| `REQUIRE_TOKEN_EXPIRATION` | Require all JWT tokens to have expiration claims           | `false`       | bool       |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase used to derive AES key for encrypting tool auth headers | `my-test-salt` | string |
+| `OAUTH_REQUEST_TIMEOUT` | OAuth request timeout in seconds                             | `30`          | int > 0    |
+| `OAUTH_MAX_RETRIES`   | Maximum retries for OAuth token requests                        | `3`           | int > 0    |
 
 > 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
 >
@@ -1036,7 +1043,7 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 > * Generate tokens via:
 >
 >   ```bash
->   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+>   export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
 >   echo $MCPGATEWAY_BEARER_TOKEN
 >   ```
 > * Tokens allow non-interactive API clients to authenticate securely.
@@ -1077,6 +1084,93 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 **A2A Configuration Effects:**
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
+
+### Email-Based Authentication & User Management
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `EMAIL_AUTH_ENABLED`          | Enable email-based authentication system         | `true`                | bool    |
+| `PLATFORM_ADMIN_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
+| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
+| `PLATFORM_ADMIN_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Administrator` | string |
+| `ARGON2ID_TIME_COST`          | Argon2id time cost (iterations)                  | `3`                   | int > 0 |
+| `ARGON2ID_MEMORY_COST`        | Argon2id memory cost in KiB                      | `65536`               | int > 0 |
+| `ARGON2ID_PARALLELISM`        | Argon2id parallelism (threads)                   | `1`                   | int > 0 |
+| `PASSWORD_MIN_LENGTH`         | Minimum password length                           | `8`                   | int > 0 |
+| `PASSWORD_REQUIRE_UPPERCASE`  | Require uppercase letters in passwords           | `false`               | bool    |
+| `PASSWORD_REQUIRE_LOWERCASE`  | Require lowercase letters in passwords           | `false`               | bool    |
+| `PASSWORD_REQUIRE_NUMBERS`    | Require numbers in passwords                     | `false`               | bool    |
+| `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `false`               | bool    |
+| `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `5`                   | int > 0 |
+| `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `30`                  | int > 0 |
+
+### MCP Client Authentication
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `MCP_CLIENT_AUTH_ENABLED`     | Enable JWT authentication for MCP client operations | `true`            | bool    |
+| `TRUST_PROXY_AUTH`            | Trust proxy authentication headers               | `false`               | bool    |
+| `PROXY_USER_HEADER`           | Header containing authenticated username from proxy | `X-Authenticated-User` | string |
+
+> 🔐 **MCP Client Auth**: When `MCP_CLIENT_AUTH_ENABLED=false`, you must set `TRUST_PROXY_AUTH=true` if using a trusted authentication proxy. This is a security-sensitive setting.
+
+### SSO (Single Sign-On) Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_ENABLED`                 | Master switch for Single Sign-On authentication  | `false`               | bool    |
+| `SSO_AUTO_CREATE_USERS`       | Automatically create users from SSO providers    | `true`                | bool    |
+| `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
+| `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
+| `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
+
+**GitHub OAuth:**
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_GITHUB_ENABLED`          | Enable GitHub OAuth authentication               | `false`               | bool    |
+| `SSO_GITHUB_CLIENT_ID`        | GitHub OAuth client ID                           | (none)                | string  |
+| `SSO_GITHUB_CLIENT_SECRET`    | GitHub OAuth client secret                       | (none)                | string  |
+| `SSO_GITHUB_ADMIN_ORGS`       | GitHub orgs granting admin privileges (JSON)     | `[]`                  | JSON array |
+
+**Google OAuth:**
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_GOOGLE_ENABLED`          | Enable Google OAuth authentication               | `false`               | bool    |
+| `SSO_GOOGLE_CLIENT_ID`        | Google OAuth client ID                           | (none)                | string  |
+| `SSO_GOOGLE_CLIENT_SECRET`    | Google OAuth client secret                       | (none)                | string  |
+| `SSO_GOOGLE_ADMIN_DOMAINS`    | Google admin domains (JSON)                      | `[]`                  | JSON array |
+
+**IBM Security Verify OIDC:**
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_IBM_VERIFY_ENABLED`      | Enable IBM Security Verify OIDC authentication   | `false`               | bool    |
+| `SSO_IBM_VERIFY_CLIENT_ID`    | IBM Security Verify client ID                    | (none)                | string  |
+| `SSO_IBM_VERIFY_CLIENT_SECRET` | IBM Security Verify client secret               | (none)                | string  |
+| `SSO_IBM_VERIFY_ISSUER`       | IBM Security Verify OIDC issuer URL             | (none)                | string  |
+
+**Okta OIDC:**
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_OKTA_ENABLED`            | Enable Okta OIDC authentication                  | `false`               | bool    |
+| `SSO_OKTA_CLIENT_ID`          | Okta client ID                                   | (none)                | string  |
+| `SSO_OKTA_CLIENT_SECRET`      | Okta client secret                               | (none)                | string  |
+| `SSO_OKTA_ISSUER`             | Okta issuer URL                                  | (none)                | string  |
+
+**SSO Admin Assignment:**
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
+
+### Personal Teams Configuration
+
+| Setting                                  | Description                                      | Default    | Options |
+| ---------------------------------------- | ------------------------------------------------ | ---------- | ------- |
+| `AUTO_CREATE_PERSONAL_TEAMS`            | Enable automatic personal team creation for new users | `true`   | bool    |
+| `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix                      | `personal` | string  |
+| `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
+| `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |
+| `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
+| `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
 
 ### Security
 
@@ -1127,6 +1221,7 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 | `LOG_ROTATION_ENABLED`  | **Enable log file rotation**       | **`false`**       | **`true`, `false`**        |
 | `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | Any positive integer       |
 | `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | Any non-negative integer   |
+| `LOG_BUFFER_SIZE_MB`    | Size of in-memory log buffer (MB)  | `1.0`             | float > 0                  |
 
 **Logging Behavior:**
 - **Default**: Logs only to **stdout/stderr** with human-readable text format
@@ -1262,6 +1357,7 @@ mcpgateway
 | `MAX_TOOL_RETRIES`      | Max retry attempts             | `3`     | int ≥ 0 |
 | `TOOL_RATE_LIMIT`       | Tool calls per minute          | `100`   | int > 0 |
 | `TOOL_CONCURRENT_LIMIT` | Concurrent tool invocations    | `10`    | int > 0 |
+| `GATEWAY_TOOL_NAME_SEPARATOR` | Tool name separator for gateway routing | `-`     | `-`, `--`, `_`, `.` |
 
 ### Prompts
 
@@ -1279,6 +1375,7 @@ mcpgateway
 | `HEALTH_CHECK_TIMEOUT`  | Health request timeout (secs)             | `10`    | int > 0 |
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
+| `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
 
 ### Database
 
@@ -1295,13 +1392,13 @@ mcpgateway
 
 | Setting                   | Description                | Default  | Options                  |
 | ------------------------- | -------------------------- | -------- | ------------------------ |
-| `CACHE_TYPE`              | Backend (`memory`/`redis`) | `memory` | `none`, `memory`,`redis` |
+| `CACHE_TYPE`              | Backend type | `database` | `none`, `memory`, `database`, `redis` |
 | `REDIS_URL`               | Redis connection URL       | (none)   | string or empty          |
 | `CACHE_PREFIX`            | Key prefix                 | `mcpgw:` | string                   |
 | `REDIS_MAX_RETRIES`       | Max Retry Attempts         | `3`      | int > 0                  |
 | `REDIS_RETRY_INTERVAL_MS` | Retry Interval (ms)        | `2000`   | int > 0                  |
 
-> 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for persistence, or `redis` for distributed caching.
+> 🧠 `none` disables caching entirely. Use `memory` for dev, `database` for local persistence, or `redis` for distributed caching across multiple instances.
 
 ### Database Management
 
@@ -1330,6 +1427,49 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | `DEV_MODE` | Enable dev mode        | `false` | bool    |
 | `RELOAD`   | Auto-reload on changes | `false` | bool    |
 | `DEBUG`    | Debug logging          | `false` | bool    |
+
+### Well-Known URI Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `WELL_KNOWN_ENABLED`          | Enable well-known URI endpoints (/.well-known/*) | `true`                | bool    |
+| `WELL_KNOWN_ROBOTS_TXT`       | robots.txt content                               | (blocks crawlers)     | string  |
+| `WELL_KNOWN_SECURITY_TXT`     | security.txt content (RFC 9116)                 | (empty)               | string  |
+| `WELL_KNOWN_CUSTOM_FILES`     | Additional custom well-known files (JSON)       | `{}`                  | JSON object |
+| `WELL_KNOWN_CACHE_MAX_AGE`    | Cache control for well-known files (seconds)    | `3600`                | int > 0 |
+
+> 🔍 **robots.txt**: By default, blocks all crawlers for security. Customize for your needs.
+>
+> 🔐 **security.txt**: Define security contact information per RFC 9116. Leave empty to disable.
+>
+> 📄 **Custom Files**: Add arbitrary well-known files like `ai.txt`, `dnt-policy.txt`, etc.
+
+### Header Passthrough Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `ENABLE_HEADER_PASSTHROUGH`   | Enable HTTP header passthrough feature (⚠️ Security implications) | `false` | bool |
+| `DEFAULT_PASSTHROUGH_HEADERS` | Default headers to pass through (JSON array)    | `["X-Tenant-Id", "X-Trace-Id"]` | JSON array |
+
+> ⚠️ **Security Warning**: Header passthrough is disabled by default for security. Only enable if you understand the implications and have reviewed which headers should be passed through to backing MCP servers. Authorization headers are not included in defaults.
+
+### Plugin Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
+| `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
+| `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
+| `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
+
+### HTTP Retry Configuration
+
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `RETRY_MAX_ATTEMPTS`          | Maximum retry attempts for HTTP requests         | `3`                   | int > 0 |
+| `RETRY_BASE_DELAY`            | Base delay between retries (seconds)             | `1.0`                 | float > 0 |
+| `RETRY_MAX_DELAY`             | Maximum delay between retries (seconds)          | `60`                  | int > 0 |
+| `RETRY_JITTER_MAX`            | Maximum jitter fraction of base delay            | `0.5`                 | float 0-1 |
 
 </details>
 
@@ -1480,7 +1620,7 @@ Generate an API Bearer token, and test the various API endpoints.
 
 ```bash
 # Generate a bearer token using the configured secret key (use the same as your .env)
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 echo ${MCPGATEWAY_BEARER_TOKEN}
 
 # Quickly confirm that authentication works and the gateway is healthy

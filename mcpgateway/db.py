@@ -22,25 +22,35 @@ Examples:
 """
 
 # Standard
-from datetime import datetime, timezone
-from typing import Any, Dict, Generator, List, Optional
+from datetime import datetime, timedelta, timezone
+import logging
+from typing import Any, Dict, Generator, List, Optional, TYPE_CHECKING
 import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
+from sqlalchemy.pool import QueuePool
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.models import ResourceContent
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.validators import SecurityValidator
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.models import ResourceContent
+
+# ResourceContent will be imported locally where needed to avoid circular imports
+# EmailUser models moved to this file to avoid circular imports
 
 # ---------------------------------------------------------------------------
 # 1. Parse the URL so we can inspect backend ("postgresql", "sqlite", ...)
@@ -80,10 +90,25 @@ elif backend == "sqlite":
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
 if backend == "sqlite":
-    # SQLite doesn't support pool overflow/timeout parameters
+    # SQLite supports connection pooling with proper configuration
+    # For SQLite, we use a smaller pool size since it's file-based
+    sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
+    sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
+
+    logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+
     engine = create_engine(
         settings.database_url,
+        pool_pre_ping=True,  # quick liveness check per checkout
+        pool_size=sqlite_pool_size,
+        max_overflow=sqlite_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+        pool_recycle=settings.db_pool_recycle,
+        # SQLite specific optimizations
+        poolclass=QueuePool,  # Explicit pool class
         connect_args=connect_args,
+        # Log pool events in debug mode
+        echo_pool=settings.log_level == "DEBUG",
     )
 else:
     # Other databases support full pooling configuration
@@ -158,6 +183,1048 @@ def refresh_slugs_on_startup():
 
 class Base(DeclarativeBase):
     """Base class for all models."""
+
+
+# ---------------------------------------------------------------------------
+# RBAC Models - SQLAlchemy Database Models
+# ---------------------------------------------------------------------------
+
+
+class Role(Base):
+    """Role model for RBAC system."""
+
+    __tablename__ = "roles"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Role metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)  # 'global', 'team', 'personal'
+
+    # Permissions and inheritance
+    permissions: Mapped[List[str]] = mapped_column(JSON, nullable=False, default=list)
+    inherits_from: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("roles.id"), nullable=True)
+
+    # Metadata
+    created_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+    is_system_role: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    # Relationships
+    parent_role: Mapped[Optional["Role"]] = relationship("Role", remote_side=[id], backref="child_roles")
+    user_assignments: Mapped[List["UserRole"]] = relationship("UserRole", back_populates="role", cascade="all, delete-orphan")
+
+    def get_effective_permissions(self) -> List[str]:
+        """Get all permissions including inherited ones.
+
+        Returns:
+            List of permission strings including inherited permissions
+        """
+        effective_permissions = set(self.permissions)
+        if self.parent_role:
+            effective_permissions.update(self.parent_role.get_effective_permissions())
+        return sorted(list(effective_permissions))
+
+
+class UserRole(Base):
+    """User role assignment model."""
+
+    __tablename__ = "user_roles"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Assignment details
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+    role_id: Mapped[str] = mapped_column(String(36), ForeignKey("roles.id"), nullable=False)
+    scope: Mapped[str] = mapped_column(String(20), nullable=False)  # 'global', 'team', 'personal'
+    scope_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)  # Team ID if team-scoped
+
+    # Grant metadata
+    granted_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Relationships
+    role: Mapped["Role"] = relationship("Role", back_populates="user_assignments")
+
+    def is_expired(self) -> bool:
+        """Check if the role assignment has expired.
+
+        Returns:
+            True if assignment has expired, False otherwise
+        """
+        if not self.expires_at:
+            return False
+        return utc_now() > self.expires_at
+
+
+class PermissionAuditLog(Base):
+    """Permission audit log model."""
+
+    __tablename__ = "permission_audit_log"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Audit metadata
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Permission details
+    permission: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+
+    # Result
+    granted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    roles_checked: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
+
+    # Request metadata
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 max length
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+# Permission constants for the system
+class Permissions:
+    """System permission constants."""
+
+    # User permissions
+    USERS_CREATE = "users.create"
+    USERS_READ = "users.read"
+    USERS_UPDATE = "users.update"
+    USERS_DELETE = "users.delete"
+    USERS_INVITE = "users.invite"
+
+    # Team permissions
+    TEAMS_CREATE = "teams.create"
+    TEAMS_READ = "teams.read"
+    TEAMS_UPDATE = "teams.update"
+    TEAMS_DELETE = "teams.delete"
+    TEAMS_JOIN = "teams.join"
+    TEAMS_MANAGE_MEMBERS = "teams.manage_members"
+
+    # Tool permissions
+    TOOLS_CREATE = "tools.create"
+    TOOLS_READ = "tools.read"
+    TOOLS_UPDATE = "tools.update"
+    TOOLS_DELETE = "tools.delete"
+    TOOLS_EXECUTE = "tools.execute"
+
+    # Resource permissions
+    RESOURCES_CREATE = "resources.create"
+    RESOURCES_READ = "resources.read"
+    RESOURCES_UPDATE = "resources.update"
+    RESOURCES_DELETE = "resources.delete"
+    RESOURCES_SHARE = "resources.share"
+
+    # Prompt permissions
+    PROMPTS_CREATE = "prompts.create"
+    PROMPTS_READ = "prompts.read"
+    PROMPTS_UPDATE = "prompts.update"
+    PROMPTS_DELETE = "prompts.delete"
+    PROMPTS_EXECUTE = "prompts.execute"
+
+    # Server permissions
+    SERVERS_CREATE = "servers.create"
+    SERVERS_READ = "servers.read"
+    SERVERS_UPDATE = "servers.update"
+    SERVERS_DELETE = "servers.delete"
+    SERVERS_MANAGE = "servers.manage"
+
+    # Token permissions
+    TOKENS_CREATE = "tokens.create"
+    TOKENS_READ = "tokens.read"
+    TOKENS_REVOKE = "tokens.revoke"
+    TOKENS_SCOPE = "tokens.scope"
+
+    # Admin permissions
+    ADMIN_SYSTEM_CONFIG = "admin.system_config"
+    ADMIN_USER_MANAGEMENT = "admin.user_management"
+    ADMIN_SECURITY_AUDIT = "admin.security_audit"
+
+    # Special permissions
+    ALL_PERMISSIONS = "*"  # Wildcard for all permissions
+
+    @classmethod
+    def get_all_permissions(cls) -> List[str]:
+        """Get list of all defined permissions.
+
+        Returns:
+            List of all permission strings defined in the class
+        """
+        permissions = []
+        for attr_name in dir(cls):
+            if not attr_name.startswith("_") and attr_name.isupper() and attr_name != "ALL_PERMISSIONS":
+                attr_value = getattr(cls, attr_name)
+                if isinstance(attr_value, str) and "." in attr_value:
+                    permissions.append(attr_value)
+        return sorted(permissions)
+
+    @classmethod
+    def get_permissions_by_resource(cls) -> Dict[str, List[str]]:
+        """Get permissions organized by resource type.
+
+        Returns:
+            Dictionary mapping resource types to their permissions
+        """
+        resource_permissions = {}
+        for permission in cls.get_all_permissions():
+            resource_type = permission.split(".")[0]
+            if resource_type not in resource_permissions:
+                resource_permissions[resource_type] = []
+            resource_permissions[resource_type].append(permission)
+        return resource_permissions
+
+
+# ---------------------------------------------------------------------------
+# Email-based User Authentication Models
+# ---------------------------------------------------------------------------
+
+
+class EmailUser(Base):
+    """Email-based user model for authentication.
+
+    This model provides email-based authentication as the foundation
+    for all multi-user features. Users are identified by email addresses
+    instead of usernames.
+
+    Attributes:
+        email (str): Primary key, unique email identifier
+        password_hash (str): Argon2id hashed password
+        full_name (str): Optional display name for professional appearance
+        is_admin (bool): Admin privileges flag
+        is_active (bool): Account status flag
+        auth_provider (str): Authentication provider ('local', 'github', etc.)
+        password_hash_type (str): Type of password hash used
+        failed_login_attempts (int): Count of failed login attempts
+        locked_until (datetime): Account lockout expiration
+        created_at (datetime): Account creation timestamp
+        updated_at (datetime): Last account update timestamp
+        last_login (datetime): Last successful login timestamp
+        email_verified_at (datetime): Email verification timestamp
+
+    Examples:
+        >>> user = EmailUser(
+        ...     email="alice@example.com",
+        ...     password_hash="$argon2id$v=19$m=65536,t=3,p=1$...",
+        ...     full_name="Alice Smith",
+        ...     is_admin=False
+        ... )
+        >>> user.email
+        'alice@example.com'
+        >>> user.is_email_verified()
+        False
+        >>> user.is_account_locked()
+        False
+    """
+
+    __tablename__ = "email_users"
+
+    # Core identity fields
+    email: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Status fields
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    email_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Security fields
+    auth_provider: Mapped[str] = mapped_column(String(50), default="local", nullable=False)
+    password_hash_type: Mapped[str] = mapped_column(String(20), default="argon2id", nullable=False)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self) -> str:
+        """String representation of the user.
+
+        Returns:
+            str: String representation of EmailUser instance
+        """
+        return f"<EmailUser(email='{self.email}', full_name='{self.full_name}', is_admin={self.is_admin})>"
+
+    def is_email_verified(self) -> bool:
+        """Check if the user's email is verified.
+
+        Returns:
+            bool: True if email is verified, False otherwise
+
+        Examples:
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.is_email_verified()
+            False
+            >>> user.email_verified_at = utc_now()
+            >>> user.is_email_verified()
+            True
+        """
+        return self.email_verified_at is not None
+
+    def is_account_locked(self) -> bool:
+        """Check if the account is currently locked.
+
+        Returns:
+            bool: True if account is locked, False otherwise
+
+        Examples:
+            >>> from datetime import timedelta
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.is_account_locked()
+            False
+            >>> user.locked_until = utc_now() + timedelta(hours=1)
+            >>> user.is_account_locked()
+            True
+        """
+        if self.locked_until is None:
+            return False
+        return utc_now() < self.locked_until
+
+    def get_display_name(self) -> str:
+        """Get the user's display name.
+
+        Returns the full_name if available, otherwise extracts
+        the local part from the email address.
+
+        Returns:
+            str: Display name for the user
+
+        Examples:
+            >>> user = EmailUser(email="john@example.com", full_name="John Doe")
+            >>> user.get_display_name()
+            'John Doe'
+            >>> user_no_name = EmailUser(email="jane@example.com")
+            >>> user_no_name.get_display_name()
+            'jane'
+        """
+        if self.full_name:
+            return self.full_name
+        return self.email.split("@")[0]
+
+    def reset_failed_attempts(self) -> None:
+        """Reset failed login attempts counter.
+
+        Called after successful authentication to reset the
+        failed attempts counter and clear any account lockout.
+
+        Examples:
+            >>> user = EmailUser(email="test@example.com", failed_login_attempts=3)
+            >>> user.reset_failed_attempts()
+            >>> user.failed_login_attempts
+            0
+            >>> user.locked_until is None
+            True
+        """
+        self.failed_login_attempts = 0
+        self.locked_until = None
+        self.last_login = utc_now()
+
+    def increment_failed_attempts(self, max_attempts: int = 5, lockout_duration_minutes: int = 30) -> bool:
+        """Increment failed login attempts and potentially lock account.
+
+        Args:
+            max_attempts: Maximum allowed failed attempts before lockout
+            lockout_duration_minutes: Duration of lockout in minutes
+
+        Returns:
+            bool: True if account is now locked, False otherwise
+
+        Examples:
+            >>> user = EmailUser(email="test@example.com", password_hash="test", failed_login_attempts=0)
+            >>> user.increment_failed_attempts(max_attempts=3)
+            False
+            >>> user.failed_login_attempts
+            1
+            >>> for _ in range(2):
+            ...     user.increment_failed_attempts(max_attempts=3)
+            False
+            True
+            >>> user.is_account_locked()
+            True
+        """
+        self.failed_login_attempts += 1
+
+        if self.failed_login_attempts >= max_attempts:
+            self.locked_until = utc_now() + timedelta(minutes=lockout_duration_minutes)
+            return True
+
+        return False
+
+    # Team relationships
+    team_memberships: Mapped[List["EmailTeamMember"]] = relationship("EmailTeamMember", foreign_keys="EmailTeamMember.user_email", back_populates="user")
+    created_teams: Mapped[List["EmailTeam"]] = relationship("EmailTeam", foreign_keys="EmailTeam.created_by", back_populates="creator")
+    sent_invitations: Mapped[List["EmailTeamInvitation"]] = relationship("EmailTeamInvitation", foreign_keys="EmailTeamInvitation.invited_by", back_populates="inviter")
+
+    # API token relationships
+    api_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="user", cascade="all, delete-orphan")
+
+    def get_teams(self) -> List["EmailTeam"]:
+        """Get all teams this user is a member of.
+
+        Returns:
+            List[EmailTeam]: List of teams the user belongs to
+
+        Examples:
+            >>> user = EmailUser(email="user@example.com")
+            >>> teams = user.get_teams()
+            >>> isinstance(teams, list)
+            True
+        """
+        return [membership.team for membership in self.team_memberships if membership.is_active]
+
+    def get_personal_team(self) -> Optional["EmailTeam"]:
+        """Get the user's personal team.
+
+        Returns:
+            EmailTeam: The user's personal team or None if not found
+
+        Examples:
+            >>> user = EmailUser(email="user@example.com")
+            >>> personal_team = user.get_personal_team()
+        """
+        for team in self.created_teams:
+            if team.is_personal and team.is_active:
+                return team
+        return None
+
+    def is_team_member(self, team_id: str) -> bool:
+        """Check if user is a member of the specified team.
+
+        Args:
+            team_id: ID of the team to check
+
+        Returns:
+            bool: True if user is a member, False otherwise
+
+        Examples:
+            >>> user = EmailUser(email="user@example.com")
+            >>> user.is_team_member("team-123")
+            False
+        """
+        return any(membership.team_id == team_id and membership.is_active for membership in self.team_memberships)
+
+    def get_team_role(self, team_id: str) -> Optional[str]:
+        """Get user's role in a specific team.
+
+        Args:
+            team_id: ID of the team to check
+
+        Returns:
+            str: User's role or None if not a member
+
+        Examples:
+            >>> user = EmailUser(email="user@example.com")
+            >>> role = user.get_team_role("team-123")
+        """
+        for membership in self.team_memberships:
+            if membership.team_id == team_id and membership.is_active:
+                return membership.role
+        return None
+
+
+class EmailAuthEvent(Base):
+    """Authentication event logging for email users.
+
+    This model tracks all authentication attempts for auditing,
+    security monitoring, and compliance purposes.
+
+    Attributes:
+        id (int): Primary key
+        timestamp (datetime): Event timestamp
+        user_email (str): Email of the user
+        event_type (str): Type of authentication event
+        success (bool): Whether the authentication was successful
+        ip_address (str): Client IP address
+        user_agent (str): Client user agent string
+        failure_reason (str): Reason for authentication failure
+        details (dict): Additional event details as JSON
+
+    Examples:
+        >>> event = EmailAuthEvent(
+        ...     user_email="alice@example.com",
+        ...     event_type="login",
+        ...     success=True,
+        ...     ip_address="192.168.1.100"
+        ... )
+        >>> event.event_type
+        'login'
+        >>> event.success
+        True
+    """
+
+    __tablename__ = "email_auth_events"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Event details
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    # Client information
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 compatible
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Failure information
+    failure_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    details: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON string
+
+    def __repr__(self) -> str:
+        """String representation of the auth event.
+
+        Returns:
+            str: String representation of EmailAuthEvent instance
+        """
+        return f"<EmailAuthEvent(user_email='{self.user_email}', event_type='{self.event_type}', success={self.success})>"
+
+    @classmethod
+    def create_login_attempt(cls, user_email: str, success: bool, ip_address: str = None, user_agent: str = None, failure_reason: str = None) -> "EmailAuthEvent":
+        """Create a login attempt event.
+
+        Args:
+            user_email: Email address of the user
+            success: Whether the login was successful
+            ip_address: Client IP address
+            user_agent: Client user agent
+            failure_reason: Reason for failure (if applicable)
+
+        Returns:
+            EmailAuthEvent: New authentication event
+
+        Examples:
+            >>> event = EmailAuthEvent.create_login_attempt(
+            ...     user_email="user@example.com",
+            ...     success=True,
+            ...     ip_address="192.168.1.1"
+            ... )
+            >>> event.event_type
+            'login'
+            >>> event.success
+            True
+        """
+        return cls(user_email=user_email, event_type="login", success=success, ip_address=ip_address, user_agent=user_agent, failure_reason=failure_reason)
+
+    @classmethod
+    def create_registration_event(cls, user_email: str, success: bool, ip_address: str = None, user_agent: str = None, failure_reason: str = None) -> "EmailAuthEvent":
+        """Create a registration event.
+
+        Args:
+            user_email: Email address of the user
+            success: Whether the registration was successful
+            ip_address: Client IP address
+            user_agent: Client user agent
+            failure_reason: Reason for failure (if applicable)
+
+        Returns:
+            EmailAuthEvent: New authentication event
+        """
+        return cls(user_email=user_email, event_type="registration", success=success, ip_address=ip_address, user_agent=user_agent, failure_reason=failure_reason)
+
+    @classmethod
+    def create_password_change_event(cls, user_email: str, success: bool, ip_address: str = None, user_agent: str = None) -> "EmailAuthEvent":
+        """Create a password change event.
+
+        Args:
+            user_email: Email address of the user
+            success: Whether the password change was successful
+            ip_address: Client IP address
+            user_agent: Client user agent
+
+        Returns:
+            EmailAuthEvent: New authentication event
+        """
+        return cls(user_email=user_email, event_type="password_change", success=success, ip_address=ip_address, user_agent=user_agent)
+
+
+class EmailTeam(Base):
+    """Email-based team model for multi-team collaboration.
+
+    This model represents teams that users can belong to, with automatic
+    personal team creation and role-based access control.
+
+    Attributes:
+        id (str): Primary key UUID
+        name (str): Team display name
+        slug (str): URL-friendly team identifier
+        description (str): Team description
+        created_by (str): Email of the user who created the team
+        is_personal (bool): Whether this is a personal team
+        visibility (str): Team visibility (private, public)
+        max_members (int): Maximum number of team members allowed
+        created_at (datetime): Team creation timestamp
+        updated_at (datetime): Last update timestamp
+        is_active (bool): Whether the team is active
+
+    Examples:
+        >>> team = EmailTeam(
+        ...     name="Engineering Team",
+        ...     slug="engineering-team",
+        ...     created_by="admin@example.com",
+        ...     is_personal=False
+        ... )
+        >>> team.name
+        'Engineering Team'
+        >>> team.is_personal
+        False
+    """
+
+    __tablename__ = "email_teams"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Basic team information
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+
+    # Team settings
+    is_personal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    visibility: Mapped[str] = mapped_column(String(20), default="private", nullable=False)
+    max_members: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    members: Mapped[List["EmailTeamMember"]] = relationship("EmailTeamMember", back_populates="team", cascade="all, delete-orphan")
+    invitations: Mapped[List["EmailTeamInvitation"]] = relationship("EmailTeamInvitation", back_populates="team", cascade="all, delete-orphan")
+    api_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="team", cascade="all, delete-orphan")
+    creator: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[created_by])
+
+    def __repr__(self) -> str:
+        """String representation of the team.
+
+        Returns:
+            str: String representation of EmailTeam instance
+        """
+        return f"<EmailTeam(id='{self.id}', name='{self.name}', is_personal={self.is_personal})>"
+
+    def get_member_count(self) -> int:
+        """Get the current number of team members.
+
+        Returns:
+            int: Number of active team members
+
+        Examples:
+            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
+            >>> team.get_member_count()
+            0
+        """
+        return len([m for m in self.members if m.is_active])
+
+    def is_member(self, user_email: str) -> bool:
+        """Check if a user is a member of this team.
+
+        Args:
+            user_email: Email address to check
+
+        Returns:
+            bool: True if user is an active member, False otherwise
+
+        Examples:
+            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
+            >>> team.is_member("admin@example.com")
+            False
+        """
+        return any(m.user_email == user_email and m.is_active for m in self.members)
+
+    def get_member_role(self, user_email: str) -> Optional[str]:
+        """Get the role of a user in this team.
+
+        Args:
+            user_email: Email address to check
+
+        Returns:
+            str: User's role or None if not a member
+
+        Examples:
+            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
+            >>> team.get_member_role("admin@example.com")
+        """
+        for member in self.members:
+            if member.user_email == user_email and member.is_active:
+                return member.role
+        return None
+
+
+class EmailTeamMember(Base):
+    """Team membership model linking users to teams with roles.
+
+    This model represents the many-to-many relationship between users and teams
+    with additional role information and audit trails.
+
+    Attributes:
+        id (str): Primary key UUID
+        team_id (str): Foreign key to email_teams
+        user_email (str): Foreign key to email_users
+        role (str): Member role (owner, member)
+        joined_at (datetime): When the user joined the team
+        invited_by (str): Email of the user who invited this member
+        is_active (bool): Whether the membership is active
+
+    Examples:
+        >>> member = EmailTeamMember(
+        ...     team_id="team-123",
+        ...     user_email="user@example.com",
+        ...     role="member",
+        ...     invited_by="admin@example.com"
+        ... )
+        >>> member.role
+        'member'
+    """
+
+    __tablename__ = "email_team_members"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Foreign keys
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+
+    # Membership details
+    role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="members")
+    user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[user_email])
+    inviter: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[invited_by])
+
+    # Unique constraint to prevent duplicate memberships
+    __table_args__ = (UniqueConstraint("team_id", "user_email", name="uq_team_member"),)
+
+    def __repr__(self) -> str:
+        """String representation of the team member.
+
+        Returns:
+            str: String representation of EmailTeamMember instance
+        """
+        return f"<EmailTeamMember(team_id='{self.team_id}', user_email='{self.user_email}', role='{self.role}')>"
+
+
+class EmailTeamInvitation(Base):
+    """Team invitation model for managing team member invitations.
+
+    This model tracks invitations sent to users to join teams, including
+    expiration dates and invitation tokens.
+
+    Attributes:
+        id (str): Primary key UUID
+        team_id (str): Foreign key to email_teams
+        email (str): Email address of the invited user
+        role (str): Role the user will have when they accept
+        invited_by (str): Email of the user who sent the invitation
+        invited_at (datetime): When the invitation was sent
+        expires_at (datetime): When the invitation expires
+        token (str): Unique invitation token
+        is_active (bool): Whether the invitation is still active
+
+    Examples:
+        >>> invitation = EmailTeamInvitation(
+        ...     team_id="team-123",
+        ...     email="newuser@example.com",
+        ...     role="member",
+        ...     invited_by="admin@example.com"
+        ... )
+        >>> invitation.role
+        'member'
+    """
+
+    __tablename__ = "email_team_invitations"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Foreign keys
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
+
+    # Invitation details
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
+    invited_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+
+    # Timing
+    invited_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # Security
+    token: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    team: Mapped["EmailTeam"] = relationship("EmailTeam", back_populates="invitations")
+    inviter: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[invited_by])
+
+    def __repr__(self) -> str:
+        """String representation of the team invitation.
+
+        Returns:
+            str: String representation of EmailTeamInvitation instance
+        """
+        return f"<EmailTeamInvitation(team_id='{self.team_id}', email='{self.email}', role='{self.role}')>"
+
+    def is_expired(self) -> bool:
+        """Check if the invitation has expired.
+
+        Returns:
+            bool: True if the invitation has expired, False otherwise
+
+        Examples:
+            >>> from datetime import timedelta
+            >>> invitation = EmailTeamInvitation(
+            ...     team_id="team-123",
+            ...     email="user@example.com",
+            ...     role="member",
+            ...     invited_by="admin@example.com",
+            ...     expires_at=utc_now() + timedelta(days=7)
+            ... )
+            >>> invitation.is_expired()
+            False
+        """
+        now = utc_now()
+        expires_at = self.expires_at
+
+        # Handle timezone awareness mismatch
+        if now.tzinfo is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        elif now.tzinfo is None and expires_at.tzinfo is not None:
+            now = now.replace(tzinfo=timezone.utc)
+
+        return now > expires_at
+
+    def is_valid(self) -> bool:
+        """Check if the invitation is valid (active and not expired).
+
+        Returns:
+            bool: True if the invitation is valid, False otherwise
+
+        Examples:
+            >>> from datetime import timedelta
+            >>> invitation = EmailTeamInvitation(
+            ...     team_id="team-123",
+            ...     email="user@example.com",
+            ...     role="member",
+            ...     invited_by="admin@example.com",
+            ...     expires_at=utc_now() + timedelta(days=7),
+            ...     is_active=True
+            ... )
+            >>> invitation.is_valid()
+            True
+        """
+        return self.is_active and not self.is_expired()
+
+
+class EmailTeamJoinRequest(Base):
+    """Team join request model for managing public team join requests.
+
+    This model tracks user requests to join public teams, including
+    approval workflow and expiration dates.
+
+    Attributes:
+        id (str): Primary key UUID
+        team_id (str): Foreign key to email_teams
+        user_email (str): Email of the user requesting to join
+        message (str): Optional message from the user
+        status (str): Request status (pending, approved, rejected, expired)
+        requested_at (datetime): When the request was made
+        expires_at (datetime): When the request expires
+        reviewed_at (datetime): When the request was reviewed
+        reviewed_by (str): Email of user who reviewed the request
+        notes (str): Optional admin notes
+    """
+
+    __tablename__ = "email_team_join_requests"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Foreign keys
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+
+    # Request details
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+
+    # Timing
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    team: Mapped["EmailTeam"] = relationship("EmailTeam")
+    user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[user_email])
+    reviewer: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[reviewed_by])
+
+    # Unique constraint to prevent duplicate requests
+    __table_args__ = (UniqueConstraint("team_id", "user_email", name="uq_team_join_request"),)
+
+    def __repr__(self) -> str:
+        """String representation of the team join request.
+
+        Returns:
+            str: String representation of the team join request.
+        """
+        return f"<EmailTeamJoinRequest(team_id='{self.team_id}', user_email='{self.user_email}', status='{self.status}')>"
+
+    def is_expired(self) -> bool:
+        """Check if the join request has expired.
+
+        Returns:
+            bool: True if the request has expired, False otherwise.
+        """
+        now = utc_now()
+        expires_at = self.expires_at
+
+        # Handle timezone awareness mismatch
+        if now.tzinfo is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        elif now.tzinfo is None and expires_at.tzinfo is not None:
+            now = now.replace(tzinfo=timezone.utc)
+
+        return now > expires_at
+
+    def is_pending(self) -> bool:
+        """Check if the join request is still pending.
+
+        Returns:
+            bool: True if the request is pending and not expired, False otherwise.
+        """
+        return self.status == "pending" and not self.is_expired()
+
+
+class PendingUserApproval(Base):
+    """Model for pending SSO user registrations awaiting admin approval.
+
+    This model stores information about users who have authenticated via SSO
+    but require admin approval before their account is fully activated.
+
+    Attributes:
+        id (str): Primary key
+        email (str): Email address of the pending user
+        full_name (str): Full name from SSO provider
+        auth_provider (str): SSO provider (github, google, etc.)
+        sso_metadata (dict): Additional metadata from SSO provider
+        requested_at (datetime): When the approval was requested
+        expires_at (datetime): When the approval request expires
+        approved_by (str): Email of admin who approved (if approved)
+        approved_at (datetime): When the approval was granted
+        status (str): Current status (pending, approved, rejected, expired)
+        rejection_reason (str): Reason for rejection (if applicable)
+        admin_notes (str): Notes from admin review
+
+    Examples:
+        >>> from datetime import timedelta
+        >>> approval = PendingUserApproval(
+        ...     email="newuser@example.com",
+        ...     full_name="New User",
+        ...     auth_provider="github",
+        ...     expires_at=utc_now() + timedelta(days=30),
+        ...     status="pending"
+        ... )
+        >>> approval.status
+        'pending'
+    """
+
+    __tablename__ = "pending_user_approvals"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # User details
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth_provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    sso_metadata: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
+
+    # Request details
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    # Approval details
+    approved_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)  # pending, approved, rejected, expired
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    admin_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    approver: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[approved_by])
+
+    def __repr__(self) -> str:
+        """String representation of the pending approval.
+
+        Returns:
+            str: String representation of PendingUserApproval instance
+        """
+        return f"<PendingUserApproval(email='{self.email}', status='{self.status}', provider='{self.auth_provider}')>"
+
+    def is_expired(self) -> bool:
+        """Check if the approval request has expired.
+
+        Returns:
+            bool: True if the approval request has expired
+        """
+        now = utc_now()
+        expires_at = self.expires_at
+
+        # Handle timezone awareness mismatch
+        if now.tzinfo is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        elif now.tzinfo is None and expires_at.tzinfo is not None:
+            now = now.replace(tzinfo=timezone.utc)
+
+        return now > expires_at
+
+    def approve(self, admin_email: str, notes: Optional[str] = None) -> None:
+        """Approve the user registration.
+
+        Args:
+            admin_email: Email of the admin approving the request
+            notes: Optional admin notes
+        """
+        self.status = "approved"
+        self.approved_by = admin_email
+        self.approved_at = utc_now()
+        self.admin_notes = notes
+
+    def reject(self, admin_email: str, reason: str, notes: Optional[str] = None) -> None:
+        """Reject the user registration.
+
+        Args:
+            admin_email: Email of the admin rejecting the request
+            reason: Reason for rejection
+            notes: Optional admin notes
+        """
+        self.status = "rejected"
+        self.approved_by = admin_email
+        self.approved_at = utc_now()
+        self.rejection_reason = reason
+        self.admin_notes = notes
 
 
 # Association table for servers and tools
@@ -427,6 +1494,11 @@ class Tool(Base):
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
 
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+
     # @property
     # def gateway_slug(self) -> str:
     #     return self.gateway.slug
@@ -632,6 +1704,11 @@ class Tool(Base):
             "last_execution_time": self.last_execution_time,
         }
 
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+
 
 class Resource(Base):
     """
@@ -689,7 +1766,7 @@ class Resource(Base):
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
 
     @property
-    def content(self) -> ResourceContent:
+    def content(self) -> "ResourceContent":
         """
         Returns the resource content in the appropriate format.
 
@@ -725,6 +1802,10 @@ class Resource(Base):
             ...     str(e)
             'Resource has no content'
         """
+
+        # Local import to avoid circular import
+        # First-Party
+        from mcpgateway.models import ResourceContent  # pylint: disable=import-outside-toplevel
 
         if self.text_content is not None:
             return ResourceContent(
@@ -839,6 +1920,11 @@ class Resource(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+
 
 class ResourceSubscription(Base):
     """Tracks subscriptions to resource updates."""
@@ -940,7 +2026,7 @@ class Prompt(Base):
         try:
             jsonschema.validate(args, self.argument_schema)
         except jsonschema.exceptions.ValidationError as e:
-            raise ValueError(f"Invalid prompt arguments: {str(e)}")
+            raise ValueError(f"Invalid prompt arguments: {str(e)}") from e
 
     @property
     def execution_count(self) -> int:
@@ -1039,6 +2125,11 @@ class Prompt(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+
 
 class Server(Base):
     """
@@ -1090,6 +2181,9 @@ class Server(Base):
     resources: Mapped[List["Resource"]] = relationship("Resource", secondary=server_resource_association, back_populates="servers")
     prompts: Mapped[List["Prompt"]] = relationship("Prompt", secondary=server_prompt_association, back_populates="servers")
     a2a_agents: Mapped[List["A2AAgent"]] = relationship("A2AAgent", secondary=server_a2a_association, back_populates="servers")
+
+    # API token relationships
+    scoped_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="server")
 
     @property
     def execution_count(self) -> int:
@@ -1200,6 +2294,11 @@ class Server(Base):
             return None
         return max(m.timestamp for m in self.metrics)
 
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+
 
 class Gateway(Base):
     """ORM model for a federated peer Gateway."""
@@ -1262,6 +2361,11 @@ class Gateway(Base):
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
@@ -1354,6 +2458,11 @@ class A2AAgent(Base):
     import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
@@ -1480,6 +2589,399 @@ class OAuthToken(Base):
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="oauth_tokens")
 
 
+class EmailApiToken(Base):
+    """Email user API token model for token catalog management.
+
+    This model provides comprehensive API token management with scoping,
+    revocation, and usage tracking for email-based users.
+
+    Attributes:
+        id (str): Unique token identifier
+        user_email (str): Owner's email address
+        team_id (str): Team the token is associated with (required for team-based access)
+        name (str): Human-readable token name
+        jti (str): JWT ID for revocation checking
+        token_hash (str): Hashed token value for security
+        server_id (str): Optional server scope limitation
+        resource_scopes (List[str]): Permission scopes like ['tools.read']
+        ip_restrictions (List[str]): IP address/CIDR restrictions
+        time_restrictions (dict): Time-based access restrictions
+        usage_limits (dict): Rate limiting and usage quotas
+        created_at (datetime): Token creation timestamp
+        expires_at (datetime): Optional expiry timestamp
+        last_used (datetime): Last usage timestamp
+        is_active (bool): Active status flag
+        description (str): Token description
+        tags (List[str]): Organizational tags
+
+    Examples:
+        >>> token = EmailApiToken(
+        ...     user_email="alice@example.com",
+        ...     name="Production API Access",
+        ...     server_id="prod-server-123",
+        ...     resource_scopes=["tools.read", "resources.read"],
+        ...     description="Read-only access to production tools"
+        ... )
+        >>> token.is_scoped_to_server("prod-server-123")
+        True
+        >>> token.has_permission("tools.read")
+        True
+    """
+
+    __tablename__ = "email_api_tokens"
+
+    # Core identity fields
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    jti: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Scoping fields
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=True)
+    resource_scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
+    ip_restrictions: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
+    time_restrictions: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
+    usage_limits: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=dict)
+
+    # Lifecycle fields
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Metadata fields
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tags: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
+
+    # Unique constraint for user+name combination
+    __table_args__ = (
+        UniqueConstraint("user_email", "name", name="uq_email_api_tokens_user_name"),
+        Index("idx_email_api_tokens_user_email", "user_email"),
+        Index("idx_email_api_tokens_jti", "jti"),
+        Index("idx_email_api_tokens_expires_at", "expires_at"),
+        Index("idx_email_api_tokens_is_active", "is_active"),
+    )
+
+    # Relationships
+    user: Mapped["EmailUser"] = relationship("EmailUser", back_populates="api_tokens")
+    team: Mapped[Optional["EmailTeam"]] = relationship("EmailTeam", back_populates="api_tokens")
+    server: Mapped[Optional["Server"]] = relationship("Server", back_populates="scoped_tokens")
+
+    def is_scoped_to_server(self, server_id: str) -> bool:
+        """Check if token is scoped to a specific server.
+
+        Args:
+            server_id: Server ID to check against.
+
+        Returns:
+            bool: True if token is scoped to the server, False otherwise.
+        """
+        return self.server_id == server_id if self.server_id else False
+
+    def has_permission(self, permission: str) -> bool:
+        """Check if token has a specific permission.
+
+        Args:
+            permission: Permission string to check for.
+
+        Returns:
+            bool: True if token has the permission, False otherwise.
+        """
+        return permission in (self.resource_scopes or [])
+
+    def is_team_token(self) -> bool:
+        """Check if this is a team-based token.
+
+        Returns:
+            bool: True if token is associated with a team, False otherwise.
+        """
+        return self.team_id is not None
+
+    def get_effective_permissions(self) -> List[str]:
+        """Get effective permissions for this token.
+
+        For team tokens, this should inherit team permissions.
+        For personal tokens, this uses the resource_scopes.
+
+        Returns:
+            List[str]: List of effective permissions for this token.
+        """
+        if self.is_team_token() and self.team:
+            # For team tokens, we would inherit team permissions
+            # This would need to be implemented based on your RBAC system
+            return self.resource_scopes or []
+        return self.resource_scopes or []
+
+    def is_expired(self) -> bool:
+        """Check if token is expired.
+
+        Returns:
+            bool: True if token is expired, False otherwise.
+        """
+        if not self.expires_at:
+            return False
+        return utc_now() > self.expires_at
+
+    def is_valid(self) -> bool:
+        """Check if token is valid (active and not expired).
+
+        Returns:
+            bool: True if token is valid, False otherwise.
+        """
+        return self.is_active and not self.is_expired()
+
+
+class TokenUsageLog(Base):
+    """Token usage logging for analytics and security monitoring.
+
+    This model tracks every API request made with email API tokens
+    for security auditing and usage analytics.
+
+    Attributes:
+        id (int): Auto-incrementing log ID
+        token_jti (str): Token JWT ID reference
+        user_email (str): Token owner's email
+        timestamp (datetime): Request timestamp
+        endpoint (str): API endpoint accessed
+        method (str): HTTP method used
+        ip_address (str): Client IP address
+        user_agent (str): Client user agent
+        status_code (int): HTTP response status
+        response_time_ms (int): Response time in milliseconds
+        blocked (bool): Whether request was blocked
+        block_reason (str): Reason for blocking if applicable
+
+    Examples:
+        >>> log = TokenUsageLog(
+        ...     token_jti="token-uuid-123",
+        ...     user_email="alice@example.com",
+        ...     endpoint="/tools",
+        ...     method="GET",
+        ...     ip_address="192.168.1.100",
+        ...     status_code=200,
+        ...     response_time_ms=45
+        ... )
+    """
+
+    __tablename__ = "token_usage_logs"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    # Token reference
+    token_jti: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Timestamp
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
+
+    # Request details
+    endpoint: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 max length
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Response details
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Security fields
+    blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    block_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_token_usage_logs_token_jti_timestamp", "token_jti", "timestamp"),
+        Index("idx_token_usage_logs_user_email_timestamp", "user_email", "timestamp"),
+    )
+
+
+class TokenRevocation(Base):
+    """Token revocation blacklist for immediate token invalidation.
+
+    This model maintains a blacklist of revoked JWT tokens to provide
+    immediate token invalidation capabilities.
+
+    Attributes:
+        jti (str): JWT ID (primary key)
+        revoked_at (datetime): Revocation timestamp
+        revoked_by (str): Email of user who revoked the token
+        reason (str): Optional reason for revocation
+
+    Examples:
+        >>> revocation = TokenRevocation(
+        ...     jti="token-uuid-123",
+        ...     revoked_by="admin@example.com",
+        ...     reason="Security compromise"
+        ... )
+    """
+
+    __tablename__ = "token_revocations"
+
+    # JWT ID as primary key
+    jti: Mapped[str] = mapped_column(String(36), primary_key=True)
+
+    # Revocation details
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    revoked_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Relationship
+    revoker: Mapped["EmailUser"] = relationship("EmailUser")
+
+
+class SSOProvider(Base):
+    """SSO identity provider configuration for OAuth2/OIDC authentication.
+
+    Stores configuration and credentials for external identity providers
+    like GitHub, Google, IBM Security Verify, and Okta.
+
+    Attributes:
+        id (str): Unique provider ID (e.g., 'github', 'google', 'ibm_verify')
+        name (str): Human-readable provider name
+        display_name (str): Display name for UI
+        provider_type (str): Protocol type ('oauth2', 'oidc')
+        is_enabled (bool): Whether provider is active
+        client_id (str): OAuth client ID
+        client_secret_encrypted (str): Encrypted client secret
+        authorization_url (str): OAuth authorization endpoint
+        token_url (str): OAuth token endpoint
+        userinfo_url (str): User info endpoint
+        issuer (str): OIDC issuer (optional)
+        trusted_domains (List[str]): Auto-approved email domains
+        scope (str): OAuth scope string
+        auto_create_users (bool): Auto-create users on first login
+        team_mapping (dict): Organization/domain to team mapping rules
+        created_at (datetime): Provider creation timestamp
+        updated_at (datetime): Last configuration update
+
+    Examples:
+        >>> provider = SSOProvider(
+        ...     id="github",
+        ...     name="github",
+        ...     display_name="GitHub",
+        ...     provider_type="oauth2",
+        ...     client_id="gh_client_123",
+        ...     authorization_url="https://github.com/login/oauth/authorize",
+        ...     token_url="https://github.com/login/oauth/access_token",
+        ...     userinfo_url="https://api.github.com/user",
+        ...     scope="user:email"
+        ... )
+    """
+
+    __tablename__ = "sso_providers"
+
+    # Provider identification
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(20), nullable=False)  # oauth2, oidc
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # OAuth2/OIDC Configuration
+    client_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    client_secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)  # Encrypted storage
+    authorization_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    token_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
+
+    # Provider Settings
+    trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    scope: Mapped[str] = mapped_column(String(200), default="openid profile email", nullable=False)
+    auto_create_users: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    team_mapping: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    def __repr__(self):
+        """String representation of SSO provider.
+
+        Returns:
+            String representation of the SSO provider instance
+        """
+        return f"<SSOProvider(id='{self.id}', name='{self.name}', enabled={self.is_enabled})>"
+
+
+class SSOAuthSession(Base):
+    """Tracks SSO authentication sessions and state.
+
+    Maintains OAuth state parameters and callback information during
+    the SSO authentication flow for security and session management.
+
+    Attributes:
+        id (str): Unique session ID (UUID)
+        provider_id (str): Reference to SSO provider
+        state (str): OAuth state parameter for CSRF protection
+        code_verifier (str): PKCE code verifier (for OAuth 2.1)
+        nonce (str): OIDC nonce parameter
+        redirect_uri (str): OAuth callback URI
+        expires_at (datetime): Session expiration time
+        user_email (str): User email after successful auth (optional)
+        created_at (datetime): Session creation timestamp
+
+    Examples:
+        >>> session = SSOAuthSession(
+        ...     provider_id="github",
+        ...     state="csrf-state-token",
+        ...     redirect_uri="https://gateway.example.com/auth/sso-callback/github"
+        ... )
+    """
+
+    __tablename__ = "sso_auth_sessions"
+
+    # Session identification
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    provider_id: Mapped[str] = mapped_column(String(50), ForeignKey("sso_providers.id"), nullable=False)
+
+    # OAuth/OIDC parameters
+    state: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)  # CSRF protection
+    code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE
+    nonce: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # OIDC
+    redirect_uri: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    # Session lifecycle
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: utc_now() + timedelta(minutes=10), nullable=False)  # 10-minute expiration
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Relationships
+    provider: Mapped["SSOProvider"] = relationship("SSOProvider")
+    user: Mapped[Optional["EmailUser"]] = relationship("EmailUser")
+
+    @property
+    def is_expired(self) -> bool:
+        """Check if SSO auth session has expired.
+
+        Returns:
+            True if the session has expired, False otherwise
+        """
+        now = utc_now()
+        expires = self.expires_at
+
+        # Handle timezone mismatch by converting naive datetime to UTC if needed
+        if expires.tzinfo is None:
+            # expires_at is timezone-naive, assume it's UTC
+            expires = expires.replace(tzinfo=timezone.utc)
+        elif now.tzinfo is None:
+            # now is timezone-naive (shouldn't happen with utc_now, but just in case)
+            now = now.replace(tzinfo=timezone.utc)
+
+        return now > expires
+
+    def __repr__(self):
+        """String representation of SSO auth session.
+
+        Returns:
+            str: String representation of the session object
+        """
+        return f"<SSOAuthSession(id='{self.id}', provider='{self.provider_id}', expired={self.is_expired})>"
+
+
 # Event listeners for validation
 def validate_tool_schema(mapper, connection, target):
     """
@@ -1500,7 +3002,7 @@ def validate_tool_schema(mapper, connection, target):
         try:
             jsonschema.Draft7Validator.check_schema(target.input_schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid tool input schema: {str(e)}")
+            raise ValueError(f"Invalid tool input schema: {str(e)}") from e
 
 
 def validate_tool_name(mapper, connection, target):
@@ -1522,7 +3024,7 @@ def validate_tool_name(mapper, connection, target):
         try:
             SecurityValidator.validate_tool_name(target.name)
         except ValueError as e:
-            raise ValueError(f"Invalid tool name: {str(e)}")
+            raise ValueError(f"Invalid tool name: {str(e)}") from e
 
 
 def validate_prompt_schema(mapper, connection, target):
@@ -1544,7 +3046,7 @@ def validate_prompt_schema(mapper, connection, target):
         try:
             jsonschema.Draft7Validator.check_schema(target.argument_schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid prompt argument schema: {str(e)}")
+            raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
 
 
 # Register validation listeners
@@ -1624,6 +3126,18 @@ def set_a2a_agent_slug(_mapper, _conn, target):
         _mapper: Mapper
         _conn: Connection
         target: Target A2AAgent instance
+    """
+    target.slug = slugify(target.name)
+
+
+@event.listens_for(EmailTeam, "before_insert")
+def set_email_team_slug(_mapper, _conn, target):
+    """Set the slug for an EmailTeam before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target EmailTeam instance
     """
     target.slug = slugify(target.name)
 

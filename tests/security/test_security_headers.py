@@ -9,10 +9,14 @@ Security Headers and CORS Testing.
 This module contains comprehensive tests for security headers middleware and CORS configuration.
 """
 
-import pytest
-from fastapi.testclient import TestClient
+# Standard
 from unittest.mock import patch
 
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.config import settings
 
 

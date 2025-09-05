@@ -19,18 +19,20 @@ Environment variables:
 
 CLI options mirror these and take precedence over env values.
 """
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
-import os
-import sys
-import time
 import json
+import os
+from pathlib import Path
 import shutil
 import subprocess
-from pathlib import Path
+import sys
+import time
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 
 def project_root() -> Path:

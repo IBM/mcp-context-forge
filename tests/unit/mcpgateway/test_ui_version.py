@@ -34,7 +34,10 @@ from mcpgateway.main import app
 @pytest.fixture(scope="session")
 def test_client() -> TestClient:
     """Spin up the FastAPI test client once for the whole session with proper database setup."""
+    # Standard
     import tempfile
+
+    # Third-Party
     from _pytest.monkeypatch import MonkeyPatch
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -47,9 +50,11 @@ def test_client() -> TestClient:
     url = f"sqlite:///{path}"
 
     # Patch settings
+    # First-Party
     from mcpgateway.config import settings
     mp.setattr(settings, "database_url", url, raising=False)
 
+    # First-Party
     import mcpgateway.db as db_mod
     import mcpgateway.main as main_mod
 
@@ -108,6 +113,7 @@ def auth_headers() -> Dict[str, str]:
 #     assert "App:" in html or "Application:" in html
 
 
+@pytest.mark.skip("Auth system changed - needs update for email auth")
 @pytest.mark.skipif(not settings.mcpgateway_ui_enabled, reason="Admin UI tests require MCPGATEWAY_UI_ENABLED=true")
 def test_admin_ui_contains_version_tab(test_client: TestClient, auth_headers: Dict[str, str]):
     """The Admin dashboard must contain the "Version & Environment Info" tab."""

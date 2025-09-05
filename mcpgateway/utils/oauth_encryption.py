@@ -24,7 +24,21 @@ logger = logging.getLogger(__name__)
 
 
 class OAuthEncryption:
-    """Handles encryption and decryption of OAuth client secrets."""
+    """Handles encryption and decryption of OAuth client secrets.
+
+    Examples:
+        Basic roundtrip:
+        >>> enc = OAuthEncryption('very-secret-key')
+        >>> cipher = enc.encrypt_secret('hello')
+        >>> isinstance(cipher, str) and enc.is_encrypted(cipher)
+        True
+        >>> enc.decrypt_secret(cipher)
+        'hello'
+
+        Non-encrypted text detection:
+        >>> enc.is_encrypted('plain-text')
+        False
+    """
 
     def __init__(self, encryption_secret: str):
         """Initialize the encryption handler.
@@ -117,5 +131,10 @@ def get_oauth_encryption(encryption_secret: str) -> OAuthEncryption:
 
     Returns:
         OAuthEncryption instance
+
+    Examples:
+        >>> enc = get_oauth_encryption('k')
+        >>> isinstance(enc, OAuthEncryption)
+        True
     """
     return OAuthEncryption(encryption_secret)

@@ -17,7 +17,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import case, delete, desc, func, select
+from sqlalchemy import and_, case, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -25,6 +25,7 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.team_management_service import TeamManagementService
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -32,11 +33,37 @@ logger = logging_service.get_logger(__name__)
 
 
 class A2AAgentError(Exception):
-    """Base class for A2A agent-related errors."""
+    """Base class for A2A agent-related errors.
+
+    Examples:
+        >>> try:
+        ...     raise A2AAgentError("Agent operation failed")
+        ... except A2AAgentError as e:
+        ...     str(e)
+        'Agent operation failed'
+        >>> try:
+        ...     raise A2AAgentError("Connection error")
+        ... except Exception as e:
+        ...     isinstance(e, A2AAgentError)
+        True
+    """
 
 
 class A2AAgentNotFoundError(A2AAgentError):
-    """Raised when a requested A2A agent is not found."""
+    """Raised when a requested A2A agent is not found.
+
+    Examples:
+        >>> try:
+        ...     raise A2AAgentNotFoundError("Agent 'test-agent' not found")
+        ... except A2AAgentNotFoundError as e:
+        ...     str(e)
+        "Agent 'test-agent' not found"
+        >>> try:
+        ...     raise A2AAgentNotFoundError("No such agent")
+        ... except A2AAgentError as e:
+        ...     isinstance(e, A2AAgentError)  # Should inherit from A2AAgentError
+        True
+    """
 
 
 class A2AAgentNameConflictError(A2AAgentError):
@@ -52,6 +79,28 @@ class A2AAgentNameConflictError(A2AAgentError):
             name: The agent name that caused the conflict.
             is_active: Whether the conflicting agent is currently active.
             agent_id: The ID of the conflicting agent, if known.
+
+        Examples:
+            >>> error = A2AAgentNameConflictError("test-agent")
+            >>> error.name
+            'test-agent'
+            >>> error.is_active
+            True
+            >>> error.agent_id is None
+            True
+            >>> "test-agent" in str(error)
+            True
+            >>>
+            >>> # Test inactive agent conflict
+            >>> error = A2AAgentNameConflictError("inactive-agent", is_active=False, agent_id="agent-123")
+            >>> error.is_active
+            False
+            >>> error.agent_id
+            'agent-123'
+            >>> "inactive" in str(error)
+            True
+            >>> "agent-123" in str(error)
+            True
         """
         self.name = name
         self.is_active = is_active
@@ -96,6 +145,9 @@ class A2AAgentService:
         created_user_agent: Optional[str] = None,
         import_batch_id: Optional[str] = None,
         federation_source: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: str = "private",
     ) -> A2AAgentRead:
         """Register a new A2A agent.
 
@@ -108,6 +160,9 @@ class A2AAgentService:
             created_user_agent: User agent of creation request.
             import_batch_id: UUID of bulk import batch.
             federation_source: Source gateway for federated entities.
+            team_id (Optional[str]): Team ID to assign the agent to.
+            owner_email (Optional[str]): Email of the user who owns this agent.
+            visibility (str): Agent visibility level (private, team, public).
 
         Returns:
             The created agent data.
@@ -134,6 +189,10 @@ class A2AAgentService:
             auth_type=agent_data.auth_type,
             auth_value=agent_data.auth_value,  # This should be encrypted in practice
             tags=agent_data.tags,
+            # Team scoping fields - use schema values if provided, otherwise fallback to parameters
+            team_id=getattr(agent_data, "team_id", None) or team_id,
+            owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
+            visibility=getattr(agent_data, "visibility", None) or visibility,
             created_by=created_by,
             created_from_ip=created_from_ip,
             created_via=created_via,
@@ -176,6 +235,75 @@ class A2AAgentService:
                 query = query.where(func.or_(*tag_conditions))
 
         query = query.order_by(desc(DbA2AAgent.created_at))
+
+        agents = db.execute(query).scalars().all()
+        return [self._db_to_schema(agent) for agent in agents]
+
+    async def list_agents_for_user(
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+    ) -> List[A2AAgentRead]:
+        """
+        List A2A agents user has access to with team filtering.
+
+        Args:
+            db: Database session
+            user_email: Email of the user requesting agents
+            team_id: Optional team ID to filter by specific team
+            visibility: Optional visibility filter (private, team, public)
+            include_inactive: Whether to include inactive agents
+            skip: Number of agents to skip for pagination
+            limit: Maximum number of agents to return
+
+        Returns:
+            List[A2AAgentRead]: A2A agents the user has access to
+        """
+
+        # Build query following existing patterns from list_agents()
+        query = select(DbA2AAgent)
+
+        # Apply active/inactive filter
+        if not include_inactive:
+            query = query.where(DbA2AAgent.enabled.is_(True))
+
+        if team_id:
+            # Filter by specific team
+            query = query.where(DbA2AAgent.team_id == team_id)
+
+            # Validate user has access to team
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            if team_id not in team_ids:
+                return []  # No access to team
+        else:
+            # Get user's accessible teams
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            # Build access conditions following existing patterns
+            access_conditions = []
+
+            # 1. User's personal resources (owner_email matches)
+            access_conditions.append(DbA2AAgent.owner_email == user_email)
+
+            # 2. Team resources where user is member
+            if team_ids:
+                access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
+
+            # 3. Public resources (if visibility allows)
+            access_conditions.append(DbA2AAgent.visibility == "public")
+
+            query = query.where(or_(*access_conditions))
+
+        # Apply visibility filter if specified
+        if visibility:
+            query = query.where(DbA2AAgent.visibility == visibility)
+
+        # Apply pagination following existing patterns
+        query = query.order_by(desc(DbA2AAgent.created_at))
+        query = query.offset(skip).limit(limit)
 
         agents = db.execute(query).scalars().all()
         return [self._db_to_schema(agent) for agent in agents]

@@ -3,11 +3,13 @@
 Compare async performance profiles between builds.
 """
 
-import pstats
-import json
+# Standard
 import argparse
+import json
 from pathlib import Path
-from typing import Dict, Any
+import pstats
+from typing import Any, Dict
+
 
 class ProfileComparator:
     """Compare performance profiles and detect regressions."""

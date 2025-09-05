@@ -35,6 +35,22 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
     - samesite: CSRF protection (configurable, defaults to 'lax')
     - path: Cookie scope limitation
     - max_age: Automatic expiration
+
+    Examples:
+        Basic cookie set with remember_me disabled:
+        >>> from fastapi import Response
+        >>> from mcpgateway.utils.security_cookies import set_auth_cookie
+        >>> resp = Response()
+        >>> set_auth_cookie(resp, 'tok123', remember_me=False)
+        >>> header = resp.headers.get('set-cookie')
+        >>> 'jwt_token=' in header and 'HttpOnly' in header and 'Path=/' in header
+        True
+
+        Extended expiration when remember_me is True:
+        >>> resp2 = Response()
+        >>> set_auth_cookie(resp2, 'tok123', remember_me=True)
+        >>> 'Max-Age=2592000' in resp2.headers.get('set-cookie')  # 30 days
+        True
     """
     # Set expiration based on remember_me preference
     max_age = 30 * 24 * 3600 if remember_me else 3600  # 30 days or 1 hour
@@ -63,6 +79,15 @@ def clear_auth_cookie(response: Response) -> None:
 
     Args:
         response: FastAPI response object to clear the cookie from
+
+    Examples:
+        >>> from fastapi import Response
+        >>> resp = Response()
+        >>> set_auth_cookie(resp, 'tok123')
+        >>> clear_auth_cookie(resp)
+        >>> # Deletion sets another Set-Cookie for jwt_token; presence indicates cleared cookie header
+        >>> 'jwt_token=' in resp.headers.get('set-cookie')
+        True
     """
     # Use same security settings as when setting the cookie
     use_secure = (settings.environment == "production") or settings.secure_cookies
@@ -80,6 +105,14 @@ def set_session_cookie(response: Response, session_id: str, max_age: int = 3600)
         response: FastAPI response object to set the cookie on
         session_id: Session identifier to store in the cookie
         max_age: Cookie expiration time in seconds (default: 1 hour)
+
+    Examples:
+        >>> from fastapi import Response
+        >>> resp = Response()
+        >>> set_session_cookie(resp, 'sess-1', max_age=3600)
+        >>> header = resp.headers.get('set-cookie')
+        >>> 'session_id=sess-1' in header and 'HttpOnly' in header
+        True
     """
     use_secure = (settings.environment == "production") or settings.secure_cookies
 
@@ -100,6 +133,14 @@ def clear_session_cookie(response: Response) -> None:
 
     Args:
         response: FastAPI response object to clear the cookie from
+
+    Examples:
+        >>> from fastapi import Response
+        >>> resp = Response()
+        >>> set_session_cookie(resp, 'sess-2', max_age=60)
+        >>> clear_session_cookie(resp)
+        >>> 'session_id=' in resp.headers.get('set-cookie')
+        True
     """
     use_secure = (settings.environment == "production") or settings.secure_cookies
 

@@ -39,6 +39,7 @@ from typing import Any, AsyncGenerator, List, Union
 from uuid import uuid4
 
 # Third-Party
+import anyio
 from fastapi.security.utils import get_authorization_scheme_param
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -691,6 +692,9 @@ class SessionManagerWrapper:
 
         try:
             await self.session_manager.handle_request(scope, receive, send)
+        except anyio.ClosedResourceError:
+            # Expected when client closes one side of the stream (normal lifecycle)
+            logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
             logger.exception(f"Error handling streamable HTTP request: {e}")
             raise

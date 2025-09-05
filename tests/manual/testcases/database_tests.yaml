@@ -1,0 +1,176 @@
+# MCP Gateway v0.7.0 - Database Tests
+# Database compatibility and performance testing
+# Focus: SQLite vs PostgreSQL comparison and migration validation
+
+worksheet_name: "Database Tests"
+description: "Complete database compatibility testing for SQLite and PostgreSQL"
+priority: "HIGH"
+estimated_time: "60-120 minutes"
+
+headers:
+  - "Test ID"
+  - "Database Type"
+  - "Feature"
+  - "Test Commands"
+  - "Expected Result"
+  - "Actual Result"
+  - "Performance"
+  - "Status"
+  - "Tester"
+  - "Date"
+  - "Comments"
+
+tests:
+  - test_id: "DB-001"
+    database_type: "SQLite"
+    feature: "Migration Execution"
+    test_commands: |
+      1. Set DATABASE_URL=sqlite:///./test_migration.db in .env
+      2. python3 -m mcpgateway.bootstrap_db
+      3. sqlite3 test_migration.db '.tables'
+      4. sqlite3 test_migration.db 'SELECT COUNT(*) FROM email_users;'
+    expected: "All multitenancy tables created, admin user exists"
+    performance: "Fast"
+
+  - test_id: "DB-002"
+    database_type: "SQLite"
+    feature: "Team Data Population"
+    test_commands: |
+      1. sqlite3 mcp.db 'SELECT COUNT(*) FROM servers WHERE team_id IS NOT NULL;'
+      2. sqlite3 mcp.db 'SELECT COUNT(*) FROM tools WHERE team_id IS NOT NULL;'
+      3. sqlite3 mcp.db 'SELECT COUNT(*) FROM servers WHERE team_id IS NULL;'
+    expected: "All resources have team_id populated, zero NULL values"
+    performance: "Fast"
+
+  - test_id: "DB-003"
+    database_type: "SQLite"
+    feature: "Connection Pool"
+    test_commands: |
+      1. Set DB_POOL_SIZE=50 in .env
+      2. Start gateway: make dev
+      3. Run concurrent requests: for i in {1..20}; do curl http://localhost:4444/health & done; wait
+    expected: "Connections managed within SQLite limits (~50)"
+    performance: "Good"
+
+  - test_id: "DB-004"
+    database_type: "SQLite"
+    feature: "JSON Fields"
+    test_commands: |
+      1. sqlite3 mcp.db 'SELECT name, schema FROM tools WHERE schema IS NOT NULL LIMIT 3;'
+      2. sqlite3 mcp.db 'UPDATE tools SET schema = json_set(schema, "$.test", "value") WHERE id = (SELECT id FROM tools LIMIT 1);'
+    expected: "JSON data stored and queried correctly"
+    performance: "Good"
+
+  - test_id: "DB-005"
+    database_type: "SQLite"
+    feature: "Backup and Restore"
+    test_commands: |
+      1. cp mcp.db backup_test.db
+      2. sqlite3 mcp.db 'DELETE FROM email_teams WHERE name = "test";'
+      3. cp backup_test.db mcp.db
+      4. sqlite3 mcp.db 'SELECT COUNT(*) FROM email_teams;'
+    expected: "File-based backup and restore works perfectly"
+    performance: "Excellent"
+
+  - test_id: "DB-006"
+    database_type: "PostgreSQL"
+    feature: "Migration Execution"
+    test_commands: |
+      1. export DATABASE_URL=postgresql://user:pass@localhost:5432/mcp_test
+      2. createdb mcp_test
+      3. python3 -m mcpgateway.bootstrap_db
+      4. psql mcp_test -c '\dt' | grep email
+    expected: "All tables created with PostgreSQL-specific types"
+    performance: "Fast"
+
+  - test_id: "DB-007"
+    database_type: "PostgreSQL"
+    feature: "UUID and JSONB"
+    test_commands: |
+      1. psql mcp_test -c 'SELECT id FROM email_teams LIMIT 1;'
+      2. psql mcp_test -c 'SELECT config FROM servers WHERE config IS NOT NULL LIMIT 1;'
+      3. psql mcp_test -c 'SELECT * FROM tools WHERE schema @> '{"type":"object"}';'
+    expected: "UUID columns work, JSONB queries efficient"
+    performance: "Excellent"
+
+  - test_id: "DB-008"
+    database_type: "PostgreSQL"
+    feature: "High Concurrency"
+    test_commands: |
+      1. Set DB_POOL_SIZE=200 in .env
+      2. Start gateway: make dev
+      3. Run high concurrency: for i in {1..100}; do curl http://localhost:4444/health & done; wait
+    expected: "High concurrency supported (200+ connections)"
+    performance: "Excellent"
+
+  - test_id: "DB-009"
+    database_type: "PostgreSQL"
+    feature: "Full-Text Search"
+    test_commands: |
+      1. psql mcp_test -c 'SELECT name FROM tools WHERE to_tsvector(name) @@ plainto_tsquery("time");'
+      2. psql mcp_test -c 'SELECT name, ts_rank(to_tsvector(name), plainto_tsquery("time")) FROM tools WHERE to_tsvector(name) @@ plainto_tsquery("time") ORDER BY ts_rank DESC;'
+    expected: "Advanced full-text search with ranking"
+    performance: "Excellent"
+
+  - test_id: "DB-010"
+    database_type: "PostgreSQL"
+    feature: "Backup and Restore"
+    test_commands: |
+      1. pg_dump mcp_test > backup_test.sql
+      2. psql mcp_test -c 'DELETE FROM email_teams WHERE name LIKE "test%";'
+      3. dropdb mcp_test && createdb mcp_test
+      4. psql mcp_test < backup_test.sql
+    expected: "SQL-based backup and restore works perfectly"
+    performance: "Good"
+
+  - test_id: "DB-011"
+    database_type: "Both"
+    feature: "Transaction Integrity"
+    test_commands: |
+      1. Begin transaction
+      2. Create team, add members, create resources
+      3. Rollback transaction
+      4. Verify no changes persisted
+    expected: "ACID transactions work correctly on both databases"
+    performance: "Good"
+
+  - test_id: "DB-012"
+    database_type: "Both"
+    feature: "Constraint Enforcement"
+    test_commands: |
+      1. Try deleting team with members
+      2. Try inserting duplicate team slug
+      3. Try invalid foreign key reference
+    expected: "Constraints enforced, referential integrity maintained"
+    performance: "Good"
+
+  - test_id: "DB-013"
+    database_type: "Both"
+    feature: "Performance Under Load"
+    test_commands: |
+      1. Create 1000+ resources (SQLite) / 10,000+ (PostgreSQL)
+      2. Test team-filtered queries
+      3. Monitor memory usage and response times
+    expected: "Reasonable performance within database limits"
+    performance: "Variable"
+
+  - test_id: "DB-014"
+    database_type: "Both"
+    feature: "Migration Rollback"
+    test_commands: |
+      1. Note current migration version: alembic current
+      2. Run downgrade: alembic downgrade -1
+      3. Check schema reverted
+      4. Run upgrade again: alembic upgrade head
+    expected: "Clean rollback and re-upgrade possible"
+    performance: "Good"
+
+  - test_id: "DB-015"
+    database_type: "Both"
+    feature: "Cross-Database Compatibility"
+    test_commands: |
+      1. Export configuration from SQLite setup
+      2. Import same configuration into PostgreSQL setup
+      3. Verify data integrity and functionality
+    expected: "Data portable between database types"
+    performance: "Good"

@@ -6,14 +6,17 @@ Authors: Mihai Criveti
 
 Property-based fuzz testing for Pydantic schema validation.
 """
+# Standard
 import json
-from hypothesis import given, strategies as st
-import pytest
+
+# Third-Party
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import ValidationError
-from mcpgateway.schemas import (
-    ToolCreate, ResourceCreate, PromptCreate, GatewayCreate,
-    AuthenticationValues, AdminToolCreate, ServerCreate
-)
+import pytest
+
+# First-Party
+from mcpgateway.schemas import AdminToolCreate, AuthenticationValues, GatewayCreate, PromptCreate, ResourceCreate, ServerCreate, ToolCreate
 
 
 class TestToolCreateSchemaFuzzing:

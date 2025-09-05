@@ -7,10 +7,15 @@ Authors: Mihai Criveti
 Tests for gateway service resource and prompt fetching functionality.
 """
 
-import pytest
+# Standard
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+# Third-Party
+import pytest
+
+# First-Party
+from mcpgateway.schemas import GatewayCreate, PromptCreate, ResourceCreate, ToolCreate
 from mcpgateway.services.gateway_service import GatewayService
-from mcpgateway.schemas import GatewayCreate, ResourceCreate, PromptCreate, ToolCreate
 
 
 class TestGatewayResourcesPrompts:

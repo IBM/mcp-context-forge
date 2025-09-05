@@ -5,12 +5,16 @@ This module tests database migrations using SQLite containers across
 different MCP Gateway versions with comprehensive validation.
 """
 
+# Standard
 import logging
-import pytest
-import time
 from pathlib import Path
+import time
 
-from .utils.data_seeder import DataSeeder, DataGenerationConfig
+# Third-Party
+import pytest
+
+# Local
+from .utils.data_seeder import DataGenerationConfig, DataSeeder
 from .utils.schema_validator import SchemaValidator
 
 logger = logging.getLogger(__name__)

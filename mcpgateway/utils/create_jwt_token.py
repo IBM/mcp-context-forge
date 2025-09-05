@@ -28,11 +28,11 @@ Doctest examples
 >>> jwt_util.settings.jwt_algorithm = 'HS256'
 >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
 >>> import jwt
->>> jwt.decode(token, 'secret', algorithms=['HS256'])['sub'] == 'alice'
+>>> jwt.decode(token, 'secret', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'alice'
 True
 >>> import asyncio
 >>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='secret', algorithm='HS256'))
->>> jwt.decode(t, 'secret', algorithms=['HS256'])['sub'] == 'bob'
+>>> jwt.decode(t, 'secret', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'bob'
 True
 """
 
@@ -80,7 +80,7 @@ def _create_jwt_token(
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
     """
-    Return a signed JWT string (synchronous, timezone-aware).
+    Return a signed JWT string (synchronous, timezone-aware) with proper claims.
 
     Args:
         data: Dictionary containing payload data to encode in the token.
@@ -90,7 +90,7 @@ def _create_jwt_token(
         algorithm: Signing algorithm to use.
 
     Returns:
-        The JWT token string.
+        The JWT token string with proper audience and issuer claims.
 
     Doctest:
     >>> from mcpgateway.utils import create_jwt_token as jwt_util
@@ -98,12 +98,24 @@ def _create_jwt_token(
     >>> jwt_util.settings.jwt_algorithm = 'HS256'
     >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
     >>> import jwt
-    >>> jwt.decode(token, 'secret', algorithms=['HS256'])['sub'] == 'alice'
+    >>> decoded = jwt.decode(token, 'secret', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)
+    >>> decoded['sub'] == 'alice' and decoded['aud'] == jwt_util.settings.jwt_audience and decoded['iss'] == jwt_util.settings.jwt_issuer
     True
     """
     payload = data.copy()
+    now = _dt.datetime.now(_dt.timezone.utc)
+
+    # Add standard JWT claims
+    payload["iat"] = int(now.timestamp())  # Issued at
+    payload["iss"] = settings.jwt_issuer  # Issuer
+    payload["aud"] = settings.jwt_audience  # Audience
+
+    # Handle legacy username format - convert to sub for consistency
+    if "username" in payload and "sub" not in payload:
+        payload["sub"] = payload["username"]
+
     if expires_in_minutes > 0:
-        expire = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=expires_in_minutes)
+        expire = now + _dt.timedelta(minutes=expires_in_minutes)
         payload["exp"] = int(expire.timestamp())
     else:
         # Warn about non-expiring token
@@ -148,7 +160,7 @@ async def create_jwt_token(
     >>> import asyncio
     >>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='secret', algorithm='HS256'))
     >>> import jwt
-    >>> jwt.decode(t, 'secret', algorithms=['HS256'])['sub'] == 'bob'
+    >>> jwt.decode(t, 'secret', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'bob'
     True
     """
     return _create_jwt_token(data, expires_in_minutes, secret, algorithm)
@@ -170,7 +182,7 @@ async def get_jwt_token() -> str:
 
 
 def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[str, Any]:
-    """Decode *without* signature verification-handy for inspection.
+    """Decode with proper audience and issuer verification.
 
     Args:
         token: JWT token string to decode.
@@ -178,11 +190,25 @@ def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[s
 
     Returns:
         Dictionary containing the decoded payload.
+
+    Examples:
+        >>> # Test algorithm parameter handling
+        >>> algs = ['HS256', 'HS512']
+        >>> len(algs)
+        2
+        >>> 'HS256' in algs
+        True
+        >>> # Test None algorithms handling
+        >>> default_algo = [DEFAULT_ALGO]
+        >>> isinstance(default_algo, list)
+        True
     """
     return jwt.decode(
         token,
         settings.jwt_secret_key,
         algorithms=algorithms or [DEFAULT_ALGO],
+        audience=settings.jwt_audience,
+        issuer=settings.jwt_issuer,
         # options={"require": ["exp"]},  # Require expiration
     )
 

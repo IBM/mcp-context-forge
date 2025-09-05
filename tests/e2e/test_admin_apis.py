@@ -62,9 +62,40 @@ setup_logging()
 # -------------------------
 # Test Configuration
 # -------------------------
-TEST_USER = "testuser"
-TEST_PASSWORD = "testpass"
-TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_USER}:{TEST_PASSWORD}"}
+def create_test_jwt_token():
+    """Create a proper JWT token for testing with required audience and issuer."""
+    # Standard
+    import datetime
+
+    # Third-Party
+    import jwt
+
+    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
+    payload = {
+        'sub': 'admin@example.com',
+        'email': 'admin@example.com',
+        'iat': int(datetime.datetime.now(datetime.timezone.utc).timestamp()),
+        'exp': int(expire.timestamp()),
+        'iss': 'mcpgateway',
+        'aud': 'mcpgateway-api',
+    }
+
+    # Use the test JWT secret key
+    return jwt.encode(payload, 'my-test-key', algorithm='HS256')
+
+TEST_JWT_TOKEN = create_test_jwt_token()
+TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
+
+# Local
+# Test user for the updated authentication system
+from tests.utils.rbac_mocks import create_mock_email_user
+
+TEST_USER = create_mock_email_user(
+    email="admin@example.com",
+    full_name="Test Admin",
+    is_admin=True,
+    is_active=True
+)
 
 
 # -------------------------
@@ -73,10 +104,49 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_USER}:{TEST_PASSWORD}"}
 @pytest_asyncio.fixture
 async def client(app_with_temp_db):
     # First-Party
-    from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.db import get_db
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.utils.create_jwt_token import get_jwt_token
+    from mcpgateway.utils.verify_credentials import require_admin_auth
 
-    app_with_temp_db.dependency_overrides[require_auth] = lambda: TEST_USER
-    app_with_temp_db.dependency_overrides[require_basic_auth] = lambda: TEST_USER
+    # Local
+    from tests.utils.rbac_mocks import create_mock_user_context
+
+    # Get the actual test database session from the app
+    test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+
+    def get_test_db_session():
+        """Get the actual test database session."""
+        if callable(test_db_dependency):
+            return next(test_db_dependency())
+        return test_db_dependency
+
+    # Create mock user context with actual test database session
+    test_db_session = get_test_db_session()
+    test_user_context = create_mock_user_context(
+        email="admin@example.com",
+        full_name="Test Admin",
+        is_admin=True
+    )
+    test_user_context["db"] = test_db_session
+
+    # Mock admin authentication function
+    async def mock_require_admin_auth():
+        """Mock admin auth that returns admin email."""
+        return "admin@example.com"
+
+    # Mock JWT token function
+    async def mock_get_jwt_token():
+        """Mock JWT token function."""
+        return TEST_JWT_TOKEN
+
+    # Mock all authentication dependencies
+    app_with_temp_db.dependency_overrides[get_current_user] = lambda: TEST_USER
+    app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = lambda: test_user_context
+    app_with_temp_db.dependency_overrides[require_admin_auth] = mock_require_admin_auth
+    app_with_temp_db.dependency_overrides[get_jwt_token] = mock_get_jwt_token
+    # Keep the existing get_db override from app_with_temp_db
 
     # Third-Party
     from httpx import ASGITransport, AsyncClient
@@ -85,8 +155,11 @@ async def client(app_with_temp_db):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
-    app_with_temp_db.dependency_overrides.pop(require_auth, None)
-    app_with_temp_db.dependency_overrides.pop(require_basic_auth, None)
+    # Clean up dependency overrides (except get_db which belongs to app_with_temp_db)
+    app_with_temp_db.dependency_overrides.pop(get_current_user, None)
+    app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+    app_with_temp_db.dependency_overrides.pop(require_admin_auth, None)
+    app_with_temp_db.dependency_overrides.pop(get_jwt_token, None)
 
 
 @pytest_asyncio.fixture

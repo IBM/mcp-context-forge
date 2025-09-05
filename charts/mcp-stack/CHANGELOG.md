@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [0.6.1] - 2025-09-01
+
+### Added
+* **Enhanced Authentication Configuration** - Comprehensive email-based authentication support with new environment variables:
+  - Email authentication: `EMAIL_AUTH_ENABLED`, `PLATFORM_ADMIN_EMAIL/PASSWORD/FULL_NAME`
+  - Password policies: `PASSWORD_MIN_LENGTH`, `PASSWORD_REQUIRE_*` settings
+  - Account lockout: `MAX_FAILED_LOGIN_ATTEMPTS`, `ACCOUNT_LOCKOUT_DURATION_MINUTES`
+  - Argon2id hashing: `ARGON2ID_TIME_COST/MEMORY_COST/PARALLELISM`
+* **SSO Integration** - Single Sign-On support for multiple providers:
+  - GitHub OAuth: `SSO_GITHUB_*` configuration options
+  - Google OAuth: `SSO_GOOGLE_*` configuration options
+  - IBM Security Verify: `SSO_IBM_VERIFY_*` configuration options
+  - Okta OIDC: `SSO_OKTA_*` configuration options
+  - SSO policies: `SSO_AUTO_CREATE_USERS`, `SSO_TRUSTED_DOMAINS`, `SSO_REQUIRE_ADMIN_APPROVAL`
+* **A2A (Agent-to-Agent) Features** - Complete A2A agent configuration:
+  - `MCPGATEWAY_A2A_ENABLED/MAX_AGENTS/DEFAULT_TIMEOUT/MAX_RETRIES/METRICS_ENABLED`
+* **Personal Teams Management** - Team collaboration features:
+  - `AUTO_CREATE_PERSONAL_TEAMS`, `PERSONAL_TEAM_PREFIX`
+  - `MAX_TEAMS_PER_USER/MEMBERS_PER_TEAM`, `INVITATION_EXPIRY_DAYS`
+* **Enhanced Logging Configuration** - Extended logging capabilities:
+  - File logging: `LOG_TO_FILE/FILEMODE/FILE/FOLDER`
+  - Rotation: `LOG_ROTATION_ENABLED/MAX_SIZE_MB/BACKUP_COUNT`
+  - Buffer management: `LOG_BUFFER_SIZE_MB`
+* **OpenTelemetry Observability** - Comprehensive tracing and metrics:
+  - OTLP configuration: `OTEL_EXPORTER_OTLP_ENDPOINT/PROTOCOL/HEADERS`
+  - Alternative backends: `OTEL_EXPORTER_JAEGER/ZIPKIN_ENDPOINT`
+  - Performance tuning: `OTEL_BSP_*` batch span processor settings
+* **Well-Known URI Support** - RFC compliance for discovery:
+  - `WELL_KNOWN_ENABLED/ROBOTS_TXT/SECURITY_TXT/CUSTOM_FILES/CACHE_MAX_AGE`
+* **Plugin Framework Configuration** - Plugin system support:
+  - `PLUGINS_ENABLED/CONFIG_FILE/CLI_COMPLETION/CLI_MARKUP_MODE`
+* **Enhanced Security Features** - Additional security configurations:
+  - MCP client auth: `MCP_CLIENT_AUTH_ENABLED/TRUST_PROXY_AUTH/PROXY_USER_HEADER`
+  - OAuth settings: `OAUTH_REQUEST_TIMEOUT/MAX_RETRIES`
+  - Header passthrough: `ENABLE_HEADER_PASSTHROUGH/DEFAULT_PASSTHROUGH_HEADERS`
+  - JWT enhancements: `JWT_AUDIENCE/ISSUER`, `REQUIRE_TOKEN_EXPIRATION`
+* **Additional Configuration** - Miscellaneous enhancements:
+  - SSE keepalive: `SSE_KEEPALIVE_ENABLED/INTERVAL`
+  - Tool routing: `GATEWAY_TOOL_NAME_SEPARATOR`
+  - Health checks: `GATEWAY_VALIDATION_TIMEOUT`
+  - HTTP retry: `RETRY_MAX_ATTEMPTS/BASE_DELAY/MAX_DELAY/JITTER_MAX`
+  - Bulk import: `MCPGATEWAY_BULK_IMPORT_ENABLED/MAX_TOOLS/RATE_LIMIT`
+
+### Changed
+* **Chart version** - Bumped to 0.6.1 to reflect extensive configuration additions
+* **Configuration organization** - Improved categorization and documentation of environment variables
+
 ## [0.3.0] - 2025-07-08 (pending)
 
 ### Added

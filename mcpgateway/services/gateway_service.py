@@ -54,7 +54,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -401,6 +401,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         created_from_ip: Optional[str] = None,
         created_via: Optional[str] = None,
         created_user_agent: Optional[str] = None,
+        team_id: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        visibility: Optional[str] = None,
     ) -> GatewayRead:
         """Register a new gateway.
 
@@ -411,6 +414,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             created_from_ip: IP address of creator
             created_via: Creation method (ui, api, federation)
             created_user_agent: User agent of creation request
+            team_id (Optional[str]): Team ID to assign the gateway to.
+            owner_email (Optional[str]): Email of the user who owns this gateway.
+            visibility (Optional[str]): Gateway visibility level (private, team, public).
 
         Returns:
             Created gateway information
@@ -488,6 +494,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     created_user_agent=created_user_agent,
                     federation_source=gateway.name,
                     version=1,
+                    # Inherit team assignment from gateway
+                    team_id=team_id,
+                    owner_email=owner_email,
+                    visibility="public",  # Federated tools should be public for discovery
                 )
                 for tool in tools
             ]
@@ -507,6 +517,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     created_user_agent=created_user_agent,
                     federation_source=gateway.name,
                     version=1,
+                    # Inherit team assignment from gateway
+                    team_id=team_id,
+                    owner_email=owner_email,
+                    visibility="public",  # Federated tools should be public for discovery
                 )
                 for resource in resources
             ]
@@ -525,6 +539,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     created_user_agent=created_user_agent,
                     federation_source=gateway.name,
                     version=1,
+                    # Inherit team assignment from gateway
+                    team_id=team_id,
+                    owner_email=owner_email,
+                    visibility="public",  # Federated tools should be public for discovery
                 )
                 for prompt in prompts
             ]
@@ -551,6 +569,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 created_via=created_via or "api",
                 created_user_agent=created_user_agent,
                 version=1,
+                # Team scoping fields
+                team_id=team_id,
+                owner_email=owner_email,
+                visibility="public" if visibility != "private" else visibility,  # Default to public for federation unless explicitly private
             )
 
             # Add to DB
@@ -747,6 +769,74 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         #         # print(f"Gateway auth_type: {g['auth_type']}")
         # print("******************************************************************")
 
+        return [GatewayRead.model_validate(g).masked() for g in gateways]
+
+    async def list_gateways_for_user(
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+    ) -> List[GatewayRead]:
+        """
+        List gateways user has access to with team filtering.
+
+        Args:
+            db: Database session
+            user_email: Email of the user requesting gateways
+            team_id: Optional team ID to filter by specific team
+            visibility: Optional visibility filter (private, team, public)
+            include_inactive: Whether to include inactive gateways
+            skip: Number of gateways to skip for pagination
+            limit: Maximum number of gateways to return
+
+        Returns:
+            List[GatewayRead]: Gateways the user has access to
+        """
+        # Build query following existing patterns from list_gateways()
+        query = select(DbGateway)
+
+        # Apply active/inactive filter
+        if not include_inactive:
+            query = query.where(DbGateway.enabled.is_(True))
+
+        if team_id:
+            # Filter by specific team
+            query = query.where(DbGateway.team_id == team_id)
+            # Validate user has access to team
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+            if team_id not in team_ids:
+                return []  # No access to team
+        else:
+            # Get user's accessible teams
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
+
+            # Build access conditions following existing patterns
+            access_conditions = []
+            # 1. User's personal resources (owner_email matches)
+            access_conditions.append(DbGateway.owner_email == user_email)
+            # 2. Team resources where user is member
+            if team_ids:
+                access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
+            # 3. Public resources (if visibility allows)
+            access_conditions.append(DbGateway.visibility == "public")
+
+            query = query.where(or_(*access_conditions))
+
+        # Apply visibility filter if specified
+        if visibility:
+            query = query.where(DbGateway.visibility == visibility)
+
+        # Apply pagination following existing patterns
+        query = query.offset(skip).limit(limit)
+
+        gateways = db.execute(query).scalars().all()
         return [GatewayRead.model_validate(g).masked() for g in gateways]
 
     async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate, include_inactive: bool = True) -> GatewayRead:

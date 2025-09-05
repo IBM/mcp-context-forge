@@ -1,0 +1,218 @@
+# MCP Gateway v0.7.0 - Admin UI Tests
+# Comprehensive admin interface testing
+# Focus: UI validation including critical server visibility test
+
+worksheet_name: "Admin UI Tests"
+description: "Complete admin interface testing including server visibility validation"
+priority: "CRITICAL"
+estimated_time: "60-120 minutes"
+
+headers:
+  - "Test ID"
+  - "UI Section"
+  - "Component"
+  - "Action"
+  - "Click-by-Click Steps"
+  - "Expected Behavior"
+  - "Actual Result"
+  - "Status"
+  - "Tester"
+  - "Browser"
+  - "Screenshot"
+  - "Date"
+  - "Comments"
+
+tests:
+  - test_id: "UI-001"
+    ui_section: "Authentication"
+    component: "Login Form"
+    action: "Test admin login interface"
+    steps: |
+      1. Open web browser (Chrome or Firefox recommended)
+      2. Navigate to: http://localhost:4444/admin
+      3. Observe login page layout and form components
+      4. Check for email and password input fields
+      5. Look for 'Login' or 'Sign In' button
+      6. Test form validation with empty fields
+      7. Enter admin email from .env file
+      8. Enter admin password from .env file
+      9. Click Login button
+      10. Verify successful redirect to admin dashboard
+    expected: "Login page functional, form validation works, authentication successful"
+    browser: "Chrome/Firefox"
+    screenshot: "Optional"
+    critical: true
+
+  - test_id: "UI-002"
+    ui_section: "Dashboard"
+    component: "Main Dashboard View"
+    action: "Navigate and test admin dashboard"
+    steps: |
+      1. After successful login, observe dashboard layout
+      2. Count the number of statistics cards displayed
+      3. Check navigation menu on left side or top
+      4. Click on each statistic card to test interactions
+      5. Test responsive design (resize browser window)
+      6. Check for any error messages or warnings
+      7. Verify user menu/profile in top right corner
+      8. Test logout functionality
+    expected: "Dashboard displays system stats, navigation menu works, responsive design functional"
+    browser: "Chrome/Firefox"
+    screenshot: "Optional"
+
+  - test_id: "UI-003"
+    ui_section: "Virtual Servers"
+    component: "Server List View"
+    action: "View and verify server list - CRITICAL MIGRATION TEST"
+    steps: |
+      1. Click 'Virtual Servers' in navigation menu
+      2. Observe server list/grid layout
+      3. COUNT the total number of servers displayed
+      4. IDENTIFY servers created before migration (older creation dates)
+      5. Click on each server card/row to view details
+      6. Verify server information is accessible and complete
+      7. Check server actions (start/stop/restart if available)
+      8. Test server filtering and search if available
+      9. TAKE SCREENSHOT of server list showing all servers
+      10. Record server names and their visibility status
+    expected: "ALL servers visible including pre-migration servers, details accessible"
+    browser: "Chrome/Firefox"
+    screenshot: "REQUIRED"
+    critical: true
+    main_migration_test: true
+    notes: "This is the main migration validation test"
+
+  - test_id: "UI-004"
+    ui_section: "Teams"
+    component: "Team Management Interface"
+    action: "Test team management functionality"
+    steps: |
+      1. Navigate to 'Teams' section in admin interface
+      2. View team list/grid display
+      3. Find your personal team (usually '<Name>'s Team')
+      4. Click on personal team to view details
+      5. Check team information display
+      6. Click 'View Members' or 'Members' tab
+      7. Verify you're listed as 'Owner'
+      8. Test 'Create Team' functionality
+      9. Fill out team creation form
+      10. Verify new team appears in list
+    expected: "Team interface functional, personal team visible, team creation works"
+    browser: "Chrome/Firefox"
+    screenshot: "Optional"
+
+  - test_id: "UI-005"
+    ui_section: "Tools"
+    component: "Tool Registry Interface"
+    action: "Test tool management and invocation"
+    steps: |
+      1. Navigate to 'Tools' section
+      2. View available tools list
+      3. Check team-based filtering is working
+      4. Click on any tool to view details
+      5. Look for 'Invoke' or 'Execute' button
+      6. Test tool invocation interface
+      7. Fill in tool parameters if prompted
+      8. Submit tool execution
+      9. Verify results are displayed properly
+      10. Test tool creation form if available
+    expected: "Tools accessible by team permissions, invocation interface works"
+    browser: "Chrome/Firefox"
+    screenshot: "Optional"
+
+  - test_id: "UI-006"
+    ui_section: "Resources"
+    component: "Resource Management Interface"
+    action: "Test resource browser and management"
+    steps: |
+      1. Navigate to 'Resources' section
+      2. Browse available resources
+      3. Check team-based resource filtering
+      4. Click on any resource to view details
+      5. Test resource download functionality
+      6. Try 'Upload Resource' button if available
+      7. Test file upload interface
+      8. Fill in resource metadata
+      9. Verify upload completes successfully
+      10. Check new resource appears in list
+    expected: "Resource browser functional, upload/download works, team filtering applied"
+    browser: "Chrome/Firefox"
+    screenshot: "Optional"
+
+  - test_id: "UI-007"
+    ui_section: "Export/Import"
+    component: "Configuration Management Interface"
+    action: "Test configuration backup and restore"
+    steps: |
+      1. Navigate to 'Export/Import' section
+      2. Locate 'Export Configuration' button/link
+      3. Click export and select export options
+      4. Download the configuration JSON file
+      5. Open JSON file and verify contents include servers/tools
+      6. Locate 'Import Configuration' button/link
+      7. Select the downloaded JSON file
+      8. Choose import options (merge/replace)
+      9. Execute the import process
+      10. Verify import completion and success
+    expected: "Export downloads complete JSON, import processes successfully"
+    browser: "Chrome/Firefox"
+    screenshot: "Recommended"
+    notes: "Important for backup/restore workflows"
+
+  - test_id: "UI-008"
+    ui_section: "User Management"
+    component: "User Administration Interface"
+    action: "Test user management (admin only)"
+    steps: |
+      1. Navigate to 'Users' section (admin only)
+      2. View user list display
+      3. Click on any user to view details
+      4. Check user profile information
+      5. Test 'Create User' functionality if available
+      6. Fill user creation form
+      7. Test role assignment interface
+      8. Verify user permissions management
+      9. Check user activity/audit information
+      10. Test user status changes (active/inactive)
+    expected: "User management interface functional, role assignment works"
+    browser: "Chrome/Firefox"
+    screenshot: "Optional"
+    requires: "Platform admin privileges"
+
+  - test_id: "UI-009"
+    ui_section: "Mobile Compatibility"
+    component: "Responsive Design"
+    action: "Test mobile device compatibility"
+    steps: |
+      1. Resize browser window to mobile width (<768px)
+      2. OR open admin UI on actual mobile device
+      3. Test navigation menu (hamburger menu?)
+      4. Check form input usability on mobile
+      5. Test touch interactions and gestures
+      6. Verify text readability and sizing
+      7. Check all features remain accessible
+      8. Test portrait and landscape orientations
+      9. Verify no horizontal scrolling required
+      10. Check mobile-specific UI adaptations
+    expected: "Interface adapts to mobile screens while maintaining full functionality"
+    browser: "Mobile Chrome/Safari"
+    screenshot: "Optional"
+
+  - test_id: "UI-010"
+    ui_section: "Error Handling"
+    component: "UI Error Scenarios"
+    action: "Test error handling and user experience"
+    steps: |
+      1. Trigger network error (disconnect internet briefly)
+      2. Submit forms with invalid data
+      3. Try accessing resources without permission
+      4. Test session timeout scenarios
+      5. Check error message display
+      6. Verify error messages are user-friendly
+      7. Test error recovery mechanisms
+      8. Check browser console for JavaScript errors
+      9. Verify graceful degradation
+      10. Test error logging and reporting
+    expected: "Graceful error handling, helpful error messages, no JavaScript crashes"
+    browser: "Chrome/Firefox"
+    screenshot: "For errors"

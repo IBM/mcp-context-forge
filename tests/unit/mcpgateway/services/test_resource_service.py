@@ -1304,6 +1304,7 @@ class TestResourceServiceMetricsExtended:
     @pytest.mark.asyncio
     async def test_list_resources_with_tags(self, resource_service, mock_db, mock_resource):
         """Test listing resources with tag filtering."""
+        # Third-Party
         from sqlalchemy import func
 
         # Mock query chain

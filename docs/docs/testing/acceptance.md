@@ -81,7 +81,7 @@ graph TB
 |---------|-------------|---------|-----------------|--------|-------|
 | Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Change to your gateway URL if remote |
 | Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation and wrapper testing |
-| Generate JWT Token | `export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)` | Generate auth token using installed package | Token generated and exported | ☐ | Default expiry 10080 (7 days) |
+| Generate JWT Token | `export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)` | Generate auth token using installed package | Token generated and exported | ☐ | Default expiry 10080 (7 days) |
 | Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"ok"}` | ☐ | Basic connectivity check |
 | Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"ready":true,"database":"ok","redis":"ok"}` | ☐ | All subsystems ready |
 | Test Auth Required | `curl -s $GW_URL/version` | GET without auth | `{"detail":"Not authenticated"}` | ☐ | Confirms auth is enforced |
@@ -382,7 +382,7 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 
 - **Gateway Base URL**: Set `export GW_URL=http://your-gateway:4444` for remote gateways
 - **Authentication**: Use Bearer token in format: `Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN`
-- **JWT Token Generation**: Can also be done inside Docker container: `docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin -e 10080 --secret my-test-key`
+- **JWT Token Generation**: Can also be done inside Docker container: `docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com -e 10080 --secret my-test-key`
 - **Time Servers**: The time server gateways are used throughout testing as reference implementations
 - **Gateway Tool Separator**: Default is `__` (double underscore) between gateway name and tool name, but newer versions may use `-`
 - **Status Column**: Check ☐ when test passes, add ✗ if test fails with failure reason

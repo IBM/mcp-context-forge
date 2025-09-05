@@ -14,6 +14,7 @@ Usage:
     python tests/integration/helpers/trace_generator.py
 """
 
+# Standard
 import asyncio
 import os
 import sys
@@ -21,9 +22,13 @@ import sys
 # Add the project root to path so we can import mcpgateway
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from mcpgateway.observability import init_telemetry, create_span
-import time
+# Standard
 import random
+import time
+
+# First-Party
+from mcpgateway.observability import create_span, init_telemetry
+
 
 async def test_phoenix_integration():
     """Send some test traces to Phoenix."""

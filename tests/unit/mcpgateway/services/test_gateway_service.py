@@ -17,8 +17,8 @@ from __future__ import annotations
 # Standard
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock, patch, mock_open
 import socket
+from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 
 # Third-Party
 import httpx
@@ -1521,6 +1521,7 @@ class TestGatewayService:
 
         with patch('mcpgateway.services.gateway_service.logging') as mock_logging:
             # Import should trigger the ImportError path
+            # First-Party
             from mcpgateway.services.gateway_service import GatewayService
             service = GatewayService()
             assert service._redis_client is None
@@ -1538,6 +1539,7 @@ class TestGatewayService:
                 mock_settings.cache_type = 'redis'
                 mock_settings.redis_url = 'redis://localhost:6379'
 
+                # First-Party
                 from mcpgateway.services.gateway_service import GatewayService
                 service = GatewayService()
 
@@ -1562,6 +1564,7 @@ class TestGatewayService:
                 mock_splitdrive.return_value = ('C:', '/home/user/.mcpgateway/health_checks.lock')
                 mock_relpath.return_value = 'home/user/.mcpgateway/health_checks.lock'
 
+                # First-Party
                 from mcpgateway.services.gateway_service import GatewayService
                 service = GatewayService()
 
@@ -1578,6 +1581,7 @@ class TestGatewayService:
         with patch('mcpgateway.services.gateway_service.settings') as mock_settings:
             mock_settings.cache_type = 'none'
 
+            # First-Party
             from mcpgateway.services.gateway_service import GatewayService
             service = GatewayService()
 
