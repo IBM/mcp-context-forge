@@ -422,7 +422,7 @@ class Settings(BaseSettings):
             return peers
         return list(v)
 
-    federation_timeout: int = 30  # seconds
+    federation_timeout: int = 120  # seconds
     federation_sync_interval: int = 300  # seconds
 
     # Resources
