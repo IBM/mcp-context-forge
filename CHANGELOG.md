@@ -220,8 +220,12 @@ SSO_IBM_VERIFY_ENABLED=false
 #### **Database Migration**
 Database migrations run automatically on startup:
 ```bash
-# Backup your database first
-cp mcp.db mcp.db.backup
+# Backup your database AND .env file first
+cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
+cp .env .env.bak
+
+# Update .env with new multi-tenancy settings
+cp .env.example .env  # then configure PLATFORM_ADMIN_EMAIL and other settings
 
 # Migrations run automatically when you start the server
 make dev  # Migrations execute automatically, then server starts

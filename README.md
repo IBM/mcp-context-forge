@@ -64,47 +64,48 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     * 8.3. [pip (alternative)](#pip-alternative)
     * 8.4. [Optional (PostgreSQL adapter)](#optional-postgresql-adapter)
         * 8.4.1. [Quick Postgres container](#quick-postgres-container)
-* 9. [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
-    * 9.1. [Basic](#basic)
-    * 9.2. [Authentication](#authentication)
-    * 9.3. [UI Features](#ui-features)
-    * 9.4. [Security](#security)
-    * 9.5. [Logging](#logging)
-    * 9.6. [Transport](#transport)
-    * 9.7. [Federation](#federation)
-    * 9.8. [Resources](#resources)
-    * 9.9. [Tools](#tools)
-    * 9.10. [Prompts](#prompts)
-    * 9.11. [Health Checks](#health-checks)
-    * 9.12. [Database](#database)
-    * 9.13. [Cache Backend](#cache-backend)
-    * 9.14. [Development](#development)
-* 10. [Running](#running)
-    * 10.1. [Makefile](#makefile)
-    * 10.2. [Script helper](#script-helper)
-    * 10.3. [Manual (Uvicorn)](#manual-uvicorn)
-* 11. [Authentication examples](#authentication-examples)
-* 12. [☁️ AWS / Azure / OpenShift](#️-aws--azure--openshift)
-* 13. [☁️ IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
-    * 13.1. [🔧 Prerequisites](#-prerequisites-1)
-    * 13.2. [📦 Environment Variables](#-environment-variables)
-    * 13.3. [🚀 Make Targets](#-make-targets)
-    * 13.4. [📝 Example Workflow](#-example-workflow)
-* 14. [API Endpoints](#api-endpoints)
-* 15. [Testing](#testing)
-* 16. [Project Structure](#project-structure)
-* 17. [API Documentation](#api-documentation)
-* 18. [Makefile targets](#makefile-targets)
-* 19. [🔍 Troubleshooting](#-troubleshooting)
-    * 19.1. [Diagnose the listener](#diagnose-the-listener)
-    * 19.2. [Why localhost fails on Windows](#why-localhost-fails-on-windows)
-        * 19.2.1. [Fix (Podman rootless)](#fix-podman-rootless)
-        * 19.2.2. [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
-* 20. [Contributing](#contributing)
-* 21. [Changelog](#changelog)
-* 22. [License](#license)
-* 23. [Core Authors and Maintainers](#core-authors-and-maintainers)
-* 24. [Star History and Project Activity](#star-history-and-project-activity)
+* 9. [🔄 Upgrading to v0.7.0](#-upgrading-to-v070)
+* 10. [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
+    * 10.1. [Basic](#basic)
+    * 10.2. [Authentication](#authentication)
+    * 10.3. [UI Features](#ui-features)
+    * 10.4. [Security](#security)
+    * 10.5. [Logging](#logging)
+    * 10.6. [Transport](#transport)
+    * 10.7. [Federation](#federation)
+    * 10.8. [Resources](#resources)
+    * 10.9. [Tools](#tools)
+    * 10.10. [Prompts](#prompts)
+    * 10.11. [Health Checks](#health-checks)
+    * 10.12. [Database](#database)
+    * 10.13. [Cache Backend](#cache-backend)
+    * 10.14. [Development](#development)
+* 11. [Running](#running)
+    * 11.1. [Makefile](#makefile)
+    * 11.2. [Script helper](#script-helper)
+    * 11.3. [Manual (Uvicorn)](#manual-uvicorn)
+* 12. [Authentication examples](#authentication-examples)
+* 13. [☁️ AWS / Azure / OpenShift](#️-aws--azure--openshift)
+* 14. [☁️ IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
+    * 14.1. [🔧 Prerequisites](#-prerequisites-1)
+    * 14.2. [📦 Environment Variables](#-environment-variables)
+    * 14.3. [🚀 Make Targets](#-make-targets)
+    * 14.4. [📝 Example Workflow](#-example-workflow)
+* 15. [API Endpoints](#api-endpoints)
+* 16. [Testing](#testing)
+* 17. [Project Structure](#project-structure)
+* 18. [API Documentation](#api-documentation)
+* 19. [Makefile targets](#makefile-targets)
+* 20. [🔍 Troubleshooting](#-troubleshooting)
+    * 20.1. [Diagnose the listener](#diagnose-the-listener)
+    * 20.2. [Why localhost fails on Windows](#why-localhost-fails-on-windows)
+        * 20.2.1. [Fix (Podman rootless)](#fix-podman-rootless)
+        * 20.2.2. [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
+* 21. [Contributing](#contributing)
+* 22. [Changelog](#changelog)
+* 23. [License](#license)
+* 24. [Core Authors and Maintainers](#core-authors-and-maintainers)
+* 25. [Star History and Project Activity](#star-history-and-project-activity)
 
 <!-- vscode-markdown-toc-config
     numbering=true
@@ -987,6 +988,44 @@ docker run --name mcp-postgres \
 ```
 
 A `make compose-up` target is provided along with a [docker-compose.yml](docker-compose.yml) file to make this process simpler.
+
+---
+
+## 🔄 Upgrading to v0.7.0
+
+> **⚠️ CRITICAL**: Version 0.7.0 introduces comprehensive multi-tenancy and requires database migration.
+
+### Backup Your Data First
+Before upgrading to v0.7.0, **always** backup your database, environment configuration, and export your settings:
+
+```bash
+# Backup database (SQLite example)
+cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
+
+# Backup existing .env file
+cp .env .env.bak
+
+# Export configuration via Admin UI or API
+curl -u admin:changeme "http://localhost:4444/admin/export/configuration" \
+     -o config_backup_$(date +%Y%m%d_%H%M%S).json
+```
+
+### Migration Process
+1. **Update `.env`** - Copy new settings: `cp .env.example .env` then configure `PLATFORM_ADMIN_EMAIL` and other required multi-tenancy settings
+2. **Run migration** - Database schema updates automatically: `python3 -m mcpgateway.bootstrap_db`
+3. **Verify migration** - Use verification script: `python3 scripts/verify_multitenancy_0_7_0_migration.py`
+
+### If Migration Fails
+If the database migration fails or you encounter issues:
+1. **Restore database backup**: `cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db`
+2. **Restore .env backup**: `cp .env.bak .env`
+3. **Delete corrupted database**: `rm mcp.db` (if migration partially completed)
+4. **Restore configuration**: Import your exported configuration via Admin UI
+
+### Complete Migration Guide
+For detailed upgrade instructions, troubleshooting, and rollback procedures, see:
+- **📖 [MIGRATION-0.7.0.md](MIGRATION-0.7.0.md)** - Complete step-by-step upgrade guide
+- **🏗️ [Multi-tenancy Architecture](https://ibm.github.io/mcp-context-forge/architecture/multitenancy/)** - Understanding the new system
 
 ---
 
@@ -2460,6 +2499,45 @@ devpi-web            - Open devpi web interface
 </details>
 
 ## 🔍 Troubleshooting
+
+<details>
+<summary><strong>macOS: SQLite "disk I/O error" when running make serve</strong></summary>
+
+If the gateway fails on macOS with `sqlite3.OperationalError: disk I/O error` (works on Linux/Docker), it's usually a filesystem/locking quirk rather than a schema bug.
+
+Quick placement guidance (macOS):
+- Avoid cloning/running the repo under `~/Documents` or `~/Desktop` if iCloud "Desktop & Documents" sync is enabled.
+- A simple, safe choice is a project folder directly under your home directory:
+  - `mkdir -p "$HOME/mcp-context-forge" && cd "$HOME/mcp-context-forge"`
+  - If you keep the DB inside the repo, use a subfolder like `data/` and an absolute path in `.env`:
+    - `mkdir -p "$HOME/mcp-context-forge/data"`
+    - `DATABASE_URL=sqlite:////Users/$USER/mcp-context-forge/data/mcp.db`
+
+- Use a safe, local APFS path for SQLite (avoid iCloud/Dropbox/OneDrive/Google Drive, network shares, or external exFAT/NAS):
+  - Option A (system location): point the DB to Application Support (note spaces):
+    - `mkdir -p "$HOME/Library/Application Support/mcpgateway"`
+    - `export DATABASE_URL="sqlite:////Users/$USER/Library/Application Support/mcpgateway/mcp.db"`
+  - Option B (project-local): keep the DB under `~/mcp-context-forge/data`:
+    - `mkdir -p "$HOME/mcp-context-forge/data"`
+    - `export DATABASE_URL="sqlite:////Users/$USER/mcp-context-forge/data/mcp.db"`
+- Clean stale SQLite artifacts after any crash:
+  - `pkill -f mcpgateway || true && rm -f mcp.db-wal mcp.db-shm mcp.db-journal`
+- Reduce startup concurrency to rule out multi-process contention:
+  - `GUNICORN_WORKERS=1 make serve` (or use `make dev` which runs single-process)
+- Run the diagnostic helper to verify the environment:
+  - `python3 scripts/test_sqlite.py --verbose`
+- While debugging, consider lowering pool pressure and retry:
+  - `DB_POOL_SIZE=10 DB_MAX_OVERFLOW=0 DB_POOL_TIMEOUT=60 DB_MAX_RETRIES=10 DB_RETRY_INTERVAL_MS=5000`
+- Optional: temporarily disable the file-lock leader path by using the in-process mode:
+  - `export CACHE_TYPE=none`
+
+If the error persists, update SQLite and ensure Python links against it:
+- `brew install sqlite3 && brew link --force sqlite3`
+- `brew install python3 && /opt/homebrew/bin/python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`
+
+See the full migration guide's "SQLite Troubleshooting Guide" for deeper steps (WAL cleanup, integrity check, recovery): `MIGRATION-0.7.0.md`.
+
+</details>
 
 <details>
 <summary><strong>Port publishing on WSL2 (rootless Podman & Docker Desktop)</strong></summary>
