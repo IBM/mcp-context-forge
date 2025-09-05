@@ -336,6 +336,8 @@ async def bootstrap_resource_assignments() -> None:
                             resource.team_id = personal_team.id
                             resource.owner_email = admin_user.email
                             resource.visibility = "public"  # Make visible to all users
+                            if hasattr(resource, "federation_source") and not resource.federation_source:
+                                resource.federation_source = "mcpgateway-0.7.0-migration"
 
                         db.commit()
                         total_assigned += len(unassigned)

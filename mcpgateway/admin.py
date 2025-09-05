@@ -78,7 +78,7 @@ from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService
+from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
@@ -7819,6 +7819,55 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
     except Exception as e:
         LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+
+@admin_router.post("/import/preview")
+async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """
+    Preview import file to show available items for selective import.
+
+    Args:
+        request: FastAPI request object with import file data
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        JSON response with categorized import preview data
+
+    Expects JSON body:
+    {
+        "data": { ... }  // The import file content
+    }
+    """
+    try:
+        LOGGER.info(f"Admin import preview requested by user: {user}")
+
+        # Parse request data
+        try:
+            data = await request.json()
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+
+        # Extract import data
+        import_data = data.get("data")
+        if not import_data:
+            raise HTTPException(status_code=400, detail="Missing 'data' field with import content")
+
+        # Validate user permissions for import preview
+        username = user if isinstance(user, str) else user.get("username", "unknown")
+        LOGGER.info(f"Processing import preview for user: {username}")
+
+        # Generate preview
+        preview_data = await import_service.preview_import(db=db, import_data=import_data)
+
+        return JSONResponse(content={"success": True, "preview": preview_data, "message": f"Import preview generated. Found {preview_data['summary']['total_items']} total items."})
+
+    except ImportValidationError as e:
+        LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid import data: {str(e)}")
+    except Exception as e:
+        LOGGER.error(f"Import preview failed for user {user}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
 
 
 @admin_router.post("/import/configuration")
