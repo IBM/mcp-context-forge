@@ -306,7 +306,7 @@ async def bootstrap_resource_assignments() -> None:
 
         with SessionLocal() as db:
             # Find admin user and their personal team
-            admin_user = db.query(EmailUser).filter(EmailUser.email == settings.platform_admin_email, EmailUser.is_admin == True).first()
+            admin_user = db.query(EmailUser).filter(EmailUser.email == settings.platform_admin_email, EmailUser.is_admin.is_(True)).first()
 
             if not admin_user:
                 logger.warning("Admin user not found - skipping resource assignment")
@@ -327,7 +327,7 @@ async def bootstrap_resource_assignments() -> None:
             for resource_name, resource_model in resource_types:
                 try:
                     # Find unassigned resources
-                    unassigned = db.query(resource_model).filter((resource_model.team_id == None) | (resource_model.owner_email == None) | (resource_model.visibility == None)).all()
+                    unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None)) | (resource_model.visibility.is_(None))).all()
 
                     if unassigned:
                         logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to admin team")
