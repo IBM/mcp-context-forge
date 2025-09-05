@@ -387,6 +387,9 @@ class SQLiteDirectTest:
             print_status(f"Database file '{self.db_path}' does not exist", False)
             return False
 
+        test_table = "mcpgateway_direct_test"
+        conn = None
+
         try:
             # Test basic connection
             conn = sqlite3.connect(self.db_path, timeout=30)
@@ -415,7 +418,7 @@ class SQLiteDirectTest:
                 print_status(f"Gateway table read successful: {count} records")
 
             # Test write operation
-            test_table = "sqlite_direct_test"
+            test_table = "mcpgateway_direct_test"
             conn.execute(f"CREATE TABLE IF NOT EXISTS {test_table} (id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
             conn.execute(f"INSERT INTO {test_table} (id) VALUES (?)", (1,))
             conn.commit()
@@ -426,10 +429,6 @@ class SQLiteDirectTest:
             count = cursor.fetchone()[0]
             print_status(f"Transaction test successful: {count} test records")
 
-            # Cleanup
-            conn.execute(f"DROP TABLE {test_table}")
-            conn.commit()
-            conn.close()
             print_status("All direct SQLite tests passed")
             return True
 
@@ -449,6 +448,16 @@ class SQLiteDirectTest:
         except Exception as e:
             print_status(f"Database test failed: {e}", False)
             return False
+
+        finally:
+            # Always cleanup test table and connection
+            if conn:
+                try:
+                    conn.execute(f"DROP TABLE IF EXISTS {test_table}")
+                    conn.commit()
+                    conn.close()
+                except Exception:
+                    pass  # Ignore cleanup errors
 
 class SQLAlchemyTest:
     """SQLAlchemy engine tests using MCP Gateway settings."""
@@ -534,7 +543,7 @@ class SQLAlchemyTest:
                     print_info("No multitenancy tables found (v0.6.0 database or earlier)")
 
                 # Test write operation
-                test_table = "sqlalchemy_test"
+                test_table = "mcpgateway_sqlalchemy_test"
                 conn.execute(text(f"CREATE TABLE IF NOT EXISTS {test_table} (id INTEGER, test_data TEXT)"))
                 conn.execute(text(f"INSERT INTO {test_table} (id, test_data) VALUES (:id, :data)"),
                            {"id": 1, "data": "test"})
@@ -542,8 +551,9 @@ class SQLAlchemyTest:
                 print_status("Write operation successful")
 
                 # Cleanup
-                conn.execute(text(f"DROP TABLE {test_table}"))
+                conn.execute(text(f"DROP TABLE IF EXISTS {test_table}"))
                 conn.commit()
+
                 print_status("All SQLAlchemy tests passed")
 
             return True
