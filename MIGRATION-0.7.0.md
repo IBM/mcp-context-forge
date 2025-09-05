@@ -43,6 +43,12 @@ pg_dump -h localhost -U postgres -d mcp > mcp_backup_$(date +%Y%m%d_%H%M%S).sql
 mysqldump -u mysql -p mcp > mcp_backup_$(date +%Y%m%d_%H%M%S).sql
 ```
 
+#### Environment Configuration Backup
+```bash
+# Backup existing .env file before updating
+cp .env .env.bak
+```
+
 #### Configuration Export (Recommended)
 **💡 Export your current configuration via the Admin UI before migration:**
 
@@ -90,10 +96,15 @@ nano .env  # or your preferred editor
 
 #### If you already have a `.env` file:
 ```bash
-# Backup your current .env
-cp .env .env.backup.$(date +%Y%m%d_%H%M%S)
+# Backup your current .env (already done above)
+cp .env .env.bak
 
-# Check if you have the required settings
+# Update with new settings from .env.example
+cp .env.example .env.new
+# Then manually merge your existing settings into .env.new and rename:
+# mv .env.new .env
+
+# Or check if you have the required settings and add manually
 grep -E "PLATFORM_ADMIN_EMAIL|PLATFORM_ADMIN_PASSWORD|EMAIL_AUTH_ENABLED" .env
 
 # If missing, add them or merge from .env.example
@@ -163,6 +174,8 @@ The migration process is automated and handles:
 
 ```bash
 # IMPORTANT: Setup .env first (if not already done)
+# Backup existing .env first, then copy new template
+cp .env .env.bak
 cp .env.example .env  # then edit with your admin credentials
 
 # Run the migration (uses settings from your .env file)
@@ -533,11 +546,12 @@ mysql -u mysql -p mcp < mcp_backup_YYYYMMDD_HHMMSS.sql
 ### 2. Revert Environment Configuration
 
 ```bash
-# Restore previous environment
-cp .env.backup.YYYYMMDD_HHMMSS .env
+# Restore previous environment from backup
+cp .env.bak .env
 
-# Disable email auth if you want to go back to basic auth only
-EMAIL_AUTH_ENABLED=false
+# Or manually disable email auth if you want to go back to basic auth only
+# Edit .env file and set:
+# EMAIL_AUTH_ENABLED=false
 ```
 
 ### 3. Use Previous Codebase Version
@@ -602,6 +616,7 @@ The multi-tenant architecture provides much more flexibility and security for ma
 ```bash
 # 1. BACKUP (before migration)
 cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
+cp .env .env.bak
 curl -u admin:changeme "http://localhost:4444/admin/export/configuration" -o config_backup.json
 
 # 2. SETUP .ENV (required)

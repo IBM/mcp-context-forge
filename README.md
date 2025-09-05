@@ -996,11 +996,14 @@ A `make compose-up` target is provided along with a [docker-compose.yml](docker-
 > **⚠️ CRITICAL**: Version 0.7.0 introduces comprehensive multi-tenancy and requires database migration.
 
 ### Backup Your Data First
-Before upgrading to v0.7.0, **always** backup your database and configuration:
+Before upgrading to v0.7.0, **always** backup your database, environment configuration, and export your settings:
 
 ```bash
 # Backup database (SQLite example)
 cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
+
+# Backup existing .env file
+cp .env .env.bak
 
 # Export configuration via Admin UI or API
 curl -u admin:changeme "http://localhost:4444/admin/export/configuration" \
@@ -1008,15 +1011,16 @@ curl -u admin:changeme "http://localhost:4444/admin/export/configuration" \
 ```
 
 ### Migration Process
-1. **Configure `.env`** - Set `PLATFORM_ADMIN_EMAIL` and other required settings from [.env.example](.env.example)
+1. **Update `.env`** - Copy new settings: `cp .env.example .env` then configure `PLATFORM_ADMIN_EMAIL` and other required multi-tenancy settings
 2. **Run migration** - Database schema updates automatically: `python3 -m mcpgateway.bootstrap_db`
 3. **Verify migration** - Use verification script: `python3 scripts/verify_multitenancy_0_7_0_migration.py`
 
 ### If Migration Fails
 If the database migration fails or you encounter issues:
 1. **Restore database backup**: `cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db`
-2. **Delete corrupted database**: `rm mcp.db` (if migration partially completed)
-3. **Restore configuration**: Import your exported configuration via Admin UI
+2. **Restore .env backup**: `cp .env.bak .env`
+3. **Delete corrupted database**: `rm mcp.db` (if migration partially completed)
+4. **Restore configuration**: Import your exported configuration via Admin UI
 
 ### Complete Migration Guide
 For detailed upgrade instructions, troubleshooting, and rollback procedures, see:
