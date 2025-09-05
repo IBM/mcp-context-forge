@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.gateway_service import GatewayNameConflictError, GatewayService
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptService
@@ -1487,9 +1488,6 @@ class ImportService:
             User context dict or None if not found
         """
         try:
-            # First-Party
-            from mcpgateway.db import EmailUser
-
             user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
             if not user:
                 logger.warning(f"Could not find importing user: {imported_by}")
@@ -1546,9 +1544,6 @@ class ImportService:
         """
         try:
             # Find the importing user and their personal team
-            # First-Party
-            from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
-
             user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
             if not user:
                 logger.warning(f"Could not find importing user {imported_by} - skipping team assignment")

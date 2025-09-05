@@ -7834,6 +7834,10 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
     Returns:
         JSON response with categorized import preview data
 
+    Raises:
+        HTTPException: 400 for invalid JSON or missing data field, validation errors;
+                      500 for unexpected preview failures
+
     Expects JSON body:
     {
         "data": { ... }  // The import file content

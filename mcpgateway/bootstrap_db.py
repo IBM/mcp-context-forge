@@ -40,7 +40,7 @@ from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import Base
+from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -62,7 +62,6 @@ async def bootstrap_admin_user() -> None:
     try:
         # Import services here to avoid circular imports
         # First-Party
-        from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
         with SessionLocal() as db:
@@ -222,9 +221,6 @@ def normalize_team_visibility() -> int:
         int: Number of teams updated
     """
     try:
-        # First-Party
-        from mcpgateway.db import EmailTeam, SessionLocal  # pylint: disable=import-outside-toplevel
-
         with SessionLocal() as db:
             # Find teams with invalid visibility
             invalid = db.query(EmailTeam).filter(EmailTeam.visibility.notin_(["private", "public"]))
@@ -301,9 +297,6 @@ async def bootstrap_resource_assignments() -> None:
         return
 
     try:
-        # First-Party
-        from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool
-
         with SessionLocal() as db:
             # Find admin user and their personal team
             admin_user = db.query(EmailUser).filter(EmailUser.email == settings.platform_admin_email, EmailUser.is_admin.is_(True)).first()

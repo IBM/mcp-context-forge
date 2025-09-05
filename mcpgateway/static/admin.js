@@ -9952,13 +9952,13 @@ async function previewImport() {
                     Authorization: `Bearer ${await getAuthToken()}`,
                 },
                 body: JSON.stringify({ data: window.currentImportData }),
-            }
+            },
         );
 
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(
-                errorData.detail || `Preview failed: ${response.statusText}`
+                errorData.detail || `Preview failed: ${response.statusText}`,
             );
         }
 
@@ -9966,7 +9966,6 @@ async function previewImport() {
         displayImportPreview(result.preview);
 
         showNotification("✅ Import preview generated successfully", "success");
-
     } catch (error) {
         console.error("Import preview error:", error);
         showNotification(`❌ Preview failed: ${error.message}`, "error");
@@ -11425,7 +11424,9 @@ function displayImportPreview(preview) {
         previewContainer.className = "mt-6 border-t pt-6";
 
         // Insert after import options in the import section
-        const importSection = document.querySelector("#import-drop-zone").parentElement.parentElement;
+        const importSection =
+            document.querySelector("#import-drop-zone").parentElement
+                .parentElement;
         importSection.appendChild(previewContainer);
     }
 
@@ -11442,9 +11443,9 @@ function displayImportPreview(preview) {
                         Found ${preview.summary.total_items} items in import file
                     </h3>
                     <div class="mt-1 text-sm text-blue-600 dark:text-blue-300">
-                        ${Object.entries(preview.summary.by_type).map(([type, count]) =>
-                            `${type}: ${count}`
-                        ).join(", ")}
+                        ${Object.entries(preview.summary.by_type)
+                            .map(([type, count]) => `${type}: ${count}`)
+                            .join(", ")}
                     </div>
                 </div>
             </div>
@@ -11473,13 +11474,17 @@ function displayImportPreview(preview) {
         </div>
 
         <!-- Gateway Bundles -->
-        ${Object.keys(preview.bundles || {}).length > 0 ? `
+        ${
+            Object.keys(preview.bundles || {}).length > 0
+                ? `
             <div class="mb-6">
                 <h5 class="text-md font-medium text-gray-900 dark:text-white mb-3">
                     🌐 Gateway Bundles (Gateway + Auto-discovered Items)
                 </h5>
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                    ${Object.entries(preview.bundles).map(([gatewayName, bundle]) => `
+                    ${Object.entries(preview.bundles)
+                        .map(
+                            ([gatewayName, bundle]) => `
                         <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-750">
                             <label class="flex items-start cursor-pointer">
                                 <input type="checkbox"
@@ -11491,34 +11496,48 @@ function displayImportPreview(preview) {
                                         ${bundle.gateway.name}
                                     </div>
                                     <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                                        ${bundle.gateway.description || 'No description'}
+                                        ${bundle.gateway.description || "No description"}
                                     </div>
                                     <div class="text-xs text-blue-600 dark:text-blue-400">
                                         Bundle includes: ${bundle.total_items} items
                                         (${Object.entries(bundle.items)
-                                            .filter(([type, items]) => items.length > 0)
-                                            .map(([type, items]) => `${items.length} ${type}`)
+                                            .filter(
+                                                ([type, items]) =>
+                                                    items.length > 0,
+                                            )
+                                            .map(
+                                                ([type, items]) =>
+                                                    `${items.length} ${type}`,
+                                            )
                                             .join(", ")})
                                     </div>
                                 </div>
                             </label>
                         </div>
-                    `).join("")}
+                    `,
+                        )
+                        .join("")}
                 </div>
             </div>
-        ` : ""}
+        `
+                : ""
+        }
 
         <!-- Custom Items by Type -->
-        ${Object.entries(preview.items || {}).map(([entityType, items]) => {
-            const customItems = items.filter(item => item.is_custom);
-            return customItems.length > 0 ? `
+        ${Object.entries(preview.items || {})
+            .map(([entityType, items]) => {
+                const customItems = items.filter((item) => item.is_custom);
+                return customItems.length > 0
+                    ? `
                 <div class="mb-6">
                     <h5 class="text-md font-medium text-gray-900 dark:text-white mb-3 capitalize">
                         🛠️ Custom ${entityType}
                     </h5>
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        ${customItems.map(item => `
-                            <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:bg-gray-50 dark:hover:bg-gray-750 ${item.conflicts_with ? 'border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-900' : ''}">
+                        ${customItems
+                            .map(
+                                (item) => `
+                            <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-3 hover:bg-gray-50 dark:hover:bg-gray-750 ${item.conflicts_with ? "border-orange-300 dark:border-orange-700 bg-orange-50 dark:bg-orange-900" : ""}">
                                 <label class="flex items-start cursor-pointer">
                                     <input type="checkbox"
                                            class="item-checkbox mt-1 mr-3"
@@ -11528,8 +11547,10 @@ function displayImportPreview(preview) {
                                     <div class="flex-1">
                                         <div class="text-sm font-medium text-gray-900 dark:text-white">
                                             ${item.name}
-                                            ${item.conflicts_with ?
-                                                '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>' : ''
+                                            ${
+                                                item.conflicts_with
+                                                    ? '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>'
+                                                    : ""
                                             }
                                         </div>
                                         <div class="text-xs text-gray-500 dark:text-gray-400">
@@ -11538,14 +11559,20 @@ function displayImportPreview(preview) {
                                     </div>
                                 </label>
                             </div>
-                        `).join("")}
+                        `,
+                            )
+                            .join("")}
                     </div>
                 </div>
-            ` : "";
-        }).join("")}
+            `
+                    : "";
+            })
+            .join("")}
 
         <!-- Conflicts Warning -->
-        ${Object.keys(preview.conflicts || {}).length > 0 ? `
+        ${
+            Object.keys(preview.conflicts || {}).length > 0
+                ? `
             <div class="mb-6">
                 <div class="bg-orange-50 dark:bg-orange-900 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
                     <div class="flex items-start">
@@ -11565,7 +11592,9 @@ function displayImportPreview(preview) {
                     </div>
                 </div>
             </div>
-        ` : ""}
+        `
+                : ""
+        }
 
         <!-- Action Buttons -->
         <div class="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
@@ -11610,13 +11639,17 @@ async function handleSelectiveImport(dryRun = false) {
         const selected_entities = collectUserSelections();
 
         if (Object.keys(selected_entities).length === 0) {
-            showNotification("❌ Please select at least one item to import", "warning");
+            showNotification(
+                "❌ Please select at least one item to import",
+                "warning",
+            );
             showImportProgress(false);
             return;
         }
 
         const conflictStrategy =
-            document.getElementById("import-conflict-strategy")?.value || "update";
+            document.getElementById("import-conflict-strategy")?.value ||
+            "update";
         const rekeySecret =
             document.getElementById("import-rekey-secret")?.value || null;
 
@@ -11639,13 +11672,13 @@ async function handleSelectiveImport(dryRun = false) {
                     Authorization: `Bearer ${await getAuthToken()}`,
                 },
                 body: JSON.stringify(requestData),
-            }
+            },
         );
 
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(
-                errorData.detail || `Import failed: ${response.statusText}`
+                errorData.detail || `Import failed: ${response.statusText}`,
             );
         }
 
@@ -11654,11 +11687,13 @@ async function handleSelectiveImport(dryRun = false) {
 
         if (!dryRun) {
             refreshCurrentTabData();
-            showNotification("✅ Selective import completed successfully", "success");
+            showNotification(
+                "✅ Selective import completed successfully",
+                "success",
+            );
         } else {
             showNotification("✅ Import preview completed", "success");
         }
-
     } catch (error) {
         console.error("Selective import error:", error);
         showNotification(`❌ Import failed: ${error.message}`, "error");
@@ -11674,14 +11709,16 @@ function collectUserSelections() {
     const selections = {};
 
     // Collect gateway selections
-    document.querySelectorAll('.gateway-checkbox:checked').forEach(checkbox => {
-        const gatewayName = checkbox.dataset.gateway;
-        if (!selections.gateways) selections.gateways = [];
-        selections.gateways.push(gatewayName);
-    });
+    document
+        .querySelectorAll(".gateway-checkbox:checked")
+        .forEach((checkbox) => {
+            const gatewayName = checkbox.dataset.gateway;
+            if (!selections.gateways) selections.gateways = [];
+            selections.gateways.push(gatewayName);
+        });
 
     // Collect individual item selections
-    document.querySelectorAll('.item-checkbox:checked').forEach(checkbox => {
+    document.querySelectorAll(".item-checkbox:checked").forEach((checkbox) => {
         const entityType = checkbox.dataset.type;
         const itemId = checkbox.dataset.id;
         if (!selections[entityType]) selections[entityType] = [];
@@ -11695,11 +11732,15 @@ function collectUserSelections() {
  * Update selection count display
  */
 function updateSelectionCount() {
-    const gatewayCount = document.querySelectorAll('.gateway-checkbox:checked').length;
-    const itemCount = document.querySelectorAll('.item-checkbox:checked').length;
+    const gatewayCount = document.querySelectorAll(
+        ".gateway-checkbox:checked",
+    ).length;
+    const itemCount = document.querySelectorAll(
+        ".item-checkbox:checked",
+    ).length;
     const totalCount = gatewayCount + itemCount;
 
-    const countElement = document.getElementById('selection-count');
+    const countElement = document.getElementById("selection-count");
     if (countElement) {
         countElement.textContent = `${totalCount} items selected (${gatewayCount} gateways, ${itemCount} individual items)`;
     }
@@ -11709,9 +11750,11 @@ function updateSelectionCount() {
  * Select all items
  */
 function selectAllItems() {
-    document.querySelectorAll('.gateway-checkbox, .item-checkbox').forEach(checkbox => {
-        checkbox.checked = true;
-    });
+    document
+        .querySelectorAll(".gateway-checkbox, .item-checkbox")
+        .forEach((checkbox) => {
+            checkbox.checked = true;
+        });
     updateSelectionCount();
 }
 
@@ -11719,9 +11762,11 @@ function selectAllItems() {
  * Select no items
  */
 function selectNoneItems() {
-    document.querySelectorAll('.gateway-checkbox, .item-checkbox').forEach(checkbox => {
-        checkbox.checked = false;
-    });
+    document
+        .querySelectorAll(".gateway-checkbox, .item-checkbox")
+        .forEach((checkbox) => {
+            checkbox.checked = false;
+        });
     updateSelectionCount();
 }
 
@@ -11729,10 +11774,10 @@ function selectNoneItems() {
  * Select only custom items (not gateway items)
  */
 function selectOnlyCustom() {
-    document.querySelectorAll('.gateway-checkbox').forEach(checkbox => {
+    document.querySelectorAll(".gateway-checkbox").forEach((checkbox) => {
         checkbox.checked = false;
     });
-    document.querySelectorAll('.item-checkbox').forEach(checkbox => {
+    document.querySelectorAll(".item-checkbox").forEach((checkbox) => {
         checkbox.checked = true;
     });
     updateSelectionCount();
@@ -11742,7 +11787,9 @@ function selectOnlyCustom() {
  * Reset import selection
  */
 function resetImportSelection() {
-    const previewContainer = document.getElementById("import-preview-container");
+    const previewContainer = document.getElementById(
+        "import-preview-container",
+    );
     if (previewContainer) {
         previewContainer.remove();
     }
