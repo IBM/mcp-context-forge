@@ -105,7 +105,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **API Authentication Updated** - All examples and documentation updated to use email-based authentication
 
 #### **📊 Database Schema Evolution**
-* **New Multi-Tenant Tables**: email_users, email_teams, email_team_members, email_team_invitations
+* **New Multi-Tenant Tables**: email_users, email_teams, email_team_members, email_team_invitations, **token_usage_logs**
+* **Token Management Tables**: email_api_tokens, token_usage_logs, token_revocations - Complete API token lifecycle tracking
 * **Extended Resource Tables** - All resource tables now include team_id, owner_email, visibility columns
 * **Performance Indexing** - Strategic indexes on team_id, owner_email, visibility for optimal query performance
 

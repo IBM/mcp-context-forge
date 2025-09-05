@@ -273,11 +273,38 @@ curl -X POST http://localhost:4444/admin/teams \
 
 The consolidated migration automatically handles your existing resources in a single, seamless process:
 
-1. **Schema Creation**: Creates all multitenancy tables (users, teams, roles, etc.)
+1. **Schema Creation**: Creates all multitenancy tables (users, teams, roles, token management, SSO, etc.)
 2. **Column Addition**: Adds `team_id`, `owner_email`, and `visibility` columns to existing resource tables
 3. **Admin User Creation**: Creates platform admin user (from `PLATFORM_ADMIN_EMAIL`)
 4. **Personal Team Creation**: Creates personal team for the admin user
 5. **Data Population**: **Automatically assigns old resources** to admin's personal team with "public" visibility
+
+### Database Tables Created
+
+The migration creates **15 new tables** for the multitenancy system:
+
+**Core Authentication:**
+- `email_users` - User accounts and authentication
+- `email_auth_events` - Authentication event logging
+- `email_api_tokens` - API token management with scoping
+- `token_usage_logs` - **Token usage tracking and analytics**
+- `token_revocations` - Token revocation blacklist
+
+**Team Management:**
+- `email_teams` - Team definitions and settings
+- `email_team_members` - Team membership and roles
+- `email_team_invitations` - Team invitation workflow
+- `email_team_join_requests` - Public team join requests
+- `pending_user_approvals` - SSO user approval workflow
+
+**RBAC System:**
+- `roles` - Role definitions and permissions
+- `user_roles` - User role assignments
+- `permission_audit_log` - Permission access auditing
+
+**SSO Integration:**
+- `sso_providers` - OAuth2/OIDC provider configuration
+- `sso_auth_sessions` - SSO authentication session tracking
 
 This all happens in the consolidated migration `cfc3d6aa0fb2`, so no additional steps are needed.
 
