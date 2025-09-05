@@ -64,47 +64,48 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
     * 8.3. [pip (alternative)](#pip-alternative)
     * 8.4. [Optional (PostgreSQL adapter)](#optional-postgresql-adapter)
         * 8.4.1. [Quick Postgres container](#quick-postgres-container)
-* 9. [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
-    * 9.1. [Basic](#basic)
-    * 9.2. [Authentication](#authentication)
-    * 9.3. [UI Features](#ui-features)
-    * 9.4. [Security](#security)
-    * 9.5. [Logging](#logging)
-    * 9.6. [Transport](#transport)
-    * 9.7. [Federation](#federation)
-    * 9.8. [Resources](#resources)
-    * 9.9. [Tools](#tools)
-    * 9.10. [Prompts](#prompts)
-    * 9.11. [Health Checks](#health-checks)
-    * 9.12. [Database](#database)
-    * 9.13. [Cache Backend](#cache-backend)
-    * 9.14. [Development](#development)
-* 10. [Running](#running)
-    * 10.1. [Makefile](#makefile)
-    * 10.2. [Script helper](#script-helper)
-    * 10.3. [Manual (Uvicorn)](#manual-uvicorn)
-* 11. [Authentication examples](#authentication-examples)
-* 12. [☁️ AWS / Azure / OpenShift](#️-aws--azure--openshift)
-* 13. [☁️ IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
-    * 13.1. [🔧 Prerequisites](#-prerequisites-1)
-    * 13.2. [📦 Environment Variables](#-environment-variables)
-    * 13.3. [🚀 Make Targets](#-make-targets)
-    * 13.4. [📝 Example Workflow](#-example-workflow)
-* 14. [API Endpoints](#api-endpoints)
-* 15. [Testing](#testing)
-* 16. [Project Structure](#project-structure)
-* 17. [API Documentation](#api-documentation)
-* 18. [Makefile targets](#makefile-targets)
-* 19. [🔍 Troubleshooting](#-troubleshooting)
-    * 19.1. [Diagnose the listener](#diagnose-the-listener)
-    * 19.2. [Why localhost fails on Windows](#why-localhost-fails-on-windows)
-        * 19.2.1. [Fix (Podman rootless)](#fix-podman-rootless)
-        * 19.2.2. [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
-* 20. [Contributing](#contributing)
-* 21. [Changelog](#changelog)
-* 22. [License](#license)
-* 23. [Core Authors and Maintainers](#core-authors-and-maintainers)
-* 24. [Star History and Project Activity](#star-history-and-project-activity)
+* 9. [🔄 Upgrading to v0.7.0](#-upgrading-to-v070)
+* 10. [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
+    * 10.1. [Basic](#basic)
+    * 10.2. [Authentication](#authentication)
+    * 10.3. [UI Features](#ui-features)
+    * 10.4. [Security](#security)
+    * 10.5. [Logging](#logging)
+    * 10.6. [Transport](#transport)
+    * 10.7. [Federation](#federation)
+    * 10.8. [Resources](#resources)
+    * 10.9. [Tools](#tools)
+    * 10.10. [Prompts](#prompts)
+    * 10.11. [Health Checks](#health-checks)
+    * 10.12. [Database](#database)
+    * 10.13. [Cache Backend](#cache-backend)
+    * 10.14. [Development](#development)
+* 11. [Running](#running)
+    * 11.1. [Makefile](#makefile)
+    * 11.2. [Script helper](#script-helper)
+    * 11.3. [Manual (Uvicorn)](#manual-uvicorn)
+* 12. [Authentication examples](#authentication-examples)
+* 13. [☁️ AWS / Azure / OpenShift](#️-aws--azure--openshift)
+* 14. [☁️ IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
+    * 14.1. [🔧 Prerequisites](#-prerequisites-1)
+    * 14.2. [📦 Environment Variables](#-environment-variables)
+    * 14.3. [🚀 Make Targets](#-make-targets)
+    * 14.4. [📝 Example Workflow](#-example-workflow)
+* 15. [API Endpoints](#api-endpoints)
+* 16. [Testing](#testing)
+* 17. [Project Structure](#project-structure)
+* 18. [API Documentation](#api-documentation)
+* 19. [Makefile targets](#makefile-targets)
+* 20. [🔍 Troubleshooting](#-troubleshooting)
+    * 20.1. [Diagnose the listener](#diagnose-the-listener)
+    * 20.2. [Why localhost fails on Windows](#why-localhost-fails-on-windows)
+        * 20.2.1. [Fix (Podman rootless)](#fix-podman-rootless)
+        * 20.2.2. [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
+* 21. [Contributing](#contributing)
+* 22. [Changelog](#changelog)
+* 23. [License](#license)
+* 24. [Core Authors and Maintainers](#core-authors-and-maintainers)
+* 25. [Star History and Project Activity](#star-history-and-project-activity)
 
 <!-- vscode-markdown-toc-config
     numbering=true
@@ -987,6 +988,40 @@ docker run --name mcp-postgres \
 ```
 
 A `make compose-up` target is provided along with a [docker-compose.yml](docker-compose.yml) file to make this process simpler.
+
+---
+
+## 🔄 Upgrading to v0.7.0
+
+> **⚠️ CRITICAL**: Version 0.7.0 introduces comprehensive multi-tenancy and requires database migration.
+
+### Backup Your Data First
+Before upgrading to v0.7.0, **always** backup your database and configuration:
+
+```bash
+# Backup database (SQLite example)
+cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
+
+# Export configuration via Admin UI or API
+curl -u admin:changeme "http://localhost:4444/admin/export/configuration" \
+     -o config_backup_$(date +%Y%m%d_%H%M%S).json
+```
+
+### Migration Process
+1. **Configure `.env`** - Set `PLATFORM_ADMIN_EMAIL` and other required settings from [.env.example](.env.example)
+2. **Run migration** - Database schema updates automatically: `python3 -m mcpgateway.bootstrap_db`
+3. **Verify migration** - Use verification script: `python3 scripts/verify_multitenancy_0_7_0_migration.py`
+
+### If Migration Fails
+If the database migration fails or you encounter issues:
+1. **Restore database backup**: `cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db`
+2. **Delete corrupted database**: `rm mcp.db` (if migration partially completed)
+3. **Restore configuration**: Import your exported configuration via Admin UI
+
+### Complete Migration Guide
+For detailed upgrade instructions, troubleshooting, and rollback procedures, see:
+- **📖 [MIGRATION-0.7.0.md](MIGRATION-0.7.0.md)** - Complete step-by-step upgrade guide
+- **🏗️ [Multi-tenancy Architecture](https://ibm.github.io/mcp-context-forge/architecture/multitenancy/)** - Understanding the new system
 
 ---
 
