@@ -151,6 +151,7 @@ class Settings(BaseSettings):
     port: int = 4444
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
+    templates_dir: Path = Path("mcpgateway/templates")
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = files("mcpgateway") / "templates"
     static_dir: Path = files("mcpgateway") / "static"

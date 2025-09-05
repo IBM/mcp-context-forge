@@ -252,7 +252,11 @@ function isInactiveChecked(type) {
 }
 
 // Enhanced fetch with timeout and better error handling
-function fetchWithTimeout(url, options = {}, timeout = window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000) {
+function fetchWithTimeout(
+    url,
+    options = {},
+    timeout = window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+) {
     // Use configurable timeout from window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT
     const controller = new AbortController();
     const timeoutId = setTimeout(() => {
