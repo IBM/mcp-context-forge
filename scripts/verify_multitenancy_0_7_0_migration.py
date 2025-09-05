@@ -28,10 +28,11 @@ sys.path.insert(0, str(project_root))
 try:
     from mcpgateway.db import (
         SessionLocal, EmailUser, EmailTeam, EmailTeamMember,
-        Server, Tool, Resource, Prompt, Gateway, A2AAgent, Role, UserRole
+        Server, Tool, Resource, Prompt, Gateway, A2AAgent, Role, UserRole,
+        EmailApiToken, TokenUsageLog, TokenRevocation, SSOProvider, SSOAuthSession, PendingUserApproval
     )
     from mcpgateway.config import settings
-    from sqlalchemy import text
+    from sqlalchemy import text, inspect
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("Make sure you're running this from the project root directory")
@@ -153,6 +154,25 @@ def verify_migration():
             # 5. Database schema validation
             print("\n🗄️  5. DATABASE SCHEMA VALIDATION")
 
+            # Check database tables exist
+            inspector = inspect(db.bind)
+            existing_tables = set(inspector.get_table_names())
+
+            # Expected multitenancy tables from migration
+            expected_auth_tables = {
+                'email_users', 'email_auth_events', 'email_teams', 'email_team_members',
+                'email_team_invitations', 'email_team_join_requests', 'pending_user_approvals',
+                'email_api_tokens', 'token_usage_logs', 'token_revocations',
+                'sso_providers', 'sso_auth_sessions', 'roles', 'user_roles', 'permission_audit_log'
+            }
+
+            missing_tables = expected_auth_tables - existing_tables
+            if missing_tables:
+                print(f"   ❌ Missing tables: {sorted(missing_tables)}")
+                success = False
+            else:
+                print(f"   ✅ All {len(expected_auth_tables)} multitenancy tables exist")
+
             # Check if we can access multitenancy models (proves schema exists)
             schema_checks = []
             try:
@@ -175,6 +195,32 @@ def verify_migration():
                 schema_checks.append("rbac")
             except Exception as e:
                 print(f"   ❌ RBAC models inaccessible: {e}")
+                success = False
+
+            # Check token management tables
+            try:
+                token_count = db.query(EmailApiToken).count()
+                usage_count = db.query(TokenUsageLog).count()
+                revocation_count = db.query(TokenRevocation).count()
+                print(f"   ✅ EmailApiToken model: {token_count} records")
+                print(f"   ✅ TokenUsageLog model: {usage_count} records")
+                print(f"   ✅ TokenRevocation model: {revocation_count} records")
+                schema_checks.append("token_management")
+            except Exception as e:
+                print(f"   ❌ Token management models inaccessible: {e}")
+                success = False
+
+            # Check SSO tables
+            try:
+                sso_provider_count = db.query(SSOProvider).count()
+                sso_session_count = db.query(SSOAuthSession).count()
+                pending_count = db.query(PendingUserApproval).count()
+                print(f"   ✅ SSOProvider model: {sso_provider_count} records")
+                print(f"   ✅ SSOAuthSession model: {sso_session_count} records")
+                print(f"   ✅ PendingUserApproval model: {pending_count} records")
+                schema_checks.append("sso")
+            except Exception as e:
+                print(f"   ❌ SSO models inaccessible: {e}")
                 success = False
 
             # Verify resource models have team attributes
@@ -211,8 +257,12 @@ def verify_migration():
                     print(f"   ❌ {model_name}: model access failed - {e}")
                     success = False
 
-            if "core_auth" in schema_checks and "rbac" in schema_checks:
+            if len(schema_checks) >= 4 and "core_auth" in schema_checks and "rbac" in schema_checks and "token_management" in schema_checks and "sso" in schema_checks:
                 print("   ✅ Multitenancy schema fully operational")
+            elif len(schema_checks) >= 2:
+                print(f"   ⚠️  Partial schema operational ({len(schema_checks)}/4 components working)")
+            else:
+                print("   ❌ Schema validation failed")
 
             # 6. Team membership check
             print("\n👥 6. TEAM MEMBERSHIP CHECK")

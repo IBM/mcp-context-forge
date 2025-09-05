@@ -247,6 +247,32 @@ def upgrade() -> None:
         safe_create_index("idx_token_revocations_revoked_at", "token_revocations", ["revoked_at"])
         safe_create_index("idx_token_revocations_revoked_by", "token_revocations", ["revoked_by"])
 
+    if "token_usage_logs" not in existing_tables:
+        # Create token_usage_logs table
+        op.create_table(
+            "token_usage_logs",
+            sa.Column("id", sa.BigInteger(), nullable=False, autoincrement=True, comment="Auto-incrementing log ID"),
+            sa.Column("token_jti", sa.String(36), nullable=False, comment="Token JWT ID reference"),
+            sa.Column("user_email", sa.String(255), nullable=False, comment="Token owner's email"),
+            sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now(), comment="Request timestamp"),
+            sa.Column("endpoint", sa.String(255), nullable=True, comment="API endpoint accessed"),
+            sa.Column("method", sa.String(10), nullable=True, comment="HTTP method used"),
+            sa.Column("ip_address", sa.String(45), nullable=True, comment="Client IP address (IPv6 compatible)"),
+            sa.Column("user_agent", sa.Text(), nullable=True, comment="Client user agent"),
+            sa.Column("status_code", sa.Integer(), nullable=True, comment="HTTP response status"),
+            sa.Column("response_time_ms", sa.Integer(), nullable=True, comment="Response time in milliseconds"),
+            sa.Column("blocked", sa.Boolean(), nullable=False, server_default=sa.false(), comment="Whether request was blocked"),
+            sa.Column("block_reason", sa.String(255), nullable=True, comment="Reason for blocking if applicable"),
+            sa.PrimaryKeyConstraint("id"),
+        )
+
+        # Create indexes for token_usage_logs
+        safe_create_index("idx_token_usage_logs_token_jti", "token_usage_logs", ["token_jti"])
+        safe_create_index("idx_token_usage_logs_user_email", "token_usage_logs", ["user_email"])
+        safe_create_index("idx_token_usage_logs_timestamp", "token_usage_logs", ["timestamp"])
+        safe_create_index("idx_token_usage_logs_token_jti_timestamp", "token_usage_logs", ["token_jti", "timestamp"])
+        safe_create_index("idx_token_usage_logs_user_email_timestamp", "token_usage_logs", ["user_email", "timestamp"])
+
     # ===============================
     # STEP 4: RBAC System
     # ===============================
@@ -974,6 +1000,7 @@ def downgrade() -> None:
         "permission_audit_log",
         "user_roles",
         "roles",
+        "token_usage_logs",
         "token_revocations",
         "email_api_tokens",
         "email_team_invitations",
@@ -993,6 +1020,12 @@ def downgrade() -> None:
                 safe_drop_index("idx_email_api_tokens_is_active", table_name)
                 safe_drop_index("idx_email_api_tokens_server_id", table_name)
                 safe_drop_index("idx_email_api_tokens_user_email", table_name)
+            elif table_name == "token_usage_logs":
+                safe_drop_index("idx_token_usage_logs_user_email_timestamp", table_name)
+                safe_drop_index("idx_token_usage_logs_token_jti_timestamp", table_name)
+                safe_drop_index("idx_token_usage_logs_timestamp", table_name)
+                safe_drop_index("idx_token_usage_logs_user_email", table_name)
+                safe_drop_index("idx_token_usage_logs_token_jti", table_name)
             elif table_name == "token_revocations":
                 safe_drop_index("idx_token_revocations_revoked_by", table_name)
                 safe_drop_index("idx_token_revocations_revoked_at", table_name)
