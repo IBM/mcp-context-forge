@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeVar
 
 # Third-Party
-from pydantic import BaseModel, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, RootModel, ValidationInfo
 
 # First-Party
 from mcpgateway.models import PromptResult
@@ -30,6 +30,8 @@ class HookType(str, Enum):
     """MCP Forge Gateway hook points.
 
     Attributes:
+        http_pre_forwarding_call: The pre hook before an http forwarding request.
+        http_post_forwarding_call: The post hook after an http forwarding request.
         prompt_pre_fetch: The prompt pre hook.
         prompt_post_fetch: The prompt post hook.
         tool_pre_invoke: The tool pre invoke hook.
@@ -48,6 +50,8 @@ class HookType(str, Enum):
         [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>, <HookType.TOOL_PRE_INVOKE: 'tool_pre_invoke'>, <HookType.TOOL_POST_INVOKE: 'tool_post_invoke'>, ...]
     """
 
+    HTTP_PRE_FORWARDING_CALL = "http_pre_forwarding_call"
+    HTTP_POST_FORWARDING_CALL = "http_post_forwarding_call"
     PROMPT_PRE_FETCH = "prompt_pre_fetch"
     PROMPT_POST_FETCH = "prompt_post_fetch"
     TOOL_PRE_INVOKE = "tool_pre_invoke"
@@ -60,13 +64,16 @@ class PluginMode(str, Enum):
     """Plugin modes of operation.
 
     Attributes:
-       enforce: enforces the plugin result.
+       enforce: enforces the plugin result, and blocks execution when there is an error.
+       enforce_ignore_error: enforces the plugin result, but allows execution when there is an error.
        permissive: audits the result.
        disabled: plugin disabled.
 
     Examples:
         >>> PluginMode.ENFORCE
         <PluginMode.ENFORCE: 'enforce'>
+        >>> PluginMode.ENFORCE_IGNORE_ERROR
+        <PluginMode.ENFORCE_IGNORE_ERROR: 'enforce_ignore_error'>
         >>> PluginMode.PERMISSIVE.value
         'permissive'
         >>> PluginMode('disabled')
@@ -76,6 +83,7 @@ class PluginMode(str, Enum):
     """
 
     ENFORCE = "enforce"
+    ENFORCE_IGNORE_ERROR = "enforce_ignore_error"
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
 
@@ -386,7 +394,7 @@ class PluginErrorModel(BaseModel):
 
     message: str
     code: Optional[str] = ""
-    details: Optional[dict[str, Any]] = {}
+    details: Optional[dict[str, Any]] = Field(default_factory=dict)
     plugin_name: str
 
 
@@ -502,7 +510,7 @@ class PromptPrehookPayload(BaseModel):
     """
 
     name: str
-    args: Optional[dict[str, str]] = {}
+    args: Optional[dict[str, str]] = Field(default_factory=dict)
 
 
 class PromptPosthookPayload(BaseModel):
@@ -568,7 +576,7 @@ class PluginResult(BaseModel, Generic[T]):
     continue_processing: bool = True
     modified_payload: Optional[T] = None
     violation: Optional[PluginViolation] = None
-    metadata: Optional[dict[str, Any]] = {}
+    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 PromptPrehookResult = PluginResult[PromptPrehookPayload]
@@ -600,7 +608,7 @@ class ToolPreInvokePayload(BaseModel):
     """
 
     name: str
-    args: Optional[dict[str, Any]] = {}
+    args: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 class ToolPostInvokePayload(BaseModel):
@@ -639,6 +647,8 @@ class GlobalContext(BaseModel):
             user (str): user ID associated with the request.
             tenant_id (str): tenant ID.
             server_id (str): server ID.
+            metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
+            state (Optional[dict[str,Any]]): a global shared state across plugins.
 
     Examples:
         >>> ctx = GlobalContext(request_id="req-123")
@@ -662,18 +672,33 @@ class GlobalContext(BaseModel):
     user: Optional[str] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
+    state: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class PluginContext(GlobalContext):
+class PluginContext(BaseModel):
     """The plugin's context, which lasts a request lifecycle.
 
     Attributes:
-       metadata: context metadata.
        state:  the inmemory state of the request.
+       global_context: the context that is shared across plugins.
+       metadata: plugin meta data.
+
+    Examples:
+        >>> gctx = GlobalContext(request_id="req-123")
+        >>> ctx = PluginContext(global_context=gctx)
+        >>> ctx.global_context.request_id
+        'req-123'
+        >>> ctx.global_context.user is None
+        True
+        >>> ctx.state["somekey"] = "some value"
+        >>> ctx.state["somekey"]
+        'some value'
     """
 
-    state: dict[str, Any] = {}
-    metadata: dict[str, Any] = {}
+    state: dict[str, Any] = Field(default_factory=dict)
+    global_context: GlobalContext
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def get_state(self, key: str, default: Any = None) -> Any:
         """Get value from shared state.
@@ -701,6 +726,14 @@ class PluginContext(GlobalContext):
         self.state.clear()
         self.metadata.clear()
 
+    def is_empty(self) -> bool:
+        """Check whether the state and metadata objects are empty.
+
+        Returns:
+            True if the context state and metadata are empty.
+        """
+        return not (self.state or self.metadata or self.global_context.state)
+
 
 PluginContextTable = dict[str, PluginContext]
 
@@ -727,7 +760,7 @@ class ResourcePreFetchPayload(BaseModel):
     """
 
     uri: str
-    metadata: Optional[dict[str, Any]] = {}
+    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 class ResourcePostFetchPayload(BaseModel):
@@ -759,3 +792,29 @@ class ResourcePostFetchPayload(BaseModel):
 
 ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]
 ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload]
+
+
+class HttpHeaderPayload(RootModel[dict[str, str]]):
+    """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""
+
+    def __iter__(self):
+        """Custom iterator function to override root attribute.
+
+        Returns:
+            A custom iterator for header dictionary.
+        """
+        return iter(self.root)
+
+    def __getitem__(self, item: str) -> str:
+        """Custom getitem function to override root attribute.
+
+        Args:
+            item: The http header key.
+
+        Returns:
+            A custom accesser for the header dictionary.
+        """
+        return self.root[item]
+
+
+HttpHeaderPayloadResult = PluginResult[HttpHeaderPayload]
