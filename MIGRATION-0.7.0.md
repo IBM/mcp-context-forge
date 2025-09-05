@@ -793,6 +793,13 @@ mkdir -p "$HOME/Library/Application Support/mcpgateway"
 export DATABASE_URL="sqlite:////Users/$USER/Library/Application Support/mcpgateway/mcp.db"
 ```
 
+Alternatively, keep the repository and database in a simple home directory folder (avoids iCloud-managed Documents/Desktop):
+
+```bash
+mkdir -p "$HOME/mcp-context-forge/data"
+export DATABASE_URL="sqlite:////Users/$USER/mcp-context-forge/data/mcp.db"
+```
+
 ### Common Fixes
 
 #### Fix 1: Remove corrupted WAL files

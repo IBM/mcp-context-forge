@@ -2505,10 +2505,21 @@ devpi-web            - Open devpi web interface
 
 If the gateway fails on macOS with `sqlite3.OperationalError: disk I/O error` (works on Linux/Docker), it's usually a filesystem/locking quirk rather than a schema bug.
 
+Quick placement guidance (macOS):
+- Avoid cloning/running the repo under `~/Documents` or `~/Desktop` if iCloud "Desktop & Documents" sync is enabled.
+- A simple, safe choice is a project folder directly under your home directory:
+  - `mkdir -p "$HOME/mcp-context-forge" && cd "$HOME/mcp-context-forge"`
+  - If you keep the DB inside the repo, use a subfolder like `data/` and an absolute path in `.env`:
+    - `mkdir -p "$HOME/mcp-context-forge/data"`
+    - `DATABASE_URL=sqlite:////Users/$USER/mcp-context-forge/data/mcp.db`
+
 - Use a safe, local APFS path for SQLite (avoid iCloud/Dropbox/OneDrive/Google Drive, network shares, or external exFAT/NAS):
-  - Create a local folder and point the DB there with an absolute path (note the four slashes and spaces):
+  - Option A (system location): point the DB to Application Support (note spaces):
     - `mkdir -p "$HOME/Library/Application Support/mcpgateway"`
     - `export DATABASE_URL="sqlite:////Users/$USER/Library/Application Support/mcpgateway/mcp.db"`
+  - Option B (project-local): keep the DB under `~/mcp-context-forge/data`:
+    - `mkdir -p "$HOME/mcp-context-forge/data"`
+    - `export DATABASE_URL="sqlite:////Users/$USER/mcp-context-forge/data/mcp.db"`
 - Clean stale SQLite artifacts after any crash:
   - `pkill -f mcpgateway || true && rm -f mcp.db-wal mcp.db-shm mcp.db-journal`
 - Reduce startup concurrency to rule out multi-process contention:
