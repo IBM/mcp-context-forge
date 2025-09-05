@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/models.py: 91%</title>
+    <title>Coverage for mcpgateway/models.py: 99%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_58284776.png">
     <link rel="stylesheet" href="style_cb_6b508a39.css" type="text/css">
     <script src="coverage_html_cb_6fb7b396.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway/models.py</b>:
-            <span class="pc_cov">91%</span>
+            <span class="pc_cov">99%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,19 +55,19 @@
             </div>
         </aside>
         <h2>
-            <span class="text">295 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">278<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">17<span class="text"> missing</span></button>
+            <span class="text">243 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">242<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">1<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
+            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">1<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_7c505f6fa7f5f82c_token_scoping_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_observability_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.5">coverage.py v7.10.5</a>,
-            created at 2025-08-26 18:29 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
+            created at 2025-09-02 21:04 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -635,8 +635,8 @@
     <p class="pln"><span class="n"><a id="t551" href="#t551">551</a></span><span class="t"><span class="str">            bool: True if the other value is equal to this URL, either as a string</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t552" href="#t552">552</a></span><span class="t"><span class="str">            or as another URL object. False otherwise.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t553" href="#t553">553</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t554" href="#t554">554</a></span><span class="t">        <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">other</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t555" href="#t555">555</a></span><span class="t">            <span class="key">return</span> <span class="nam">str</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">==</span> <span class="nam">other</span>&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t554" href="#t554">554</a></span><span class="t">        <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">other</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">554&#x202F;&#x219B;&#x202F;556</span><span class="annotate long">line 554 didn't jump to line 556 because the condition on line 554 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t555" href="#t555">555</a></span><span class="t">            <span class="key">return</span> <span class="nam">str</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">==</span> <span class="nam">other</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t556" href="#t556">556</a></span><span class="t">        <span class="key">return</span> <span class="nam">super</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">__eq__</span><span class="op">(</span><span class="nam">other</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t557" href="#t557">557</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t558" href="#t558">558</a></span><span class="t">    <span class="com"># Keep hashing behaviour aligned with equality</span>&nbsp;</span><span class="r"></span></p>
@@ -913,7 +913,7 @@
     <p class="run"><span class="n"><a id="t829" href="#t829">829</a></span><span class="t">    <span class="nam">last_seen</span><span class="op">:</span> <span class="nam">Optional</span><span class="op">[</span><span class="nam">datetime</span><span class="op">]</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t830" href="#t830">830</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t831" href="#t831">831</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t832" href="#t832">832</a></span><span class="t"><span class="com"># ===== RBAC Models (Epic 004) =====</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t832" href="#t832">832</a></span><span class="t"><span class="com"># ===== RBAC Models =====</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t833" href="#t833">833</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t834" href="#t834">834</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t835" href="#t835">835</a></span><span class="t"><span class="key">class</span> <span class="nam">RBACRole</span><span class="op">(</span><span class="nam">BaseModel</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -1060,112 +1060,8 @@
     <p class="run"><span class="n"><a id="t976" href="#t976">976</a></span><span class="t">    <span class="nam">user_agent</span><span class="op">:</span> <span class="nam">Optional</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span> <span class="op">=</span> <span class="nam">Field</span><span class="op">(</span><span class="key">None</span><span class="op">,</span> <span class="nam">description</span><span class="op">=</span><span class="str">"User agent string"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t977" href="#t977">977</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t978" href="#t978">978</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t979" href="#t979">979</a></span><span class="t"><span class="com"># Permission constants for the system</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t980" href="#t980">980</a></span><span class="t"><span class="key">class</span> <span class="nam">SystemPermissions</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t981" href="#t981">981</a></span><span class="t">    <span class="str">"""System permission constants.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t982" href="#t982">982</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t983" href="#t983">983</a></span><span class="t"><span class="str">    Defines all available permissions in the system organized by resource type.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t984" href="#t984">984</a></span><span class="t"><span class="str">    Used for role definitions and permission checking.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t985" href="#t985">985</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t986" href="#t986">986</a></span><span class="t"><span class="str">    Examples:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t987" href="#t987">987</a></span><span class="t"><span class="str">        >>> SystemPermissions.USERS_CREATE</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t988" href="#t988">988</a></span><span class="t"><span class="str">        'users.create'</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t989" href="#t989">989</a></span><span class="t"><span class="str">        >>> SystemPermissions.TOOLS_EXECUTE</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t990" href="#t990">990</a></span><span class="t"><span class="str">        'tools.execute'</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t991" href="#t991">991</a></span><span class="t"><span class="str">        >>> SystemPermissions.ADMIN_SYSTEM_CONFIG</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t992" href="#t992">992</a></span><span class="t"><span class="str">        'admin.system_config'</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t993" href="#t993">993</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t994" href="#t994">994</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t995" href="#t995">995</a></span><span class="t">    <span class="com"># User permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t996" href="#t996">996</a></span><span class="t">    <span class="nam">USERS_CREATE</span> <span class="op">=</span> <span class="str">"users.create"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t997" href="#t997">997</a></span><span class="t">    <span class="nam">USERS_READ</span> <span class="op">=</span> <span class="str">"users.read"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t998" href="#t998">998</a></span><span class="t">    <span class="nam">USERS_UPDATE</span> <span class="op">=</span> <span class="str">"users.update"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t999" href="#t999">999</a></span><span class="t">    <span class="nam">USERS_DELETE</span> <span class="op">=</span> <span class="str">"users.delete"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1000" href="#t1000">1000</a></span><span class="t">    <span class="nam">USERS_INVITE</span> <span class="op">=</span> <span class="str">"users.invite"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1001" href="#t1001">1001</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1002" href="#t1002">1002</a></span><span class="t">    <span class="com"># Team permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1003" href="#t1003">1003</a></span><span class="t">    <span class="nam">TEAMS_CREATE</span> <span class="op">=</span> <span class="str">"teams.create"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1004" href="#t1004">1004</a></span><span class="t">    <span class="nam">TEAMS_READ</span> <span class="op">=</span> <span class="str">"teams.read"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1005" href="#t1005">1005</a></span><span class="t">    <span class="nam">TEAMS_UPDATE</span> <span class="op">=</span> <span class="str">"teams.update"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1006" href="#t1006">1006</a></span><span class="t">    <span class="nam">TEAMS_DELETE</span> <span class="op">=</span> <span class="str">"teams.delete"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1007" href="#t1007">1007</a></span><span class="t">    <span class="nam">TEAMS_MANAGE_MEMBERS</span> <span class="op">=</span> <span class="str">"teams.manage_members"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1008" href="#t1008">1008</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1009" href="#t1009">1009</a></span><span class="t">    <span class="com"># Tool permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1010" href="#t1010">1010</a></span><span class="t">    <span class="nam">TOOLS_CREATE</span> <span class="op">=</span> <span class="str">"tools.create"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1011" href="#t1011">1011</a></span><span class="t">    <span class="nam">TOOLS_READ</span> <span class="op">=</span> <span class="str">"tools.read"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1012" href="#t1012">1012</a></span><span class="t">    <span class="nam">TOOLS_UPDATE</span> <span class="op">=</span> <span class="str">"tools.update"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1013" href="#t1013">1013</a></span><span class="t">    <span class="nam">TOOLS_DELETE</span> <span class="op">=</span> <span class="str">"tools.delete"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1014" href="#t1014">1014</a></span><span class="t">    <span class="nam">TOOLS_EXECUTE</span> <span class="op">=</span> <span class="str">"tools.execute"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1015" href="#t1015">1015</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1016" href="#t1016">1016</a></span><span class="t">    <span class="com"># Resource permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1017" href="#t1017">1017</a></span><span class="t">    <span class="nam">RESOURCES_CREATE</span> <span class="op">=</span> <span class="str">"resources.create"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1018" href="#t1018">1018</a></span><span class="t">    <span class="nam">RESOURCES_READ</span> <span class="op">=</span> <span class="str">"resources.read"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1019" href="#t1019">1019</a></span><span class="t">    <span class="nam">RESOURCES_UPDATE</span> <span class="op">=</span> <span class="str">"resources.update"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1020" href="#t1020">1020</a></span><span class="t">    <span class="nam">RESOURCES_DELETE</span> <span class="op">=</span> <span class="str">"resources.delete"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1021" href="#t1021">1021</a></span><span class="t">    <span class="nam">RESOURCES_SHARE</span> <span class="op">=</span> <span class="str">"resources.share"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1022" href="#t1022">1022</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1023" href="#t1023">1023</a></span><span class="t">    <span class="com"># Server permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1024" href="#t1024">1024</a></span><span class="t">    <span class="nam">SERVERS_CREATE</span> <span class="op">=</span> <span class="str">"servers.create"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1025" href="#t1025">1025</a></span><span class="t">    <span class="nam">SERVERS_READ</span> <span class="op">=</span> <span class="str">"servers.read"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1026" href="#t1026">1026</a></span><span class="t">    <span class="nam">SERVERS_UPDATE</span> <span class="op">=</span> <span class="str">"servers.update"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1027" href="#t1027">1027</a></span><span class="t">    <span class="nam">SERVERS_DELETE</span> <span class="op">=</span> <span class="str">"servers.delete"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1028" href="#t1028">1028</a></span><span class="t">    <span class="nam">SERVERS_MANAGE</span> <span class="op">=</span> <span class="str">"servers.manage"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1029" href="#t1029">1029</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1030" href="#t1030">1030</a></span><span class="t">    <span class="com"># Token permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1031" href="#t1031">1031</a></span><span class="t">    <span class="nam">TOKENS_CREATE</span> <span class="op">=</span> <span class="str">"tokens.create"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1032" href="#t1032">1032</a></span><span class="t">    <span class="nam">TOKENS_READ</span> <span class="op">=</span> <span class="str">"tokens.read"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1033" href="#t1033">1033</a></span><span class="t">    <span class="nam">TOKENS_REVOKE</span> <span class="op">=</span> <span class="str">"tokens.revoke"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1034" href="#t1034">1034</a></span><span class="t">    <span class="nam">TOKENS_SCOPE</span> <span class="op">=</span> <span class="str">"tokens.scope"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1035" href="#t1035">1035</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1036" href="#t1036">1036</a></span><span class="t">    <span class="com"># Admin permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1037" href="#t1037">1037</a></span><span class="t">    <span class="nam">ADMIN_SYSTEM_CONFIG</span> <span class="op">=</span> <span class="str">"admin.system_config"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1038" href="#t1038">1038</a></span><span class="t">    <span class="nam">ADMIN_USER_MANAGEMENT</span> <span class="op">=</span> <span class="str">"admin.user_management"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1039" href="#t1039">1039</a></span><span class="t">    <span class="nam">ADMIN_SECURITY_AUDIT</span> <span class="op">=</span> <span class="str">"admin.security_audit"</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1040" href="#t1040">1040</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1041" href="#t1041">1041</a></span><span class="t">    <span class="com"># Special permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1042" href="#t1042">1042</a></span><span class="t">    <span class="nam">ALL_PERMISSIONS</span> <span class="op">=</span> <span class="str">"*"</span>  <span class="com"># Wildcard for all permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1043" href="#t1043">1043</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1044" href="#t1044">1044</a></span><span class="t">    <span class="op">@</span><span class="nam">classmethod</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1045" href="#t1045">1045</a></span><span class="t">    <span class="key">def</span> <span class="nam">get_all_permissions</span><span class="op">(</span><span class="nam">cls</span><span class="op">)</span> <span class="op">-></span> <span class="nam">List</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1046" href="#t1046">1046</a></span><span class="t">        <span class="str">"""Get list of all defined permissions.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1047" href="#t1047">1047</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1048" href="#t1048">1048</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1049" href="#t1049">1049</a></span><span class="t"><span class="str">            List[str]: All permission constants</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1050" href="#t1050">1050</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1051" href="#t1051">1051</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1052" href="#t1052">1052</a></span><span class="t"><span class="str">            >>> permissions = SystemPermissions.get_all_permissions()</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1053" href="#t1053">1053</a></span><span class="t"><span class="str">            >>> "users.create" in permissions</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1054" href="#t1054">1054</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1055" href="#t1055">1055</a></span><span class="t"><span class="str">            >>> len(permissions) > 20</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1056" href="#t1056">1056</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1057" href="#t1057">1057</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1058" href="#t1058">1058</a></span><span class="t">        <span class="nam">permissions</span> <span class="op">=</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1059" href="#t1059">1059</a></span><span class="t">        <span class="key">for</span> <span class="nam">attr_name</span> <span class="key">in</span> <span class="nam">dir</span><span class="op">(</span><span class="nam">cls</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1060" href="#t1060">1060</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">attr_name</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="str">"_"</span><span class="op">)</span> <span class="key">and</span> <span class="nam">attr_name</span><span class="op">.</span><span class="nam">isupper</span><span class="op">(</span><span class="op">)</span> <span class="key">and</span> <span class="nam">attr_name</span> <span class="op">!=</span> <span class="str">"ALL_PERMISSIONS"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1061" href="#t1061">1061</a></span><span class="t">                <span class="nam">attr_value</span> <span class="op">=</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">cls</span><span class="op">,</span> <span class="nam">attr_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1062" href="#t1062">1062</a></span><span class="t">                <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">attr_value</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span> <span class="key">and</span> <span class="str">"."</span> <span class="key">in</span> <span class="nam">attr_value</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1063" href="#t1063">1063</a></span><span class="t">                    <span class="nam">permissions</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">attr_value</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1064" href="#t1064">1064</a></span><span class="t">        <span class="key">return</span> <span class="nam">sorted</span><span class="op">(</span><span class="nam">permissions</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1065" href="#t1065">1065</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1066" href="#t1066">1066</a></span><span class="t">    <span class="op">@</span><span class="nam">classmethod</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1067" href="#t1067">1067</a></span><span class="t">    <span class="key">def</span> <span class="nam">get_permissions_by_resource</span><span class="op">(</span><span class="nam">cls</span><span class="op">)</span> <span class="op">-></span> <span class="nam">Dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">List</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1068" href="#t1068">1068</a></span><span class="t">        <span class="str">"""Get permissions organized by resource type.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1069" href="#t1069">1069</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1070" href="#t1070">1070</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1071" href="#t1071">1071</a></span><span class="t"><span class="str">            Dict[str, List[str]]: Permissions grouped by resource</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1072" href="#t1072">1072</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1073" href="#t1073">1073</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1074" href="#t1074">1074</a></span><span class="t"><span class="str">            >>> perms = SystemPermissions.get_permissions_by_resource()</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1075" href="#t1075">1075</a></span><span class="t"><span class="str">            >>> perms['users']</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1076" href="#t1076">1076</a></span><span class="t"><span class="str">            ['users.create', 'users.delete', 'users.invite', 'users.read', 'users.update']</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1077" href="#t1077">1077</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1078" href="#t1078">1078</a></span><span class="t">        <span class="nam">resource_permissions</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1079" href="#t1079">1079</a></span><span class="t">        <span class="key">for</span> <span class="nam">permission</span> <span class="key">in</span> <span class="nam">cls</span><span class="op">.</span><span class="nam">get_all_permissions</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1080" href="#t1080">1080</a></span><span class="t">            <span class="nam">resource_type</span> <span class="op">=</span> <span class="nam">permission</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">"."</span><span class="op">)</span><span class="op">[</span><span class="num">0</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1081" href="#t1081">1081</a></span><span class="t">            <span class="key">if</span> <span class="nam">resource_type</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">resource_permissions</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1082" href="#t1082">1082</a></span><span class="t">                <span class="nam">resource_permissions</span><span class="op">[</span><span class="nam">resource_type</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1083" href="#t1083">1083</a></span><span class="t">            <span class="nam">resource_permissions</span><span class="op">[</span><span class="nam">resource_type</span><span class="op">]</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">permission</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t1084" href="#t1084">1084</a></span><span class="t">        <span class="key">return</span> <span class="nam">resource_permissions</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t979" href="#t979">979</a></span><span class="t"><span class="com"># Permission constants are imported from db.py to avoid duplication</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t980" href="#t980">980</a></span><span class="t"><span class="com"># Use Permissions class from mcpgateway.db instead of duplicate SystemPermissions</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1174,8 +1070,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_580dae60cda9039c_observability_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.5">coverage.py v7.10.5</a>,
-            created at 2025-08-26 18:29 +0100
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
+            created at 2025-09-02 21:04 +0100
         </p>
     </div>
 </footer>
