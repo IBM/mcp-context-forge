@@ -10444,6 +10444,7 @@ async function createToken(form) {
             expires_in_days: formData.get("expires_in_days")
                 ? parseInt(formData.get("expires_in_days"))
                 : null,
+            tags: [], // Always include empty tags array
         };
 
         // Add scoping if provided
@@ -10452,18 +10453,30 @@ async function createToken(form) {
             scope.server_id = formData.get("server_id");
         }
         if (formData.get("ip_restrictions")) {
-            scope.ip_restrictions = [formData.get("ip_restrictions")];
+            // Parse IP restrictions as array (split by comma if multiple)
+            const ipRestrictions = formData.get("ip_restrictions").trim();
+            scope.ip_restrictions = ipRestrictions
+                ? ipRestrictions.split(",").map((ip) => ip.trim())
+                : [];
+        } else {
+            scope.ip_restrictions = [];
         }
         if (formData.get("permissions")) {
             scope.permissions = formData
                 .get("permissions")
                 .split(",")
-                .map((p) => p.trim());
+                .map((p) => p.trim())
+                .filter((p) => p.length > 0);
+        } else {
+            scope.permissions = [];
         }
 
-        if (Object.keys(scope).length > 0) {
-            payload.scope = scope;
-        }
+        // Always include time_restrictions and usage_limits as empty objects
+        scope.time_restrictions = {};
+        scope.usage_limits = {};
+
+        // Always add scope object (even if empty) to ensure proper structure
+        payload.scope = scope;
 
         const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
             method: "POST",
