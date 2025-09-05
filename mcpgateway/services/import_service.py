@@ -336,6 +336,10 @@ class ImportService:
                     if not dry_run:
                         db.flush()
 
+            # Assign all imported items to user's team with public visibility (after all entities processed)
+            if not dry_run:
+                await self._assign_imported_items_to_team(db, imported_by)
+
             # Mark as completed
             status.status = "completed"
             status.completed_at = datetime.now(timezone.utc)
@@ -1471,3 +1475,125 @@ class ImportService:
             logger.warning(f"Could not detect all conflicts: {e}")
 
         return conflicts
+
+    async def _get_user_context(self, db: Session, imported_by: str) -> Optional[Dict[str, Any]]:
+        """Get user context for import team assignment.
+
+        Args:
+            db: Database session
+            imported_by: Email of importing user
+
+        Returns:
+            User context dict or None if not found
+        """
+        try:
+            # First-Party
+            from mcpgateway.db import EmailUser
+
+            user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
+            if not user:
+                logger.warning(f"Could not find importing user: {imported_by}")
+                return None
+
+            personal_team = user.get_personal_team()
+            if not personal_team:
+                logger.warning(f"User {imported_by} has no personal team")
+                return None
+
+            return {"user_email": user.email, "team_id": personal_team.id, "team_name": personal_team.name}
+        except Exception as e:
+            logger.error(f"Failed to get user context: {e}")
+            return None
+
+    def _add_multitenancy_context(self, entity_data: Dict[str, Any], user_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Add team and visibility context to entity data for import.
+
+        Args:
+            entity_data: Original entity data
+            user_context: User context with team information
+
+        Returns:
+            Entity data enhanced with multitenancy fields
+        """
+        # Create copy to avoid modifying original
+        enhanced_data = dict(entity_data)
+
+        # Add team assignment (assign to importing user's personal team)
+        if not enhanced_data.get("team_id"):
+            enhanced_data["team_id"] = user_context["team_id"]
+
+        if not enhanced_data.get("owner_email"):
+            enhanced_data["owner_email"] = user_context["user_email"]
+
+        # Set visibility: use export value if present, otherwise default to 'public'
+        # This supports pre-0.7.0 exports that don't have visibility field
+        if not enhanced_data.get("visibility"):
+            enhanced_data["visibility"] = "public"  # Default to public for backward compatibility
+
+        # Add import tracking
+        if not enhanced_data.get("federation_source"):
+            enhanced_data["federation_source"] = f"imported-by-{user_context['user_email']}"
+
+        logger.debug(f"Enhanced entity with multitenancy: team_id={enhanced_data['team_id']}, visibility={enhanced_data['visibility']}")
+        return enhanced_data
+
+    async def _assign_imported_items_to_team(self, db: Session, imported_by: str) -> None:
+        """Assign imported items without team assignment to the importer's personal team.
+
+        Args:
+            db: Database session
+            imported_by: Email of user who performed the import
+        """
+        try:
+            # Find the importing user and their personal team
+            # First-Party
+            from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
+
+            user = db.query(EmailUser).filter(EmailUser.email == imported_by).first()
+            if not user:
+                logger.warning(f"Could not find importing user {imported_by} - skipping team assignment")
+                return
+
+            personal_team = user.get_personal_team()
+            if not personal_team:
+                logger.warning(f"User {imported_by} has no personal team - skipping team assignment")
+                return
+
+            logger.info(f"Assigning orphaned imported items to {imported_by}'s team: {personal_team.name}")
+
+            # Resource types to check
+            resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
+
+            total_assigned = 0
+
+            for resource_name, resource_model in resource_types:
+                try:
+                    # Find items without team assignment (recently imported)
+                    unassigned = db.query(resource_model).filter((resource_model.team_id.is_(None)) | (resource_model.owner_email.is_(None))).all()
+
+                    if unassigned:
+                        logger.info(f"Assigning {len(unassigned)} orphaned {resource_name} to user team")
+
+                        for item in unassigned:
+                            item.team_id = personal_team.id
+                            item.owner_email = user.email
+                            # Set imported items to public for better visibility
+                            item.visibility = "public"
+                            if hasattr(item, "federation_source") and not item.federation_source:
+                                item.federation_source = f"imported-by-{imported_by}"
+
+                        total_assigned += len(unassigned)
+
+                except Exception as e:
+                    logger.error(f"Failed to assign {resource_name} to team: {e}")
+                    continue
+
+            if total_assigned > 0:
+                db.commit()
+                logger.info(f"Assigned {total_assigned} imported items to {personal_team.name} with public visibility")
+            else:
+                logger.debug("No orphaned imported items found")
+
+        except Exception as e:
+            logger.error(f"Failed to assign imported items to team: {e}")
+            # Don't fail the import for team assignment issues
