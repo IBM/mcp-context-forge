@@ -515,7 +515,7 @@ async def test_process_resource_entities(import_service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_process_root_entities(import_service):
+async def test_process_root_entities(import_service, mock_db):
     """Test processing root entities."""
     root_data = {
         "uri": "file:///workspace",
@@ -533,10 +533,11 @@ async def test_process_root_entities(import_service):
 
     # Setup mocks
     import_service.root_service.add_root.return_value = MagicMock()
+    mock_db.flush.return_value = None  # Mock flush method
 
     # Execute import
     status = await import_service.import_configuration(
-        db=None,  # Root processing doesn't need db
+        db=mock_db,  # Use mock_db instead of None
         import_data=import_data,
         imported_by="test_user"
     )
@@ -917,7 +918,7 @@ async def test_import_configuration_with_selected_entities(import_service, mock_
 
 
 @pytest.mark.asyncio
-async def test_conversion_methods_comprehensive(import_service):
+async def test_conversion_methods_comprehensive(import_service, mock_db):
     """Test all schema conversion methods."""
     # Test gateway conversion without auth (simpler test)
     gateway_data = {
@@ -932,7 +933,7 @@ async def test_conversion_methods_comprehensive(import_service):
     assert gateway_create.name == "test_gateway"
     assert str(gateway_create.url) == "https://gateway.example.com"
 
-    # Test server conversion
+    # Test server conversion with mock db
     server_data = {
         "name": "test_server",
         "description": "Test server",
@@ -940,9 +941,12 @@ async def test_conversion_methods_comprehensive(import_service):
         "tags": ["server"]
     }
 
-    server_create = import_service._convert_to_server_create(server_data)
+    # Mock the list_tools method to return empty list (no tools to resolve)
+    import_service.tool_service.list_tools.return_value = []
+
+    server_create = await import_service._convert_to_server_create(mock_db, server_data)
     assert server_create.name == "test_server"
-    assert server_create.associated_tools == ["tool1", "tool2"]
+    assert server_create.associated_tools == []  # Empty because no tools found to resolve
 
     # Test prompt conversion with schema
     prompt_data = {
@@ -1773,7 +1777,7 @@ async def test_resource_conflict_fail_strategy(import_service, mock_db):
 
 
 @pytest.mark.asyncio
-async def test_root_dry_run_processing(import_service):
+async def test_root_dry_run_processing(import_service, mock_db):
     """Test root dry-run processing."""
     root_data = {
         "uri": "file:///test",
@@ -1787,9 +1791,12 @@ async def test_root_dry_run_processing(import_service):
         "metadata": {"entity_counts": {"roots": 1}}
     }
 
+    # Mock flush for dry run (even though it won't be called)
+    mock_db.flush.return_value = None
+
     # Execute dry-run import
     status = await import_service.import_configuration(
-        db=None,  # Root processing doesn't need db
+        db=mock_db,  # Use mock_db instead of None
         import_data=import_data,
         dry_run=True,
         imported_by="test_user"
@@ -1801,7 +1808,7 @@ async def test_root_dry_run_processing(import_service):
 
 
 @pytest.mark.asyncio
-async def test_root_conflict_skip_strategy(import_service):
+async def test_root_conflict_skip_strategy(import_service, mock_db):
     """Test root SKIP conflict strategy."""
     root_data = {
         "uri": "file:///existing",
@@ -1817,9 +1824,10 @@ async def test_root_conflict_skip_strategy(import_service):
 
     # Setup conflict
     import_service.root_service.add_root.side_effect = Exception("Root already exists")
+    mock_db.flush.return_value = None  # Mock flush method
 
     status = await import_service.import_configuration(
-        db=None,  # Root processing doesn't need db
+        db=mock_db,  # Use mock_db instead of None
         import_data=import_data,
         conflict_strategy=ConflictStrategy.SKIP,
         imported_by="test_user"
@@ -1831,7 +1839,7 @@ async def test_root_conflict_skip_strategy(import_service):
 
 
 @pytest.mark.asyncio
-async def test_root_conflict_fail_strategy(import_service):
+async def test_root_conflict_fail_strategy(import_service, mock_db):
     """Test root FAIL conflict strategy."""
     root_data = {
         "uri": "file:///fail",
@@ -1847,9 +1855,10 @@ async def test_root_conflict_fail_strategy(import_service):
 
     # Setup conflict
     import_service.root_service.add_root.side_effect = Exception("Root already exists")
+    mock_db.flush.return_value = None  # Mock flush method
 
     status = await import_service.import_configuration(
-        db=None,  # Root processing doesn't need db
+        db=mock_db,  # Use mock_db instead of None
         import_data=import_data,
         conflict_strategy=ConflictStrategy.FAIL,
         imported_by="test_user"
@@ -1861,7 +1870,7 @@ async def test_root_conflict_fail_strategy(import_service):
 
 
 @pytest.mark.asyncio
-async def test_root_conflict_update_or_rename_strategy(import_service):
+async def test_root_conflict_update_or_rename_strategy(import_service, mock_db):
     """Test root UPDATE/RENAME conflict strategy (both should raise ImportError)."""
     root_data = {
         "uri": "file:///conflict",
@@ -1877,10 +1886,11 @@ async def test_root_conflict_update_or_rename_strategy(import_service):
 
     # Setup conflict
     import_service.root_service.add_root.side_effect = Exception("Root already exists")
+    mock_db.flush.return_value = None  # Mock flush method
 
     # Test UPDATE strategy
     status_update = await import_service.import_configuration(
-        db=None,  # Root processing doesn't need db
+        db=mock_db,  # Use mock_db instead of None
         import_data=import_data,
         conflict_strategy=ConflictStrategy.UPDATE,
         imported_by="test_user"
@@ -1895,7 +1905,7 @@ async def test_root_conflict_update_or_rename_strategy(import_service):
 
     # Test RENAME strategy
     status_rename = await import_service.import_configuration(
-        db=None,  # Root processing doesn't need db
+        db=mock_db,  # Use mock_db instead of None
         import_data=import_data,
         conflict_strategy=ConflictStrategy.RENAME,
         imported_by="test_user"
@@ -2061,7 +2071,7 @@ async def test_gateway_update_auth_decode_error(import_service):
 
 
 @pytest.mark.asyncio
-async def test_server_update_conversion(import_service):
+async def test_server_update_conversion(import_service, mock_db):
     """Test server update schema conversion."""
     server_data = {
         "name": "update_server",
@@ -2070,10 +2080,13 @@ async def test_server_update_conversion(import_service):
         "tags": ["server", "update"]
     }
 
-    server_update = import_service._convert_to_server_update(server_data)
+    # Mock the list_tools method to return empty list (no tools to resolve)
+    import_service.tool_service.list_tools.return_value = []
+
+    server_update = await import_service._convert_to_server_update(mock_db, server_data)
     assert server_update.name == "update_server"
     assert server_update.description == "Updated server description"
-    assert server_update.associated_tools == ["tool1", "tool2", "tool3"]
+    assert server_update.associated_tools is None  # None because no tools found to resolve
     assert server_update.tags == ["server", "update"]
 
 
