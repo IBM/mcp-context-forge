@@ -782,6 +782,17 @@ brew install python3
 /opt/homebrew/bin/python3 -c "import sqlite3; print(f'Python SQLite: {sqlite3.sqlite_version}')"
 ```
 
+##### Filesystem location pitfalls (macOS)
+
+- Avoid storing `mcp.db` under synced or special folders (iCloud Drive, Dropbox, OneDrive, Google Drive), external exFAT drives, or network shares. These can break SQLite's journaling/locking and trigger `disk I/O error`.
+- Prefer a local APFS path and an absolute `DATABASE_URL`:
+
+```bash
+mkdir -p "$HOME/Library/Application Support/mcpgateway"
+# Note the four slashes for absolute path and the space in the folder name
+export DATABASE_URL="sqlite:////Users/$USER/Library/Application Support/mcpgateway/mcp.db"
+```
+
 ### Common Fixes
 
 #### Fix 1: Remove corrupted WAL files
@@ -842,6 +853,20 @@ python3 -c "import sqlite3; print(f'SQLite: {sqlite3.sqlite_version}')"
 sqlite3 --version
 ```
 
+#### Fix 5: Reduce startup concurrency (single worker)
+
+SQLite is file-based. Running migrations and first-queries concurrently across multiple Gunicorn workers can stress macOS filesystems:
+
+```bash
+# Run production server with a single worker while validating the environment
+GUNICORN_WORKERS=1 make serve
+
+# Or run the dev server (single-process)
+make dev
+```
+
+If this eliminates errors, the underlying issue is filesystem/locking. Keep the DB on a safe path and gradually raise workers.
+
 ### Environment Configuration for v0.7.0
 
 #### Enhanced SQLite settings for multitenancy
@@ -865,13 +890,26 @@ DATABASE_URL="sqlite:///./mcp.db?timeout=60&journal_mode=WAL"
 DB_POOL_TIMEOUT=60
 DB_MAX_RETRIES=10
 DB_RETRY_INTERVAL_MS=5000
+# Optionally reduce pool pressure during troubleshooting
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=0
+```
+
+#### Optional: In-process mode (bypass file-lock leadership)
+
+To simplify troubleshooting and remove file-lock leadership competition on macOS, temporarily use in-process mode for cache/session management:
+
+```bash
+export CACHE_TYPE=none
 ```
 
 ### Test Database Access
 
 Run the comprehensive test script:
 ```bash
-python3 scripts/test_sqlite.py
+python3 scripts/test_sqlite.py --verbose
+# If using a custom path, pass it explicitly
+python3 scripts/test_sqlite.py --database-url "sqlite:////Users/$USER/Library/Application Support/mcpgateway/mcp.db" --verbose
 ```
 
 This script tests:

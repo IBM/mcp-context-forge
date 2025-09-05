@@ -2501,6 +2501,34 @@ devpi-web            - Open devpi web interface
 ## 🔍 Troubleshooting
 
 <details>
+<summary><strong>macOS: SQLite "disk I/O error" when running make serve</strong></summary>
+
+If the gateway fails on macOS with `sqlite3.OperationalError: disk I/O error` (works on Linux/Docker), it's usually a filesystem/locking quirk rather than a schema bug.
+
+- Use a safe, local APFS path for SQLite (avoid iCloud/Dropbox/OneDrive/Google Drive, network shares, or external exFAT/NAS):
+  - Create a local folder and point the DB there with an absolute path (note the four slashes and spaces):
+    - `mkdir -p "$HOME/Library/Application Support/mcpgateway"`
+    - `export DATABASE_URL="sqlite:////Users/$USER/Library/Application Support/mcpgateway/mcp.db"`
+- Clean stale SQLite artifacts after any crash:
+  - `pkill -f mcpgateway || true && rm -f mcp.db-wal mcp.db-shm mcp.db-journal`
+- Reduce startup concurrency to rule out multi-process contention:
+  - `GUNICORN_WORKERS=1 make serve` (or use `make dev` which runs single-process)
+- Run the diagnostic helper to verify the environment:
+  - `python3 scripts/test_sqlite.py --verbose`
+- While debugging, consider lowering pool pressure and retry:
+  - `DB_POOL_SIZE=10 DB_MAX_OVERFLOW=0 DB_POOL_TIMEOUT=60 DB_MAX_RETRIES=10 DB_RETRY_INTERVAL_MS=5000`
+- Optional: temporarily disable the file-lock leader path by using the in-process mode:
+  - `export CACHE_TYPE=none`
+
+If the error persists, update SQLite and ensure Python links against it:
+- `brew install sqlite3 && brew link --force sqlite3`
+- `brew install python3 && /opt/homebrew/bin/python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`
+
+See the full migration guide's "SQLite Troubleshooting Guide" for deeper steps (WAL cleanup, integrity check, recovery): `MIGRATION-0.7.0.md`.
+
+</details>
+
+<details>
 <summary><strong>Port publishing on WSL2 (rootless Podman & Docker Desktop)</strong></summary>
 
 ### Diagnose the listener
