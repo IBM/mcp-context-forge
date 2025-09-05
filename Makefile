@@ -1397,13 +1397,13 @@ nodejsscan:
 
 lint-web: install-web-linters nodejsscan
 	@echo "🔍 Linting HTML files..."
-	@npx htmlhint "mcpgateway/templates/**/*.html" || true
+	@find mcpgateway/templates -name "*.html" -exec npx htmlhint {} + 2>/dev/null || true
 	@echo "🔍 Linting CSS files..."
-	@npx stylelint "mcpgateway/static/**/*.css" || true
+	@find mcpgateway/static -name "*.css" -exec npx stylelint {} + 2>/dev/null || true
 	@echo "🔍 Linting JS files..."
-	@npx eslint "mcpgateway/static/**/*.js" || true
+	@find mcpgateway/static -name "*.js" -exec npx eslint {} + 2>/dev/null || true
 	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
-	@npx retire --path mcpgateway/static || true
+	@cd mcpgateway/static && npx retire . 2>/dev/null || true
 	@if [ -f package.json ]; then \
 	  echo "🔒 Running npm audit (high severity)..."; \
 	  npm audit --audit-level=high || true; \
