@@ -36,12 +36,12 @@ jobs:
 
     steps:
       - name: ⬇️  Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: 🐍  Setup Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -73,7 +73,7 @@ jobs:
           make async-validate
 
       - name: 📎  Upload async test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: async-test-results
           path: |
