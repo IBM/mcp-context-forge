@@ -9,10 +9,10 @@ jobs:
       matrix:
         python: ["3.10", "3.11", "3.12", "3.13-dev"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ① Install the runner interpreter for this job
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
 

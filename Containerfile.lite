@@ -4,8 +4,8 @@
 # MCP Gateway (lite) - OCI-compliant container build
 #
 # This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
-# image that automatically tracks the latest Python 3.11.x patch release
-# from the RHEL 9 repositories and is fully patched on each rebuild.
+# image that automatically tracks the latest Python 3.12.x patch release
+# from the RHEL 10 repositories and is fully patched on each rebuild.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
@@ -21,12 +21,12 @@
 # Temporary dir for assembling the scratch rootfs
 ARG ROOTFS_PATH=/tmp/rootfs
 # Python major.minor series to track
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi:9.6-1756915113 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.0-1756805986 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -111,8 +111,8 @@ RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
     && mkdir -p "${ROOTFS_PATH:?}" \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 upgrade -y \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 install -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 upgrade -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
          --setopt=install_weak_deps=0 \
          --setopt=tsflags=nodocs \
          python${PYTHON_VERSION} \
@@ -122,7 +122,7 @@ RUN set -euo pipefail \
 # ----------------------------------------------------------------------------
 # Create `python3` symlink in the rootfs for compatibility
 # ----------------------------------------------------------------------------
-RUN ln -s /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
 
 # ----------------------------------------------------------------------------
 # Clean up unnecessary files from rootfs (if they exist)

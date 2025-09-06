@@ -44,7 +44,7 @@ jobs:
       # 0️⃣  Checkout
       # -----------------------------------------------------------
       - name: ⬇️  Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
@@ -52,7 +52,7 @@ jobs:
       # 1️⃣  Set-up Python
       # -----------------------------------------------------------
       - name: 🐍  Setup Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -118,13 +118,13 @@ jobs:
     #       --- keep disabled unless you need them ---
     # -----------------------------------------------------------
     # - name: 📤  Upload coverage.xml
-    #   uses: actions/upload-artifact@v4
+    #   uses: actions/upload-artifact@v4.6.2
     #   with:
     #     name: coverage-xml-${{ matrix.python }}
     #     path: coverage.xml
     #
     # - name: 📤  Upload HTML coverage
-    #   uses: actions/upload-artifact@v4
+    #   uses: actions/upload-artifact@v4.6.2
     #   with:
     #     name: htmlcov-${{ matrix.python }}
     #     path: htmlcov/

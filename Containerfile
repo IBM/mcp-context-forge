@@ -1,10 +1,10 @@
-FROM registry.access.redhat.com/ubi9-minimal:9.6-1755695350
+FROM registry.access.redhat.com/ubi10-minimal:10.0-1755721767
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
       version="0.6.0" \
       description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 
 # Install Python and build dependencies
 # hadolint ignore=DL3041

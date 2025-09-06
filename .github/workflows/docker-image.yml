@@ -44,13 +44,15 @@ jobs:
 
     env:
       CACHE_DIR: /tmp/.buildx-cache # BuildKit layer cache dir
+      # Temporarily disable Trivy (RHEL 10 unsupported). Set to 'true' to re‑enable.
+      TRIVY_ENABLED: 'false'
 
     steps:
       # -------------------------------------------------------------
       # 0️⃣  Checkout source
       # -------------------------------------------------------------
       - name: ⬇️  Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -------------------------------------------------------------
       # 0️⃣.5️⃣  Derive lower-case IMAGE_NAME for Docker tag
@@ -83,7 +85,7 @@ jobs:
       # 2️⃣  Set up Buildx & restore cache
       # -------------------------------------------------------------
       - name: 🛠️  Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.11.1
 
       - name: 🔄  Restore BuildKit layer cache
         uses: actions/cache@v4
@@ -136,7 +138,7 @@ jobs:
       # 5️⃣  Generate SPDX SBOM with Syft
       # -------------------------------------------------------------
       - name: 📄  Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@v0.20.5
         with:
           image: ${{ env.IMAGE_NAME }}:latest
           output-file: sbom.spdx.json
@@ -145,9 +147,10 @@ jobs:
       # 6️⃣  Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
+        if: env.TRIVY_ENABLED == 'true'
         id: trivy
         continue-on-error: true
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ env.IMAGE_NAME }}:latest
           format: sarif
@@ -155,7 +158,7 @@ jobs:
           severity: CRITICAL
           exit-code: 0
       - name: ☁️  Upload Trivy SARIF
-        if: always()
+        if: always() && env.TRIVY_ENABLED == 'true'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
@@ -179,7 +182,7 @@ jobs:
       # 7️⃣  Push both tags to GHCR
       # -------------------------------------------------------------
       - name: 🔑  Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.5.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -196,7 +199,7 @@ jobs:
       # -------------------------------------------------------------
       - name: 📥 Install Cosign
         if: github.ref == 'refs/heads/main'
-        uses: sigstore/cosign-installer@v3 # provides the matching CLI
+        uses: sigstore/cosign-installer@v3.9.2 # provides the matching CLI
 
       - name: 🔏 Sign & attest images (latest + timestamp)
         if: github.ref == 'refs/heads/main'
@@ -221,9 +224,13 @@ jobs:
         if: |
           env.HADOLINT_EXIT != '0' ||
           env.DOCKLE_EXIT   != '0' ||
-          steps.trivy.outcome == 'failure'
+          (env.TRIVY_ENABLED == 'true' && steps.trivy.outcome == 'failure')
         run: |
           echo "Hadolint exit: $HADOLINT_EXIT"
           echo "Dockle  exit: $DOCKLE_EXIT"
-          echo "Trivy   status: ${{ steps.trivy.outcome }}"
+          if [ "${{ env.TRIVY_ENABLED }}" = "true" ]; then
+            echo "Trivy   status: ${{ steps.trivy.outcome }}"
+          else
+            echo "Trivy   disabled"
+          fi
           exit 1
