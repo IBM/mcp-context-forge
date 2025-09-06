@@ -6903,13 +6903,10 @@ async function handleGatewayFormSubmit(e) {
             formData.append("oauth_config", JSON.stringify(oauthConfig));
         }
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/gateways`,
-            {
-                method: "POST",
-                body: formData,
-            },
-        );
+        const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
+            method: "POST",
+            body: formData,
+        });
         const result = await response.json();
 
         if (!result || !result.success) {
@@ -6967,13 +6964,10 @@ async function handleResourceFormSubmit(e) {
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources`,
-            {
-                method: "POST",
-                body: formData,
-            },
-        );
+        const response = await fetch(`${window.ROOT_PATH}/admin/resources`, {
+            method: "POST",
+            body: formData,
+        });
         const result = await response.json();
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add Resource");
@@ -7025,13 +7019,10 @@ async function handlePromptFormSubmit(e) {
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/prompts`,
-            {
-                method: "POST",
-                body: formData,
-            },
-        );
+        const response = await fetch(`${window.ROOT_PATH}/admin/prompts`, {
+            method: "POST",
+            body: formData,
+        });
         const result = await response.json();
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add prompt");
@@ -7131,14 +7122,10 @@ async function handleServerFormSubmit(e) {
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/servers`,
-            {
-                method: "POST",
-                body: formData,
-                redirect: "manual",
-            },
-        );
+        const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
+            method: "POST",
+            body: formData,
+        });
         const result = await response.json();
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add server.");
@@ -7214,13 +7201,10 @@ async function handleToolFormSubmit(event) {
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools`,
-            {
-                method: "POST",
-                body: formData,
-            },
-        );
+        const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
+            method: "POST",
+            body: formData,
+        });
         const result = await response.json();
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add tool");
