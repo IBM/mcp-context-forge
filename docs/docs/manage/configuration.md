@@ -22,7 +22,7 @@ MCP Gateway supports multiple database backends with full feature parity across 
 
 !!! success "MySQL Full Support"
     MySQL is **fully supported** alongside SQLite and PostgreSQL:
-    
+
     - **36+ database tables** work perfectly with MySQL 8.4+
     - All **VARCHAR length issues** have been resolved for MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
@@ -40,10 +40,10 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     ```bash
     # Install MySQL server
     sudo apt update && sudo apt install mysql-server
-    
+
     # Secure installation (optional)
     sudo mysql_secure_installation
-    
+
     # Create database and user
     sudo mysql -e "CREATE DATABASE mcp;"
     sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
@@ -57,7 +57,7 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     sudo dnf install mysql-server  # or: sudo yum install mysql-server
     sudo systemctl start mysqld
     sudo systemctl enable mysqld
-    
+
     # Create database and user
     sudo mysql -e "CREATE DATABASE mcp;"
     sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
@@ -70,7 +70,7 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     # Install MySQL
     brew install mysql
     brew services start mysql
-    
+
     # Create database and user
     mysql -u root -e "CREATE DATABASE mcp;"
     mysql -u root -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
