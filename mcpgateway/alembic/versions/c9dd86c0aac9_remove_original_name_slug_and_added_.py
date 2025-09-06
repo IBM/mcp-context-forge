@@ -49,7 +49,7 @@ def upgrade() -> None:
         # Add custom_name column if it doesn't exist
         if "custom_name" not in columns:
             try:
-                op.add_column("tools", sa.Column("custom_name", sa.String(), nullable=True))
+                op.add_column("tools", sa.Column("custom_name", sa.String(255), nullable=True))
                 # Only try to update if original_name column exists
                 if "original_name" in columns:
                     op.execute("UPDATE tools SET custom_name = original_name")

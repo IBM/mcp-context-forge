@@ -98,14 +98,22 @@ curl http://localhost:4444/health    # {"status":"ok"}
 
 Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:
 
-| Service block         | Connection string                             |
-| --------------------- | --------------------------------------------- |
-| `postgres:` (default) | `postgresql://postgres:...@postgres:5432/mcp` |
-| `mariadb:`            | `mysql+pymysql://admin:...@mariadb:3306/mcp`  |
-| `mysql:`              | `mysql+pymysql://mysql:...@mysql:3306/mcp`    |
-| `mongodb:`            | `mongodb://admin:...@mongodb:27017/mcp`       |
+| Service block         | Connection string                             | Notes                          |
+| --------------------- | --------------------------------------------- | ------------------------------ |
+| `postgres:` (default) | `postgresql://postgres:...@postgres:5432/mcp` | Recommended for production     |
+| `mysql:`              | `mysql+pymysql://mysql:...@mysql:3306/mcp`    | **Fully supported** - MySQL 8.4+ |
+| `mariadb:`            | `mysql+pymysql://admin:...@mariadb:3306/mcp`  | Alternative MySQL variant      |
+| `mongodb:`            | `mongodb://admin:...@mongodb:27017/mcp`       | NoSQL option                   |
 
 Named volumes (`pgdata`, `mariadbdata`, `mysqldata`, `mongodata`) isolate persistent data.
+
+!!! info "MySQL Full Support"
+    MySQL is **fully supported** alongside SQLite and PostgreSQL:
+
+    - **36+ database tables** work perfectly with MySQL 8.4+
+    - All **VARCHAR length issues** have been resolved for MySQL compatibility
+    - Simply uncomment the `mysql:` service block in `docker-compose.yml`
+    - Use connection string: `mysql+pymysql://mysql:changeme@mysql:3306/mcp`
 
 ---
 
