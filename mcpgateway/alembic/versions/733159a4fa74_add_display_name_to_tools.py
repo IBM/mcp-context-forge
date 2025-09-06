@@ -57,7 +57,7 @@ def upgrade() -> None:
     tools_columns = [col["name"] for col in inspector.get_columns("tools")]
     if "display_name" not in tools_columns:
         # Add the column first
-        op.add_column("tools", sa.Column("display_name", sa.String(), nullable=True))
+        op.add_column("tools", sa.Column("display_name", sa.String(255), nullable=True))
         print("Added display_name column to tools table.")
 
         # Populate smart displayName for existing tools that don't have one

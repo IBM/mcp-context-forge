@@ -24,8 +24,8 @@ services:
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
-    #image: ghcr.io/ibm/mcp-context-forge:0.6.0 # Use the release MCP Context Forge image
-    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
+    image: ghcr.io/ibm/mcp-context-forge:0.6.0 # Use the release MCP Context Forge image
+    #image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds
@@ -41,7 +41,7 @@ services:
       - HOST=0.0.0.0
       - PORT=4444
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mysql:3306/mcp
+      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
@@ -120,15 +120,23 @@ services:
   #   volumes: [mariadbdata:/var/lib/mysql]
   #   networks: [mcpnet]
 
-  # mysql:
-  #   image: mysql:8
+  # mariadb:
+  #   image: registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
   #   environment:
   #     - MYSQL_ROOT_PASSWORD=mysecretpassword
   #     - MYSQL_DATABASE=mcp
   #     - MYSQL_USER=mysql
   #     - MYSQL_PASSWORD=changeme
-  #   volumes: [mysqldata:/var/lib/mysql]
+  #   volumes: ["mariadbdata:/var/lib/mysql"]
   #   networks: [mcpnet]
+  #   ports:
+  #     - "3306:3306"
+  #   healthcheck:
+  #     test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pmysecretpassword"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 30s
 
   # mongodb:
   #   image: mongo:7

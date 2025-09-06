@@ -206,10 +206,10 @@ def upgrade() -> None:
             sa.Column("token_hash", sa.String(255), nullable=False, comment="Hashed token value"),
             # Scoping fields - with proper JSON types and defaults
             sa.Column("server_id", sa.String(36), nullable=True, comment="Limited to specific server (NULL = global)"),
-            sa.Column("resource_scopes", sa.JSON(), nullable=True, server_default=sa.text("'[]'"), comment="JSON array of resource permissions"),
-            sa.Column("ip_restrictions", sa.JSON(), nullable=True, server_default=sa.text("'[]'"), comment="JSON array of allowed IP addresses/CIDR"),
-            sa.Column("time_restrictions", sa.JSON(), nullable=True, server_default=sa.text("'{}'"), comment="JSON object of time-based restrictions"),
-            sa.Column("usage_limits", sa.JSON(), nullable=True, server_default=sa.text("'{}'"), comment="JSON object of usage limits"),
+            sa.Column("resource_scopes", sa.JSON(), nullable=True, comment="JSON array of resource permissions"),
+            sa.Column("ip_restrictions", sa.JSON(), nullable=True, comment="JSON array of allowed IP addresses/CIDR"),
+            sa.Column("time_restrictions", sa.JSON(), nullable=True, comment="JSON object of time-based restrictions"),
+            sa.Column("usage_limits", sa.JSON(), nullable=True, comment="JSON object of usage limits"),
             # Lifecycle fields
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now(), comment="Token creation timestamp"),
             sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True, comment="Token expiry timestamp"),
@@ -217,7 +217,7 @@ def upgrade() -> None:
             sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true(), comment="Active status flag"),
             # Metadata fields
             sa.Column("description", sa.Text(), nullable=True, comment="Token description"),
-            sa.Column("tags", sa.JSON(), nullable=True, server_default=sa.text("'[]'"), comment="JSON array of tags"),
+            sa.Column("tags", sa.JSON(), nullable=True, comment="JSON array of tags"),
             sa.Column("team_id", sa.String(length=36), nullable=True),  # Team scoping
             # Constraints
             sa.PrimaryKeyConstraint("id"),
@@ -363,10 +363,10 @@ def upgrade() -> None:
             sa.Column("token_url", sa.String(500), nullable=False),
             sa.Column("userinfo_url", sa.String(500), nullable=False),
             sa.Column("issuer", sa.String(500), nullable=True),
-            sa.Column("trusted_domains", sa.JSON(), nullable=False, server_default=sa.text("'[]'")),  # JSON type for proper validation
+            sa.Column("trusted_domains", sa.JSON(), nullable=True),  # JSON type for proper validation
             sa.Column("scope", sa.String(200), nullable=False, server_default=sa.text("'openid profile email'")),
             sa.Column("auto_create_users", sa.Boolean, nullable=False, server_default=sa.true()),
-            sa.Column("team_mapping", sa.JSON(), nullable=False, server_default=sa.text("'{}'")),  # JSON type for proper validation
+            sa.Column("team_mapping", sa.JSON(), nullable=True),  # JSON type for proper validation
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         )
