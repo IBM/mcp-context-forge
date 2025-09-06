@@ -81,7 +81,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
   ```bash
   # MariaDB (recommended MySQL-compatible option):
   DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
-  
+
   # Docker deployment with MariaDB 12.0.2-ubi10:
   DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp
   ```
