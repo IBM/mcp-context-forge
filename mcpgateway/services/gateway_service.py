@@ -560,6 +560,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 auth_type=auth_type,
                 auth_value=auth_value,
                 oauth_config=oauth_config,
+                passthrough_headers=gateway.passthrough_headers,
                 tools=tools,
                 resources=db_resources,
                 prompts=db_prompts,
@@ -889,6 +890,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.transport = gateway_update.transport
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
+                if gateway_update.passthrough_headers is not None:
+                    if isinstance(gateway_update.passthrough_headers, list):
+                        gateway.passthrough_headers = gateway_update.passthrough_headers
+                    else:
+                        if isinstance(gateway_update.passthrough_headers, str):
+                            parsed = [h.strip() for h in gateway_update.passthrough_headers.split(",") if h.strip()]
+                            gateway.passthrough_headers = parsed
+                        else:
+                            raise GatewayError("Invalid passthrough_headers format: must be list[str] or comma-separated string")
+
+                    logger.info("Updated passthrough_headers for gateway {gateway.id}: {gateway.passthrough_headers}")
 
                 if getattr(gateway, "auth_type", None) is not None:
                     gateway.auth_type = gateway_update.auth_type
