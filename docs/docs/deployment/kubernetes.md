@@ -113,6 +113,23 @@ You can load your `.env` as a ConfigMap:
     kubectl create configmap mcpgateway-env --from-env-file=.env
     ```
 
+=== "With MariaDB"
+    ```bash
+    # Create .env file
+    cat > .env << EOF
+    HOST=0.0.0.0
+    PORT=4444
+    DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb-service:3306/mcp
+    JWT_SECRET_KEY=your-secret-key
+    BASIC_AUTH_USER=admin
+    BASIC_AUTH_PASSWORD=changeme
+    MCPGATEWAY_UI_ENABLED=true
+    MCPGATEWAY_ADMIN_API_ENABLED=true
+    EOF
+
+    kubectl create configmap mcpgateway-env --from-env-file=.env
+    ```
+
 === "With MySQL"
     ```bash
     # Create .env file
@@ -215,12 +232,12 @@ spec:
       storage: 10Gi
 ```
 
-!!! info "MySQL Kubernetes Support"
-    MySQL is **fully supported** in Kubernetes deployments:
+!!! info "MariaDB & MySQL Kubernetes Support"
+    MariaDB and MySQL are **fully supported** in Kubernetes deployments:
 
-    - **36+ database tables** work perfectly with MySQL 8.4+
-    - All **VARCHAR length issues** resolved for MySQL compatibility
-    - Use connection string: `mysql+pymysql://mysql:changeme@mysql-service:3306/mcp`
+    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
+    - Use connection string: `mysql+pymysql://mysql:changeme@mariadb-service:3306/mcp`
 
 ---
 

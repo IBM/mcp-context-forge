@@ -50,6 +50,25 @@ By default, MCP Gateway uses SQLite for simplicity. You can configure alternativ
     DATABASE_URL=sqlite:///./mcp.db
     ```
 
+=== "MariaDB"
+    ```bash
+    # .env file
+    DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
+    ```
+
+    !!! info "MariaDB Setup"
+        Install and configure MariaDB server:
+        ```bash
+        # Ubuntu/Debian
+        sudo apt update && sudo apt install mariadb-server
+
+        # Create database and user
+        sudo mariadb -e "CREATE DATABASE mcp;"
+        sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
+        sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
+        sudo mariadb -e "FLUSH PRIVILEGES;"
+        ```
+
 === "MySQL"
     ```bash
     # .env file
@@ -75,11 +94,11 @@ By default, MCP Gateway uses SQLite for simplicity. You can configure alternativ
     DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp
     ```
 
-!!! tip "MySQL Full Compatibility"
-    MySQL is **fully supported** with:
+!!! tip "MariaDB & MySQL Full Compatibility"
+    MariaDB and MySQL are **fully supported** with:
 
-    - **36+ database tables** working perfectly with MySQL 8.4+
-    - All **VARCHAR length issues** resolved for MySQL compatibility
+    - **36+ database tables** working perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
 
 ---

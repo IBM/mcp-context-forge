@@ -41,7 +41,7 @@ services:
       - HOST=0.0.0.0
       - PORT=4444
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mysql:3306/mcp
+      # - DATABASE_URL=mysql+pymysql://mysql:${MYSQL_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mysql+pymysql://admin:${MARIADB_PASSWORD:-changeme}@mariadb:3306/mcp
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
@@ -120,14 +120,14 @@ services:
   #   volumes: [mariadbdata:/var/lib/mysql]
   #   networks: [mcpnet]
 
-  # mysql:
-  #   image: mysql:8
+  # mariadb:
+  #   image: registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
   #   environment:
   #     - MYSQL_ROOT_PASSWORD=mysecretpassword
   #     - MYSQL_DATABASE=mcp
   #     - MYSQL_USER=mysql
   #     - MYSQL_PASSWORD=changeme
-  #   volumes: ["mysqldata:/var/lib/mysql"]
+  #   volumes: ["mariadbdata:/var/lib/mysql"]
   #   networks: [mcpnet]
   #   ports:
   #     - "3306:3306"

@@ -204,11 +204,11 @@ Pick an install method below, generate an auth token, then walk through a real t
         The sample Compose file includes multiple database options:
 
         - **PostgreSQL** (default): `postgresql://postgres:password@postgres:5432/mcp`
-        - **MySQL**: `mysql+pymysql://mysql:changeme@mysql:3306/mcp` - fully supported with 36+ tables
-        - **MariaDB**: `mysql+pymysql://admin:changeme@mariadb:3306/mcp`
+        - **MariaDB**: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp` - fully supported with 36+ tables
+        - **MySQL**: `mysql+pymysql://admin:changeme@mysql:3306/mcp`
         - **MongoDB**: `mongodb://admin:changeme@mongodb:27017/mcp`
 
-        MySQL 8.4+ is fully compatible with all VARCHAR length requirements resolved.
+        MariaDB 12.0+ and MySQL 8.4+ are fully compatible with all VARCHAR length requirements resolved.
 
 ---
 

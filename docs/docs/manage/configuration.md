@@ -13,18 +13,18 @@ MCP Gateway supports multiple database backends with full feature parity across 
 | Database    | Support Level | Connection String Example                                    | Notes                          |
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
-| MySQL       | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MySQL 8.4+    |
 | PostgreSQL  | ✅ Full       | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
-| MariaDB     | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | MySQL-compatible variant       |
+| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 12.0+ |
+| MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
 | MongoDB     | ✅ Full       | `mongodb://admin:changeme@localhost:27017/mcp`              | NoSQL document store           |
 
-### MySQL Setup Details
+### MariaDB/MySQL Setup Details
 
-!!! success "MySQL Full Support"
-    MySQL is **fully supported** alongside SQLite and PostgreSQL:
+!!! success "MariaDB & MySQL Full Support"
+    MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MySQL 8.4+
-    - All **VARCHAR length issues** have been resolved for MySQL compatibility
+    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
     - Supports all MCP Gateway features including federation, caching, and A2A agents
 
@@ -34,9 +34,24 @@ MCP Gateway supports multiple database backends with full feature parity across 
 DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
 ```
 
-#### Local MySQL Installation
+#### Local MariaDB/MySQL Installation
 
-=== "Ubuntu/Debian"
+=== "Ubuntu/Debian (MariaDB)"
+    ```bash
+    # Install MariaDB server
+    sudo apt update && sudo apt install mariadb-server
+
+    # Secure installation (optional)
+    sudo mariadb-secure-installation
+
+    # Create database and user
+    sudo mariadb -e "CREATE DATABASE mcp;"
+    sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
+    sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
+    sudo mariadb -e "FLUSH PRIVILEGES;"
+    ```
+
+=== "Ubuntu/Debian (MySQL)"
     ```bash
     # Install MySQL server
     sudo apt update && sudo apt install mysql-server
@@ -51,7 +66,21 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     sudo mysql -e "FLUSH PRIVILEGES;"
     ```
 
-=== "CentOS/RHEL/Fedora"
+=== "CentOS/RHEL/Fedora (MariaDB)"
+    ```bash
+    # Install MariaDB server
+    sudo dnf install mariadb-server
+    sudo systemctl start mariadb
+    sudo systemctl enable mariadb
+
+    # Create database and user
+    sudo mariadb -e "CREATE DATABASE mcp;"
+    sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
+    sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
+    sudo mariadb -e "FLUSH PRIVILEGES;"
+    ```
+
+=== "CentOS/RHEL/Fedora (MySQL)"
     ```bash
     # Install MySQL server
     sudo dnf install mysql-server  # or: sudo yum install mysql-server
@@ -65,7 +94,20 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     sudo mysql -e "FLUSH PRIVILEGES;"
     ```
 
-=== "macOS (Homebrew)"
+=== "macOS (Homebrew - MariaDB)"
+    ```bash
+    # Install MariaDB
+    brew install mariadb
+    brew services start mariadb
+
+    # Create database and user
+    mariadb -u root -e "CREATE DATABASE mcp;"
+    mariadb -u root -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
+    mariadb -u root -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
+    mariadb -u root -e "FLUSH PRIVILEGES;"
+    ```
+
+=== "macOS (Homebrew - MySQL)"
     ```bash
     # Install MySQL
     brew install mysql
@@ -78,10 +120,19 @@ DATABASE_URL=mysql+pymysql://[username]:[password]@[host]:[port]/[database]
     mysql -u root -e "FLUSH PRIVILEGES;"
     ```
 
-#### Docker MySQL Setup
+#### Docker MariaDB/MySQL Setup
 
 ```bash
-# Start MySQL container
+# Start MariaDB container (recommended)
+docker run -d --name mariadb-mcp \
+  -e MYSQL_ROOT_PASSWORD=mysecretpassword \
+  -e MYSQL_DATABASE=mcp \
+  -e MYSQL_USER=mysql \
+  -e MYSQL_PASSWORD=changeme \
+  -p 3306:3306 \
+  registry.redhat.io/rhel9/mariadb-106:12.0.2-ubi10
+
+# Or start MySQL container
 docker run -d --name mysql-mcp \
   -e MYSQL_ROOT_PASSWORD=mysecretpassword \
   -e MYSQL_DATABASE=mcp \
@@ -90,7 +141,7 @@ docker run -d --name mysql-mcp \
   -p 3306:3306 \
   mysql:8
 
-# Connection string for MCP Gateway
+# Connection string for MCP Gateway (same for both)
 DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 ```
 

@@ -101,19 +101,19 @@ Uncomment one service block in `docker-compose.yml` and align `DATABASE_URL`:
 | Service block         | Connection string                             | Notes                          |
 | --------------------- | --------------------------------------------- | ------------------------------ |
 | `postgres:` (default) | `postgresql://postgres:...@postgres:5432/mcp` | Recommended for production     |
-| `mysql:`              | `mysql+pymysql://mysql:...@mysql:3306/mcp`    | **Fully supported** - MySQL 8.4+ |
-| `mariadb:`            | `mysql+pymysql://admin:...@mariadb:3306/mcp`  | Alternative MySQL variant      |
+| `mariadb:`            | `mysql+pymysql://mysql:...@mariadb:3306/mcp`  | **Fully supported** - MariaDB 12.0+ |
+| `mysql:`              | `mysql+pymysql://admin:...@mysql:3306/mcp`    | Alternative MySQL variant      |
 | `mongodb:`            | `mongodb://admin:...@mongodb:27017/mcp`       | NoSQL option                   |
 
 Named volumes (`pgdata`, `mariadbdata`, `mysqldata`, `mongodata`) isolate persistent data.
 
-!!! info "MySQL Full Support"
-    MySQL is **fully supported** alongside SQLite and PostgreSQL:
+!!! info "MariaDB & MySQL Full Support"
+    MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MySQL 8.4+
-    - All **VARCHAR length issues** have been resolved for MySQL compatibility
-    - Simply uncomment the `mysql:` service block in `docker-compose.yml`
-    - Use connection string: `mysql+pymysql://mysql:changeme@mysql:3306/mcp`
+    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
+    - Simply uncomment the `mariadb:` service block in `docker-compose.yml`
+    - Use connection string: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp`
 
 ---
 

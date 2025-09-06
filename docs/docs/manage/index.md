@@ -26,11 +26,11 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 
 Most operational settings (logging level, database pool size, auth mode) are controlled through `.env` or environment variables.
 
-!!! info "MySQL Fully Supported"
-    MCP Gateway now has **complete MySQL support** alongside SQLite and PostgreSQL:
+!!! info "MariaDB & MySQL Fully Supported"
+    MCP Gateway now has **complete MariaDB/MySQL support** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MySQL 8.4+
-    - All **VARCHAR length issues** resolved for MySQL compatibility
+    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
     - Connection string: `DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp`
     - See [Configuration Reference](configuration.md) for complete setup instructions
 
