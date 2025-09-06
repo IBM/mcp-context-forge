@@ -854,8 +854,11 @@ spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 	sort -d -f -o $< $<
 
 tox:                                ## 🧪  Multi-Python tox matrix (uv)
-	@echo "🧪  Running tox with uv ..."
-	python3 -m tox -p auto $(TOXARGS)
+	@echo "🧪  Running tox with uv across Python 3.11, 3.12, 3.13..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q tox tox-uv && \
+		python3 -m tox -p auto $(TOXARGS)"
 
 sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report..."

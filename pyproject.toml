@@ -143,7 +143,10 @@ asyncpg = [
     "asyncpg>=0.30.0",
 ]
 
-# Chuck runtime (optional)
+# Chuck/Chuk MCP Runtime (optional) - External plugin server runtime
+# Provides MCP tool decorators, plugin hooks, and multi-transport server support
+# Used by: mcpgateway/plugins/framework/external/mcp/server/runtime.py
+# Required only if you plan to create external MCP plugin servers
 chuck = [
     "chuk-mcp-runtime>=0.6.5",
 ]
@@ -181,7 +184,7 @@ dev = [
     "pylint>=3.3.8",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.25",
-    "pyrefly>=0.31.0",
+    "pyrefly>=0.31.1",
     "pyright>=1.1.405",
     "pyroma>=5.0",
     "pyspelling>=2.11",
