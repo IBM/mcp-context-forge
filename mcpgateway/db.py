@@ -1231,15 +1231,15 @@ class PendingUserApproval(Base):
 server_tool_association = Table(
     "server_tool_association",
     Base.metadata,
-    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
-    Column("tool_id", String, ForeignKey("tools.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
+    Column("tool_id", String(36), ForeignKey("tools.id"), primary_key=True),
 )
 
 # Association table for servers and resources
 server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
-    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
     Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
 )
 
@@ -1247,7 +1247,7 @@ server_resource_association = Table(
 server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
-    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
     Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
 )
 
@@ -1255,8 +1255,8 @@ server_prompt_association = Table(
 server_a2a_association = Table(
     "server_a2a_association",
     Base.metadata,
-    Column("server_id", String, ForeignKey("servers.id"), primary_key=True),
-    Column("a2a_agent_id", String, ForeignKey("a2a_agents.id"), primary_key=True),
+    Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
+    Column("a2a_agent_id", String(36), ForeignKey("a2a_agents.id"), primary_key=True),
 )
 
 
@@ -1292,7 +1292,7 @@ class ToolMetric(Base):
     __tablename__ = "tool_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tool_id: Mapped[str] = mapped_column(String, ForeignKey("tools.id"), nullable=False)
+    tool_id: Mapped[str] = mapped_column(String(36), ForeignKey("tools.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -1344,7 +1344,7 @@ class ServerMetric(Base):
     __tablename__ = "server_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    server_id: Mapped[str] = mapped_column(String, ForeignKey("servers.id"), nullable=False)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -1402,7 +1402,7 @@ class A2AAgentMetric(Base):
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    interaction_type: Mapped[str] = mapped_column(String, nullable=False, default="invoke")
+    interaction_type: Mapped[str] = mapped_column(String(50), nullable=False, default="invoke")
 
     # Relationship back to the A2AAgent model.
     a2a_agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="metrics")
@@ -1443,11 +1443,11 @@ class Tool(Base):
     __tablename__ = "tools"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    original_name: Mapped[str] = mapped_column(String, nullable=False)
-    url: Mapped[str] = mapped_column(String, nullable=True)
-    description: Mapped[Optional[str]]
-    integration_type: Mapped[str] = mapped_column(default="MCP")
-    request_type: Mapped[str] = mapped_column(default="SSE")
+    original_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(String(767), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    integration_type: Mapped[str] = mapped_column(String(20), default="MCP")
+    request_type: Mapped[str] = mapped_column(String(20), default="SSE")
     headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
@@ -1455,32 +1455,32 @@ class Tool(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
-    jsonpath_filter: Mapped[str] = mapped_column(default="")
+    jsonpath_filter: Mapped[str] = mapped_column(Text, default="")
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
-    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Request type and authentication fields
-    auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", or None
-    auth_value: Mapped[Optional[str]] = mapped_column(default=None)
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", or None
+    auth_value: Mapped[Optional[str]] = mapped_column(Text, default=None)
 
     # custom_name,custom_name_slug, display_name
-    custom_name: Mapped[Optional[str]] = mapped_column(String, nullable=False)
-    custom_name_slug: Mapped[Optional[str]] = mapped_column(String, nullable=False)
-    display_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
+    custom_name_slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
@@ -1503,7 +1503,7 @@ class Tool(Base):
     # def gateway_slug(self) -> str:
     #     return self.gateway.slug
 
-    _computed_name = Column("name", String, unique=True)  # Stored column
+    _computed_name = Column("name", String(255), unique=True)  # Stored column
 
     @hybrid_property
     def name(self):
@@ -1723,30 +1723,30 @@ class Resource(Base):
     __tablename__ = "resources"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    uri: Mapped[str] = mapped_column(unique=True)
-    name: Mapped[str]
-    description: Mapped[Optional[str]]
-    mime_type: Mapped[Optional[str]]
-    size: Mapped[Optional[int]]
-    template: Mapped[Optional[str]]  # URI template for parameterized resources
+    uri: Mapped[str] = mapped_column(String(767), unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
-    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["ResourceMetric"]] = relationship("ResourceMetric", back_populates="resource", cascade="all, delete-orphan")
@@ -1933,9 +1933,9 @@ class ResourceSubscription(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
-    subscriber_id: Mapped[str]  # Client identifier
+    subscriber_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Client identifier
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
-    last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     resource: Mapped["Resource"] = relationship(back_populates="subscriptions")
 
@@ -1961,8 +1961,8 @@ class Prompt(Base):
     __tablename__ = "prompts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(unique=True)
-    description: Mapped[Optional[str]]
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -1971,18 +1971,18 @@ class Prompt(Base):
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
-    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["PromptMetric"]] = relationship("PromptMetric", back_populates="prompt", cascade="all, delete-orphan")
@@ -2151,27 +2151,27 @@ class Server(Base):
     __tablename__ = "servers"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    name: Mapped[str] = mapped_column(unique=True)
-    description: Mapped[Optional[str]]
-    icon: Mapped[Optional[str]]
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    icon: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
-    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     metrics: Mapped[List["ServerMetric"]] = relationship("ServerMetric", back_populates="server", cascade="all, delete-orphan")
@@ -2306,32 +2306,32 @@ class Gateway(Base):
     __tablename__ = "gateways"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    slug: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    url: Mapped[str] = mapped_column(String, unique=True)
-    description: Mapped[Optional[str]]
-    transport: Mapped[str] = mapped_column(default="SSE")
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    url: Mapped[str] = mapped_column(String(767), unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    transport: Mapped[str] = mapped_column(String(20), default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
-    last_seen: Mapped[Optional[datetime]]
+    last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
-    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Header passthrough configuration
@@ -2356,7 +2356,7 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(default=None)  # "basic", "bearer", "headers", "oauth" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
 
     # OAuth configuration
@@ -2421,17 +2421,17 @@ class A2AAgent(Base):
     __tablename__ = "a2a_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    slug: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    endpoint_url: Mapped[str] = mapped_column(String, nullable=False)
-    agent_type: Mapped[str] = mapped_column(String, nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
-    protocol_version: Mapped[str] = mapped_column(String, nullable=False, default="1.0")
+    endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
+    protocol_version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Configuration and authentication
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
-    auth_type: Mapped[Optional[str]] = mapped_column(String)  # "api_key", "oauth", "bearer", etc.
+    auth_type: Mapped[Optional[str]] = mapped_column(String(50))  # "api_key", "oauth", "bearer", etc.
     auth_value: Mapped[Optional[str]] = mapped_column(Text)  # encrypted auth data
 
     # Status and metadata
@@ -2445,18 +2445,18 @@ class A2AAgent(Base):
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
-    created_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    modified_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_from_ip: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    modified_via: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    import_batch_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    federation_source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Team scoping fields for resource organization
@@ -2547,10 +2547,10 @@ class SessionRecord(Base):
 
     __tablename__ = "mcp_sessions"
 
-    session_id: Mapped[str] = mapped_column(primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(255), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)  # pylint: disable=not-callable
     last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)  # pylint: disable=not-callable
-    data: Mapped[str] = mapped_column(String, nullable=True)
+    data: Mapped[str] = mapped_column(Text, nullable=True)
 
     messages: Mapped[List["SessionMessageRecord"]] = relationship("SessionMessageRecord", back_populates="session", cascade="all, delete-orphan")
 
@@ -2561,8 +2561,8 @@ class SessionMessageRecord(Base):
     __tablename__ = "mcp_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    session_id: Mapped[str] = mapped_column(ForeignKey("mcp_sessions.session_id"))
-    message: Mapped[str] = mapped_column(String, nullable=True)
+    session_id: Mapped[str] = mapped_column(String(255), ForeignKey("mcp_sessions.session_id"))
+    message: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)  # pylint: disable=not-callable
     last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)  # pylint: disable=not-callable
 

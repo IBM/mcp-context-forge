@@ -93,6 +93,10 @@ postgres = [
     "psycopg2-binary>=2.9.10",
 ]
 
+mysql = [
+    "pymysql>=1.1.0",
+]
+
 # Fuzzing and property-based testing
 fuzz = [
     "hypothesis>=6.138.14",

@@ -92,17 +92,61 @@ Pick an install method below, generate an auth token, then walk through a real t
 
     2. **(Optional) persist the DB**
 
-        ```bash
-        mkdir -p $(pwd)/data
-        docker run -d --name mcpgateway \
-          -p 4444:4444 \
-          -v $(pwd)/data:/data \
-          -e DATABASE_URL=sqlite:////data/mcp.db \
-          -e JWT_SECRET_KEY=my-test-key \
-          -e BASIC_AUTH_USER=admin \
-          -e BASIC_AUTH_PASSWORD=changeme \
-          ghcr.io/ibm/mcp-context-forge:0.6.0
-        ```
+        === "SQLite (Default)"
+            ```bash
+            mkdir -p $(pwd)/data
+            docker run -d --name mcpgateway \
+              -p 4444:4444 \
+              -v $(pwd)/data:/data \
+              -e DATABASE_URL=sqlite:////data/mcp.db \
+              -e JWT_SECRET_KEY=my-test-key \
+              -e BASIC_AUTH_USER=admin \
+              -e BASIC_AUTH_PASSWORD=changeme \
+              ghcr.io/ibm/mcp-context-forge:0.6.0
+            ```
+
+        === "MySQL"
+            ```bash
+            # Start MySQL container first
+            docker run -d --name mysql-db \
+              -e MYSQL_ROOT_PASSWORD=mysecretpassword \
+              -e MYSQL_DATABASE=mcp \
+              -e MYSQL_USER=mysql \
+              -e MYSQL_PASSWORD=changeme \
+              -p 3306:3306 \
+              mysql:8
+
+            # Start MCP Gateway with MySQL connection
+            docker run -d --name mcpgateway \
+              -p 4444:4444 \
+              --link mysql-db:mysql \
+              -e DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp \
+              -e JWT_SECRET_KEY=my-test-key \
+              -e BASIC_AUTH_USER=admin \
+              -e BASIC_AUTH_PASSWORD=changeme \
+              ghcr.io/ibm/mcp-context-forge:0.6.0
+            ```
+
+        === "PostgreSQL"
+            ```bash
+            # Start PostgreSQL container first
+            docker run -d --name postgres-db \
+              -e POSTGRES_USER=postgres \
+              -e POSTGRES_PASSWORD=mysecretpassword \
+              -e POSTGRES_DB=mcp \
+              -p 5432:5432 \
+              postgres:17
+
+            # Start MCP Gateway with PostgreSQL connection
+            docker run -d --name mcpgateway \
+              -p 4444:4444 \
+              --link postgres-db:postgres \
+              -e DATABASE_URL=postgresql://postgres:mysecretpassword@postgres:5432/mcp \
+              -e JWT_SECRET_KEY=my-test-key \
+              -e BASIC_AUTH_USER=admin \
+              -e BASIC_AUTH_PASSWORD=changeme \
+              ghcr.io/ibm/mcp-context-forge:0.6.0
+            ```
 
     3. **Generate a token inside the container**
 
@@ -156,9 +200,15 @@ Pick an install method below, generate an auth token, then walk through a real t
         curl -s http://localhost:4444/health | jq
         ```
 
-    > **Tip :** The sample Compose file has multiple database blocks
-    > (Postgres, MariaDB, MySQL, MongoDB) and admin tools. Uncomment one and align
-    > `DATABASE_URL` for your preferred backend.
+    !!! tip "Database Support"
+        The sample Compose file includes multiple database options:
+
+        - **PostgreSQL** (default): `postgresql://postgres:password@postgres:5432/mcp`
+        - **MariaDB**: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp` - fully supported with 36+ tables
+        - **MySQL**: `mysql+pymysql://admin:changeme@mysql:3306/mcp`
+        - **MongoDB**: `mongodb://admin:changeme@mongodb:27017/mcp`
+
+        MariaDB 12.0+ and MySQL 8.4+ are fully compatible with all VARCHAR length requirements resolved.
 
 ---
 

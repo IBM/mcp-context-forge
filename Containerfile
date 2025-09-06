@@ -24,7 +24,7 @@ COPY . /app
 # Including observability packages for OpenTelemetry support
 RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,alembic,observability]"
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability]"
 
 # update the user permissions
 RUN chown -R 1001:0 /app && \

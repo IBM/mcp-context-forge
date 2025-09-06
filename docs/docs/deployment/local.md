@@ -40,6 +40,69 @@ make dev        # hot-reload (Uvicorn) on :8000
 
 ---
 
+## 🗄 Database Configuration
+
+By default, MCP Gateway uses SQLite for simplicity. You can configure alternative databases via the `DATABASE_URL` environment variable:
+
+=== "SQLite (Default)"
+    ```bash
+    # .env file
+    DATABASE_URL=sqlite:///./mcp.db
+    ```
+
+=== "MariaDB"
+    ```bash
+    # .env file
+    DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
+    ```
+
+    !!! info "MariaDB Setup"
+        Install and configure MariaDB server:
+        ```bash
+        # Ubuntu/Debian
+        sudo apt update && sudo apt install mariadb-server
+
+        # Create database and user
+        sudo mariadb -e "CREATE DATABASE mcp;"
+        sudo mariadb -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
+        sudo mariadb -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
+        sudo mariadb -e "FLUSH PRIVILEGES;"
+        ```
+
+=== "MySQL"
+    ```bash
+    # .env file
+    DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
+    ```
+
+    !!! info "MySQL Setup"
+        Install and configure MySQL server:
+        ```bash
+        # Ubuntu/Debian
+        sudo apt update && sudo apt install mysql-server
+
+        # Create database and user
+        sudo mysql -e "CREATE DATABASE mcp;"
+        sudo mysql -e "CREATE USER 'mysql'@'localhost' IDENTIFIED BY 'changeme';"
+        sudo mysql -e "GRANT ALL PRIVILEGES ON mcp.* TO 'mysql'@'localhost';"
+        sudo mysql -e "FLUSH PRIVILEGES;"
+        ```
+
+=== "PostgreSQL"
+    ```bash
+    # .env file
+    DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp
+    ```
+
+!!! tip "MariaDB & MySQL Full Compatibility"
+    MariaDB and MySQL are **fully supported** with:
+
+    - **36+ database tables** working perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
+    - Complete feature parity with SQLite and PostgreSQL
+
+---
+
 ## 🧪 Health Test
 
 ```bash
