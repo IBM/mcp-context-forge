@@ -255,6 +255,9 @@ class Settings(BaseSettings):
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
 
+    # UI Tool Test Configuration
+    mcpgateway_ui_tool_test_timeout: int = Field(default=60000, description="Tool test timeout in milliseconds for the admin UI")
+
     # A2A (Agent-to-Agent) Feature Flags
     mcpgateway_a2a_enabled: bool = True
     mcpgateway_a2a_max_agents: int = 100
@@ -420,7 +423,7 @@ class Settings(BaseSettings):
             return peers
         return list(v)
 
-    federation_timeout: int = 30  # seconds
+    federation_timeout: int = 120  # seconds
     federation_sync_interval: int = 300  # seconds
 
     # Resources

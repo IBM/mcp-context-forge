@@ -119,7 +119,7 @@ plugin_dirs:
 # Global plugin settings
 plugin_settings:
   parallel_execution_within_band: true
-  plugin_timeout: 30
+  plugin_timeout: 120
   fail_on_plugin_error: false
   enable_plugin_api: true
   plugin_health_check_interval: 60
