@@ -1586,6 +1586,7 @@ class TestTokenStorageService:
                 fixed_time = datetime(2025, 1, 1, 12, 0, 0)
                 with patch('mcpgateway.services.token_storage_service.datetime') as mock_dt:
                     mock_dt.utcnow.return_value = fixed_time
+                    mock_dt.now.return_value = fixed_time
 
                     result = await service.store_tokens(
                         gateway_id="gateway123",
@@ -1626,6 +1627,7 @@ class TestTokenStorageService:
             fixed_time = datetime(2025, 1, 1, 12, 0, 0)
             with patch('mcpgateway.services.token_storage_service.datetime') as mock_dt:
                 mock_dt.utcnow.return_value = fixed_time
+                mock_dt.now.return_value = fixed_time
 
                 result = await service.store_tokens(
                     gateway_id="gateway123",
@@ -1682,6 +1684,7 @@ class TestTokenStorageService:
                 fixed_time = datetime(2025, 1, 1, 12, 0, 0)
                 with patch('mcpgateway.services.token_storage_service.datetime') as mock_dt:
                     mock_dt.utcnow.return_value = fixed_time
+                    mock_dt.now.return_value = fixed_time
 
                     result = await service.store_tokens(
                         gateway_id="gateway123",
@@ -1724,6 +1727,7 @@ class TestTokenStorageService:
                 fixed_time = datetime(2025, 1, 1, 12, 0, 0)
                 with patch('mcpgateway.services.token_storage_service.datetime') as mock_dt:
                     mock_dt.utcnow.return_value = fixed_time
+                    mock_dt.now.return_value = fixed_time
 
                     result = await service.store_tokens(
                         gateway_id="gateway123",
@@ -2329,6 +2333,7 @@ class TestTokenStorageService:
 
             with patch('mcpgateway.services.token_storage_service.datetime') as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2025, 1, 1, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2025, 1, 1, 12, 0, 0)
 
                 result = await service.cleanup_expired_tokens(max_age_days=30)
 

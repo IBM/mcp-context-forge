@@ -11,7 +11,7 @@ for Authorization Code flow implementations.
 """
 
 # Standard
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -101,8 +101,7 @@ class TokenStorageService:
                     encrypted_refresh = self.encryption.encrypt_secret(refresh_token)
 
             # Calculate expiration
-            expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
-
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
             # Create or update token record
             token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.user_id == user_id)).scalar_one_or_none()
 
@@ -112,7 +111,7 @@ class TokenStorageService:
                 token_record.refresh_token = encrypted_refresh
                 token_record.expires_at = expires_at
                 token_record.scopes = scopes
-                token_record.updated_at = datetime.utcnow()
+                token_record.updated_at = datetime.now()
                 logger.info(f"Updated OAuth tokens for gateway {gateway_id}, user {user_id}")
             else:
                 # Create new record
@@ -282,8 +281,10 @@ class TokenStorageService:
         """
         if not token_record.expires_at:
             return True
-
-        return datetime.utcnow() + timedelta(seconds=threshold_seconds) >= token_record.expires_at
+        expires_at = token_record.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) + timedelta(seconds=threshold_seconds) >= expires_at
 
     async def get_token_info(self, gateway_id: str, user_id: str) -> Optional[Dict[str, Any]]:
         """Get information about stored OAuth tokens.
