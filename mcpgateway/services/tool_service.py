@@ -493,7 +493,7 @@ class ToolService:
             for tag in tags:
                 tag_conditions.append(func.json_contains(DbTool.tags, f'"{tag}"'))
             if tag_conditions:
-                query = query.where(func.or_(*tag_conditions))
+                query = query.where(*tag_conditions)
 
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]
