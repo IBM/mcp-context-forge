@@ -232,7 +232,7 @@ class A2AAgentService:
                 tag_conditions.append(func.json_extract(DbA2AAgent.tags, "$").contains(tag))
 
             if tag_conditions:
-                query = query.where(func.or_(*tag_conditions))
+                query = query.where(*tag_conditions)
 
         query = query.order_by(desc(DbA2AAgent.created_at))
 

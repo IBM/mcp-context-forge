@@ -403,7 +403,7 @@ class ResourceService:
             for tag in tags:
                 tag_conditions.append(func.json_contains(DbResource.tags, f'"{tag}"'))
             if tag_conditions:
-                query = query.where(func.or_(*tag_conditions))
+                query = query.where(*tag_conditions)
 
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()

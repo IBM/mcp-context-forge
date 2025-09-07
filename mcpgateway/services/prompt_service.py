@@ -408,7 +408,7 @@ class PromptService:
             for tag in tags:
                 tag_conditions.append(func.json_contains(DbPrompt.tags, f'"{tag}"'))
             if tag_conditions:
-                query = query.where(func.or_(*tag_conditions))
+                query = query.where(*tag_conditions)
 
         # Cursor-based pagination logic can be implemented here in the future.
         logger.debug(cursor)

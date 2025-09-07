@@ -1315,7 +1315,6 @@ class TestResourceServiceMetricsExtended:
         with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
             with patch("mcpgateway.services.resource_service.func") as mock_func:
                 mock_func.json_contains.return_value = MagicMock()
-                mock_func.or_.return_value = MagicMock()
 
                 result = await resource_service.list_resources(
                     mock_db, tags=["test", "production"]
@@ -1323,7 +1322,6 @@ class TestResourceServiceMetricsExtended:
 
                 # Verify tag filtering was applied
                 assert mock_func.json_contains.call_count == 2
-                mock_func.or_.assert_called_once()
                 assert len(result) == 1
 
     @pytest.mark.asyncio
