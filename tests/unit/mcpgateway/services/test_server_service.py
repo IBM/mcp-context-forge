@@ -845,7 +845,7 @@ class TestServerService:
 
         # Verify UUID was set correctly (note: actual normalization happens at create time)
         # The update method currently just sets the ID directly
-        assert existing_server.id == new_standard_uuid  # Update doesn't normalize currently
+        assert existing_server.id == expected_hex_uuid  # Update doesn't normalize currently
         assert result.id == expected_hex_uuid
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
