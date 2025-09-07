@@ -193,6 +193,7 @@ class ErrorFormatter:
             "Tool URL must start with": f"{field.title()} must be a valid HTTP or WebSocket URL",
             "cannot contain directory traversal": f"{field.title()} contains invalid characters",
             "contains HTML tags": f"{field.title()} cannot contain HTML or script tags",
+            "Server ID must be a valid UUID format": f"{field.title()} must be a valid UUID",
         }
 
         for pattern, friendly_msg in mappings.items():
@@ -308,6 +309,8 @@ class ErrorFormatter:
                     return {"message": "A server with this name already exists", "success": False}
                 elif "prompts.name" in error_str:
                     return {"message": "A prompt with this name already exists", "success": False}
+                elif "servers.id" in error_str:
+                    return {"message": "A server with this ID already exists", "success": False}
 
             elif "FOREIGN KEY constraint failed" in error_str:
                 return {"message": "Referenced item not found", "success": False}

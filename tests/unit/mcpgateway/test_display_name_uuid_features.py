@@ -285,7 +285,7 @@ class TestSchemaValidation:
         }
 
         server_create = ServerCreate(**server_data)
-        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
+        assert server_create.id == "550e8400e29b41d4a716446655440000"
         assert server_create.name == "Test Server"
 
     def test_server_update_schema_with_uuid(self):
@@ -296,7 +296,7 @@ class TestSchemaValidation:
         }
 
         server_update = ServerUpdate(**update_data)
-        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
+        assert server_update.id == "123e4567e89b12d3a456426614174000"
         assert server_update.name == "Updated Server Name"
 
     def test_server_uuid_validation(self):
@@ -309,7 +309,7 @@ class TestSchemaValidation:
             id="550e8400-e29b-41d4-a716-446655440000",
             name="Test Server"
         )
-        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
+        assert server_create.id == "550e8400e29b41d4a716446655440000"
 
         # Test invalid UUID should raise validation error
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -320,7 +320,7 @@ class TestSchemaValidation:
 
         # Test ServerUpdate UUID validation
         server_update = ServerUpdate(id="123e4567-e89b-12d3-a456-426614174000")
-        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
+        assert server_update.id == "123e4567e89b12d3a456426614174000"
 
         # Test invalid UUID in update
         with pytest.raises(Exception):  # Pydantic ValidationError
