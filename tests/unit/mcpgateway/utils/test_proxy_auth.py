@@ -258,3 +258,50 @@ class TestWebSocketAuthentication:
 
             # Should accept connection with proxy auth
             websocket.accept.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_streamable_http_auth_with_proxy_header(self):
+        """streamable_http_auth should allow request when proxy header present and auth disabled."""
+        # from types import SimpleNamespace
+        # from starlette.datastructures import Headers
+        from mcpgateway.transports.streamablehttp_transport import streamable_http_auth
+
+        # Build ASGI scope
+        scope = {
+            "type": "http",
+            "path": "/servers/123/mcp",
+            "headers": [(b"x-authenticated-user", b"proxy-user")],
+        }
+        # Patch settings dynamically
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.proxy_user_header = "X-Authenticated-User"
+            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_algorithm = "HS256"
+            mock_settings.auth_required = False
+
+            allowed = await streamable_http_auth(scope, AsyncMock(), AsyncMock())
+            assert allowed is True
+
+    @pytest.mark.asyncio
+    async def test_streamable_http_auth_no_header_denied_when_required(self):
+        """Should deny when proxy header missing and auth_required true."""
+        from mcpgateway.transports.streamablehttp_transport import streamable_http_auth
+        scope = {
+            "type": "http",
+            "path": "/servers/123/mcp",
+            "headers": [],
+        }
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.proxy_user_header = "X-Authenticated-User"
+            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_algorithm = "HS256"
+            mock_settings.auth_required = True
+            send = AsyncMock()
+            ok = await streamable_http_auth(scope, AsyncMock(), send)
+            # When denied, function returns False and send called with 401 response
+            assert ok is False
+            assert any(isinstance(call.args[0], dict) and call.args[0].get("status") == 401 for call in send.mock_calls)
