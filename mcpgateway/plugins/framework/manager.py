@@ -28,12 +28,14 @@ Examples:
 
 # Standard
 import asyncio
+from copy import deepcopy
 import logging
 import time
 from typing import Any, Callable, Coroutine, Dict, Generic, Optional, Tuple, TypeVar
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin, PluginRef
+from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.models import (
@@ -43,9 +45,9 @@ from mcpgateway.plugins.framework.models import (
     PluginCondition,
     PluginContext,
     PluginContextTable,
+    PluginErrorModel,
     PluginMode,
     PluginResult,
-    PluginViolation,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -111,13 +113,15 @@ class PluginExecutor(Generic[T]):
         >>> # )
     """
 
-    def __init__(self, timeout: int = DEFAULT_PLUGIN_TIMEOUT):
+    def __init__(self, config: Optional[Config] = None, timeout: int = DEFAULT_PLUGIN_TIMEOUT):
         """Initialize the plugin executor.
 
         Args:
             timeout: Maximum execution time per plugin in seconds.
+            config: the plugin manager configuration.
         """
         self.timeout = timeout
+        self.config = config
 
     async def execute(
         self,
@@ -145,6 +149,7 @@ class PluginExecutor(Generic[T]):
 
         Raises:
             PayloadSizeError: If the payload exceeds MAX_PAYLOAD_SIZE.
+            PluginError: If there is an error inside a plugin.
 
         Examples:
             >>> # Execute plugins with timeout protection
@@ -177,18 +182,28 @@ class PluginExecutor(Generic[T]):
                 logger.debug(f"Skipping plugin {pluginref.name} - conditions not met")
                 continue
 
+            tmp_global_context = GlobalContext(
+                request_id=global_context.request_id,
+                user=global_context.user,
+                tenant_id=global_context.tenant_id,
+                server_id=global_context.server_id,
+                state={} if not global_context.state else deepcopy(global_context.state),
+            )
             # Get or create local context for this plugin
             local_context_key = global_context.request_id + pluginref.uuid
             if local_contexts and local_context_key in local_contexts:
                 local_context = local_contexts[local_context_key]
+                local_context.global_context = tmp_global_context
             else:
-                local_context = PluginContext(request_id=global_context.request_id, user=global_context.user, tenant_id=global_context.tenant_id, server_id=global_context.server_id)
+                local_context = PluginContext(global_context=tmp_global_context)
             res_local_contexts[local_context_key] = local_context
 
             try:
                 # Execute plugin with timeout protection
                 result = await self._execute_with_timeout(pluginref, plugin_run, current_payload or payload, local_context)
-
+                if local_context.global_context:
+                    global_context.state.update(local_context.global_context.state)
+                    global_context.metadata.update(local_context.global_context.metadata)
                 # Aggregate metadata from all plugins
                 if result.metadata:
                     combined_metadata.update(result.metadata)
@@ -211,25 +226,20 @@ class PluginExecutor(Generic[T]):
 
             except asyncio.TimeoutError:
                 logger.error(f"Plugin {pluginref.name} timed out after {self.timeout}s")
-                if pluginref.plugin.mode == PluginMode.ENFORCE:
-                    violation = PluginViolation(
-                        reason="Plugin timeout",
-                        description=f"Plugin {pluginref.name} exceeded {self.timeout}s timeout",
-                        code="PLUGIN_TIMEOUT",
-                        details={"timeout": self.timeout, "plugin": pluginref.name},
-                    )
-                    return (PluginResult[T](continue_processing=False, violation=violation, modified_payload=current_payload, metadata=combined_metadata), res_local_contexts)
-                # In permissive mode, continue with next plugin
+                if self.config.plugin_settings.fail_on_plugin_error or pluginref.plugin.mode == PluginMode.ENFORCE:
+                    raise PluginError(error=PluginErrorModel(message=f"Plugin {pluginref.name} exceeded {self.timeout}s timeout", plugin_name=pluginref.name))
+                # In permissive or enforce_ignore_error mode, continue with next plugin
                 continue
 
+            except PluginError as pe:
+                logger.error(f"Plugin {pluginref.name} failed with error: {str(pe)}", exc_info=True)
+                if self.config.plugin_settings.fail_on_plugin_error or pluginref.plugin.mode == PluginMode.ENFORCE:
+                    raise
             except Exception as e:
                 logger.error(f"Plugin {pluginref.name} failed with error: {str(e)}", exc_info=True)
-                if pluginref.plugin.mode == PluginMode.ENFORCE:
-                    violation = PluginViolation(
-                        reason="Plugin error", description=f"Plugin {pluginref.name} encountered an error: {str(e)}", code="PLUGIN_ERROR", details={"error": str(e), "plugin": pluginref.name}
-                    )
-                    return (PluginResult[T](continue_processing=False, violation=violation, modified_payload=current_payload, metadata=combined_metadata), res_local_contexts)
-                # In permissive mode, continue with next plugin
+                if self.config.plugin_settings.fail_on_plugin_error or pluginref.plugin.mode == PluginMode.ENFORCE:
+                    raise PluginError(error=convert_exception_to_error(e, pluginref.name))
+                # In permissive or enforce_ignore_error mode, continue with next plugin
                 continue
 
         return (PluginResult[T](continue_processing=True, modified_payload=current_payload, violation=None, metadata=combined_metadata), res_local_contexts)
@@ -286,11 +296,11 @@ async def pre_prompt_fetch(plugin: PluginRef, payload: PromptPrehookPayload, con
 
     Examples:
         >>> from mcpgateway.plugins.framework.base import PluginRef
-        >>> from mcpgateway.plugins.framework import Plugin, PromptPrehookPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptPrehookPayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = PromptPrehookPayload(name="test", args={"key": "value"})
-        >>> context = PluginContext(request_id="123")
+        >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await pre_prompt_fetch(plugin_ref, payload, context)
     """
@@ -310,13 +320,13 @@ async def post_prompt_fetch(plugin: PluginRef, payload: PromptPosthookPayload, c
 
     Examples:
         >>> from mcpgateway.plugins.framework.base import PluginRef
-        >>> from mcpgateway.plugins.framework import Plugin, PromptPosthookPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptPosthookPayload, PluginContext, GlobalContext
         >>> from mcpgateway.models import PromptResult
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> result = PromptResult(messages=[])
         >>> payload = PromptPosthookPayload(name="test", result=result)
-        >>> context = PluginContext(request_id="123")
+        >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await post_prompt_fetch(plugin_ref, payload, context)
     """
@@ -336,11 +346,11 @@ async def pre_tool_invoke(plugin: PluginRef, payload: ToolPreInvokePayload, cont
 
     Examples:
         >>> from mcpgateway.plugins.framework.base import PluginRef
-        >>> from mcpgateway.plugins.framework import Plugin, ToolPreInvokePayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, ToolPreInvokePayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
-        >>> context = PluginContext(request_id="123")
+        >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await pre_tool_invoke(plugin_ref, payload, context)
     """
@@ -360,11 +370,11 @@ async def post_tool_invoke(plugin: PluginRef, payload: ToolPostInvokePayload, co
 
     Examples:
         >>> from mcpgateway.plugins.framework.base import PluginRef
-        >>> from mcpgateway.plugins.framework import Plugin, ToolPostInvokePayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, ToolPostInvokePayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
-        >>> context = PluginContext(request_id="123")
+        >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await post_tool_invoke(plugin_ref, payload, context)
     """
@@ -384,11 +394,11 @@ async def pre_resource_fetch(plugin: PluginRef, payload: ResourcePreFetchPayload
 
     Examples:
         >>> from mcpgateway.plugins.framework.base import PluginRef
-        >>> from mcpgateway.plugins.framework import Plugin, ResourcePreFetchPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, ResourcePreFetchPayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> payload = ResourcePreFetchPayload(uri="file:///data.txt", metadata={"cache": True})
-        >>> context = PluginContext(request_id="123")
+        >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await pre_resource_fetch(plugin_ref, payload, context)
     """
@@ -408,13 +418,13 @@ async def post_resource_fetch(plugin: PluginRef, payload: ResourcePostFetchPaylo
 
     Examples:
         >>> from mcpgateway.plugins.framework.base import PluginRef
-        >>> from mcpgateway.plugins.framework import Plugin, ResourcePostFetchPayload, PluginContext, GlobalContext
+        >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, ResourcePostFetchPayload, PluginContext, GlobalContext
         >>> from mcpgateway.models import ResourceContent
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
-        >>> context = PluginContext(request_id="123")
+        >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await post_resource_fetch(plugin_ref, payload, context)
     """
@@ -495,6 +505,12 @@ class PluginManager:
         self._post_tool_executor.timeout = timeout
         self._resource_pre_executor.timeout = timeout
         self._resource_post_executor.timeout = timeout
+        self._pre_prompt_executor.config = self._config
+        self._post_prompt_executor.config = self._config
+        self._pre_tool_executor.config = self._config
+        self._post_tool_executor.config = self._config
+        self._resource_pre_executor.config = self._config
+        self._resource_post_executor.config = self._config
 
         # Initialize context tracking if not already done
         if not hasattr(self, "_context_store"):

@@ -9,9 +9,15 @@ Tests for errors module.
 
 # Third-Party
 import pytest
-
-# First-Party
-from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
+import re
+from mcpgateway.plugins.framework.errors import convert_exception_to_error
+from mcpgateway.plugins.framework import (
+    GlobalContext,
+    PluginError,
+    PluginMode,
+    PluginManager,
+    PromptPrehookPayload,
+)
 
 
 @pytest.mark.asyncio
@@ -24,3 +30,33 @@ async def test_convert_exception_to_error():
 
     assert plugin_error.error.message == "ValueError('This is some error.')"
     assert plugin_error.error.plugin_name == "SomePluginName"
+
+@pytest.mark.asyncio
+async def test_error_plugin():
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/error_plugin.yaml")
+    await plugin_manager.initialize()
+    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    global_context = GlobalContext(request_id="1")
+    escaped_regex = re.escape("ValueError('Sadly! Prompt prefetch is broken!')")
+    with pytest.raises(PluginError, match=escaped_regex):
+        await plugin_manager.prompt_pre_fetch(payload, global_context)
+
+    await plugin_manager.shutdown()
+
+async def test_error_plugin_raise_error_false():
+    plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/error_plugin_raise_error_false.yaml")
+    await plugin_manager.initialize()
+    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    global_context = GlobalContext(request_id="1")
+    with pytest.raises(PluginError):
+        result, _ = await plugin_manager.prompt_pre_fetch(payload, global_context)
+    #assert result.continue_processing
+    #assert not result.modified_payload
+
+    await plugin_manager.shutdown()
+    plugin_manager.config.plugins[0].mode = PluginMode.ENFORCE_IGNORE_ERROR
+    await plugin_manager.initialize()
+    result, _ = await plugin_manager.prompt_pre_fetch(payload, global_context)
+    assert result.continue_processing
+    assert not result.modified_payload
+    await plugin_manager.shutdown()
