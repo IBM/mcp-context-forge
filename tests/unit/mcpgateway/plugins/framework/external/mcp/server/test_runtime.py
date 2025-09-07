@@ -16,6 +16,7 @@ import pytest
 # First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import (
+    GlobalContext,
     PluginContext,
     PromptPosthookPayload,
     PromptPrehookPayload,
@@ -55,10 +56,11 @@ async def test_get_plugin_config(monkeypatch, server):
 async def test_prompt_pre_fetch(monkeypatch, server):
     monkeypatch.setattr(runtime, "SERVER", server)
     payload = PromptPrehookPayload(name="test_prompt", args={"user": "This is so innovative"})
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await runtime.prompt_pre_fetch("DenyListPlugin", payload=payload, context=context)
     assert result
-    assert not result["continue_processing"]
+    assert result["result"]
+    assert not result["result"]["continue_processing"]
 
 
 @pytest.mark.asyncio
@@ -67,21 +69,23 @@ async def test_prompt_post_fetch(monkeypatch, server):
     message = Message(content=TextContent(type="text", text="crap prompt"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
     payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await runtime.prompt_post_fetch("ReplaceBadWordsPlugin", payload=payload, context=context)
     assert result
-    assert result["continue_processing"]
-    assert "crap" not in result["modified_payload"]
+    assert result["result"]
+    assert result["result"]["continue_processing"]
+    assert "crap" not in result["result"]["modified_payload"]
 
 
 @pytest.mark.asyncio
 async def test_tool_pre_invoke(monkeypatch, server):
     monkeypatch.setattr(runtime, "SERVER", server)
     payload = ToolPreInvokePayload(name="test_tool", args={"arg0": "Good argument"})
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await runtime.tool_pre_invoke("ReplaceBadWordsPlugin", payload=payload, context=context)
     assert result
-    assert result["continue_processing"]
+    assert result["result"]
+    assert result["result"]["continue_processing"]
 
 
 @pytest.mark.asyncio
@@ -90,28 +94,31 @@ async def test_tool_post_invoke(monkeypatch, server):
     message = Message(content=TextContent(type="text", text="crap result"), role=Role.USER)
     prompt_result = ToolPostInvokeResult(messages=[message])
     payload = ToolPostInvokePayload(name="test_prompt", result=prompt_result)
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await runtime.tool_post_invoke("ReplaceBadWordsPlugin", payload=payload, context=context)
     assert result
-    assert result["continue_processing"]
-    assert "crap" not in result["modified_payload"]
+    assert result["result"]
+    assert result["result"]["continue_processing"]
+    assert "crap" not in result["result"]["modified_payload"]
 
 
 @pytest.mark.asyncio
 async def test_resource_pre_fetch(monkeypatch, server):
     monkeypatch.setattr(runtime, "SERVER", server)
     payload = ResourcePreFetchPayload(uri="resource", metadata={"arg0": "Good argument"})
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await runtime.resource_pre_fetch("ResourceFilterExample", payload=payload, context=context)
     assert result
-    assert not result["continue_processing"]
+    assert result["result"]
+    assert not result["result"]["continue_processing"]
 
 
 @pytest.mark.asyncio
 async def test_tool_post_invoke(monkeypatch, server):
     monkeypatch.setattr(runtime, "SERVER", server)
     payload = ResourcePostFetchPayload(uri="resource", content="content")
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await runtime.resource_post_fetch("ResourceFilterExample", payload=payload, context=context)
     assert result
-    assert result["continue_processing"]
+    assert result["result"]
+    assert result["result"]["continue_processing"]

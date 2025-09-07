@@ -159,8 +159,8 @@ class ResourceFilterPlugin(Plugin):
                 **payload.metadata,
                 "validated": True,
                 "protocol": parsed.scheme,
-                "request_id": context.request_id,
-                "user": context.user,
+                "request_id": context.global_context.request_id,
+                "user": context.global_context.user,
                 "resource_filter_plugin": "pre_fetch_validated",
                 "allowed_size": self.max_content_size
             }

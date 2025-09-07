@@ -13,6 +13,7 @@ import pytest
 # First-Party
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework.models import (
+    GlobalContext,
     HookType,
     PluginConfig,
     PluginContext,
@@ -58,7 +59,7 @@ class TestResourceFilterPlugin:
     @pytest.fixture
     def context(self):
         """Create a plugin context."""
-        return PluginContext(request_id="test-123", user="testuser")
+        return PluginContext(global_context=GlobalContext(request_id="test-123", user="testuser"))
 
     @pytest.mark.asyncio
     async def test_allowed_protocol(self, plugin, context):
