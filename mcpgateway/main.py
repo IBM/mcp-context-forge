@@ -3959,12 +3959,16 @@ if UI_ENABLED:
     # Mount static files for UI
     logger.info("Mounting static files - UI enabled")
     try:
+        # Create a sub-application for static files that will respect root_path
+        static_app = StaticFiles(directory=str(settings.static_dir))
+        static_path = f"{settings.app_root_path}/static" if settings.app_root_path else "/static"
+
         app.mount(
-            "/static",
-            StaticFiles(directory=str(settings.static_dir)),
+            static_path,
+            static_app,
             name="static",
         )
-        logger.info("Static assets served from %s", settings.static_dir)
+        logger.info("Static assets served from %s at %s", settings.static_dir, static_path)
     except RuntimeError as exc:
         logger.warning(
             "Static dir %s not found - Admin UI disabled (%s)",
