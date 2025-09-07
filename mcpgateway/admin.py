@@ -1861,6 +1861,7 @@ async def admin_ui(
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),
             "user_teams": user_teams,
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
         },
     )
 

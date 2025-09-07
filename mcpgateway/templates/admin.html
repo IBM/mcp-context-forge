@@ -7069,6 +7069,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       window.GATEWAY_TOOL_NAME_SEPARATOR = {{ gateway_tool_name_separator | tojson }};
       window.MAX_NAME_LENGTH = {{ max_name_length | tojson }};
       window.USER_TEAMS = {{ user_teams | default([]) | tojson }};
+      window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT = {{ mcpgateway_ui_tool_test_timeout | tojson }};
 
       // Tag filtering functionality moved to admin.js
       function clearTagFilter(entityType) {
