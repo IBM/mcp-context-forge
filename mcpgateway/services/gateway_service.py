@@ -85,6 +85,7 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -703,12 +704,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    async def list_gateways(self, db: Session, include_inactive: bool = False) -> List[GatewayRead]:
+    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[GatewayRead]:
         """List all registered gateways.
 
         Args:
             db: Database session
             include_inactive: Whether to include inactive gateways
+            tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
 
         Returns:
             List of registered gateways
@@ -744,6 +746,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         if not include_inactive:
             query = query.where(DbGateway.enabled)
+
+        if tags:
+            # Filter resources that have any of the specified tags
+            tag_conditions = []
+            for tag in tags:
+                tag_conditions.append(json_contains_expr(db, DbGateway.tags, tag))
+            if tag_conditions:
+                query = query.where(*tag_conditions)
 
         gateways = db.execute(query).scalars().all()
 
