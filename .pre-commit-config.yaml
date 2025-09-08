@@ -368,7 +368,7 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual)/.*\.py$|^tests/migration/.*\.py$  # Exclude page object, helper, fuzzer, script, fixture, util, manual, and migration files
+        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async)/.*\.py$|^tests/migration/.*\.py$|^tests/async/(async_validator|benchmarks|monitor_runner|profile_compare|profiler)\.py$  # Exclude page object, helper, fuzzer, script, fixture, util, manual, migration, and async utility files
         args: [--pytest-test-first] # `test_.*\.py`
 
   # - repo: https://github.com/pycqa/flake8
