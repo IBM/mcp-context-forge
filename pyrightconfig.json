@@ -2,5 +2,5 @@
   "typeCheckingMode": "strict",
   "reportUnusedCoroutine": "error",
   "reportMissingTypeStubs": "warning",
-  "exclude": ["build", ".venv", "async_testing/profiles"]
+  "exclude": ["build", ".venv", "tests/async/profiles"]
 }

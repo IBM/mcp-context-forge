@@ -77,13 +77,13 @@ jobs:
         with:
           name: async-test-results
           path: |
-            async_testing/reports/
-            async_testing/profiles/
+            tests/async/reports/
+            tests/async/profiles/
           retention-days: 30
 
       - name: 📈  Performance regression check
         run: |
-          python async_testing/check_regression.py \
-            --current async_testing/profiles/latest.prof \
-            --baseline async_testing/profiles/baseline.prof \
+          python tests/async/check_regression.py \
+            --current tests/async/profiles/latest.prof \
+            --baseline tests/async/profiles/baseline.prof \
             --threshold 20  # 20% regression threshold

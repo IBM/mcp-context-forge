@@ -3797,7 +3797,7 @@ pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 ## --------------------------------------------------------------------------- ##
 .PHONY: async-test async-lint profile async-monitor async-debug profile-serve
 
-ASYNC_TEST_DIR := async_testing
+ASYNC_TEST_DIR := tests/async
 PROFILE_DIR := $(ASYNC_TEST_DIR)/profiles
 REPORTS_DIR := $(ASYNC_TEST_DIR)/reports
 VENV_PYTHON := $(VENV_DIR)/bin/python
