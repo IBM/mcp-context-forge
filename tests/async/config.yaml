@@ -6,7 +6,7 @@ async_linting:
     strict: true
 
 profiling:
-  output_dir: "async_testing/profiles"
+  output_dir: "tests/async/profiles"
   snakeviz_port: 8080
   profile_scenarios:
     - "websocket_stress_test"

@@ -3792,12 +3792,24 @@ pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 
 
 
-## --------------------------------------------------------------------------- ##
-##  Async Code Testing and Performance Profiling
-## --------------------------------------------------------------------------- ##
+# =============================================================================
+# 🔄 ASYNC CODE TESTING & PERFORMANCE PROFILING
+# =============================================================================
+# help: 🔄 ASYNC CODE TESTING & PERFORMANCE PROFILING
+# help: async-test           - Run comprehensive async safety tests with debug mode
+# help: async-lint           - Run async-aware linting (ruff, flake8, mypy with coroutine warnings)
+# help: async-monitor        - Start aiomonitor for live async debugging (WebUI + console)
+# help: async-debug          - Run async tests with PYTHONASYNCIODEBUG=1 and debug mode
+# help: async-benchmark      - Run async performance benchmarks and generate reports
+# help: async-validate       - Validate async code patterns and generate validation report
+# help: async-clean          - Clean async testing artifacts and kill background processes
+# help: profile              - Generate async performance profiles and start SnakeViz server
+# help: profile-serve        - Start SnakeViz profile server on localhost:8080
+# help: profile-compare      - Compare performance profiles between baseline and current
+
 .PHONY: async-test async-lint profile async-monitor async-debug profile-serve
 
-ASYNC_TEST_DIR := async_testing
+ASYNC_TEST_DIR := tests/async
 PROFILE_DIR := $(ASYNC_TEST_DIR)/profiles
 REPORTS_DIR := $(ASYNC_TEST_DIR)/reports
 VENV_PYTHON := $(VENV_DIR)/bin/python
