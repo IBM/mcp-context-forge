@@ -1312,16 +1312,21 @@ class TestResourceServiceMetricsExtended:
         mock_query.where.return_value = mock_query
         mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_resource]
 
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        mock_db.get_bind.return_value = bind
+
         with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
-            with patch("mcpgateway.services.resource_service.func") as mock_func:
-                mock_func.json_contains.return_value = MagicMock()
+            with patch("mcpgateway.services.resource_service.json_contains_expr") as mock_json_contains:
+                mock_json_contains.return_value = MagicMock()
 
                 result = await resource_service.list_resources(
                     mock_db, tags=["test", "production"]
                 )
 
                 # Verify tag filtering was applied
-                assert mock_func.json_contains.call_count == 2
+                assert mock_json_contains.call_count == 2
                 assert len(result) == 1
 
     @pytest.mark.asyncio
