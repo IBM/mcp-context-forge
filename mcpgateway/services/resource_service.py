@@ -388,6 +388,10 @@ class ResourceService:
 
             With tags filter:
             >>> db2 = MagicMock()
+            >>> bind = MagicMock()
+            >>> bind.dialect = MagicMock()
+            >>> bind.dialect.name = "sqlite"           # or "postgresql" / "mysql"
+            >>> db2.get_bind.return_value = bind
             >>> db2.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> result2 = asyncio.run(service.list_resources(db2, tags=['api']))
             >>> isinstance(result2, list)
