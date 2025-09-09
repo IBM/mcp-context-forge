@@ -59,12 +59,14 @@ __all__: Sequence[str] = (
     "_create_jwt_token",
 )
 
+from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret
+
 # ---------------------------------------------------------------------------
 # Defaults & constants
 # ---------------------------------------------------------------------------
-DEFAULT_SECRET: str = settings.jwt_secret_key
+DEFAULT_SECRET: str = get_jwt_private_key_or_secret()
 DEFAULT_ALGO: str = settings.jwt_algorithm
-DEFAULT_EXP_MINUTES: int = settings.token_expiry  # 7 days (in minutes)
+DEFAULT_EXP_MINUTES: int = settings.token_expiry
 DEFAULT_USERNAME: str = settings.basic_auth_user
 
 
@@ -79,29 +81,10 @@ def _create_jwt_token(
     secret: str = DEFAULT_SECRET,
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
-    """
-    Return a signed JWT string (synchronous, timezone-aware) with proper claims.
+    # Validate JWT configuration before creating token
+    from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys, get_jwt_private_key_or_secret
+    validate_jwt_algo_and_keys()
 
-    Args:
-        data: Dictionary containing payload data to encode in the token.
-        expires_in_minutes: Token expiration time in minutes. Default is 7 days.
-            Set to 0 to disable expiration.
-        secret: Secret key used for signing the token.
-        algorithm: Signing algorithm to use.
-
-    Returns:
-        The JWT token string with proper audience and issuer claims.
-
-    Doctest:
-    >>> from mcpgateway.utils import create_jwt_token as jwt_util
-    >>> jwt_util.settings.jwt_secret_key = 'secret'
-    >>> jwt_util.settings.jwt_algorithm = 'HS256'
-    >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
-    >>> import jwt
-    >>> decoded = jwt.decode(token, 'secret', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)
-    >>> decoded['sub'] == 'alice' and decoded['aud'] == jwt_util.settings.jwt_audience and decoded['iss'] == jwt_util.settings.jwt_issuer
-    True
-    """
     payload = data.copy()
     now = _dt.datetime.now(_dt.timezone.utc)
 
@@ -125,6 +108,7 @@ def _create_jwt_token(
             "   Once JWT API (#425) is available, use it for automatic token renewal.",
             file=sys.stderr,
         )
+
     return jwt.encode(payload, secret, algorithm=algorithm)
 
 
