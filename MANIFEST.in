@@ -96,3 +96,13 @@ exclude llms-full.txt
 prune deployment
 prune mcp-servers
 prune agent_runtimes
+
+# Exclude opa
+exclude  plugins/external/opa/.dockerignore
+exclude plugins/external/opa/.env.template
+exclude plugins/external/opa/.ruff.toml
+exclude plugins/external/opa/Containerfile
+exclude plugins/external/opa/MANIFEST.in
+exclude plugins/external/opa/opaserver/rego/example.rego
+exclude plugins/external/opa/pyproject.toml
+exclude plugins/external/opa/run-server.sh
