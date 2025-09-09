@@ -55,6 +55,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Local
 from ..config import extract_using_jq
@@ -488,12 +489,7 @@ class ToolService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Filter tools that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(func.json_contains(DbTool.tags, f'"{tag}"'))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]

@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, List, Optional
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -35,6 +35,21 @@ from mcpgateway.services.prompt_service import PromptError, PromptNotFoundError,
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_prompt():
+    """Create a mock prompt model."""
+    prompt = MagicMock()
+
+    prompt.id = "1"
+    prompt.name = "test"
+    prompt.description = "Test prompt"
+    prompt.template = "Hello!"
+    prompt.argument_schema = {}
+    prompt.version = 1
+
+    return prompt
 
 
 def _make_execute_result(*, scalar: Any = None, scalars_list: Optional[list] = None):
@@ -488,3 +503,44 @@ class TestPromptService:
         await prompt_service.reset_metrics(test_db)
         test_db.execute.assert_called()
         test_db.commit.assert_called_once()
+
+
+    @pytest.mark.asyncio
+    async def test_list_prompts_with_tags(self, prompt_service, mock_prompt):
+        """Test listing prompts with tag filtering."""
+        # Third-Party
+        from sqlalchemy import func
+
+        # Mock query chain
+        mock_query = MagicMock()
+        mock_query.where.return_value = mock_query
+
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [mock_prompt]
+
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        session.get_bind.return_value = bind
+
+        with patch("mcpgateway.services.prompt_service.select", return_value=mock_query):
+            with patch("mcpgateway.services.prompt_service.json_contains_expr") as mock_json_contains:
+                # return a fake condition object that query.where will accept
+                fake_condition = MagicMock()
+                mock_json_contains.return_value = fake_condition
+
+                result = await prompt_service.list_prompts(
+                    session, tags=["test", "production"]
+                )
+
+                # helper should be called once with the tags list (not once per tag)
+                mock_json_contains.assert_called_once()                       # called exactly once
+                called_args = mock_json_contains.call_args[0]                # positional args tuple
+                assert called_args[0] is session                            # session passed through
+                # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                assert called_args[2] == ["test", "production"]
+                # and the fake condition returned must have been passed to where()
+                mock_query.where.assert_called_with(fake_condition)
+                # finally, your service should return the list produced by mock_db.execute(...)
+                assert isinstance(result, list)
+                assert len(result) == 1

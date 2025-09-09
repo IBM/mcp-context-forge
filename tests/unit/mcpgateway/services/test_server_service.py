@@ -8,7 +8,7 @@ Tests for server service implementation.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -47,7 +47,7 @@ def mock_tool():
 @pytest.fixture
 def mock_resource():
     res = MagicMock(spec=DbResource)
-    res.id = 201
+    res.id = "201"
     res.name = "test_resource"
     res._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return res
@@ -56,7 +56,7 @@ def mock_resource():
 @pytest.fixture
 def mock_prompt():
     pr = MagicMock(spec=DbPrompt)
-    pr.id = 301
+    pr.id = "301"
     pr.name = "test_prompt"
     pr._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return pr
@@ -66,7 +66,7 @@ def mock_prompt():
 def mock_server(mock_tool, mock_resource, mock_prompt):
     """Return a mocked DbServer object with minimal required attributes."""
     server = MagicMock(spec=DbServer)
-    server.id = 1
+    server.id = "1"
     server.name = "test_server"
     server.description = "A test server"
     server.icon = "server-icon"
@@ -887,3 +887,44 @@ class TestServerService:
             # Check that any alphabetic characters are lowercase
             assert normalized.islower() or not any(c.isalpha() for c in normalized)
             assert normalized.isalnum()
+
+
+    @pytest.mark.asyncio
+    async def test_list_servers_with_tags(self, server_service, mock_server):
+        """Test listing servers with tag filtering."""
+        # Third-Party
+        from sqlalchemy import func
+
+        # Mock query chain
+        mock_query = MagicMock()
+        mock_query.where.return_value = mock_query
+
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [mock_server]
+
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        session.get_bind.return_value = bind
+
+        with patch("mcpgateway.services.server_service.select", return_value=mock_query):
+            with patch("mcpgateway.services.server_service.json_contains_expr") as mock_json_contains:
+                # return a fake condition object that query.where will accept
+                fake_condition = MagicMock()
+                mock_json_contains.return_value = fake_condition
+
+                result = await server_service.list_servers(
+                    session, tags=["test", "production"]
+                )
+
+                # helper should be called once with the tags list (not once per tag)
+                mock_json_contains.assert_called_once()                       # called exactly once
+                called_args = mock_json_contains.call_args[0]                # positional args tuple
+                assert called_args[0] is session                            # session passed through
+                # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                assert called_args[2] == ["test", "production"]
+                # and the fake condition returned must have been passed to where()
+                mock_query.where.assert_called_with(fake_condition)
+                # finally, your service should return the list produced by mock_db.execute(...)
+                assert isinstance(result, list)
+                assert len(result) == 1
