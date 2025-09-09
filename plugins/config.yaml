@@ -110,6 +110,13 @@ plugins:
         - pattern: "secret\\s*[:=]\\s*\\S+"
           replacement: "secret: [REDACTED]"
 
+  - name: "OPAPluginFilter"
+    kind: "external"
+    priority: 10 # adjust the priority
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://127.0.0.1:8000/mcp
+
 # Plugin directories to scan
 plugin_dirs:
   - "plugins/native"      # Built-in plugins

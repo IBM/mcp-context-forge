@@ -1,19 +1,12 @@
 # ──────────────────────────────────────────────────────────────
-# MANIFEST.in - source-distribution contents for mcpgateway
+# MANIFEST.in - source-distribution contents for opapluginfilter
 # ──────────────────────────────────────────────────────────────
 
 # 1️⃣  Core project files that SDists/Wheels should always carry
 include LICENSE
 include README.md
-include plugins/README.md
 include pyproject.toml
-include gunicorn.config.py
 include Containerfile
-include Containerfile.lite
-include __init__
-include alembic.ini
-include tox.ini
-include alembic/README
 
 # 2️⃣  Top-level config, examples and helper scripts
 include *.py
@@ -27,10 +20,8 @@ include *.yml
 include *.json
 include *.sh
 include *.txt
-recursive-include tests/async *.py
-recursive-include tests/async *.yaml
-recursive-include examples *.yaml
-recursive-include plugin_templates *
+recursive-include async_testing *.py
+recursive-include async_testing *.yaml
 
 # 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
@@ -52,30 +43,8 @@ include .editorconfig
 include .snyk
 
 # 4️⃣  Runtime data that lives *inside* the package at import time
-recursive-include mcpgateway/templates *.html
-recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
-recursive-include mcpgateway *.pyi py.typed
-recursive-include mcpgateway *.ico
-recursive-include alembic *.mako
-recursive-include alembic *.md
-recursive-include alembic *.py
-
-# 🔄 Export/Import functionality (explicitly include new files)
-include mcpgateway/cli_export_import.py
-include mcpgateway/services/export_service.py
-include mcpgateway/services/import_service.py
-
-# 📦 Migration scripts (v0.7.0 multitenancy migration tools)
-recursive-include scripts *.py
-
-# 🧪 Testing documentation and plans
-recursive-include tests/manual *.py *.md
-
-# recursive-include deployment *
-# recursive-include mcp-servers *
-recursive-include plugins *.py
-recursive-include plugins *.yaml
-recursive-include plugins *.md
+recursive-include resources/plugins *.yaml
+recursive-include opapluginfilter *.yaml
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
@@ -96,13 +65,3 @@ exclude llms-full.txt
 prune deployment
 prune mcp-servers
 prune agent_runtimes
-
-# Exclude opa
-exclude  plugins/external/opa/.dockerignore
-exclude plugins/external/opa/.env.template
-exclude plugins/external/opa/.ruff.toml
-exclude plugins/external/opa/Containerfile
-exclude plugins/external/opa/MANIFEST.in
-exclude plugins/external/opa/opaserver/rego/example.rego
-exclude plugins/external/opa/pyproject.toml
-exclude plugins/external/opa/run-server.sh
