@@ -33,6 +33,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -457,12 +458,7 @@ class ServerService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Filter servers that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(func.json_contains(DbServer.tags, f'"{tag}"'))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
         servers = db.execute(query).scalars().all()
         return [self._convert_server_to_read(s) for s in servers]

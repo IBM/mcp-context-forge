@@ -1312,16 +1312,31 @@ class TestResourceServiceMetricsExtended:
         mock_query.where.return_value = mock_query
         mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_resource]
 
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        mock_db.get_bind.return_value = bind
+
         with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
-            with patch("mcpgateway.services.resource_service.func") as mock_func:
-                mock_func.json_contains.return_value = MagicMock()
+            with patch("mcpgateway.services.resource_service.json_contains_expr") as mock_json_contains:
+                # return a fake condition object that query.where will accept
+                fake_condition = MagicMock()
+                mock_json_contains.return_value = fake_condition
 
                 result = await resource_service.list_resources(
                     mock_db, tags=["test", "production"]
                 )
 
-                # Verify tag filtering was applied
-                assert mock_func.json_contains.call_count == 2
+                # helper should be called once with the tags list (not once per tag)
+                mock_json_contains.assert_called_once()                       # called exactly once
+                called_args = mock_json_contains.call_args[0]                # positional args tuple
+                assert called_args[0] is mock_db                            # session passed through
+                # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                assert called_args[2] == ["test", "production"]
+                # and the fake condition returned must have been passed to where()
+                mock_query.where.assert_called_with(fake_condition)
+                # finally, your service should return the list produced by mock_db.execute(...)
+                assert isinstance(result, list)
                 assert len(result) == 1
 
     @pytest.mark.asyncio

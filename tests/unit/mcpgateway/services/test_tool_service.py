@@ -1901,61 +1901,45 @@ class TestToolService:
             mock_build.assert_called_once_with(mock_results)
             test_db.query.assert_called_once()
 
-    async def test_list_tools_with_tags(self, tool_service, mock_tool, test_db):
+    @pytest.mark.asyncio
+    async def test_list_tools_with_tags(self, tool_service, mock_tool):
         """Test listing tools with tag filtering."""
-        # Mock DB to return a list of tools
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [mock_tool]
-        mock_scalar_result = MagicMock()
-        mock_scalar_result.scalars.return_value = mock_scalars
-        mock_execute = Mock(return_value=mock_scalar_result)
-        test_db.execute = mock_execute
+        # Third-Party
+        from sqlalchemy import func
 
-        # Mock conversion
-        tool_read = ToolRead(
-            id="1",
-            original_name="test_tool",
-            custom_name="test_tool",
-            custom_name_slug="test-tool",
-            gateway_slug="test-gateway",
-            name="test-gateway-test-tool",
-            url="http://example.com/tools/test",
-            description="A test tool",
-            integration_type="MCP",
-            request_type="POST",
-            headers={"Content-Type": "application/json"},
-            input_schema={"type": "object", "properties": {"param": {"type": "string"}}},
-            jsonpath_filter="",
-            created_at="2023-01-01T00:00:00",
-            updated_at="2023-01-01T00:00:00",
-            enabled=True,
-            reachable=True,
-            gateway_id=None,
-            execution_count=0,
-            auth=None,
-            annotations={},
-            metrics={
-                "total_executions": 0,
-                "successful_executions": 0,
-                "failed_executions": 0,
-                "failure_rate": 0.0,
-                "min_response_time": None,
-                "max_response_time": None,
-                "avg_response_time": None,
-                "last_execution_time": None,
-            },
-        )
-        tool_service._convert_tool_to_read = Mock(return_value=tool_read)
+        # Mock query chain
+        mock_query = MagicMock()
+        mock_query.where.return_value = mock_query
 
-        # Call method with tags
-        result = await tool_service.list_tools(test_db, tags=["python", "automation"])
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
 
-        # Verify DB query was called and tags were processed
-        test_db.execute.assert_called_once()
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        session.get_bind.return_value = bind
 
-        # Verify result
-        assert len(result) == 1
-        assert result[0] == tool_read
+        with patch("mcpgateway.services.tool_service.select", return_value=mock_query):
+            with patch("mcpgateway.services.tool_service.json_contains_expr") as mock_json_contains:
+                # return a fake condition object that query.where will accept
+                fake_condition = MagicMock()
+                mock_json_contains.return_value = fake_condition
+
+                result = await tool_service.list_tools(
+                    session, tags=["test", "production"]
+                )
+
+                # helper should be called once with the tags list (not once per tag)
+                mock_json_contains.assert_called_once()                       # called exactly once
+                called_args = mock_json_contains.call_args[0]                # positional args tuple
+                assert called_args[0] is session                            # session passed through
+                # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                assert called_args[2] == ["test", "production"]
+                # and the fake condition returned must have been passed to where()
+                mock_query.where.assert_called_with(fake_condition)
+                # finally, your service should return the list produced by mock_db.execute(...)
+                assert isinstance(result, list)
+                assert len(result) == 1
 
     async def test_invoke_tool_rest_oauth_success(self, tool_service, mock_tool, test_db):
         """Test invoking REST tool with successful OAuth authentication."""
