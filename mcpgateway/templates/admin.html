@@ -1081,9 +1081,11 @@
           <div class="flex items-center space-x-4">
             <input
               type="text"
+              id="search-servers"
               data-testid="search-input"
               placeholder="Search servers..."
               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+              oninput="filterServerTable(this.value)"
             />
             <div class="flex items-center">
               <input
@@ -1584,6 +1586,13 @@
                     </div>
                   </label>
                   {% endfor %}
+                  <p
+                    id="noResourcesMessage"
+                    class="text-gray-700 dark:text-gray-300"
+                    style="display: none"
+                  >
+                    No resource found containing "<span id="searchResourcesQuery"></span>"
+                  </p>
                 </div>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
@@ -1643,6 +1652,13 @@
                     </div>
                   </label>
                   {% endfor %}
+                  <p
+                    id="noPromptsMessage"
+                    class="text-gray-700 dark:text-gray-300"
+                    style="display: none"
+                  >
+                    No prompt found containing "<span id="searchPromptsQuery"></span>"
+                  </p>
                 </div>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
@@ -7904,34 +7920,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       });
 
       // Add search functionality for filtering tools
-      document.addEventListener('DOMContentLoaded', function() {
-        const searchBox = document.getElementById('searchTools');
-        const toolItems = document.querySelectorAll('#associatedTools .tool-item');
-        const noToolsMessage = document.getElementById('noToolsMessage');
-        const searchQuerySpan = document.getElementById('searchQuery');
 
-        searchBox.addEventListener('input', function() {
-          const filter = this.value.toLowerCase();
-          let hasVisibleItems = false;
-
-          toolItems.forEach(function(toolItem) {
-            const toolName = toolItem.querySelector('span').textContent.toLowerCase();
-            if (toolName.includes(filter)) {
-              toolItem.style.display = '';
-              hasVisibleItems = true;
-            } else {
-              toolItem.style.display = 'none';
-            }
-          });
-
-          if (hasVisibleItems) {
-            noToolsMessage.style.display = 'none';
-          } else {
-            searchQuerySpan.textContent = filter;
-            noToolsMessage.style.display = 'block';
-          }
-        });
-      });
     </script>
     <script>
       function handleEditIntegrationTypeChange() {

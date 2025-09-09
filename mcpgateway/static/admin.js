@@ -8166,7 +8166,13 @@ function setupSelectorSearch() {
     const searchTools = safeGetElement("searchTools", true);
     if (searchTools) {
         searchTools.addEventListener("input", function () {
-            filterItems(this.value, ".tool-item", ["span"]);
+            filterSelectorItems(
+                this.value,
+                "#associatedTools",
+                ".tool-item",
+                "noToolsMessage",
+                "searchQuery",
+            );
         });
     }
 
@@ -8174,7 +8180,13 @@ function setupSelectorSearch() {
     const searchResources = safeGetElement("searchResources", true);
     if (searchResources) {
         searchResources.addEventListener("input", function () {
-            filterItems(this.value, ".resource-item", ["span", ".text-xs"]);
+            filterSelectorItems(
+                this.value,
+                "#associatedResources",
+                ".resource-item",
+                "noResourcesMessage",
+                "searchResourcesQuery",
+            );
         });
     }
 
@@ -8182,36 +8194,114 @@ function setupSelectorSearch() {
     const searchPrompts = safeGetElement("searchPrompts", true);
     if (searchPrompts) {
         searchPrompts.addEventListener("input", function () {
-            filterItems(this.value, ".prompt-item", ["span", ".text-xs"]);
+            filterSelectorItems(
+                this.value,
+                "#associatedPrompts",
+                ".prompt-item",
+                "noPromptsMessage",
+                "searchPromptsQuery",
+            );
         });
     }
 }
 
 /**
- * Generic function to filter items in multi-select dropdowns
+ * Generic function to filter items in multi-select dropdowns with no results message
  */
-function filterItems(searchText, itemSelector, textSelectors) {
-    const items = document.querySelectorAll(itemSelector);
-    const search = searchText.toLowerCase();
+function filterSelectorItems(
+    searchText,
+    containerSelector,
+    itemSelector,
+    noResultsId,
+    searchQueryId,
+) {
+    const container = document.querySelector(containerSelector);
+    if (!container) {
+        return;
+    }
+
+    const items = container.querySelectorAll(itemSelector);
+    const search = searchText.toLowerCase().trim();
+    let hasVisibleItems = false;
 
     items.forEach((item) => {
         let textContent = "";
 
-        // Collect text from all specified selectors within the item
-        textSelectors.forEach((selector) => {
-            const elements = item.querySelectorAll(selector);
-            elements.forEach((el) => {
-                textContent += " " + el.textContent;
-            });
+        // Get text from all text nodes within the item
+        const textElements = item.querySelectorAll(
+            "span, .text-xs, .font-medium",
+        );
+        textElements.forEach((el) => {
+            textContent += " " + el.textContent;
         });
 
-        if (textContent.toLowerCase().includes(search)) {
+        // Also get direct text content
+        textContent += " " + item.textContent;
+
+        if (search === "" || textContent.toLowerCase().includes(search)) {
             item.style.display = "";
+            hasVisibleItems = true;
         } else {
             item.style.display = "none";
         }
     });
+
+    // Handle no results message
+    const noResultsMessage = safeGetElement(noResultsId, true);
+    const searchQuerySpan = safeGetElement(searchQueryId, true);
+
+    if (search !== "" && !hasVisibleItems) {
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "block";
+        }
+        if (searchQuerySpan) {
+            searchQuerySpan.textContent = searchText;
+        }
+    } else {
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
 }
+
+/**
+ * Filter server table rows based on search text
+ */
+function filterServerTable(searchText) {
+    try {
+        const tbody = document.querySelector(
+            'tbody[data-testid="server-list"]',
+        );
+        if (!tbody) {
+            console.warn("Server table not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll('tr[data-testid="server-item"]');
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from all cells in the row
+            const cells = row.querySelectorAll("td");
+            cells.forEach((cell) => {
+                textContent += " " + cell.textContent;
+            });
+
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering server table:", error);
+    }
+}
+
+// Make server search function available globally
+window.filterServerTable = filterServerTable;
 
 function handleAuthTypeChange() {
     const authType = this.value;
