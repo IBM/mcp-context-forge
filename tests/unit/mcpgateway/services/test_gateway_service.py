@@ -1976,4 +1976,3 @@ class TestGatewayService:
 
                     mock_model_validate.assert_called_once()
                     assert result == ["masked_result"]
-

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: mcpgateway/utils/sqlalchemy_modifier.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

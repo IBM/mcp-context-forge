@@ -1910,7 +1910,7 @@ class TestToolService:
         # Mock query chain
         mock_query = MagicMock()
         mock_query.where.return_value = mock_query
-        
+
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
 
