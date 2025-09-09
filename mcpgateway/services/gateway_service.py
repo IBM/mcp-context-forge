@@ -676,23 +676,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         continue
 
                     try:
-                        db_tool = DbTool(
-                            original_name=tool.name,
-                            custom_name=tool.name,
-                            custom_name_slug=slugify(tool.name),
-                            display_name=generate_display_name(tool.name),
-                            url=gateway.url.rstrip("/"),
-                            description=tool.description,
-                            integration_type="MCP",  # Gateway-discovered tools are MCP type
-                            request_type=tool.request_type,
-                            headers=tool.headers,
-                            input_schema=tool.input_schema,
-                            annotations=tool.annotations,
-                            jsonpath_filter=tool.jsonpath_filter,
-                            auth_type=gateway.auth_type,
-                            auth_value=gateway.auth_value,
-                            gateway=gateway,  # attach relationship to avoid NoneType during flush
+                        db_tool = self._create_db_tool(
+                            tool=tool,
+                            gateway=gateway,
+                            created_by="system",
+                            created_via="oauth",
                         )
+                        # Attach relationship to avoid NoneType during flush
+                        db_tool.gateway = gateway
                         tools_to_add.append(db_tool)
                     except Exception as e:
                         logger.warning(f"Failed to create DbTool for tool {getattr(tool, 'name', 'unknown')}: {e}")
@@ -941,20 +932,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
                             if not existing_tool:
                                 gateway.tools.append(
-                                    DbTool(
-                                        original_name=tool.name,
-                                        custom_name=tool.custom_name,
-                                        custom_name_slug=slugify(tool.custom_name),
-                                        display_name=generate_display_name(tool.custom_name),
-                                        url=gateway.url,
-                                        description=tool.description,
-                                        integration_type="MCP",  # Gateway-discovered tools are MCP type
-                                        request_type=tool.request_type,
-                                        headers=tool.headers,
-                                        input_schema=tool.input_schema,
-                                        jsonpath_filter=tool.jsonpath_filter,
-                                        auth_type=gateway.auth_type,
-                                        auth_value=gateway.auth_value,
+                                    self._create_db_tool(
+                                        tool=tool,
+                                        gateway=gateway,
+                                        created_by="system",
+                                        created_via="update",
                                     )
                                 )
 
@@ -1130,18 +1112,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
                             if not existing_tool:
                                 gateway.tools.append(
-                                    DbTool(
-                                        original_name=tool.name,
-                                        display_name=generate_display_name(tool.name),
-                                        url=gateway.url,
-                                        description=tool.description,
-                                        integration_type="MCP",  # Gateway-discovered tools are MCP type
-                                        request_type=tool.request_type,
-                                        headers=tool.headers,
-                                        input_schema=tool.input_schema,
-                                        jsonpath_filter=tool.jsonpath_filter,
-                                        auth_type=gateway.auth_type,
-                                        auth_value=gateway.auth_value,
+                                    self._create_db_tool(
+                                        tool=tool,
+                                        gateway=gateway,
+                                        created_by="system",
+                                        created_via="rediscovery",
                                     )
                                 )
 
@@ -1942,6 +1917,56 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
+
+    def _create_db_tool(
+        self,
+        tool: ToolCreate,
+        gateway: DbGateway,
+        created_by: Optional[str] = None,
+        created_from_ip: Optional[str] = None,
+        created_via: Optional[str] = None,
+        created_user_agent: Optional[str] = None,
+    ) -> DbTool:
+        """Create a DbTool with consistent federation metadata across all scenarios.
+
+        Args:
+            tool: Tool creation schema
+            gateway: Gateway database object
+            created_by: Username who created/updated this tool
+            created_from_ip: IP address of creator
+            created_via: Creation method (ui, api, federation, rediscovery)
+            created_user_agent: User agent of creation request
+
+        Returns:
+            DbTool: Consistently configured database tool object
+        """
+        return DbTool(
+            original_name=tool.name,
+            custom_name=tool.name,
+            custom_name_slug=slugify(tool.name),
+            display_name=generate_display_name(tool.name),
+            url=gateway.url,
+            description=tool.description,
+            integration_type="MCP",  # Gateway-discovered tools are MCP type
+            request_type=tool.request_type,
+            headers=tool.headers,
+            input_schema=tool.input_schema,
+            annotations=tool.annotations,
+            jsonpath_filter=tool.jsonpath_filter,
+            auth_type=gateway.auth_type,
+            auth_value=gateway.auth_value,
+            # Federation metadata - consistent across all scenarios
+            created_by=created_by or "system",
+            created_from_ip=created_from_ip,
+            created_via=created_via or "federation",
+            created_user_agent=created_user_agent,
+            federation_source=gateway.name,
+            version=1,
+            # Inherit team assignment and visibility from gateway
+            team_id=gateway.team_id,
+            owner_email=gateway.owner_email,
+            visibility="public",  # Federated tools should be public for discovery
+        )
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """Publish event to all subscribers.
