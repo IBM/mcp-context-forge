@@ -645,6 +645,15 @@ class ServerService:
             if server_update.icon is not None:
                 server.icon = server_update.icon
 
+            if server_update.visibility is not None:
+                server.visibility = server_update.visibility
+
+            if server_update.team_id is not None:
+                server.team_id = server_update.team_id
+
+            if server_update.owner_email is not None:
+                server.owner_email = server_update.owner_email
+
             # Update associated tools if provided
             if server_update.associated_tools is not None:
                 server.tools = []

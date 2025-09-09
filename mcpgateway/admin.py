@@ -344,6 +344,97 @@ def get_user_email(user) -> str:
     return str(user) if user else "unknown"
 
 
+async def get_team_for_user(db, user_email, team_id=None):
+    """
+    Retrieve a team ID for a user based on their membership and optionally a specific team ID.
+
+    This function attempts to fetch all teams associated with the given user email.
+    If no `team_id` is provided, it returns the ID of the user's personal team (if any).
+    If a `team_id` is provided, it checks whether the user is a member of that team.
+    If the user is not a member of the specified team, it returns a JSONResponse with an error message.
+
+    Args:
+        db: Database session or connection object.
+        user_email (str): The email of the user whose teams are being queried.
+        team_id (str or None, optional): Specific team ID to check for membership. Defaults to None.
+
+    Returns:
+        str or JSONResponse or None:
+            - If `team_id` is None, returns the ID of the user's personal team or None if not found.
+            - If `team_id` is provided and the user is a member of that team, returns `team_id`.
+            - If `team_id` is provided but the user is not a member of that team, returns a JSONResponse with error.
+            - Returns None if an error occurs and no `team_id` was initially provided.
+
+    Raises:
+        None explicitly, but any exceptions during the process are caught and logged.
+
+    Example usage with doctest:
+    >>> import asyncio
+    >>> import types
+    >>>
+    >>> class DummyTeam:
+    ...     def __init__(self, id, is_personal):
+    ...         self.id = id
+    ...         self.is_personal = is_personal
+    >>>
+    >>> class TeamManagementService:
+    ...     def __init__(self, db):
+    ...         self.db = db
+    ...     async def get_user_teams(self, user_email, include_personal=True):
+    ...         return [DummyTeam("team1", False), DummyTeam("personal_team", True)]
+    >>>
+    >>> class DummyJSONResponse:
+    ...     def __init__(self, content, status_code):
+    ...         self.content = content
+    ...         self.status_code = status_code
+    >>>
+    >>> async def test_get_team_for_user():
+    ...     import sys
+    ...
+    ...     # Patch the TeamManagementService to use the dummy class
+    ...     sys.modules['mcpgateway.services.team_management_service'] = types.SimpleNamespace(
+    ...         TeamManagementService=TeamManagementService
+    ...     )
+    ...
+    ...     # Patch JSONResponse globally to use DummyJSONResponse
+    ...     global JSONResponse
+    ...     JSONResponse = DummyJSONResponse
+    ...
+    ...     # Case 1: No team_id, should return personal team id (personal_team)
+    ...     result = await get_team_for_user(None, "user@example.com")
+    ...     assert result == "personal_team"
+    ...
+    ...     # Case 2: team_id provided and user is a member (team1)
+    ...     result = await get_team_for_user(None, "user@example.com", "team1")
+    ...     assert result == "team1"
+    ...
+    >>> import asyncio
+    >>> asyncio.run(test_get_team_for_user())
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+
+        if not team_id:
+            # If no team_id is provided, try to get the personal team
+            personal_team = next((t for t in user_teams if getattr(t, "is_personal", False)), None)
+            team_id = personal_team.id if personal_team else None
+        else:
+            # Check if the provided team_id exists among the user's teams
+            is_team_present = any(team.id == team_id for team in user_teams)
+            if not is_team_present:
+                return JSONResponse(content={"message": "You are not a member of the team", "success": False}, status_code=422)
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        if not team_id:
+            team_id = None
+
+    return team_id
+
+
 def serialize_datetime(obj):
     """Convert datetime objects to ISO format strings for JSON serialization.
 
@@ -832,6 +923,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
         server_id = form.get("id")
+        visibility = str(form.get("visibility", "private"))
         LOGGER.info(f" user input id::{server_id}")
         server = ServerCreate(
             id=form.get("id") or None,
@@ -842,6 +934,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             associated_resources=",".join(form.getlist("associatedResources")),
             associated_prompts=",".join(form.getlist("associatedPrompts")),
             tags=tags,
+            visibility=visibility,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -849,20 +942,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         user_email = get_user_email(user)
         # Determine personal team for default assignment
-        team_id = None
-        try:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
-            personal_team = next((t for t in user_teams if getattr(t, "is_personal", False)), None)
-            team_id = personal_team.id if personal_team else None
-        except Exception:
-            team_id = None
+        team_id = form.get("team_id", None)
+        team_id = await get_team_for_user(db, user_email, team_id)
 
         # Ensure default visibility is private and assign to personal team when available
-        await server_service.register_server(db, server, created_by=user_email, team_id=team_id, visibility="private")
+        await server_service.register_server(db, server, created_by=user_email, team_id=team_id, visibility=visibility)
         return JSONResponse(
             content={"message": "Server created successfully!", "success": True},
             status_code=200,
@@ -1005,6 +1089,11 @@ async def admin_edit_server(
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
         LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
+        visibility = str(form.get("visibility", "private"))
+        user_email = get_user_email(user)
+        team_id = form.get("team_id", None)
+        team_id = await get_team_for_user(db, user_email, team_id)
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
@@ -1014,7 +1103,11 @@ async def admin_edit_server(
             associated_resources=",".join(form.getlist("associatedResources")),
             associated_prompts=",".join(form.getlist("associatedPrompts")),
             tags=tags,
+            visibility=visibility,
+            team_id=team_id,
+            owner_email=user_email,
         )
+
         await server_service.update_server(db, server_id, server)
 
         return JSONResponse(
@@ -5262,6 +5355,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
+        visibility = str(form.get("visibility", "private"))
+
         # Handle passthrough_headers
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
@@ -5288,6 +5383,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             auth_headers=auth_headers if auth_headers else None,
             oauth_config=oauth_config,
             passthrough_headers=passthrough_headers,
+            visibility=visibility,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -5297,6 +5393,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         # --- Getting only the custom message from the ValueError ---
         error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+
+    user_email = get_user_email(user)
+    team_id = form.get("team_id", None)
+
+    team_id = await get_team_for_user(db, user_email, team_id)
 
     try:
         # Extract creation metadata
@@ -5309,6 +5410,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             created_from_ip=metadata["created_from_ip"],
             created_via=metadata["created_via"],
             created_user_agent=metadata["created_user_agent"],
+            visibility=visibility,
+            team_id=team_id,
+            owner_email=user_email,
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
@@ -5460,6 +5564,8 @@ async def admin_edit_gateway(
         tags_str = str(form.get("tags", ""))
         tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
+        visibility = str(form.get("visibility", "private"))
+
         # Parse auth_headers JSON if present
         auth_headers_json = str(form.get("auth_headers"))
         auth_headers = []
@@ -5494,6 +5600,11 @@ async def admin_edit_gateway(
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
+        user_email = get_user_email(user)
+        # Determine personal team for default assignment
+        team_id = form.get("team_id", None)
+        team_id = await get_team_for_user(db, user_email, team_id)
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=str(form.get("name")),
             url=str(form["url"]),
@@ -5510,6 +5621,9 @@ async def admin_edit_gateway(
             auth_headers=auth_headers if auth_headers else None,
             passthrough_headers=passthrough_headers,
             oauth_config=oauth_config,
+            visibility=visibility,
+            owner_email=user_email,
+            team_id=team_id,
         )
         await gateway_service.update_gateway(db, gateway_id, gateway)
         return JSONResponse(
@@ -8371,8 +8485,10 @@ async def get_tools_section(
                 }
             )
             tools.append(tool_dict)
+        # Third-Party
+        from fastapi.encoders import jsonable_encoder
 
-        return JSONResponse(content={"tools": tools, "team_id": team_id})
+        return JSONResponse(content=jsonable_encoder({"tools": tools, "team_id": team_id}))
 
     except Exception as e:
         LOGGER.error(f"Error loading tools section: {e}")
@@ -8569,7 +8685,7 @@ async def get_gateways_section(
 
         # Apply team filtering if specified
         if team_id:
-            gateways_list = [g for g in gateways_list if getattr(g, "team_id", None) == team_id]
+            gateways_list = [g for g in gateways_list if g.team_id == team_id]
 
         # Convert to JSON-serializable format
         gateways = []

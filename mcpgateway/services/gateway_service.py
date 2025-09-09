@@ -447,6 +447,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ... except Exception:
             ...     pass
         """
+        visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
             # Check for name conflicts (both active and inactive)
             existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway.name)).scalar_one_or_none()
@@ -498,7 +499,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Inherit team assignment from gateway
                     team_id=team_id,
                     owner_email=owner_email,
-                    visibility="public",  # Federated tools should be public for discovery
+                    visibility=visibility,
                 )
                 for tool in tools
             ]
@@ -521,7 +522,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Inherit team assignment from gateway
                     team_id=team_id,
                     owner_email=owner_email,
-                    visibility="public",  # Federated tools should be public for discovery
+                    visibility=visibility,
                 )
                 for resource in resources
             ]
@@ -543,7 +544,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Inherit team assignment from gateway
                     team_id=team_id,
                     owner_email=owner_email,
-                    visibility="public",  # Federated tools should be public for discovery
+                    visibility=visibility,
                 )
                 for prompt in prompts
             ]
@@ -574,7 +575,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Team scoping fields
                 team_id=team_id,
                 owner_email=owner_email,
-                visibility="public" if visibility != "private" else visibility,  # Default to public for federation unless explicitly private
+                visibility=visibility,
             )
 
             # Add to DB
@@ -886,6 +887,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.transport = gateway_update.transport
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
+                if gateway_update.visibility is not None:
+                    gateway.visibility = gateway_update.visibility
+                if gateway_update.visibility is not None:
+                    gateway.visibility = gateway_update.visibility
                 if gateway_update.passthrough_headers is not None:
                     if isinstance(gateway_update.passthrough_headers, list):
                         gateway.passthrough_headers = gateway_update.passthrough_headers
@@ -932,10 +937,43 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
 
-                        # Update tools
                         for tool in tools:
                             existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
-                            if not existing_tool:
+
+                            # If the tool exists, check for changes
+                            if existing_tool:
+                                # Compare each field and update if necessary
+                                fields_to_update = False
+
+                                # Checking if any field has changed
+                                if (
+                                    existing_tool.url != gateway.url
+                                    or existing_tool.description != tool.description
+                                    or existing_tool.integration_type != "MCP"
+                                    or existing_tool.request_type != tool.request_type
+                                    or existing_tool.headers != tool.headers
+                                    or existing_tool.input_schema != tool.input_schema
+                                    or existing_tool.jsonpath_filter != tool.jsonpath_filter
+                                    or existing_tool.auth_type != gateway.auth_type
+                                    or existing_tool.auth_value != gateway.auth_value
+                                    or existing_tool.visibility != gateway.visibility
+                                ):
+                                    fields_to_update = True
+                                # If there are changes, update the existing tool
+                                if fields_to_update:
+                                    existing_tool.url = gateway.url
+                                    existing_tool.description = tool.description
+                                    existing_tool.integration_type = "MCP"
+                                    existing_tool.request_type = tool.request_type
+                                    existing_tool.headers = tool.headers
+                                    existing_tool.input_schema = tool.input_schema
+                                    existing_tool.jsonpath_filter = tool.jsonpath_filter
+                                    existing_tool.auth_type = gateway.auth_type
+                                    existing_tool.auth_value = gateway.auth_value
+                                    existing_tool.visibility = gateway.visibility
+
+                            # If the tool doesn't exist, create a new one
+                            else:
                                 gateway.tools.append(
                                     self._create_db_tool(
                                         tool=tool,
@@ -956,6 +994,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         description=resource.description,
                                         mime_type=resource.mime_type,
                                         template=resource.template,
+                                        visibility=gateway.visibility,
                                     )
                                 )
 
@@ -969,6 +1008,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         description=prompt.description,
                                         template=prompt.template if hasattr(prompt, "template") else "",
                                         argument_schema={},  # Use argument_schema instead of arguments
+                                        visibility=gateway.visibility,
                                     )
                                 )
 

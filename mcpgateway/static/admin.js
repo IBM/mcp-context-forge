@@ -3189,6 +3189,22 @@ async function editGateway(gatewayId) {
             tagsField.value = gateway.tags ? gateway.tags.join(", ") : "";
         }
 
+        const visibility = gateway.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const publicRadio = safeGetElement("edit-gateway-visibility-public");
+        const teamRadio = safeGetElement("edit-gateway-visibility-team");
+        const privateRadio = safeGetElement("edit-gateway-visibility-private");
+
+        if (visibility) {
+            // Check visibility and set the corresponding radio button
+            if (visibility === "public" && publicRadio) {
+                publicRadio.checked = true;
+            } else if (visibility === "team" && teamRadio) {
+                teamRadio.checked = true;
+            } else if (visibility === "private" && privateRadio) {
+                privateRadio.checked = true;
+            }
+        }
+
         if (transportField) {
             transportField.value = gateway.transport || "SSE"; // falls back to SSE(default)
         }
@@ -3808,20 +3824,42 @@ async function editServer(serverId) {
 
         const isInactiveCheckedBool = isInactiveChecked("servers");
         let hiddenField = safeGetElement("edit-server-show-inactive");
+        const editForm = safeGetElement("edit-server-form");
         if (!hiddenField) {
             hiddenField = document.createElement("input");
             hiddenField.type = "hidden";
             hiddenField.name = "is_inactive_checked";
             hiddenField.id = "edit-server-show-inactive";
-            const editForm = safeGetElement("edit-server-form");
+
             if (editForm) {
                 editForm.appendChild(hiddenField);
             }
         }
         hiddenField.value = isInactiveCheckedBool;
 
+        const visibility = server.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const publicRadio = safeGetElement("edit-visibility-public");
+        const teamRadio = safeGetElement("edit-visibility-team");
+        const privateRadio = safeGetElement("edit-visibility-private");
+
+        // Prepopulate visibility radio buttons based on the server data
+        if (visibility) {
+            // Check visibility and set the corresponding radio button
+            if (visibility === "public" && publicRadio) {
+                publicRadio.checked = true;
+            } else if (visibility === "team" && teamRadio) {
+                teamRadio.checked = true;
+            } else if (visibility === "private" && privateRadio) {
+                privateRadio.checked = true;
+            }
+        }
+
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+        teamId && editForm.append("team_id", teamId);
+
         // Set form action and populate fields with validation
-        const editForm = safeGetElement("edit-server-form");
         if (editForm) {
             editForm.action = `${window.ROOT_PATH}/admin/servers/${serverId}/edit`;
         }
@@ -6926,6 +6964,13 @@ async function handleGatewayFormSubmit(e) {
             formData.append("oauth_config", JSON.stringify(oauthConfig));
         }
 
+        formData.append("visibility", formData.get("visibility"));
+
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+        teamId && formData.append("team_id", teamId);
+
         const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
             method: "POST",
             body: formData,
@@ -7144,6 +7189,12 @@ async function handleServerFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("servers");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
+
+        formData.append("visibility", formData.get("visibility"));
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+        teamId && formData.append("team_id", teamId);
 
         const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
             method: "POST",

@@ -1297,9 +1297,9 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    {% if server.owner_email %}
+                    {% if server.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ server.owner_email }}</span
+                      >{{ server.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -1695,10 +1695,7 @@
             </div>
 
             <div>
-              <label
-                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                >Tags</label
-              >
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Tags</label>
               <input
                 type="text"
                 name="tags"
@@ -1706,11 +1703,27 @@
                 class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
               />
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Enter tags separated by commas. Tags help categorize and filter
-                servers.
+                Enter tags separated by commas. Tags help categorize and filter servers.
               </p>
             </div>
-
+            <!-- Visibility options -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="visibility-public" checked />
+                  <label for="visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="visibility-team" />
+                  <label for="visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="visibility-private" />
+                  <label for="visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                </div>
+              </div>
+            </div>
             <div class="mt-6">
               <button
                 type="submit"
@@ -1961,9 +1974,9 @@
                     {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
-                    {% if tool.owner_email %}
+                    {% if tool.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ tool.owner_email }}</span
+                      >{{ tool.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -2916,9 +2929,9 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    {% if resource.owner_email %}
+                    {% if resource.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ resource.owner_email }}</span
+                      >{{ resource.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -3272,9 +3285,9 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    {% if prompt.owner_email %}
+                    {% if prompt.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ prompt.owner_email }}</span
+                      >{{ prompt.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -3597,6 +3610,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
                   >
+                    Visibility
+                  </th>
+                  <th
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
+                  >
                     Actions
                   </th>
                 </tr>
@@ -3702,6 +3720,28 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    {% if gateway.visibility == 'private' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800"
+                      >Private</span
+                    >
+                    {% elif gateway.visibility == 'team' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                      >Team</span
+                    >
+                    {% elif gateway.visibility == 'public' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
+                      >Public</span
+                    >
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
+                    {% endif %}
                   </td>
                   <td class="px-3 py-4 whitespace-nowrap text-sm font-medium">
                     <div class="grid grid-cols-2 gap-1 max-w-48">
@@ -3888,6 +3928,42 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   normalized (lowercase, spaces→hyphens).
                 </p>
               </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                  Visibility
+                </label>
+                <div class="mt-1 flex space-x-6"> 
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="public"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      checked
+                    />
+                    <label for="edit-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="team"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label for="edit-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="private"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label for="edit-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -6247,6 +6323,26 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         automatically normalized.
                       </p>
                     </div>
+
+                    <!-- Visibility options -->
+                    <div id="edit-gateway-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-public" />
+                          <label for="edit-gateway-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-team" />
+                          <label for="edit-gateway-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-private" />
+                          <label for="edit-gateway-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                        </div>
+                      </div>
+                    </div>
+
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
                         >Transport Type</label
@@ -6668,6 +6764,25 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         Enter tags separated by commas. Tags help categorize and
                         filter servers.
                       </p>
+                    </div>
+
+                    <!-- Visibility options -->
+                    <div id="edit-server-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-public" />
+                          <label for="edit-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-team" />
+                          <label for="edit-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-private" />
+                          <label for="edit-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                        </div>
+                      </div>
                     </div>
 
                     <div
