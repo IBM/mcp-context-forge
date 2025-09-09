@@ -40,7 +40,7 @@ class TokenStorageService:
         >>> # Test token expiration calculation
         >>> from datetime import datetime, timedelta
         >>> expires_in = 3600  # 1 hour
-        >>> now = datetime.utcnow()
+        >>> now = datetime.now(tz=timezone.utc)
         >>> expires_at = now + timedelta(seconds=expires_in)
         >>> expires_at > now
         True
@@ -179,7 +179,7 @@ class TokenStorageService:
             >>> from datetime import datetime, timedelta
             >>> svc = TokenStorageService(None)
             >>> svc.encryption = None  # simplify for doctest
-            >>> future = datetime.utcnow() + timedelta(seconds=3600)
+            >>> future = datetime.now(tz=timezone.utc) + timedelta(seconds=3600)
             >>> rec = SimpleNamespace(gateway_id='g1', user_id='u1', access_token='tok', refresh_token=None, expires_at=future)
             >>> class _Res:
             ...     def scalar_one_or_none(self):
@@ -192,7 +192,7 @@ class TokenStorageService:
             >>> asyncio.run(svc.get_any_valid_token('g1'))
             'tok'
             >>> # Expired record returns None
-            >>> past = datetime.utcnow() - timedelta(seconds=1)
+            >>> past = datetime.now(tz=timezone.utc) - timedelta(seconds=1)
             >>> rec2 = SimpleNamespace(gateway_id='g1', user_id='u1', access_token='tok', refresh_token=None, expires_at=past)
             >>> class _Res2:
             ...     def scalar_one_or_none(self):
@@ -266,8 +266,8 @@ class TokenStorageService:
             >>> from types import SimpleNamespace
             >>> from datetime import datetime, timedelta
             >>> svc = TokenStorageService(None)
-            >>> future = datetime.utcnow() + timedelta(seconds=600)
-            >>> past = datetime.utcnow() - timedelta(seconds=10)
+            >>> future = datetime.now(tz=timezone.utc) + timedelta(seconds=600)
+            >>> past = datetime.now(tz=timezone.utc) - timedelta(seconds=10)
             >>> rec_future = SimpleNamespace(expires_at=future)
             >>> rec_past = SimpleNamespace(expires_at=past)
             >>> svc._is_token_expired(rec_future, threshold_seconds=300)  # 10 min ahead, 5 min threshold
@@ -300,7 +300,7 @@ class TokenStorageService:
             >>> from types import SimpleNamespace
             >>> from datetime import datetime, timedelta
             >>> svc = TokenStorageService(None)
-            >>> now = datetime.utcnow()
+            >>> now = datetime.now(tz=timezone.utc)
             >>> future = now + timedelta(seconds=60)
             >>> rec = SimpleNamespace(user_id='u1', token_type='bearer', expires_at=future, scopes=['s1'], created_at=now, updated_at=now)
             >>> class _Res:
@@ -400,7 +400,7 @@ class TokenStorageService:
             2
         """
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=max_age_days)
+            cutoff_date = datetime.now(tz=timezone.utc) - timedelta(days=max_age_days)
 
             expired_tokens = self.db.execute(select(OAuthToken).where(OAuthToken.expires_at < cutoff_date)).scalars().all()
 
