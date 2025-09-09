@@ -458,12 +458,7 @@ class ServerService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Filter servers that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(json_contains_expr(db, DbServer.tags, tag))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
         servers = db.execute(query).scalars().all()
         return [self._convert_server_to_read(s) for s in servers]

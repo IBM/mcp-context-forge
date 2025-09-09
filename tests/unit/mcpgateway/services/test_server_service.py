@@ -909,12 +909,22 @@ class TestServerService:
 
         with patch("mcpgateway.services.server_service.select", return_value=mock_query):
             with patch("mcpgateway.services.server_service.json_contains_expr") as mock_json_contains:
-                mock_json_contains.return_value = MagicMock()
+                # return a fake condition object that query.where will accept
+                fake_condition = MagicMock()
+                mock_json_contains.return_value = fake_condition
 
                 result = await server_service.list_servers(
                     session, tags=["test", "production"]
                 )
 
-                # Verify tag filtering was applied
-                assert mock_json_contains.call_count == 2
+                # helper should be called once with the tags list (not once per tag)
+                mock_json_contains.assert_called_once()                       # called exactly once
+                called_args = mock_json_contains.call_args[0]                # positional args tuple
+                assert called_args[0] is session                            # session passed through
+                # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                assert called_args[2] == ["test", "production"]
+                # and the fake condition returned must have been passed to where()
+                mock_query.where.assert_called_with(fake_condition)
+                # finally, your service should return the list produced by mock_db.execute(...)
+                assert isinstance(result, list)
                 assert len(result) == 1

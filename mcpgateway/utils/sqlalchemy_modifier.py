@@ -10,12 +10,22 @@ SQLAlchemy modifiers
 
 # Standard
 import json
+from typing import Iterable, List, Union
+import uuid
 
 # Third-Party
-from sqlalchemy import func, text
+from sqlalchemy import and_, func, or_, text
 
 
-def json_contains_expr(session, col, value) -> bool:
+def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        return [values]
+    return list(values)
+
+
+def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_any: bool = True) -> str:
     """
     Return a SQLAlchemy expression that is True when JSON column `col`
     contains the scalar `value`. `session` is used to detect dialect.
@@ -24,29 +34,79 @@ def json_contains_expr(session, col, value) -> bool:
     Args:
         session: database session
         col: column that contains JSON
-        value: value to check for in json
+        values: list of values to check for in json
+        match_any: Boolean to set OR or AND matching
 
     Returns:
-        bool: Whether value in col JSON
+        str: Returns SQL quuery
 
     Raises:
         RuntimeError: If dialect is not supported
+        ValueError: If values is empty
     """
+    values_list = _ensure_list(values)
+    if not values_list:
+        raise ValueError("values must be non-empty")
+
     dialect = session.get_bind().dialect.name
 
+    # ---------- MySQL ----------
+    # - all-of: JSON_CONTAINS(col, '["a","b"]') == 1
+    # - any-of: prefer JSON_OVERLAPS (MySQL >= 8.0.17), otherwise OR of JSON_CONTAINS for each value
     if dialect == "mysql":
-        # MySQL: JSON_CONTAINS(target, candidate) -> returns 1 for true
-        # candidate must be a JSON value; json.dumps(value) -> '"value"'
-        return func.json_contains(col, json.dumps(value)) == 1
+        try:
+            if match_any:
+                # JSON_OVERLAPS exists in modern MySQL; SQLAlchemy will emit func.json_overlaps(...)
+                return func.json_overlaps(col, json.dumps(values_list)) == 1
+            else:
+                return func.json_contains(col, json.dumps(values_list)) == 1
+        except Exception:
+            # Fallback: compose OR of json_contains for each scalar
+            if match_any:
+                return or_(*[func.json_contains(col, json.dumps(t)) == 1 for t in values_list])
+            else:
+                return and_(*[func.json_contains(col, json.dumps(t)) == 1 for t in values_list])
 
+    # ---------- PostgreSQL ----------
+    # - all-of: col.contains(list)  (works if col is JSONB)
+    # - any-of: use OR of col.contains([value]) (or use ?| operator if you prefer)
     if dialect == "postgresql":
-        # Postgres JSONB: .contains() works with Python objects (casts to JSONB)
-        # For an array-of-strings column, check contains([value])
-        return col.contains([value])
+        # prefer JSONB .contains for all-of
+        if not match_any:
+            return col.contains(values_list)
+        # match_any: use OR over element-containment
+        return or_(*[col.contains([t]) for t in values_list])
 
+    # ---------- SQLite (json1) ----------
+    # SQLite doesn't have JSON_CONTAINS. We build safe SQL:
+    # - any-of: single EXISTS ... WHERE value IN (:p0,:p1,...)
+    # - all-of: multiple EXISTS with unique bind params (one EXISTS per value) => AND semantics
     if dialect == "sqlite":
-        # SQLite json1: no json_contains; use json_each to test array membership.
-        # This assumes `col` holds a JSON array of scalars.
-        return text(f"EXISTS (SELECT 1 FROM json_each({col.name}) WHERE value = :_val)").bindparams(_val=value)
+        table_name = getattr(getattr(col, "table", None), "name", None)
+        column_name = getattr(col, "name", None) or str(col)
+        col_ref = f"{table_name}.{column_name}" if table_name else column_name
+
+        if match_any:
+            # Build placeholders with unique param names and pass *values* to bindparams
+            params = {}
+            placeholders = []
+            for i, t in enumerate(values_list):
+                pname = f"t_{uuid.uuid4().hex[:8]}_{i}"
+                placeholders.append(f":{pname}")
+                params[pname] = t
+            placeholders_sql = ",".join(placeholders)
+            sq = text(f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value IN ({placeholders_sql}))")
+            # IMPORTANT: pass plain values as kwargs to bindparams
+            return sq.bindparams(**params)
+
+        # all-of: return AND of EXISTS(... = :pX) with plain values
+        exists_clauses = []
+        for t in values_list:
+            pname = f"t_{uuid.uuid4().hex[:8]}"
+            clause = text(f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{pname})").bindparams(**{pname: t})
+            exists_clauses.append(clause)
+        if len(exists_clauses) == 1:
+            return exists_clauses[0]
+        return and_(*exists_clauses)
 
     raise RuntimeError(f"Unsupported dialect for json_contains: {dialect}")

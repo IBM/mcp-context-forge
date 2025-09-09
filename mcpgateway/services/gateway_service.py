@@ -748,12 +748,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             query = query.where(DbGateway.enabled)
 
         if tags:
-            # Filter resources that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(json_contains_expr(db, DbGateway.tags, tag))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
 
         gateways = db.execute(query).scalars().all()
 

@@ -403,12 +403,7 @@ class ResourceService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Filter resources that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(json_contains_expr(db, DbResource.tags, tag))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbResource.tags, tags, match_any=True))
 
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()

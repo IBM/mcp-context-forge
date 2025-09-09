@@ -489,12 +489,7 @@ class ToolService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Filter tools that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(json_contains_expr(db, DbTool.tags, tag))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
         tools = db.execute(query).scalars().all()
         return [self._convert_tool_to_read(t) for t in tools]

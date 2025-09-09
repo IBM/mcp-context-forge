@@ -404,12 +404,7 @@ class PromptService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Filter prompts that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(json_contains_expr(db, DbPrompt.tags, tag))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbPrompt.tags, tags, match_any=True))
 
         # Cursor-based pagination logic can be implemented here in the future.
         logger.debug(cursor)
