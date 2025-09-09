@@ -1,4 +1,4 @@
-"""Location: ./tests/unit/mcpgateway/services/test_resource_service.py
+"""Location: mcpgateway/utils/sqlalchemy_modifier.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Madhav Kandukuri
