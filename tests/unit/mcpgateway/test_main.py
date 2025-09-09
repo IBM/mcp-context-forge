@@ -1476,7 +1476,7 @@ class TestErrorHandling:
 
     def test_docs_with_expired_jwt(self, test_client):
         """Test /docs with an expired JWT returns 401."""
-        expired_payload = {"sub": "test_user", "exp": datetime.datetime.utcnow() - datetime.timedelta(hours=1)}
+        expired_payload = {"sub": "test_user", "exp": datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(hours=1)}
         # First-Party
         from mcpgateway.config import settings
 
