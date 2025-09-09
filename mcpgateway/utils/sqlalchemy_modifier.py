@@ -18,6 +18,18 @@ from sqlalchemy import and_, func, or_, text
 
 
 def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
+    """
+    Normalize input into a list of strings.
+
+    Args:
+        values: A single string or any iterable of strings. If `None`, an empty
+            list is returned.
+
+    Returns:
+        A list of strings. If `values` is a string it will be wrapped in a
+        single-item list; if it's already an iterable, it will be converted to
+        a list. If `values` is `None`, returns an empty list.
+    """
     if values is None:
         return []
     if isinstance(values, str):
