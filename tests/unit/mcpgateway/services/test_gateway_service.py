@@ -1928,3 +1928,44 @@ class TestGatewayService:
             # Verify
             assert "prompts" in capabilities
             assert len(prompts) == 0  # Should be empty due to failure
+
+    @pytest.mark.asyncio
+    async def test_list_gateway_with_tags(self, gateway_service, mock_gateway):
+        """Test listing gateways with tag filtering."""
+        # Third-Party
+        from sqlalchemy import func
+
+        # Mock query chain
+        mock_query = MagicMock()
+        mock_query.where.return_value = mock_query
+
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        session.get_bind.return_value = bind
+
+        mocked_gateway_read = MagicMock()
+        mocked_gateway_read.masked.return_value = "masked_result"
+
+        with patch("mcpgateway.services.gateway_service.select", return_value=mock_query):
+            with patch("mcpgateway.services.gateway_service.json_contains_expr") as mock_json_contains:
+                with patch(
+                    "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+                    return_value=mocked_gateway_read,
+                ) as mock_model_validate:
+                    mock_json_contains.return_value = MagicMock()
+
+                    result = await gateway_service.list_gateways(
+                        session, tags=["test", "production"]
+                    )
+
+                    # Verify tag filtering was applied
+                    assert mock_json_contains.call_count == 2
+                    assert len(result) == 1
+
+                    mock_model_validate.assert_called_once()
+                    assert result == ["masked_result"]
+
