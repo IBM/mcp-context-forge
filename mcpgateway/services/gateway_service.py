@@ -1115,13 +1115,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             if not existing_tool:
                                 gateway.tools.append(
                                     DbTool(
-<<<<<<< HEAD
-                                        original_name=tool.name,
-                                        display_name=generate_display_name(tool.name),
-=======
                                         custom_name=tool.custom_name,
                                         custom_name_slug=slugify(tool.custom_name),
->>>>>>> 1d387655 (All metrics functionality has been successfully implemented and enhanced, with the exception of the first-row summary above the table, while preserving core functionality.)
                                         url=gateway.url,
                                         description=tool.description,
                                         integration_type="MCP",  # Gateway-discovered tools are MCP type

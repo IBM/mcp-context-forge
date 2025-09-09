@@ -470,7 +470,7 @@ class ForwardingService:
                     if "error" in result:
                         error_message = result['error'].get('message')
                         raise ForwardingError(f"Gateway error: {error_message}")
-                    
+
                     success = True
                     return result.get("result")
 

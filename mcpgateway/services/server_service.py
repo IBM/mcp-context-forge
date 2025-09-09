@@ -168,10 +168,10 @@ class ServerService:
             .group_by(DbServer.id, DbServer.name)
             .order_by(desc("execution_count"))
         )
-        
+
         if limit is not None:
             query = query.limit(limit)
-            
+
         results = query.all()
 
         return build_top_performers(results)
