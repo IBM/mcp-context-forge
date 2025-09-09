@@ -3189,6 +3189,18 @@ async function editGateway(gatewayId) {
             tagsField.value = gateway.tags ? gateway.tags.join(", ") : "";
         }
 
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+
+        if (teamId) {
+            const hiddenInput = document.createElement("input");
+            hiddenInput.type = "hidden";
+            hiddenInput.name = "team_id";
+            hiddenInput.value = teamId;
+            editForm.appendChild(hiddenInput);
+        }
+
         const visibility = gateway.visibility; // Ensure visibility is either 'public', 'team', or 'private'
         const publicRadio = safeGetElement("edit-gateway-visibility-public");
         const teamRadio = safeGetElement("edit-gateway-visibility-team");
@@ -3857,7 +3869,14 @@ async function editServer(serverId) {
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
-        teamId && editForm.append("team_id", teamId);
+
+        if (teamId) {
+            const hiddenInput = document.createElement("input");
+            hiddenInput.type = "hidden";
+            hiddenInput.name = "team_id";
+            hiddenInput.value = teamId;
+            editForm.appendChild(hiddenInput);
+        }
 
         // Set form action and populate fields with validation
         if (editForm) {

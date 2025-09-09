@@ -1092,7 +1092,9 @@ async def admin_edit_server(
         visibility = str(form.get("visibility", "private"))
         user_email = get_user_email(user)
         team_id = form.get("team_id", None)
+        print("TEAM ID RECEIVED:", team_id)
         team_id = await get_team_for_user(db, user_email, team_id)
+        print("TEAM ID FINAL:", team_id)
 
         server = ServerUpdate(
             id=form.get("id"),
