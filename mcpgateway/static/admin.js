@@ -6999,10 +6999,20 @@ async function handleGatewayFormSubmit(e) {
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add gateway");
         } else {
-            const redirectUrl = isInactiveCheckedBool
-                ? `${window.ROOT_PATH}/admin?include_inactive=true#gateways`
-                : `${window.ROOT_PATH}/admin#gateways`;
+            const teamId = new URL(window.location.href).searchParams.get("team_id");
+            const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
+
             window.location.href = redirectUrl;
+
         }
     } catch (error) {
         console.error("Error:", error);
@@ -7059,9 +7069,17 @@ async function handleResourceFormSubmit(e) {
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add Resource");
         } else {
-            const redirectUrl = isInactiveCheckedBool
-                ? `${window.ROOT_PATH}/admin?include_inactive=true#resources`
-                : `${window.ROOT_PATH}/admin#resources`;
+            const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+            const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -7115,9 +7133,17 @@ async function handlePromptFormSubmit(e) {
             throw new Error(result?.message || "Failed to add prompt");
         }
         // Only redirect on success
-        const redirectUrl = isInactiveCheckedBool
-            ? `${window.ROOT_PATH}/admin?include_inactive=true#prompts`
-            : `${window.ROOT_PATH}/admin#prompts`;
+        const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+        const searchParams = new URLSearchParams();
+        if (isInactiveCheckedBool) {
+            searchParams.set("include_inactive", "true");
+        }
+        if (teamId) {
+            searchParams.set("team_id", teamId);
+        }
+        const queryString = searchParams.toString();
+        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Error:", error);
@@ -7170,9 +7196,17 @@ async function handleEditPromptFormSubmit(e) {
             throw new Error(result?.message || "Failed to edit Prompt");
         }
         // Only redirect on success
-        const redirectUrl = isInactiveCheckedBool
-            ? `${window.ROOT_PATH}/admin?include_inactive=true#prompts`
-            : `${window.ROOT_PATH}/admin#prompts`;
+        const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+        const searchParams = new URLSearchParams();
+        if (isInactiveCheckedBool) {
+            searchParams.set("include_inactive", "true");
+        }
+        if (teamId) {
+            searchParams.set("team_id", teamId);
+        }
+        const queryString = searchParams.toString();
+        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#prompts`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Error:", error);
@@ -7224,10 +7258,20 @@ async function handleServerFormSubmit(e) {
             throw new Error(result?.message || "Failed to add server.");
         } else {
             // Success redirect
-            const redirectUrl = isInactiveCheckedBool
-                ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
-                : `${window.ROOT_PATH}/admin#catalog`;
+            const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+            const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
             window.location.href = redirectUrl;
+
         }
     } catch (error) {
         console.error("Add Server Error:", error);
@@ -7302,9 +7346,17 @@ async function handleToolFormSubmit(event) {
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add tool");
         } else {
-            const redirectUrl = isInactiveCheckedBool
-                ? `${window.ROOT_PATH}/admin?include_inactive=true#tools`
-                : `${window.ROOT_PATH}/admin#tools`;
+            const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+            const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -7356,9 +7408,17 @@ async function handleEditToolFormSubmit(event) {
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit tool");
         } else {
-            const redirectUrl = isInactiveCheckedBool
-                ? `${window.ROOT_PATH}/admin?include_inactive=true#tools`
-                : `${window.ROOT_PATH}/admin#tools`;
+            const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+            const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#tools`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -7457,9 +7517,17 @@ async function handleEditGatewayFormSubmit(e) {
             throw new Error(result?.message || "Failed to edit gateway");
         }
         // Only redirect on success
-        const redirectUrl = isInactiveCheckedBool
-            ? `${window.ROOT_PATH}/admin?include_inactive=true#gateways`
-            : `${window.ROOT_PATH}/admin#gateways`;
+        const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+        const searchParams = new URLSearchParams();
+        if (isInactiveCheckedBool) {
+            searchParams.set("include_inactive", "true");
+        }
+        if (teamId) {
+            searchParams.set("team_id", teamId);
+        }
+        const queryString = searchParams.toString();
+        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Error:", error);
@@ -7503,9 +7571,17 @@ async function handleEditServerFormSubmit(e) {
         // Only redirect on success
         else {
             // Redirect to the appropriate page based on inactivity checkbox
-            const redirectUrl = isInactiveCheckedBool
-                ? `${window.ROOT_PATH}/admin?include_inactive=true#catalog`
-                : `${window.ROOT_PATH}/admin#catalog`;
+            const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+            const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -7559,9 +7635,17 @@ async function handleEditResFormSubmit(e) {
         // Only redirect on success
         else {
             // Redirect to the appropriate page based on inactivity checkbox
-            const redirectUrl = isInactiveCheckedBool
-                ? `${window.ROOT_PATH}/admin?include_inactive=true#resources`
-                : `${window.ROOT_PATH}/admin#resources`;
+            const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+            const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#resources`;
             window.location.href = redirectUrl;
         }
     } catch (error) {
