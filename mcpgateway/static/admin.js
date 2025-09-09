@@ -8166,7 +8166,13 @@ function setupSelectorSearch() {
     const searchTools = safeGetElement("searchTools", true);
     if (searchTools) {
         searchTools.addEventListener("input", function () {
-            filterSelectorItems(this.value, "#associatedTools", ".tool-item", "noToolsMessage", "searchQuery");
+            filterSelectorItems(
+                this.value,
+                "#associatedTools",
+                ".tool-item",
+                "noToolsMessage",
+                "searchQuery",
+            );
         });
     }
 
@@ -8174,7 +8180,13 @@ function setupSelectorSearch() {
     const searchResources = safeGetElement("searchResources", true);
     if (searchResources) {
         searchResources.addEventListener("input", function () {
-            filterSelectorItems(this.value, "#associatedResources", ".resource-item", "noResourcesMessage", "searchResourcesQuery");
+            filterSelectorItems(
+                this.value,
+                "#associatedResources",
+                ".resource-item",
+                "noResourcesMessage",
+                "searchResourcesQuery",
+            );
         });
     }
 
@@ -8182,7 +8194,13 @@ function setupSelectorSearch() {
     const searchPrompts = safeGetElement("searchPrompts", true);
     if (searchPrompts) {
         searchPrompts.addEventListener("input", function () {
-            filterSelectorItems(this.value, "#associatedPrompts", ".prompt-item", "noPromptsMessage", "searchPromptsQuery");
+            filterSelectorItems(
+                this.value,
+                "#associatedPrompts",
+                ".prompt-item",
+                "noPromptsMessage",
+                "searchPromptsQuery",
+            );
         });
     }
 }
@@ -8190,9 +8208,17 @@ function setupSelectorSearch() {
 /**
  * Generic function to filter items in multi-select dropdowns with no results message
  */
-function filterSelectorItems(searchText, containerSelector, itemSelector, noResultsId, searchQueryId) {
+function filterSelectorItems(
+    searchText,
+    containerSelector,
+    itemSelector,
+    noResultsId,
+    searchQueryId,
+) {
     const container = document.querySelector(containerSelector);
-    if (!container) return;
+    if (!container) {
+        return;
+    }
     
     const items = container.querySelectorAll(itemSelector);
     const search = searchText.toLowerCase().trim();
@@ -8200,16 +8226,18 @@ function filterSelectorItems(searchText, containerSelector, itemSelector, noResu
 
     items.forEach((item) => {
         let textContent = "";
-        
+
         // Get text from all text nodes within the item
-        const textElements = item.querySelectorAll("span, .text-xs, .font-medium");
+        const textElements = item.querySelectorAll(
+            "span, .text-xs, .font-medium",
+        );
         textElements.forEach((el) => {
             textContent += " " + el.textContent;
         });
-        
+
         // Also get direct text content
         textContent += " " + item.textContent;
-        
+
         if (search === "" || textContent.toLowerCase().includes(search)) {
             item.style.display = "";
             hasVisibleItems = true;
@@ -8241,34 +8269,34 @@ function filterSelectorItems(searchText, containerSelector, itemSelector, noResu
  */
 function filterServerTable(searchText) {
     try {
-        const tbody = document.querySelector('tbody[data-testid="server-list"]');
+        const tbody = document.querySelector(
+            'tbody[data-testid="server-list"]',
+        );
         if (!tbody) {
-            console.warn('Server table not found');
+            console.warn("Server table not found");
             return;
         }
-        
+
         const rows = tbody.querySelectorAll('tr[data-testid="server-item"]');
         const search = searchText.toLowerCase().trim();
-        let visibleCount = 0;
 
         rows.forEach((row) => {
             let textContent = "";
-            
+
             // Get text from all cells in the row
-            const cells = row.querySelectorAll('td');
+            const cells = row.querySelectorAll("td");
             cells.forEach((cell) => {
                 textContent += " " + cell.textContent;
             });
-            
+
             if (search === "" || textContent.toLowerCase().includes(search)) {
                 row.style.display = "";
-                visibleCount++;
             } else {
                 row.style.display = "none";
             }
         });
     } catch (error) {
-        console.error('Error filtering server table:', error);
+        console.error("Error filtering server table:", error);
     }
 }
 
