@@ -11,7 +11,7 @@ and time-based restrictions.
 """
 
 # Standard
-from datetime import datetime
+from datetime import datetime, timezone
 import ipaddress
 import re
 from typing import Optional
@@ -172,7 +172,7 @@ class TokenScopingMiddleware:
         if not time_restrictions:
             return True  # No restrictions
 
-        now = datetime.utcnow()
+        now = datetime.now(tz=timezone.utc)
 
         # Check business hours restriction
         if time_restrictions.get("business_hours_only"):

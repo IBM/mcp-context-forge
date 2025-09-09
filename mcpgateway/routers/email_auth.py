@@ -164,7 +164,7 @@ def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     Returns:
         Tuple of (token_string, expires_in_seconds)
     """
-    now = datetime.utcnow()
+    now = datetime.now(tz=UTC)
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 

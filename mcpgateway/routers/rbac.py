@@ -12,7 +12,7 @@ Examples:
 """
 
 # Standard
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 from typing import Generator, List, Optional
 
@@ -421,7 +421,7 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
             user_agent=user.get("user_agent"),
         )
 
-        return PermissionCheckResponse(user_email=check_data.user_email, permission=check_data.permission, granted=granted, checked_at=datetime.utcnow(), checked_by=user["email"])
+        return PermissionCheckResponse(user_email=check_data.user_email, permission=check_data.permission, granted=granted, checked_at=datetime.now(tz=timezone.utc), checked_by=user["email"])
 
     except Exception as e:
         logger.error(f"Permission check failed: {e}")

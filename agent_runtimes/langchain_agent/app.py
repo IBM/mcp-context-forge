@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import time
@@ -66,7 +66,7 @@ async def health_check():
         tools_count = len(agent.get_available_tools())
         return HealthResponse(
             status="healthy",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(tz=timezone.utc).isoformat(),
             details={
                 "agent_initialized": agent.is_initialized(),
                 "tools_loaded": tools_count,
@@ -88,7 +88,7 @@ async def readiness_check():
 
         return ReadyResponse(
             ready=True,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(tz=timezone.utc).isoformat(),
             details={
                 "gateway_connection": await agent.test_gateway_connection(),
                 "tools_available": (len(agent.tools) > 0) or (len(agent.get_available_tools()) > 0),

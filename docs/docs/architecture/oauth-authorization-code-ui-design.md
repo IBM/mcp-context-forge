@@ -152,7 +152,7 @@ class TokenStorageService:
             encrypted_refresh = self.encryption.encrypt_secret(refresh_token)
 
         # Calculate expiration
-        expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+        expires_at = datetime.now(tz=timezone.utc) + timedelta(seconds=expires_in)
 
         # Create or update token record
         token_record = self.db.query(OAuthToken).filter(
@@ -166,7 +166,7 @@ class TokenStorageService:
             token_record.refresh_token = encrypted_refresh
             token_record.expires_at = expires_at
             token_record.scopes = scopes
-            token_record.updated_at = datetime.utcnow()
+            token_record.updated_at = datetime.now(tz=timezone.utc)
         else:
             # Create new record
             token_record = OAuthToken(
@@ -217,7 +217,7 @@ class TokenStorageService:
 
     def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:
         """Check if token is expired or near expiration."""
-        return datetime.utcnow() + timedelta(seconds=threshold_seconds) >= token_record.expires_at
+        return datetime.now(tz=timezone.utc) + timedelta(seconds=threshold_seconds) >= token_record.expires_at
 ```
 
 ### 2. Enhanced OAuth Manager
