@@ -5215,6 +5215,15 @@ async function testTool(toolId) {
                         });
 
                         wrapper.appendChild(input);
+
+                        if (itemTypes.includes("boolean")) {
+                            const hidden = document.createElement("input");
+                            hidden.type = "hidden";
+                            hidden.name = keyValidation.value;
+                            hidden.value = "false";
+                            wrapper.appendChild(hidden);
+                        }
+
                         wrapper.appendChild(delBtn);
                         return wrapper;
                     }
@@ -5258,6 +5267,7 @@ async function testTool(toolId) {
                             fieldInput.type = "number";
                         } else if (prop.type === "boolean") {
                             fieldInput.type = "checkbox";
+                            fieldInput.value = "true";
                         } else {
                             fieldInput = document.createElement("textarea");
                             fieldInput.rows = 1;
@@ -5284,6 +5294,15 @@ async function testTool(toolId) {
                     }
 
                     fieldDiv.appendChild(fieldInput);
+                    if (prop.default !== undefined) {
+                        if (fieldInput.type === "checkbox") {
+                            const hiddenInput = document.createElement("input");
+                            hiddenInput.type = "hidden";
+                            hiddenInput.value = "false";
+                            hiddenInput.name = keyValidation.value;
+                            fieldDiv.appendChild(hiddenInput);
+                        }
+                    }
                 }
 
                 container.appendChild(fieldDiv);
