@@ -8200,7 +8200,7 @@ function filterSelectorItems(
     if (!container) {
         return;
     }
-    
+
     const items = container.querySelectorAll(itemSelector);
     const search = searchText.toLowerCase().trim();
     let hasVisibleItems = false;
@@ -8226,11 +8226,11 @@ function filterSelectorItems(
             item.style.display = "none";
         }
     });
-    
+
     // Handle no results message
     const noResultsMessage = safeGetElement(noResultsId, true);
     const searchQuerySpan = safeGetElement(searchQueryId, true);
-    
+
     if (search !== "" && !hasVisibleItems) {
         if (noResultsMessage) {
             noResultsMessage.style.display = "block";
