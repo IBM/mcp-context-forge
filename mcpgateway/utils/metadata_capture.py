@@ -107,12 +107,14 @@ class MetadataCapture:
             'alice'
             >>> MetadataCapture.extract_username({"sub": "bob", "exp": 123})
             'bob'
+            >>> MetadataCapture.extract_username({"email": "user@example.com", "full_name": "User"})
+            'user@example.com'
         """
         if isinstance(user, str):
             return user
         elif isinstance(user, dict):
-            # Try to extract username from JWT payload
-            return user.get("username") or user.get("sub") or "unknown"
+            # Try to extract username from JWT payload or user context
+            return user.get("username") or user.get("sub") or user.get("email") or "unknown"
         else:
             return "unknown"
 

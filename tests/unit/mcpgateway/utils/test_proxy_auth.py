@@ -9,12 +9,16 @@ Unit tests for proxy authentication functionality.
 Tests the new MCP_CLIENT_AUTH_ENABLED and proxy authentication features.
 """
 
+# Standard
 import asyncio
-import pytest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import AsyncMock, Mock, patch
+
+# Third-Party
 from fastapi import HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
+import pytest
 
+# First-Party
 from mcpgateway.utils import verify_credentials as vc
 
 
@@ -43,6 +47,7 @@ class TestProxyAuthentication:
         """Create a mock request object."""
         request = Mock(spec=Request)
         request.headers = {}
+        request.cookies = {}  # Empty cookies dict, not Mock
         return request
 
     @pytest.mark.asyncio
@@ -131,6 +136,7 @@ class TestProxyAuthentication:
     @pytest.mark.asyncio
     async def test_mixed_auth_scenario(self, mock_settings, mock_request):
         """Test scenario with both proxy header and JWT token."""
+        # Third-Party
         import jwt
 
         mock_settings.mcp_client_auth_enabled = False
@@ -153,8 +159,11 @@ class TestWebSocketAuthentication:
     @pytest.mark.asyncio
     async def test_websocket_auth_required(self):
         """Test that WebSocket requires authentication when enabled."""
-        from fastapi import WebSocket
+        # Standard
         from unittest.mock import AsyncMock
+
+        # Third-Party
+        from fastapi import WebSocket
 
         # Create mock WebSocket
         websocket = AsyncMock(spec=WebSocket)
@@ -169,6 +178,7 @@ class TestWebSocketAuthentication:
             mock_settings.trust_proxy_auth = False
 
             # Import and call the websocket_endpoint function
+            # First-Party
             from mcpgateway.main import websocket_endpoint
 
             # Should close connection due to missing auth
@@ -178,8 +188,11 @@ class TestWebSocketAuthentication:
     @pytest.mark.asyncio
     async def test_websocket_with_token_query_param(self):
         """Test WebSocket authentication with token in query parameters."""
-        from fastapi import WebSocket
+        # Standard
         from unittest.mock import AsyncMock
+
+        # Third-Party
+        from fastapi import WebSocket
         import jwt
 
         # Create mock WebSocket
@@ -198,6 +211,7 @@ class TestWebSocketAuthentication:
 
             # Mock verify_jwt_token to succeed
             with patch('mcpgateway.main.verify_jwt_token', new=AsyncMock(return_value={'sub': 'test-user'})):
+                # First-Party
                 from mcpgateway.main import websocket_endpoint
 
                 try:
@@ -212,8 +226,11 @@ class TestWebSocketAuthentication:
     @pytest.mark.asyncio
     async def test_websocket_with_proxy_auth(self):
         """Test WebSocket authentication with proxy headers."""
-        from fastapi import WebSocket
+        # Standard
         from unittest.mock import AsyncMock
+
+        # Third-Party
+        from fastapi import WebSocket
 
         # Create mock WebSocket
         websocket = AsyncMock(spec=WebSocket)
@@ -230,6 +247,7 @@ class TestWebSocketAuthentication:
             mock_settings.auth_required = False
             mock_settings.port = 8000
 
+            # First-Party
             from mcpgateway.main import websocket_endpoint
 
             try:
@@ -240,3 +258,50 @@ class TestWebSocketAuthentication:
 
             # Should accept connection with proxy auth
             websocket.accept.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_streamable_http_auth_with_proxy_header(self):
+        """streamable_http_auth should allow request when proxy header present and auth disabled."""
+        # from types import SimpleNamespace
+        # from starlette.datastructures import Headers
+        from mcpgateway.transports.streamablehttp_transport import streamable_http_auth
+
+        # Build ASGI scope
+        scope = {
+            "type": "http",
+            "path": "/servers/123/mcp",
+            "headers": [(b"x-authenticated-user", b"proxy-user")],
+        }
+        # Patch settings dynamically
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.proxy_user_header = "X-Authenticated-User"
+            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_algorithm = "HS256"
+            mock_settings.auth_required = False
+
+            allowed = await streamable_http_auth(scope, AsyncMock(), AsyncMock())
+            assert allowed is True
+
+    @pytest.mark.asyncio
+    async def test_streamable_http_auth_no_header_denied_when_required(self):
+        """Should deny when proxy header missing and auth_required true."""
+        from mcpgateway.transports.streamablehttp_transport import streamable_http_auth
+        scope = {
+            "type": "http",
+            "path": "/servers/123/mcp",
+            "headers": [],
+        }
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.proxy_user_header = "X-Authenticated-User"
+            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_algorithm = "HS256"
+            mock_settings.auth_required = True
+            send = AsyncMock()
+            ok = await streamable_http_auth(scope, AsyncMock(), send)
+            # When denied, function returns False and send called with 401 response
+            assert ok is False
+            assert any(isinstance(call.args[0], dict) and call.args[0].get("status") == 401 for call in send.mock_calls)

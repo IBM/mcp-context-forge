@@ -5,12 +5,13 @@ This module provides comprehensive database schema comparison and validation
 capabilities for ensuring migration integrity across MCP Gateway versions.
 """
 
+# Standard
+from dataclasses import dataclass
 import difflib
 import logging
+from pathlib import Path
 import re
 import tempfile
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -533,6 +534,7 @@ class SchemaValidator:
                 "foreign_keys": table_schema.foreign_keys
             }
 
+        # Standard
         import json
         with open(output_path, 'w') as f:
             json.dump({
@@ -555,6 +557,7 @@ class SchemaValidator:
         """
         logger.info(f"📂 Loading schema snapshot: {snapshot_file}")
 
+        # Standard
         import json
         with open(snapshot_file, 'r') as f:
             data = json.load(f)

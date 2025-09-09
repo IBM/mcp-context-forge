@@ -309,7 +309,7 @@ DOB: 01/15/1985
 ## CURL Command to Test
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
 
 # Then test with a prompt containing various PII
 curl -X GET "http://localhost:4444/prompts/test_prompt" \

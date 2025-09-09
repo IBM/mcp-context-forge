@@ -81,7 +81,7 @@ To access the APIs you need to generate your JWT token using the same `JWT_SECRE
 
 ```bash
 # Generate a one-off token for the default admin user
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com)
 echo ${MCPGATEWAY_BEARER_TOKEN} # Check that the key was generated
 ```
 
@@ -224,7 +224,7 @@ Test the API endpoints with the generated `MCPGATEWAY_BEARER_TOKEN`:
 
 ```bash
 # Generate a one-off token for the default admin user
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com)
 
 # Call a protected endpoint. Since there are not tools, initially this just returns `[]`
 curl -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \

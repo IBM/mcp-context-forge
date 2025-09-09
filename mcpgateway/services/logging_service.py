@@ -20,6 +20,13 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 # Third-Party
 from pythonjsonlogger import jsonlogger  # You may need to install python-json-logger package
 
+try:
+    # Optional import; only used for filtering a known benign upstream error
+    # Third-Party
+    from anyio import ClosedResourceError as AnyioClosedResourceError  # type: ignore  # pylint: disable=invalid-name
+except Exception:  # pragma: no cover - environment without anyio
+    AnyioClosedResourceError = None  # pylint: disable=invalid-name  # fallback if anyio is not present
+
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.models import LogLevel
@@ -224,6 +231,9 @@ class LoggingService:
 
         logging.info("Logging service initialized")
 
+        # Suppress noisy upstream logs for normal stream closures in MCP streamable HTTP
+        self._install_closedresourceerror_filter()
+
     async def shutdown(self) -> None:
         """Shutdown logging service.
 
@@ -236,6 +246,91 @@ class LoggingService:
         # Clear subscribers
         self._subscribers.clear()
         logging.info("Logging service shutdown")
+
+    def _install_closedresourceerror_filter(self) -> None:
+        """Install a filter to drop benign ClosedResourceError logs from upstream MCP.
+
+        The MCP streamable HTTP server logs an ERROR when the in-memory channel is
+        closed during normal client disconnects, raising ``anyio.ClosedResourceError``.
+        This filter suppresses those specific records to keep logs clean.
+
+        Examples:
+            >>> # Initialize service (installs filter)
+            >>> import asyncio, logging, anyio
+            >>> service = LoggingService()
+            >>> asyncio.run(service.initialize())
+            >>> # Locate the installed filter on the target logger
+            >>> target = logging.getLogger('mcp.server.streamable_http')
+            >>> flts = [f for f in target.filters if f.__class__.__name__.endswith('SuppressClosedResourceErrorFilter')]
+            >>> len(flts) >= 1
+            True
+            >>> filt = flts[0]
+            >>> # Non-target logger should pass through even if message matches
+            >>> rec_other = logging.makeLogRecord({'name': 'other.logger', 'msg': 'ClosedResourceError'})
+            >>> filt.filter(rec_other)
+            True
+            >>> # Target logger with message containing ClosedResourceError should be suppressed
+            >>> rec_target_msg = logging.makeLogRecord({'name': 'mcp.server.streamable_http', 'msg': 'ClosedResourceError in normal shutdown'})
+            >>> filt.filter(rec_target_msg)
+            False
+            >>> # Target logger with ClosedResourceError in exc_info should be suppressed
+            >>> try:
+            ...     raise anyio.ClosedResourceError
+            ... except anyio.ClosedResourceError as e:
+            ...     rec_target_exc = logging.makeLogRecord({
+            ...         'name': 'mcp.server.streamable_http',
+            ...         'msg': 'Error in message router',
+            ...         'exc_info': (e.__class__, e, None),
+            ...     })
+            >>> filt.filter(rec_target_exc)
+            False
+            >>> # Cleanup
+            >>> asyncio.run(service.shutdown())
+        """
+
+        class _SuppressClosedResourceErrorFilter(logging.Filter):
+            """Filter to suppress ClosedResourceError exceptions from MCP streamable HTTP logger.
+
+            This filter prevents noisy ClosedResourceError exceptions from the upstream
+            MCP streamable HTTP implementation from cluttering the logs. These errors
+            are typically harmless connection cleanup events.
+            """
+
+            def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+                """Filter log records to suppress ClosedResourceError exceptions.
+
+                Args:
+                    record: The log record to evaluate
+
+                Returns:
+                    True to allow the record through, False to suppress it
+                """
+                # Apply only to upstream MCP streamable HTTP logger
+                if not record.name.startswith("mcp.server.streamable_http"):
+                    return True
+
+                # If exception info is present, check its type
+                exc_info = getattr(record, "exc_info", None)
+                if exc_info and AnyioClosedResourceError is not None:
+                    exc_type, exc, _tb = exc_info
+                    try:
+                        if isinstance(exc, AnyioClosedResourceError) or (getattr(exc_type, "__name__", "") == "ClosedResourceError"):
+                            return False
+                    except Exception:
+                        # Be permissive if anything goes wrong, don't drop logs accidentally
+                        return True
+
+                # Fallback: drop if message text clearly indicates ClosedResourceError
+                try:
+                    msg = record.getMessage()
+                    if "ClosedResourceError" in msg:
+                        return False
+                except Exception:
+                    pass
+                return True
+
+        target_logger = logging.getLogger("mcp.server.streamable_http")
+        target_logger.addFilter(_SuppressClosedResourceErrorFilter())
 
     def get_logger(self, name: str) -> logging.Logger:
         """Get or create logger instance.

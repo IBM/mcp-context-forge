@@ -25,7 +25,7 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
-    ToolPreInvokeResult
+    ToolPreInvokeResult,
 )
 
 

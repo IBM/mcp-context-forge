@@ -254,21 +254,14 @@ plugins:
 ## Plugin Development Best Practices
 
 ### Error Handling
-```python
-async def tool_pre_invoke(self, payload: ToolPreInvokePayload) -> ToolPreInvokeResult:
-    try:
-        # Your plugin logic
-        result = await self._process_payload(payload)
-        return ToolPreInvokeResult(result=PluginResult.CONTINUE)
-    except Exception as e:
-        self.logger.error(f"Plugin error: {e}")
-        if self.mode == PluginMode.ENFORCE:
-            return ToolPreInvokeResult(
-                result=PluginResult.BLOCK,
-                message=f"Plugin failed: {e}"
-            )
-        return ToolPreInvokeResult(result=PluginResult.CONTINUE)
-```
+
+Errors inside a plugin should be raised as exceptions.  The plugin manager will catch the error, and its behavior depends on both the gateway's and plugin's configuration as follows:
+
+1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of the MCP Context Forge regardless of the plugin mode.
+2. if `plugin_settings.fail_on_plugin_error` is set to false the error is handled based off of the plugin mode in the plugin's config as follows:
+  * if `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.
+  * if `mode` is `enforce_ignore_error`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
+  * if `mode` is `permissive`, execution is allowed to proceed whether there are errors or violations. Both are logged.
 
 ### Logging and Monitoring
 ```python
@@ -283,6 +276,7 @@ async def tool_pre_invoke(self, payload: ToolPreInvokePayload) -> ToolPreInvokeR
 ```
 
 ### Configuration Validation
+
 ```python
 def validate_config(self) -> None:
     """Validate plugin configuration."""

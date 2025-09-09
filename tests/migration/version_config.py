@@ -6,8 +6,9 @@ following an n-2 support policy where we test the current version
 and the two previous versions.
 """
 
-from typing import List, Tuple, Dict, Any
+# Standard
 from datetime import datetime
+from typing import Any, Dict, List, Tuple
 
 
 class VersionConfig:

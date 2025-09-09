@@ -108,13 +108,13 @@ def upgrade() -> None:
     print("Existing installation detected. Starting data and schema migration...")
 
     # ── STAGE 1: ADD NEW NULLABLE COLUMNS AS PLACEHOLDERS ─────────────────
-    op.add_column("gateways", sa.Column("slug", sa.String(), nullable=True))
+    op.add_column("gateways", sa.Column("slug", sa.String(255), nullable=True))
     op.add_column("gateways", sa.Column("id_new", sa.String(36), nullable=True))
 
     op.add_column("tools", sa.Column("id_new", sa.String(36), nullable=True))
-    op.add_column("tools", sa.Column("original_name", sa.String(), nullable=True))
-    op.add_column("tools", sa.Column("original_name_slug", sa.String(), nullable=True))
-    op.add_column("tools", sa.Column("name_new", sa.String(), nullable=True))
+    op.add_column("tools", sa.Column("original_name", sa.String(255), nullable=True))
+    op.add_column("tools", sa.Column("original_name_slug", sa.String(255), nullable=True))
+    op.add_column("tools", sa.Column("name_new", sa.String(255), nullable=True))
     op.add_column("tools", sa.Column("gateway_id_new", sa.String(36), nullable=True))
 
     op.add_column("resources", sa.Column("gateway_id_new", sa.String(36), nullable=True))
@@ -523,7 +523,7 @@ def downgrade() -> None:
         # Add back old columns
         batch_op.add_column(sa.Column("id", sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column("gateway_id", sa.Integer(), nullable=True))
-        batch_op.add_column(sa.Column("name", sa.String(), nullable=True))
+        batch_op.add_column(sa.Column("name", sa.String(255), nullable=True))
 
     with op.batch_alter_table("servers") as batch_op:
         batch_op.drop_constraint("pk_servers", type_="primarykey")

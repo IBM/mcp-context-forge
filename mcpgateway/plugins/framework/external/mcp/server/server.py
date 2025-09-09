@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
+from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, PLUGIN_NAME, RESULT
 from mcpgateway.plugins.framework.errors import convert_exception_to_error
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.manager import DEFAULT_PLUGIN_TIMEOUT, PluginManager
@@ -117,36 +118,42 @@ class ExternalPluginServer:
             >>> import asyncio
             >>> import os
             >>> os.environ["PYTHONPATH"] = "."
-            >>> from mcpgateway.plugins.framework import PromptPrehookPayload, PluginContext, PromptPrehookResult
+            >>> from mcpgateway.plugins.framework import GlobalContext, PromptPrehookPayload, PluginContext, PromptPrehookResult
             >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
             >>> def prompt_pre_fetch_func(plugin: Plugin, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
             ...     return plugin.prompt_pre_fetch(payload, context)
             >>> payload = PromptPrehookPayload(name="test_prompt", args={"user": "This is so innovative"})
-            >>> context = PluginContext(request_id="1", server_id="2")
+            >>> context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
             >>> initialized = asyncio.run(server.initialize())
             >>> initialized
             True
             >>> result = asyncio.run(server.invoke_hook(PromptPrehookPayload, prompt_pre_fetch_func, "DenyListPlugin", payload.model_dump(), context.model_dump()))
             >>> result is not None
             True
-            >>> result["continue_processing"]
+            >>> result["result"]["continue_processing"]
             False
         """
         global_plugin_manager = PluginManager()
         plugin_timeout = global_plugin_manager.config.plugin_settings.plugin_timeout if global_plugin_manager.config else DEFAULT_PLUGIN_TIMEOUT
         plugin = global_plugin_manager.get_plugin(plugin_name)
+        result_payload: dict[str, Any] = {PLUGIN_NAME: plugin_name}
         try:
             if plugin:
                 _payload = payload_model.model_validate(payload)
                 _context = PluginContext.model_validate(context)
                 result = await asyncio.wait_for(hook_function(plugin, _payload, _context), plugin_timeout)
-                return result.model_dump()
+                result_payload[RESULT] = result.model_dump()
+                if not _context.is_empty():
+                    result_payload[CONTEXT] = _context.model_dump()
+                return result_payload
             raise ValueError(f"Unable to retrieve plugin {plugin_name} to execute.")
         except asyncio.TimeoutError:
-            return PluginErrorModel(message=f"Plugin {plugin_name} timed out from execution after {plugin_timeout} seconds.", plugin_name=plugin_name).model_dump()
+            result_payload[ERROR] = PluginErrorModel(message=f"Plugin {plugin_name} timed out from execution after {plugin_timeout} seconds.", plugin_name=plugin_name).model_dump()
+            return result_payload
         except Exception as ex:
             logger.exception(ex)
-            return convert_exception_to_error(ex, plugin_name=plugin_name).model_dump()
+            result_payload[ERROR] = convert_exception_to_error(ex, plugin_name=plugin_name).model_dump()
+            return result_payload
 
     async def initialize(self) -> bool:
         """Initialize the plugin server.

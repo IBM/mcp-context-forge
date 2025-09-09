@@ -95,6 +95,11 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
 
     Raises:
         HTTPException: 404 if file not found or well-known disabled
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_well_known_file)
+        True
     """
     if not settings.well_known_enabled:
         raise HTTPException(status_code=404, detail="Not found")

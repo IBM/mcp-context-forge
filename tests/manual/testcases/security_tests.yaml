@@ -1,0 +1,173 @@
+# MCP Gateway v0.7.0 - Security Tests
+# Security and penetration testing
+# Focus: Attack scenarios and defense validation
+
+worksheet_name: "Security Tests"
+description: "Security validation and penetration testing with actual attack scenarios"
+priority: "HIGH"
+estimated_time: "90-180 minutes"
+warning: "Performs actual attack scenarios - test environment only"
+
+headers:
+  - "Test ID"
+  - "Attack Type"
+  - "Target"
+  - "Risk Level"
+  - "Attack Steps"
+  - "Expected Defense"
+  - "Actual Defense"
+  - "Vulnerability Found"
+  - "Status"
+  - "Tester"
+  - "Date"
+  - "Remediation"
+  - "Notes"
+
+tests:
+  - test_id: "SEC-001"
+    attack_type: "SQL Injection"
+    target: "Teams API"
+    risk_level: "Critical"
+    attack_steps: |
+      1. Get valid JWT token from admin login
+      2. Prepare malicious team name with SQL injection:
+         {"name":"'; DROP TABLE users; --","description":"injection test"}
+      3. Execute attack:
+         curl -X POST http://localhost:4444/teams -H "Authorization: Bearer <TOKEN>" -d '{"name":"\\"; DROP TABLE users; --"}'
+      4. Check database integrity:
+         sqlite3 mcp.db '.tables' (verify users table still exists)
+      5. Check error response handling
+    expected_defense: "Input sanitized, parameterized queries prevent injection, graceful error handling"
+    validation: "Database remains intact, no SQL executed, proper error returned"
+
+  - test_id: "SEC-002"
+    attack_type: "JWT Token Manipulation"
+    target: "Authentication System"
+    risk_level: "Critical"
+    attack_steps: |
+      1. Obtain valid JWT token through normal login
+      2. Decode JWT payload (use jwt.io or similar tool)
+      3. Modify claims (e.g., change user email, add admin role)
+      4. Re-encode JWT with different signature
+      5. Attempt to use modified token:
+         curl -H "Authorization: Bearer <MODIFIED_TOKEN>" http://localhost:4444/admin/users
+      6. Verify access is denied
+    expected_defense: "Token signature validation prevents tampering, access denied"
+    validation: "Modified tokens rejected, signature verification works"
+
+  - test_id: "SEC-003"
+    attack_type: "Team Isolation Bypass"
+    target: "Multi-tenancy Authorization"
+    risk_level: "Critical"
+    attack_steps: |
+      1. Create two test users in different teams
+      2. User A creates a private resource in Team 1
+      3. Get User B's JWT token
+      4. User B attempts to access User A's resource:
+         curl -H "Authorization: Bearer <USER_B_TOKEN>" http://localhost:4444/resources/{USER_A_RESOURCE_ID}
+      5. Verify access is denied
+      6. Test with direct resource ID guessing
+    expected_defense: "Team boundaries strictly enforced, cross-team access blocked"
+    validation: "Access denied, team isolation maintained"
+
+  - test_id: "SEC-004"
+    attack_type: "Privilege Escalation"
+    target: "RBAC System"
+    risk_level: "Critical"
+    attack_steps: |
+      1. Login as regular user (non-admin)
+      2. Attempt to access admin-only endpoints:
+         curl -H "Authorization: Bearer <USER_TOKEN>" http://localhost:4444/admin/users
+      3. Try to modify own user role in database
+      4. Attempt direct admin API calls
+      5. Test admin UI access with regular user credentials
+    expected_defense: "Admin privileges protected, privilege escalation prevented"
+    validation: "Admin functions inaccessible to regular users"
+
+  - test_id: "SEC-005"
+    attack_type: "Cross-Site Scripting (XSS)"
+    target: "Admin UI"
+    risk_level: "High"
+    attack_steps: |
+      1. Access admin UI with valid credentials
+      2. Create tool with malicious name:
+         Name: <script>alert("XSS Test")</script>
+      3. Save tool and navigate to tools list
+      4. Check if JavaScript executes in browser
+      5. Test other input fields for XSS vulnerabilities
+      6. Check browser console for script execution
+    expected_defense: "Script tags escaped or sanitized, no JavaScript execution"
+    validation: "No alert boxes, scripts properly escaped in HTML"
+
+  - test_id: "SEC-006"
+    attack_type: "Cross-Site Request Forgery (CSRF)"
+    target: "State-Changing Operations"
+    risk_level: "High"
+    attack_steps: |
+      1. Create malicious HTML page with form posting to gateway
+      2. Form targets state-changing endpoint (e.g., team creation)
+      3. Get authenticated user to visit malicious page
+      4. Check if operation executes without user consent
+      5. Verify CSRF token requirements
+      6. Test cross-origin request blocking
+    expected_defense: "CSRF tokens required, cross-origin requests properly blocked"
+    validation: "Operations require explicit user consent and CSRF protection"
+
+  - test_id: "SEC-007"
+    attack_type: "Password Brute Force"
+    target: "Login Endpoint"
+    risk_level: "Medium"
+    attack_steps: |
+      1. Script multiple rapid login attempts with wrong passwords:
+         for i in {1..10}; do curl -X POST http://localhost:4444/auth/login -d '{"email":"admin@example.com","password":"wrong$i"}'; done
+      2. Monitor response times and status codes
+      3. Check for rate limiting implementation
+      4. Test account lockout after failed attempts
+      5. Verify lockout duration enforcement
+    expected_defense: "Account locked after multiple failures, rate limiting enforced"
+    validation: "Brute force attacks mitigated by lockout and rate limiting"
+
+  - test_id: "SEC-008"
+    attack_type: "File Upload Attack"
+    target: "Resource Management"
+    risk_level: "High"
+    attack_steps: |
+      1. Try uploading executable file (.exe, .sh)
+      2. Attempt script file upload (.py, .js, .php)
+      3. Test oversized file upload
+      4. Try files with malicious names
+      5. Attempt path traversal in filenames (../../../etc/passwd)
+      6. Check file type and size validation
+    expected_defense: "File type validation, size limits enforced, path sanitization"
+    validation: "Malicious uploads blocked, validation errors returned"
+
+  - test_id: "SEC-009"
+    attack_type: "API Rate Limiting"
+    target: "DoS Prevention"
+    risk_level: "Medium"
+    attack_steps: |
+      1. Script rapid API requests to test rate limiting:
+         for i in {1..100}; do curl -s http://localhost:4444/health; done
+      2. Monitor response times and status codes
+      3. Check for rate limit headers in responses
+      4. Verify throttling and backoff mechanisms
+      5. Test rate limiting on authenticated endpoints
+    expected_defense: "Rate limits enforced, DoS protection active, proper HTTP status codes"
+    validation: "Rate limiting prevents abuse, service remains stable"
+
+  - test_id: "SEC-010"
+    attack_type: "Information Disclosure"
+    target: "Error Handling"
+    risk_level: "Medium"
+    attack_steps: |
+      1. Trigger various error conditions:
+         - Invalid JSON syntax
+         - Missing required fields
+         - Invalid authentication
+         - Access denied scenarios
+      2. Analyze error messages for sensitive information
+      3. Check for stack traces in responses
+      4. Look for database connection strings or paths
+      5. Verify no internal system information disclosed
+    expected_defense: "No sensitive information disclosed in error responses"
+    validation: "Error messages are user-friendly without exposing system internals"

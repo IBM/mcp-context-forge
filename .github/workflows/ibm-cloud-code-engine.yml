@@ -89,13 +89,13 @@ jobs:
       # 0️⃣  Checkout repository
       # -----------------------------------------------------------
       - name: ⬇️  Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -----------------------------------------------------------
       # 1️⃣  Set up Docker Buildx
       # -----------------------------------------------------------
       - name: 🛠️  Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.11.1
 
       # -----------------------------------------------------------
       # 2️⃣  Restore BuildKit layer cache

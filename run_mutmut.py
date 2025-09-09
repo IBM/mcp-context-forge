@@ -5,11 +5,13 @@ Workaround script for mutmut v3 stats collection failure.
 Generates mutants and then runs them despite stats failure.
 """
 
+# Standard
+import json
+import os
+from pathlib import Path
 import subprocess
 import sys
-import os
-import json
-from pathlib import Path
+
 
 def run_command(cmd):
     """Run a shell command and return output."""
@@ -38,6 +40,7 @@ def main():
 
     # Show some output to indicate progress
     if "done in" in stdout:
+        # Standard
         import re
         match = re.search(r'done in (\d+)ms', stdout)
         if match:
@@ -60,6 +63,7 @@ def main():
         return 1
 
     # Sample mutants for quicker testing
+    # Standard
     import random
 
     print(f"🔍 Found {len(all_mutants)} total mutants")

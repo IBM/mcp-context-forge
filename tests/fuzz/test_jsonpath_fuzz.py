@@ -6,9 +6,13 @@ Authors: Mihai Criveti
 
 Property-based fuzz testing for JSONPath processing.
 """
-from hypothesis import given, strategies as st, assume
-import pytest
+# Third-Party
 from fastapi import HTTPException
+from hypothesis import assume, given
+from hypothesis import strategies as st
+import pytest
+
+# First-Party
 from mcpgateway.config import jsonpath_modifier
 
 

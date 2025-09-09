@@ -10,6 +10,7 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 
 | Page | Description |
 |------|-------------|
+| [Configuration](configuration.md) | **Complete configuration reference** - databases, environment variables, and deployment settings |
 | [Backups](backup.md) | How to persist and restore your database, configs, and resource state |
 | [Export & Import](export-import.md) | Complete configuration management with CLI, API, and Admin UI |
 | [Export/Import Tutorial](export-import-tutorial.md) | Step-by-step tutorial for getting started with export/import |
@@ -24,6 +25,14 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 ## 🔐 Runtime Config via `.env`
 
 Most operational settings (logging level, database pool size, auth mode) are controlled through `.env` or environment variables.
+
+!!! info "MariaDB & MySQL Fully Supported"
+    MCP Gateway now has **complete MariaDB/MySQL support** alongside SQLite and PostgreSQL:
+
+    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
+    - Connection string: `DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp`
+    - See [Configuration Reference](configuration.md) for complete setup instructions
 
 Update the file and restart the container or process to apply changes.
 

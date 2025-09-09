@@ -39,7 +39,7 @@ def test_rpc_vulnerability():
     if not bearer_token:
         print("Please set MCPGATEWAY_BEARER_TOKEN environment variable")
         print("You can generate one with:")
-        print("  export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)")
+        print("  export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)")
         sys.exit(1)
 
     headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}

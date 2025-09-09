@@ -9,19 +9,17 @@ Tests for CLI export/import to improve coverage.
 
 # Standard
 import argparse
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
 import json
+import os
+from pathlib import Path
+import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.cli_export_import import (
-    create_parser, get_auth_token, AuthenticationError, CLIError
-)
+from mcpgateway.cli_export_import import AuthenticationError, CLIError, create_parser, get_auth_token
 
 
 @pytest.mark.asyncio
@@ -190,8 +188,11 @@ def test_parser_subcommands_exist():
 
 def test_main_with_subcommands_export():
     """Test main_with_subcommands with export."""
-    from mcpgateway.cli_export_import import main_with_subcommands
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import main_with_subcommands
 
     with patch.object(sys, 'argv', ['mcpgateway', 'export', '--help']):
         with patch('mcpgateway.cli_export_import.asyncio.run') as mock_run:
@@ -202,8 +203,11 @@ def test_main_with_subcommands_export():
 
 def test_main_with_subcommands_import():
     """Test main_with_subcommands with import."""
-    from mcpgateway.cli_export_import import main_with_subcommands
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import main_with_subcommands
 
     with patch.object(sys, 'argv', ['mcpgateway', 'import', '--help']):
         with patch('mcpgateway.cli_export_import.asyncio.run') as mock_run:
@@ -214,8 +218,11 @@ def test_main_with_subcommands_import():
 
 def test_main_with_subcommands_fallback():
     """Test main_with_subcommands fallback to original CLI."""
-    from mcpgateway.cli_export_import import main_with_subcommands
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import main_with_subcommands
 
     with patch.object(sys, 'argv', ['mcpgateway', '--version']):
         with patch('mcpgateway.cli.main') as mock_main:
@@ -226,6 +233,7 @@ def test_main_with_subcommands_fallback():
 @pytest.mark.asyncio
 async def test_make_authenticated_request_no_auth():
     """Test make_authenticated_request when no auth is configured."""
+    # First-Party
     from mcpgateway.cli_export_import import make_authenticated_request
 
     with patch('mcpgateway.cli_export_import.get_auth_token', return_value=None):
@@ -236,6 +244,7 @@ async def test_make_authenticated_request_no_auth():
 # Test the authentication flow by testing the token logic without the full HTTP call
 def test_make_authenticated_request_auth_logic():
     """Test the authentication logic in make_authenticated_request."""
+    # First-Party
     from mcpgateway.cli_export_import import make_authenticated_request
 
     # Test that the function creates the right headers for basic auth
@@ -265,10 +274,12 @@ def test_make_authenticated_request_auth_logic():
                 return {"success": True, "headers": headers}
 
             # Replace the function temporarily
+            # First-Party
             import mcpgateway.cli_export_import
             mcpgateway.cli_export_import.make_authenticated_request = mock_make_request
 
             try:
+                # Standard
                 import asyncio
                 result = asyncio.run(mock_make_request("GET", "/test"))
                 assert result["success"] is True
@@ -280,6 +291,7 @@ def test_make_authenticated_request_auth_logic():
 
 def test_make_authenticated_request_bearer_auth_logic():
     """Test the bearer authentication logic in make_authenticated_request."""
+    # First-Party
     from mcpgateway.cli_export_import import make_authenticated_request
 
     # Test that the function creates the right headers for bearer auth
@@ -309,10 +321,12 @@ def test_make_authenticated_request_bearer_auth_logic():
                 return {"success": True, "headers": headers}
 
             # Replace the function temporarily
+            # First-Party
             import mcpgateway.cli_export_import
             mcpgateway.cli_export_import.make_authenticated_request = mock_make_request
 
             try:
+                # Standard
                 import asyncio
                 result = asyncio.run(mock_make_request("POST", "/api"))
                 assert result["success"] is True
@@ -325,9 +339,12 @@ def test_make_authenticated_request_bearer_auth_logic():
 @pytest.mark.asyncio
 async def test_export_command_success():
     """Test successful export command execution."""
-    from mcpgateway.cli_export_import import export_command
-    import tempfile
+    # Standard
     import os
+    import tempfile
+
+    # First-Party
+    from mcpgateway.cli_export_import import export_command
 
     # Mock export data
     export_data = {
@@ -378,9 +395,12 @@ async def test_export_command_success():
 @pytest.mark.asyncio
 async def test_export_command_with_output_file():
     """Test export command with specified output file."""
-    from mcpgateway.cli_export_import import export_command
-    import tempfile
+    # Standard
     import json
+    import tempfile
+
+    # First-Party
+    from mcpgateway.cli_export_import import export_command
 
     export_data = {
         "metadata": {"entity_counts": {"tools": 1}},
@@ -414,8 +434,11 @@ async def test_export_command_with_output_file():
 @pytest.mark.asyncio
 async def test_export_command_error_handling():
     """Test export command error handling."""
-    from mcpgateway.cli_export_import import export_command
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import export_command
 
     args = MagicMock()
     args.types = None
@@ -438,8 +461,11 @@ async def test_export_command_error_handling():
 @pytest.mark.asyncio
 async def test_import_command_file_not_found():
     """Test import command when input file doesn't exist."""
-    from mcpgateway.cli_export_import import import_command
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     args = MagicMock()
     args.input_file = "/nonexistent/file.json"
@@ -455,9 +481,12 @@ async def test_import_command_file_not_found():
 @pytest.mark.asyncio
 async def test_import_command_success_dry_run():
     """Test successful import command in dry-run mode."""
-    from mcpgateway.cli_export_import import import_command
-    import tempfile
+    # Standard
     import json
+    import tempfile
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     # Create test import data
     import_data = {
@@ -518,9 +547,12 @@ async def test_import_command_success_dry_run():
 @pytest.mark.asyncio
 async def test_import_command_with_include_parameter():
     """Test import command with selective import parameter."""
-    from mcpgateway.cli_export_import import import_command
-    import tempfile
+    # Standard
     import json
+    import tempfile
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     import_data = {"tools": [{"name": "test_tool"}]}
     api_response = {
@@ -562,10 +594,13 @@ async def test_import_command_with_include_parameter():
 @pytest.mark.asyncio
 async def test_import_command_with_errors_and_failures():
     """Test import command with errors and failures."""
-    from mcpgateway.cli_export_import import import_command
-    import tempfile
+    # Standard
     import json
     import sys
+    import tempfile
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     import_data = {"tools": [{"name": "test_tool"}]}
     api_response = {
@@ -607,9 +642,12 @@ async def test_import_command_with_errors_and_failures():
 @pytest.mark.asyncio
 async def test_import_command_json_parse_error():
     """Test import command with invalid JSON file."""
-    from mcpgateway.cli_export_import import import_command
-    import tempfile
+    # Standard
     import sys
+    import tempfile
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     # Create file with invalid JSON
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -641,8 +679,11 @@ async def test_import_command_json_parse_error():
 
 def test_main_with_subcommands_no_func_attribute():
     """Test main_with_subcommands when args don't have func attribute."""
-    from mcpgateway.cli_export_import import main_with_subcommands
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import main_with_subcommands
 
     # Mock parser that returns args without func attribute
     mock_parser = MagicMock()
@@ -662,8 +703,11 @@ def test_main_with_subcommands_no_func_attribute():
 
 def test_main_with_subcommands_keyboard_interrupt():
     """Test main_with_subcommands handling KeyboardInterrupt."""
-    from mcpgateway.cli_export_import import main_with_subcommands
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import main_with_subcommands
 
     mock_parser = MagicMock()
     mock_args = MagicMock()
@@ -684,8 +728,11 @@ def test_main_with_subcommands_keyboard_interrupt():
 
 def test_main_with_subcommands_include_dependencies_handling():
     """Test main_with_subcommands handling of include_dependencies flag."""
-    from mcpgateway.cli_export_import import main_with_subcommands
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import main_with_subcommands
 
     mock_parser = MagicMock()
     mock_args = MagicMock()

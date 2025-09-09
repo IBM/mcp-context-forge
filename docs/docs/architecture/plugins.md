@@ -109,20 +109,20 @@ flowchart TB
     Registry --> SelfContained
     Registry --> External
     Registry --> Hybrid
-    
+
     Executor --> PPF
     Executor --> PPO
     Executor --> TPI
     Executor --> TPO
     Executor --> RPF
     Executor --> RPO
-    
+
     External --> MCP
     MCP --> HTTP
     MCP --> WS
     MCP --> STDIO
     MCP --> SSE
-    
+
     style Client fill:#e1f5fe
     style Gateway fill:#f3e5f5
     style PM fill:#fff3e0
@@ -737,7 +737,7 @@ FEDERATION_POST_SYNC = "federation_post_sync"  # Post-federation processing
 #### Current Integrations
 
 - ✅ **LlamaGuard:** Content safety classification and filtering
-- ✅ **OpenAI Moderation API:** Commercial content moderation  
+- ✅ **OpenAI Moderation API:** Commercial content moderation
 - ✅ **Custom MCP Servers:** Any language, any protocol
 
 #### Planned Integrations (Phase 2-3)
@@ -764,7 +764,7 @@ flowchart TD
         Interface["📋 Plugin Interface\\n(Language Agnostic)"]
         Protocol["📡 MCP Protocol\\n(Cross-Platform)"]
     end
-    
+
     subgraph "Host Applications"
         MCPGateway["🌐 MCP Gateway\\n(Primary Use Case)"]
         WebFramework["🕷️ FastAPI/Flask App"]
@@ -772,16 +772,16 @@ flowchart TD
         Microservice["⚙️ Microservice"]
         DataPipeline["📊 Data Pipeline"]
     end
-    
+
     Framework --> Interface
     Interface --> Protocol
-    
+
     Framework --> MCPGateway
     Framework --> WebFramework
     Framework --> CLITool
     Framework --> Microservice
     Framework --> DataPipeline
-    
+
     style Framework fill:#fff3e0
     style Protocol fill:#e8f5e8
     style MCPGateway fill:#e3f2fd
@@ -801,24 +801,24 @@ class MyApplication:
             config_path="/path/to/plugins.yaml",
             timeout=30
         )
-    
+
     async def process_request(self, request):
         payload = RequestPayload(data=request.data)
         context = GlobalContext(request_id=request.id)
-        
+
         # Pre-processing with plugins
         result, _ = await self.plugin_manager.custom_pre_hook(
             payload, context
         )
-        
+
         if not result.continue_processing:
             return ErrorResponse(result.violation.description)
-        
+
         # Your application logic here
         response = await self.process_business_logic(
             result.modified_payload or payload
         )
-        
+
         return response
 ```
 
@@ -832,21 +832,21 @@ plugins:
   # Python self-contained plugin
   - name: "FastValidation"
     kind: "internal.validators.FastValidator"
-    
+
   # TypeScript/Node.js plugin
   - name: "OpenAIModerationTS"
     kind: "external"
     mcp:
       proto: "STREAMABLEHTTP"
       url: "http://nodejs-plugin:3000/mcp"
-    
-  # Go plugin  
+
+  # Go plugin
   - name: "HighPerformanceFilter"
     kind: "external"
     mcp:
       proto: "STDIO"
       script: "/opt/plugins/go-filter"
-    
+
   # Rust plugin
   - name: "CryptoValidator"
     kind: "external"
@@ -867,7 +867,7 @@ sequenceDiagram
     participant Client as External Plugin Client
     participant Server as Remote MCP Server
     participant Service as External AI Service
-    
+
     Note over Gateway,Service: Plugin Initialization
     Gateway->>Client: Initialize External Plugin
     Client->>Server: MCP Connection (HTTP/WS/STDIO)
@@ -875,18 +875,18 @@ sequenceDiagram
     Client->>Server: get_plugin_config(plugin_name)
     Server-->>Client: Plugin Configuration
     Client-->>Gateway: Plugin Ready
-    
+
     Note over Gateway,Service: Request Processing
     Gateway->>Client: tool_pre_invoke(payload, context)
     Client->>Server: MCP Tool Call: tool_pre_invoke
-    
+
     alt Self-Processing
         Server->>Server: Process Internally
     else External Service Call
         Server->>Service: API Call (OpenAI, LlamaGuard, etc.)
         Service-->>Server: Service Response
     end
-    
+
     Server-->>Client: MCP Response
     Client-->>Gateway: PluginResult
 ```
@@ -917,38 +917,38 @@ import OpenAI from 'openai';
 
 class OpenAIModerationPlugin {
   private openai: OpenAI;
-  
+
   constructor() {
     this.openai = new OpenAI({
       apiKey: process.env.OPENAI_API_KEY
     });
   }
-  
+
   @Tool('tool_pre_invoke')
   async handleToolPreInvoke(params: any) {
     const { payload, context } = params;
-    
+
     const content = Object.values(payload.args || {})
       .filter(v => typeof v === 'string')
       .join(' ');
-    
+
     if (!content.trim()) {
       return { continue_processing: true };
     }
-    
+
     try {
       const moderation = await this.openai.moderations.create({
         input: content,
         model: 'text-moderation-stable'
       });
-      
+
       const result = moderation.results[0];
-      
+
       if (result.flagged) {
         const flaggedCategories = Object.entries(result.categories)
           .filter(([_, flagged]) => flagged)
           .map(([category, _]) => category);
-        
+
         return {
           continue_processing: false,
           violation: {
@@ -962,14 +962,14 @@ class OpenAIModerationPlugin {
           }
         };
       }
-      
+
       return {
         continue_processing: true,
         metadata: {
           openai_moderation_score: Math.max(...Object.values(result.category_scores))
         }
       };
-      
+
     } catch (error) {
       return {
         continue_processing: true,
@@ -977,7 +977,7 @@ class OpenAIModerationPlugin {
       };
     }
   }
-  
+
   @Tool('get_plugin_config')
   async getPluginConfig(params: { name: string }) {
     return {
@@ -1006,12 +1006,12 @@ server.listen({ transport: 'stdio' });
   - ✅ **Status**: Completed
   - **Impact**: Enables polyglot plugin development and service integration
 
-- **Issue #673**: [ARCHITECTURE] Identify Next Steps for Plugin Development  
+- **Issue #673**: [ARCHITECTURE] Identify Next Steps for Plugin Development
   - 🔄 **Status**: In Progress
   - **Impact**: Defines framework evolution and enterprise features
 
 - **Issue #720**: [Feature] Add CLI for authoring and packaging plugins
-  - 🔄 **Status**: In Progress  
+  - 🔄 **Status**: In Progress
   - **Impact**: Streamlines plugin development and deployment
 
 - **Issue #319**: [Feature Request] AI Middleware Integration / Plugin Framework
@@ -1033,11 +1033,11 @@ server.listen({ transport: 'stdio' });
 
 The MCP Context Forge plugin framework provides a **production-ready, platform-agnostic foundation** for extensible middleware processing. The architecture successfully balances:
 
-✅ **Performance**: Sub-millisecond latency for self-contained plugins, optimized external plugin communication  
-✅ **Flexibility**: Support for any programming language via MCP protocol  
-✅ **Security**: Comprehensive protection mechanisms and compliance features  
-✅ **Scalability**: Horizontal scaling for self-contained, vertical scaling for external plugins  
-✅ **Developer Experience**: Simple APIs, comprehensive testing, and CLI tooling  
-✅ **Enterprise Ready**: Multi-tenant support, audit logging, and integration capabilities  
+✅ **Performance**: Sub-millisecond latency for self-contained plugins, optimized external plugin communication
+✅ **Flexibility**: Support for any programming language via MCP protocol
+✅ **Security**: Comprehensive protection mechanisms and compliance features
+✅ **Scalability**: Horizontal scaling for self-contained, vertical scaling for external plugins
+✅ **Developer Experience**: Simple APIs, comprehensive testing, and CLI tooling
+✅ **Enterprise Ready**: Multi-tenant support, audit logging, and integration capabilities
 
 The framework supports both **immediate security needs** through self-contained plugins and **future enterprise AI safety integrations** through the external plugin ecosystem. With its platform-agnostic design, the framework can be embedded in any application requiring  middleware processing capabilities.

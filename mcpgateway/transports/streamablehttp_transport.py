@@ -39,6 +39,7 @@ from typing import Any, AsyncGenerator, List, Union
 from uuid import uuid4
 
 # Third-Party
+import anyio
 from fastapi.security.utils import get_authorization_scheme_param
 from mcp import types
 from mcp.server.lowlevel import Server
@@ -691,6 +692,9 @@ class SessionManagerWrapper:
 
         try:
             await self.session_manager.handle_request(scope, receive, send)
+        except anyio.ClosedResourceError:
+            # Expected when client closes one side of the stream (normal lifecycle)
+            logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
             logger.exception(f"Error handling streamable HTTP request: {e}")
             raise
@@ -740,12 +744,21 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
     headers = Headers(scope=scope)
     authorization = headers.get("authorization")
+    proxy_user = headers.get(settings.proxy_user_header) if settings.trust_proxy_auth else None
 
-    token = None
+    # Determine authentication strategy based on settings
+    if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
+        # Client auth disabled → allow proxy header
+        if proxy_user:
+            return True  # Trusted proxy supplied user
+
+    # --- Standard JWT authentication flow (client auth enabled) ---
+    token: str | None = None
     if authorization:
         scheme, credentials = get_authorization_scheme_param(authorization)
         if scheme.lower() == "bearer" and credentials:
             token = credentials
+
     try:
         if token is None:
             raise Exception()

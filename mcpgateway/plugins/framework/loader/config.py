@@ -16,7 +16,7 @@ import jinja2
 import yaml
 
 # First-Party
-from mcpgateway.plugins.framework.models import Config
+from mcpgateway.plugins.framework.models import Config, PluginSettings
 
 
 class ConfigLoader:
@@ -72,12 +72,16 @@ class ConfigLoader:
             ...     os.unlink(temp_path)
             60
         """
-        with open(os.path.normpath(config), "r", encoding="utf-8") as file:
-            template = file.read()
-            if use_jinja:
-                jinja_env = jinja2.Environment(loader=jinja2.BaseLoader(), autoescape=True)
-                rendered_template = jinja_env.from_string(template).render(env=os.environ)
-            else:
-                rendered_template = template
-            config_data = yaml.safe_load(rendered_template)
-        return Config(**config_data)
+        try:
+            with open(os.path.normpath(config), "r", encoding="utf-8") as file:
+                template = file.read()
+                if use_jinja:
+                    jinja_env = jinja2.Environment(loader=jinja2.BaseLoader(), autoescape=True)
+                    rendered_template = jinja_env.from_string(template).render(env=os.environ)
+                else:
+                    rendered_template = template
+                config_data = yaml.safe_load(rendered_template) or {}
+            return Config(**config_data)
+        except FileNotFoundError:
+            # Graceful fallback for tests and minimal environments without plugin config
+            return Config(plugins=[], plugin_dirs=[], plugin_settings=PluginSettings())

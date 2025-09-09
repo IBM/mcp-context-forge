@@ -29,7 +29,41 @@ logger = logging.getLogger(__name__)
 
 
 class OAuthManager:
-    """Manages OAuth 2.0 authentication flows."""
+    """Manages OAuth 2.0 authentication flows.
+
+    Examples:
+        >>> manager = OAuthManager(request_timeout=30, max_retries=3)
+        >>> manager.request_timeout
+        30
+        >>> manager.max_retries
+        3
+        >>> manager.token_storage is None
+        True
+        >>>
+        >>> # Test grant type validation
+        >>> grant_type = "client_credentials"
+        >>> grant_type in ["client_credentials", "authorization_code"]
+        True
+        >>> grant_type = "invalid_grant"
+        >>> grant_type in ["client_credentials", "authorization_code"]
+        False
+        >>>
+        >>> # Test encrypted secret detection heuristic
+        >>> short_secret = "secret123"
+        >>> len(short_secret) > 50
+        False
+        >>> encrypted_secret = "gAAAAABh" + "x" * 60  # Simulated encrypted secret
+        >>> len(encrypted_secret) > 50
+        True
+        >>>
+        >>> # Test scope list handling
+        >>> scopes = ["read", "write"]
+        >>> " ".join(scopes)
+        'read write'
+        >>> empty_scopes = []
+        >>> " ".join(empty_scopes)
+        ''
+    """
 
     def __init__(self, request_timeout: int = 30, max_retries: int = 3, token_storage: Optional[Any] = None):
         """Initialize OAuth Manager.
@@ -55,6 +89,29 @@ class OAuthManager:
         Raises:
             ValueError: If grant type is unsupported
             OAuthError: If token acquisition fails
+
+        Examples:
+            Client credentials flow:
+            >>> import asyncio
+            >>> class TestMgr(OAuthManager):
+            ...     async def _client_credentials_flow(self, credentials):
+            ...         return 'tok'
+            >>> mgr = TestMgr()
+            >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
+            'tok'
+
+            Authorization code fallback to client credentials:
+            >>> asyncio.run(mgr.get_access_token({'grant_type': 'authorization_code'}))
+            'tok'
+
+            Unsupported grant type raises ValueError:
+            >>> def _unsupported():
+            ...     try:
+            ...         asyncio.run(mgr.get_access_token({'grant_type': 'bad'}))
+            ...     except ValueError:
+            ...         return True
+            >>> _unsupported()
+            True
         """
         grant_type = credentials.get("grant_type")
         logger.debug(f"Getting access token for grant type: {grant_type}")
@@ -525,4 +582,17 @@ class OAuthManager:
 
 
 class OAuthError(Exception):
-    """OAuth-related errors."""
+    """OAuth-related errors.
+
+    Examples:
+        >>> try:
+        ...     raise OAuthError("Token acquisition failed")
+        ... except OAuthError as e:
+        ...     str(e)
+        'Token acquisition failed'
+        >>> try:
+        ...     raise OAuthError("Invalid grant type")
+        ... except Exception as e:
+        ...     isinstance(e, OAuthError)
+        True
+    """

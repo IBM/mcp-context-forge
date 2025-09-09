@@ -854,8 +854,11 @@ spellcheck-sort: .spellcheck-en.txt ## 🔤  Sort spell-list
 	sort -d -f -o $< $<
 
 tox:                                ## 🧪  Multi-Python tox matrix (uv)
-	@echo "🧪  Running tox with uv ..."
-	python3 -m tox -p auto $(TOXARGS)
+	@echo "🧪  Running tox with uv across Python 3.11, 3.12, 3.13..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m pip install -q tox tox-uv && \
+		python3 -m tox -p auto $(TOXARGS)"
 
 sbom:								## 🛡️  Generate SBOM & security report
 	@echo "🛡️   Generating SBOM & security report..."
@@ -1383,7 +1386,8 @@ install-web-linters:
 	@npm install --no-save \
 		htmlhint \
 		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
-		eslint eslint-config-standard \
+		eslint eslint-config-standard eslint-plugin-import eslint-plugin-n eslint-plugin-promise \
+		eslint-plugin-prettier eslint-config-prettier \
 		retire \
 		prettier \
 		jshint \
@@ -1397,13 +1401,13 @@ nodejsscan:
 
 lint-web: install-web-linters nodejsscan
 	@echo "🔍 Linting HTML files..."
-	@npx htmlhint "mcpgateway/templates/**/*.html" || true
+	@find mcpgateway/templates -name "*.html" -exec npx htmlhint {} + 2>/dev/null || true
 	@echo "🔍 Linting CSS files..."
-	@npx stylelint "mcpgateway/static/**/*.css" || true
+	@find mcpgateway/static -name "*.css" -exec npx stylelint {} + 2>/dev/null || true
 	@echo "🔍 Linting JS files..."
-	@npx eslint "mcpgateway/static/**/*.js" || true
+	@find mcpgateway/static -name "*.js" -exec npx eslint {} + 2>/dev/null || true
 	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
-	@npx retire --path mcpgateway/static || true
+	@cd mcpgateway/static && npx retire . 2>/dev/null || true
 	@if [ -f package.json ]; then \
 	  echo "🔒 Running npm audit (high severity)..."; \
 	  npm audit --audit-level=high || true; \
@@ -3788,12 +3792,24 @@ pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 
 
 
-## --------------------------------------------------------------------------- ##
-##  Async Code Testing and Performance Profiling
-## --------------------------------------------------------------------------- ##
+# =============================================================================
+# 🔄 ASYNC CODE TESTING & PERFORMANCE PROFILING
+# =============================================================================
+# help: 🔄 ASYNC CODE TESTING & PERFORMANCE PROFILING
+# help: async-test           - Run comprehensive async safety tests with debug mode
+# help: async-lint           - Run async-aware linting (ruff, flake8, mypy with coroutine warnings)
+# help: async-monitor        - Start aiomonitor for live async debugging (WebUI + console)
+# help: async-debug          - Run async tests with PYTHONASYNCIODEBUG=1 and debug mode
+# help: async-benchmark      - Run async performance benchmarks and generate reports
+# help: async-validate       - Validate async code patterns and generate validation report
+# help: async-clean          - Clean async testing artifacts and kill background processes
+# help: profile              - Generate async performance profiles and start SnakeViz server
+# help: profile-serve        - Start SnakeViz profile server on localhost:8080
+# help: profile-compare      - Compare performance profiles between baseline and current
+
 .PHONY: async-test async-lint profile async-monitor async-debug profile-serve
 
-ASYNC_TEST_DIR := async_testing
+ASYNC_TEST_DIR := tests/async
 PROFILE_DIR := $(ASYNC_TEST_DIR)/profiles
 REPORTS_DIR := $(ASYNC_TEST_DIR)/reports
 VENV_PYTHON := $(VENV_DIR)/bin/python

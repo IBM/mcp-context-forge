@@ -145,10 +145,10 @@ LOG_FOLDER=logs
 ### Authentication & Tokens
 ```bash
 # Generate JWT bearer token
-python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key
+python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
 
 # Export for API calls
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
 ```
 
 ### Working with MCP Servers

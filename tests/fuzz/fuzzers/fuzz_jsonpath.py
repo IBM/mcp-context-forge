@@ -7,18 +7,24 @@ Authors: Mihai Criveti
 
 Coverage-guided fuzzing for JSONPath processing using Atheris.
 """
-import atheris
-import sys
+# Standard
 import json
 import os
+import sys
 from typing import Any
+
+# Third-Party
+import atheris
 
 # Ensure the project is in the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
 
 try:
-    from mcpgateway.config import jsonpath_modifier
+    # Third-Party
     from fastapi import HTTPException
+
+    # First-Party
+    from mcpgateway.config import jsonpath_modifier
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

@@ -44,7 +44,7 @@ def upgrade() -> None:
         columns = [col["name"] for col in inspector.get_columns("tools")]
         if "annotations" not in columns:
             try:
-                op.add_column("tools", sa.Column("annotations", sa.JSON(), server_default=sa.text("'{}'"), nullable=False))
+                op.add_column("tools", sa.Column("annotations", sa.JSON(), nullable=True))
             except Exception as e:
                 print(f"Warning: Could not add annotations column to tools: {e}")
 

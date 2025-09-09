@@ -149,6 +149,17 @@ mcpContextForge:
     PROTOCOL_VERSION: 2025-03-26
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
     MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
+    MCPGATEWAY_BULK_IMPORT_ENABLED: "true" # toggle bulk import endpoint
+    MCPGATEWAY_BULK_IMPORT_MAX_TOOLS: "200" # maximum tools per bulk import
+    MCPGATEWAY_BULK_IMPORT_RATE_LIMIT: "10" # requests per minute for bulk import
+
+    # ─ A2A (Agent-to-Agent) Features ─
+    MCPGATEWAY_A2A_ENABLED: "true"      # enable A2A agent features
+    MCPGATEWAY_A2A_MAX_AGENTS: "100"    # maximum number of A2A agents allowed
+    MCPGATEWAY_A2A_DEFAULT_TIMEOUT: "30" # default timeout for A2A HTTP requests
+    MCPGATEWAY_A2A_MAX_RETRIES: "3"     # maximum retry attempts for A2A calls
+    MCPGATEWAY_A2A_METRICS_ENABLED: "true" # enable A2A agent metrics collection
+
     # ─ Security & CORS ─
     ENVIRONMENT: development         # deployment environment (development/production)
     APP_DOMAIN: localhost            # domain for production CORS origins
@@ -175,11 +186,21 @@ mcpContextForge:
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format
+    LOG_TO_FILE: "false"             # enable file logging
+    LOG_FILEMODE: "a+"               # file write mode (append/overwrite)
+    LOG_FILE: ""                     # log filename when file logging enabled
+    LOG_FOLDER: ""                   # directory for log files
+    LOG_ROTATION_ENABLED: "false"    # enable log file rotation
+    LOG_MAX_SIZE_MB: "1"             # max file size before rotation (MB)
+    LOG_BACKUP_COUNT: "5"            # number of backup files to keep
+    LOG_BUFFER_SIZE_MB: "1.0"        # size of in-memory log buffer (MB)
 
     # ─ Transports ─
     TRANSPORT_TYPE: all              # comma-separated list: http, ws, sse, stdio, all
     WEBSOCKET_PING_INTERVAL: "30"    # seconds between WS pings
     SSE_RETRY_TIMEOUT: "5000"        # milliseconds before SSE client retries
+    SSE_KEEPALIVE_ENABLED: "true"    # enable SSE keepalive events
+    SSE_KEEPALIVE_INTERVAL: "30"     # seconds between keepalive events
 
     # ─ Streaming sessions ─
     USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
@@ -202,6 +223,7 @@ mcpContextForge:
     MAX_TOOL_RETRIES: "3"            # retries for failed tool runs
     TOOL_RATE_LIMIT: "100"           # invocations per minute cap
     TOOL_CONCURRENT_LIMIT: "10"      # concurrent tool executions
+    GATEWAY_TOOL_NAME_SEPARATOR: "-" # separator for gateway tool routing
 
     # ─ Prompt cache ─
     PROMPT_CACHE_SIZE: "100"         # number of prompt templates to cache
@@ -212,12 +234,51 @@ mcpContextForge:
     HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
     HEALTH_CHECK_TIMEOUT: "10"       # request timeout per health check
     UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
+    GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
     FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
 
     # ─ Development toggles ─
     DEV_MODE: "false"                # enable dev-mode features
     RELOAD: "false"                  # auto-reload code on changes
     DEBUG: "false"                   # verbose debug traces
+
+    # ─ HTTP Retry Configuration ─
+    RETRY_MAX_ATTEMPTS: "3"          # maximum retry attempts for HTTP requests
+    RETRY_BASE_DELAY: "1.0"          # base delay between retries (seconds)
+    RETRY_MAX_DELAY: "60"            # maximum delay between retries (seconds)
+    RETRY_JITTER_MAX: "0.5"          # maximum jitter fraction of base delay
+
+    # ─ Well-Known URI Configuration ─
+    WELL_KNOWN_ENABLED: "true"       # enable well-known URI endpoints
+    WELL_KNOWN_ROBOTS_TXT: |
+      User-agent: *
+      Disallow: /
+
+      # MCP Gateway is a private API gateway
+      # Public crawling is disabled by default
+    WELL_KNOWN_SECURITY_TXT: ""      # security.txt content (RFC 9116)
+    WELL_KNOWN_CUSTOM_FILES: "{}"    # additional custom well-known files (JSON)
+    WELL_KNOWN_CACHE_MAX_AGE: "3600" # cache control for well-known files (seconds)
+
+    # ─ Plugin Configuration ─
+    PLUGINS_ENABLED: "false"         # enable the plugin framework
+    PLUGIN_CONFIG_FILE: "plugins/config.yaml" # path to main plugin configuration file
+    PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
+    PLUGINS_CLI_MARKUP_MODE: ""      # set markup mode for plugins CLI
+
+    # ─ OpenTelemetry Observability ─
+    OTEL_ENABLE_OBSERVABILITY: "true" # master switch for observability
+    OTEL_TRACES_EXPORTER: "otlp"     # traces exporter: otlp, jaeger, zipkin, console, none
+    OTEL_EXPORTER_OTLP_PROTOCOL: "grpc" # OTLP protocol: grpc or http
+    OTEL_EXPORTER_OTLP_INSECURE: "true" # use insecure connection for OTLP
+    OTEL_SERVICE_NAME: "mcp-gateway"  # service name for traces
+    OTEL_BSP_MAX_QUEUE_SIZE: "2048"   # max queue size for batch span processor
+    OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512" # max export batch size
+    OTEL_BSP_SCHEDULE_DELAY: "5000"   # schedule delay in milliseconds
+
+    # ─ Header Passthrough (Security Warning) ─
+    ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough (security implications)
+    DEFAULT_PASSTHROUGH_HEADERS: '["X-Tenant-Id", "X-Trace-Id"]' # default headers to pass through (JSON array)
 
   ####################################################################
   # SENSITIVE SETTINGS
@@ -232,8 +293,89 @@ mcpContextForge:
     AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
     JWT_SECRET_KEY: my-test-key            # secret key used to sign JWT tokens
     JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
+    JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
+    JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
     TOKEN_EXPIRY: "10080"                  # JWT validity (minutes); 10080 = 7 days
+    REQUIRE_TOKEN_EXPIRATION: "false"      # require all JWT tokens to have expiration claims
     AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+
+    # ─ Email-Based Authentication ─
+    EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
+    PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
+    PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
+    PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
+
+    # ─ Password Hashing & Security ─
+    ARGON2ID_TIME_COST: "3"                # Argon2id time cost (iterations)
+    ARGON2ID_MEMORY_COST: "65536"          # Argon2id memory cost in KiB
+    ARGON2ID_PARALLELISM: "1"              # Argon2id parallelism (threads)
+    PASSWORD_MIN_LENGTH: "8"               # minimum password length
+    PASSWORD_REQUIRE_UPPERCASE: "false"    # require uppercase letters in passwords
+    PASSWORD_REQUIRE_LOWERCASE: "false"    # require lowercase letters in passwords
+    PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
+    PASSWORD_REQUIRE_SPECIAL: "false"      # require special characters in passwords
+    MAX_FAILED_LOGIN_ATTEMPTS: "5"         # maximum failed login attempts before lockout
+    ACCOUNT_LOCKOUT_DURATION_MINUTES: "30" # account lockout duration in minutes
+
+    # ─ MCP Client Authentication ─
+    MCP_CLIENT_AUTH_ENABLED: "true"        # enable JWT authentication for MCP client operations
+    TRUST_PROXY_AUTH: "false"              # trust proxy authentication headers
+    PROXY_USER_HEADER: X-Authenticated-User # header containing authenticated username from proxy
+
+    # ─ OAuth Configuration ─
+    OAUTH_REQUEST_TIMEOUT: "30"            # OAuth request timeout in seconds
+    OAUTH_MAX_RETRIES: "3"                 # maximum retries for OAuth token requests
+
+    # ─ SSO (Single Sign-On) Configuration ─
+    SSO_ENABLED: "false"                   # master switch for Single Sign-On authentication
+    SSO_AUTO_CREATE_USERS: "true"          # automatically create users from SSO providers
+    SSO_TRUSTED_DOMAINS: "[]"              # trusted email domains (JSON array)
+    SSO_PRESERVE_ADMIN_AUTH: "true"        # preserve local admin authentication when SSO enabled
+    SSO_REQUIRE_ADMIN_APPROVAL: "false"    # require admin approval for new SSO registrations
+    SSO_AUTO_ADMIN_DOMAINS: "[]"           # email domains that automatically get admin privileges
+
+    # ─ GitHub OAuth ─
+    SSO_GITHUB_ENABLED: "false"            # enable GitHub OAuth authentication
+    SSO_GITHUB_CLIENT_ID: ""               # GitHub OAuth client ID
+    SSO_GITHUB_CLIENT_SECRET: ""           # GitHub OAuth client secret
+    SSO_GITHUB_ADMIN_ORGS: "[]"            # GitHub orgs granting admin privileges (JSON)
+
+    # ─ Google OAuth ─
+    SSO_GOOGLE_ENABLED: "false"            # enable Google OAuth authentication
+    SSO_GOOGLE_CLIENT_ID: ""               # Google OAuth client ID
+    SSO_GOOGLE_CLIENT_SECRET: ""           # Google OAuth client secret
+    SSO_GOOGLE_ADMIN_DOMAINS: "[]"         # Google admin domains (JSON)
+
+    # ─ IBM Security Verify OIDC ─
+    SSO_IBM_VERIFY_ENABLED: "false"        # enable IBM Security Verify OIDC authentication
+    SSO_IBM_VERIFY_CLIENT_ID: ""           # IBM Security Verify client ID
+    SSO_IBM_VERIFY_CLIENT_SECRET: ""       # IBM Security Verify client secret
+    SSO_IBM_VERIFY_ISSUER: ""              # IBM Security Verify OIDC issuer URL
+
+    # ─ Okta OIDC ─
+    SSO_OKTA_ENABLED: "false"              # enable Okta OIDC authentication
+    SSO_OKTA_CLIENT_ID: ""                 # Okta client ID
+    SSO_OKTA_CLIENT_SECRET: ""             # Okta client secret
+    SSO_OKTA_ISSUER: ""                    # Okta issuer URL
+
+    # ─ Personal Teams Configuration ─
+    AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
+    PERSONAL_TEAM_PREFIX: personal         # personal team naming prefix
+    MAX_TEAMS_PER_USER: "50"               # maximum number of teams a user can belong to
+    MAX_MEMBERS_PER_TEAM: "100"            # maximum number of members per team
+    INVITATION_EXPIRY_DAYS: "7"            # number of days before team invitations expire
+    REQUIRE_EMAIL_VERIFICATION_FOR_INVITES: "true" # require email verification for team invitations
+
+    # ─ OpenTelemetry Endpoints (Optional/Sensitive) ─
+    OTEL_EXPORTER_OTLP_ENDPOINT: ""        # OTLP endpoint (e.g., http://localhost:4317)
+    OTEL_EXPORTER_OTLP_HEADERS: ""         # OTLP headers (comma-separated key=value)
+    OTEL_EXPORTER_JAEGER_ENDPOINT: ""      # Jaeger endpoint
+    OTEL_EXPORTER_ZIPKIN_ENDPOINT: ""      # Zipkin endpoint
+    OTEL_RESOURCE_ATTRIBUTES: ""           # resource attributes (comma-separated key=value)
+
+    # ─ Documentation & UI Settings (Sensitive) ─
+    DOCS_ALLOW_BASIC_AUTH: "false"         # allow basic auth for docs endpoints
+
     # (derived URLs are defined in deployment-mcp.yaml)
 
     # ─ Optional database / redis overrides ─

@@ -5,14 +5,15 @@ This module provides comprehensive Docker/Podman container orchestration
 for testing database migrations across different MCP Gateway versions.
 """
 
+# Standard
+from dataclasses import dataclass
 import json
 import logging
 import os
+from pathlib import Path
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -194,8 +195,10 @@ class ContainerManager:
             logger.info(f"📁 Created new data directory: {temp_dir}")
             # Set ownership and permissions so the app user (uid=1001) can write to it
             try:
+                # Standard
                 import os
                 import stat
+
                 # Change ownership to match the container app user (uid=1001, gid=1001)
                 os.chown(temp_dir, 1001, 1001)
                 # Also set write permissions for good measure

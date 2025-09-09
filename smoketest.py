@@ -230,7 +230,8 @@ def generate_jwt() -> str:
     Create a short-lived admin JWT that matches the gateway's settings.
     Resolution order → environment-variable override, then package defaults.
     """
-    user = os.getenv("BASIC_AUTH_USER", "admin")
+    # Use email format for new authentication system
+    user = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
     secret = os.getenv("JWT_SECRET_KEY", "my-test-key")
     expiry = os.getenv("TOKEN_EXPIRY", "300")  # seconds
 

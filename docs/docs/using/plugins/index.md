@@ -78,7 +78,7 @@ plugins:
     author: "Your Team"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["security", "filter"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "enforce"  # enforce | enforce_ignore_error | permissive | disabled
     priority: 100    # Lower number = higher priority
     conditions:
       - prompts: ["customer_chat", "support_bot"]
@@ -133,7 +133,8 @@ Each plugin can operate in one of three modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| **enforce** | Blocks requests on policy violations | Production guardrails |
+| **enforce** | Blocks requests on policy violations and plugin errors | Production guardrails |
+| **enforce_ignore_errors** | Blocks requests on policy violations but only logs errors | Production guardrails |
 | **permissive** | Logs violations but allows requests | Testing and monitoring |
 | **disabled** | Plugin loaded but not executed | Temporary deactivation |
 
@@ -440,7 +441,47 @@ class MyPlugin(Plugin):
 
 ### Plugin Context and State
 
-Plugins can maintain state between pre/post hooks:
+Each hook function has a `context` object of type `PluginContext` which is designed to allow plugins to pass state between one another (across pre/post hook pairs) or for a plugin to pass state information to itself across pre/post hook pairs.  The plugin context looks as follows:
+
+```python
+class GlobalContext(BaseModel):
+    """The global context, which shared across all plugins.
+
+    Attributes:
+            request_id (str): ID of the HTTP request.
+            user (str): user ID associated with the request.
+            tenant_id (str): tenant ID.
+            server_id (str): server ID.
+            metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective.).
+            state (Optional[dict[str,Any]]): a global shared state across plugins.
+    """
+
+    request_id: str
+    user: Optional[str] = None
+    tenant_id: Optional[str] = None
+    server_id: Optional[str] = None
+    state: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PluginContext(BaseModel):
+    """The plugin's context, which lasts a request lifecycle.
+
+    Attributes:
+       state:  the inmemory state of the request.
+       global_context: the context that is shared across plugins.
+       metadata: plugin meta data.
+    """
+
+    state: dict[str, Any] = Field(default_factory=dict)
+    global_context: GlobalContext
+    metadata: dict[str, Any] = Field(default_factory=dict)
+```
+
+As can be seen, the `PluginContext` has both a `state` dictionary and a `global_context` object that also has a `state` dictionary. A single plugin can share state between pre/post hook pairs by using the
+the `PluginContext` state dictionary. It can share state with other plugins using the `context.global_context.state` dictionary.  Metadata for the specific hook site is passed in through the `metadata` dictionaries in the `context.global_context.metadata`. It is meant to be read-only. The `context.metadata` is plugin specific metadata and can be used to store metadata information such as timing information.
+
+The following shows how plugins can maintain state between pre/post hooks:
 
 ```python
 async def prompt_pre_fetch(self, payload, context):
@@ -595,31 +636,14 @@ async def test_my_plugin():
 
 ### 1. Error Handling
 
-Always handle errors gracefully:
+Errors inside a plugin should be raised as exceptions.  The plugin manager will catch the error, and its behavior depends on both the gateway's and plugin's configuration as follows:
 
-```python
-async def prompt_pre_fetch(self, payload, context):
-    try:
-        # Plugin logic
-        pass
-    except Exception as e:
-        logger.error(f"Plugin {self.name} error: {e}")
+1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of the MCP Context Forge regardless of the plugin mode.
+2. if `plugin_settings.fail_on_plugin_error` is set to false the error is handled based off of the plugin mode in the plugin's config as follows:
+  * if `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.
+  * if `mode` is `enforce_ignore_error`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.
+  * if `mode` is `permissive`, execution is allowed to proceed whether there are errors or violations. Both are logged.
 
-        # In permissive mode, log and continue
-        if self.mode == PluginMode.PERMISSIVE:
-            return PromptPrehookResult()
-
-        # In enforce mode, block the request
-        return PromptPrehookResult(
-            continue_processing=False,
-            violation=PluginViolation(
-                plugin_name=self.name,
-                description="Plugin error occurred",
-                violation_code="PLUGIN_ERROR",
-                details={"error": str(e)}
-            )
-        )
-```
 
 ### 2. Performance Considerations
 

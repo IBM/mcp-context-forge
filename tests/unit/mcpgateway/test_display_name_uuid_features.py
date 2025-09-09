@@ -1,15 +1,21 @@
 # -*- coding: utf-8 -*-
 """Tests for displayName and UUID editing features."""
 
+# Standard
+from unittest.mock import AsyncMock, Mock
+
+# Third-Party
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from unittest.mock import Mock, AsyncMock
 
-from mcpgateway.db import Base, Tool as DbTool, Server as DbServer
-from mcpgateway.schemas import ToolCreate, ToolUpdate, ToolRead, ServerCreate, ServerUpdate, ServerRead
-from mcpgateway.services.tool_service import ToolService
+# First-Party
+from mcpgateway.db import Base
+from mcpgateway.db import Server as DbServer
+from mcpgateway.db import Tool as DbTool
+from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.server_service import ServerService
+from mcpgateway.services.tool_service import ToolService
 
 
 @pytest.fixture
@@ -279,7 +285,7 @@ class TestSchemaValidation:
         }
 
         server_create = ServerCreate(**server_data)
-        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
+        assert server_create.id == "550e8400e29b41d4a716446655440000"
         assert server_create.name == "Test Server"
 
     def test_server_update_schema_with_uuid(self):
@@ -290,11 +296,12 @@ class TestSchemaValidation:
         }
 
         server_update = ServerUpdate(**update_data)
-        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
+        assert server_update.id == "123e4567e89b12d3a456426614174000"
         assert server_update.name == "Updated Server Name"
 
     def test_server_uuid_validation(self):
         """Test UUID validation in schemas."""
+        # First-Party
         from mcpgateway.schemas import ServerCreate, ServerUpdate
 
         # Test valid UUID
@@ -302,7 +309,7 @@ class TestSchemaValidation:
             id="550e8400-e29b-41d4-a716-446655440000",
             name="Test Server"
         )
-        assert server_create.id == "550e8400-e29b-41d4-a716-446655440000"
+        assert server_create.id == "550e8400e29b41d4a716446655440000"
 
         # Test invalid UUID should raise validation error
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -313,7 +320,7 @@ class TestSchemaValidation:
 
         # Test ServerUpdate UUID validation
         server_update = ServerUpdate(id="123e4567-e89b-12d3-a456-426614174000")
-        assert server_update.id == "123e4567-e89b-12d3-a456-426614174000"
+        assert server_update.id == "123e4567e89b12d3a456426614174000"
 
         # Test invalid UUID in update
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -326,9 +333,12 @@ class TestServerUUIDNormalization:
     @pytest.mark.asyncio
     async def test_server_create_uuid_normalization_standard_format(self, db_session, server_service):
         """Test server creation with standard UUID format (with dashes) gets normalized to hex format."""
+        # Standard
         import uuid as uuid_module
-        from mcpgateway.schemas import ServerCreate
+
+        # First-Party
         from mcpgateway.db import Server as DbServer
+        from mcpgateway.schemas import ServerCreate
 
         # Standard UUID format (with dashes)
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
@@ -395,7 +405,10 @@ class TestServerUUIDNormalization:
     @pytest.mark.asyncio
     async def test_server_create_uuid_normalization_hex_format(self, db_session, server_service):
         """Test server creation with UUID in hex format (without dashes) works unchanged."""
+        # Standard
         import uuid as uuid_module
+
+        # First-Party
         from mcpgateway.schemas import ServerCreate
 
         # Hex UUID format (without dashes) - but we need to provide a valid UUID
@@ -464,6 +477,7 @@ class TestServerUUIDNormalization:
     @pytest.mark.asyncio
     async def test_server_create_auto_generated_uuid(self, db_session, server_service):
         """Test server creation without custom UUID generates UUID automatically."""
+        # First-Party
         from mcpgateway.schemas import ServerCreate
 
         # Mock database operations
@@ -524,8 +538,11 @@ class TestServerUUIDNormalization:
     @pytest.mark.asyncio
     async def test_server_create_invalid_uuid_format(self, db_session, server_service):
         """Test server creation with invalid UUID format raises validation error."""
-        from mcpgateway.schemas import ServerCreate
+        # Third-Party
         from pydantic import ValidationError
+
+        # First-Party
+        from mcpgateway.schemas import ServerCreate
 
         # Test various invalid UUID formats that should raise validation errors
         invalid_uuids = [
@@ -566,6 +583,7 @@ class TestServerUUIDNormalization:
 
     def test_uuid_normalization_logic(self):
         """Test the UUID normalization logic directly."""
+        # Standard
         import uuid as uuid_module
 
         # Test cases for UUID normalization
@@ -596,6 +614,7 @@ class TestServerUUIDNormalization:
 
     def test_database_storage_format_verification(self, db_session):
         """Test that UUIDs are stored in the database in the expected hex format."""
+        # Standard
         import uuid as uuid_module
 
         # Create a server with standard UUID format
@@ -623,7 +642,10 @@ class TestServerUUIDNormalization:
     @pytest.mark.asyncio
     async def test_comprehensive_uuid_scenarios_with_service(self, db_session, server_service):
         """Test comprehensive UUID scenarios that would be encountered in practice."""
+        # Standard
         import uuid as uuid_module
+
+        # First-Party
         from mcpgateway.schemas import ServerCreate
 
         test_scenarios = [
@@ -767,6 +789,7 @@ class TestSmartDisplayNameGeneration:
 
     def test_generate_display_name_function(self):
         """Test the display name generation utility function."""
+        # First-Party
         from mcpgateway.utils.display_name import generate_display_name
 
         test_cases = [
@@ -787,6 +810,7 @@ class TestSmartDisplayNameGeneration:
 
     def test_manual_tool_displayname_preserved(self):
         """Test that manually specified displayName is preserved."""
+        # First-Party
         from mcpgateway.schemas import ToolCreate
 
         # Manual tool with explicit displayName should keep it
@@ -803,6 +827,7 @@ class TestSmartDisplayNameGeneration:
 
     def test_manual_tool_without_displayname(self):
         """Test that manual tools without displayName get service defaults."""
+        # First-Party
         from mcpgateway.schemas import ToolCreate
 
         # Manual tool without displayName (service layer will set default)

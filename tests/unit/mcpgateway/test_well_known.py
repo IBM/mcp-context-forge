@@ -7,11 +7,15 @@ Authors: Mihai Criveti
 Test cases for well-known URI endpoints.
 """
 
+# Standard
 import json
-import pytest
-from fastapi.testclient import TestClient
 from unittest.mock import patch
 
+# Third-Party
+from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 # Import the main FastAPI app
 from mcpgateway.main import app
 
@@ -65,6 +69,7 @@ class TestSecurityTxtValidation:
 
     def test_validate_security_txt_empty(self):
         """Test validation with empty content."""
+        # First-Party
         from mcpgateway.routers.well_known import validate_security_txt
 
         result = validate_security_txt("")
@@ -75,6 +80,7 @@ class TestSecurityTxtValidation:
 
     def test_validate_security_txt_adds_expires(self):
         """Test that validation adds Expires field."""
+        # First-Party
         from mcpgateway.routers.well_known import validate_security_txt
 
         content = "Contact: security@example.com"
@@ -87,6 +93,7 @@ class TestSecurityTxtValidation:
 
     def test_validate_security_txt_preserves_expires(self):
         """Test that validation preserves existing Expires field."""
+        # First-Party
         from mcpgateway.routers.well_known import validate_security_txt
 
         content = "Contact: security@example.com\nExpires: 2025-12-31T23:59:59Z"
@@ -99,6 +106,7 @@ class TestSecurityTxtValidation:
 
     def test_validate_security_txt_preserves_comments(self):
         """Test that validation preserves existing comments."""
+        # First-Party
         from mcpgateway.routers.well_known import validate_security_txt
 
         content = "# Custom security information\nContact: security@example.com"
@@ -240,6 +248,7 @@ class TestWellKnownAdminEndpoint:
     @pytest.fixture
     def auth_client(self):
         """Create a test client with auth dependency override."""
+        # First-Party
         from mcpgateway.utils.verify_credentials import require_auth
         app.dependency_overrides[require_auth] = lambda: "test_user"
         client = TestClient(app)
@@ -331,6 +340,7 @@ class TestWellKnownRegistry:
 
     def test_registry_contains_standard_files(self):
         """Test that registry contains expected standard files."""
+        # First-Party
         from mcpgateway.routers.well_known import WELL_KNOWN_REGISTRY
 
         expected_files = ["robots.txt", "security.txt", "ai.txt", "dnt-policy.txt", "change-password"]
@@ -343,6 +353,7 @@ class TestWellKnownRegistry:
 
     def test_registry_content_types(self):
         """Test that registry has correct content types."""
+        # First-Party
         from mcpgateway.routers.well_known import WELL_KNOWN_REGISTRY
 
         # Most should be text/plain

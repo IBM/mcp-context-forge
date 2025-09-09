@@ -27,8 +27,8 @@ include *.yml
 include *.json
 include *.sh
 include *.txt
-recursive-include async_testing *.py
-recursive-include async_testing *.yaml
+recursive-include tests/async *.py
+recursive-include tests/async *.yaml
 recursive-include examples *.yaml
 recursive-include plugin_templates *
 
@@ -64,6 +64,13 @@ recursive-include alembic *.py
 include mcpgateway/cli_export_import.py
 include mcpgateway/services/export_service.py
 include mcpgateway/services/import_service.py
+
+# 📦 Migration scripts (v0.7.0 multitenancy migration tools)
+recursive-include scripts *.py
+
+# 🧪 Testing documentation and plans
+recursive-include tests/manual *.py *.md
+
 # recursive-include deployment *
 # recursive-include mcp-servers *
 recursive-include plugins *.py

@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
-import os
+# Standard
 from functools import lru_cache
-from typing import Optional, List
+import os
+from typing import List, Optional
 
 # Load .env file if it exists
 try:
+    # Third-Party
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
@@ -12,8 +14,10 @@ except ImportError:
     pass
 
 try:
+    # Local
     from .models import AgentConfig
 except ImportError:
+    # Third-Party
     from models import AgentConfig
 
 def _parse_tools_list(tools_str: str) -> Optional[List[str]]:

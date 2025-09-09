@@ -39,16 +39,16 @@ def upgrade() -> None:
 
     # Define metadata columns to add
     metadata_columns = [
-        ("created_by", sa.String(), True),
-        ("created_from_ip", sa.String(), True),
-        ("created_via", sa.String(), True),
+        ("created_by", sa.String(255), True),
+        ("created_from_ip", sa.String(45), True),
+        ("created_via", sa.String(100), True),
         ("created_user_agent", sa.Text(), True),
-        ("modified_by", sa.String(), True),
-        ("modified_from_ip", sa.String(), True),
-        ("modified_via", sa.String(), True),
+        ("modified_by", sa.String(255), True),
+        ("modified_from_ip", sa.String(45), True),
+        ("modified_via", sa.String(100), True),
         ("modified_user_agent", sa.Text(), True),
-        ("import_batch_id", sa.String(), True),
-        ("federation_source", sa.String(), True),
+        ("import_batch_id", sa.String(36), True),
+        ("federation_source", sa.String(255), True),
         ("version", sa.Integer(), False, "1"),  # Not nullable, with default
     ]
 

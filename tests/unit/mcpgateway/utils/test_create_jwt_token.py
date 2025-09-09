@@ -75,11 +75,13 @@ def test_create_token_paths():
     payload: Dict[str, Any] = {"foo": "bar"}
 
     tok1 = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO)
-    dec1 = jwt.decode(tok1, TEST_SECRET, algorithms=[TEST_ALGO])
+    dec1 = jwt.decode(tok1, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
     assert dec1["foo"] == "bar" and "exp" in dec1
 
     tok2 = _create(payload, expires_in_minutes=0, secret=TEST_SECRET, algorithm=TEST_ALGO)
-    assert jwt.decode(tok2, TEST_SECRET, algorithms=[TEST_ALGO]) == payload
+    dec2 = jwt.decode(tok2, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+    # Check that the original payload keys are present
+    assert dec2["foo"] == "bar"
 
 
 @pytest.mark.asyncio
@@ -93,7 +95,8 @@ async def test_async_wrappers():
         secret=TEST_SECRET,
         algorithm=TEST_ALGO,
     )
-    assert _decode(token) == {"k": "v"}
+    decoded = _decode(token)
+    assert decoded["k"] == "v"  # Check the custom claim is present
 
     # get_jwt_token uses the original secret captured at definition time;
     # just decode without verifying the signature to inspect the payload.
@@ -154,7 +157,7 @@ def test_main_encode_pretty(capsys):
     out_lines = capsys.readouterr().out.strip().splitlines()
     assert out_lines[0] == "Payload:"
     token = out_lines[-1]
-    assert jwt.decode(token, TEST_SECRET, algorithms=[TEST_ALGO])["username"] == "cliuser"
+    assert jwt.decode(token, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")["username"] == "cliuser"
 
 
 def test_main_decode_mode(capsys):
@@ -165,4 +168,5 @@ def test_main_decode_mode(capsys):
     main_cli()
 
     printed = capsys.readouterr().out.strip()
-    assert json.loads(printed) == {"z": 9}
+    decoded = json.loads(printed)
+    assert decoded["z"] == 9  # Check the custom claim is present

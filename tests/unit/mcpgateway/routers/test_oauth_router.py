@@ -9,18 +9,18 @@ This module tests OAuth endpoints including authorization flow, callbacks, and s
 """
 
 # Standard
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.routers.oauth_router import oauth_router
 from mcpgateway.db import Gateway
+from mcpgateway.routers.oauth_router import oauth_router
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -81,6 +81,7 @@ class TestOAuthRouter:
                 mock_token_storage_class.return_value = mock_token_storage
 
                 # Import the function to test
+                # First-Party
                 from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
                 # Execute
@@ -102,6 +103,7 @@ class TestOAuthRouter:
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
+        # First-Party
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
         # Execute & Assert
@@ -120,6 +122,7 @@ class TestOAuthRouter:
         mock_gateway.oauth_config = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
+        # First-Party
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
         # Execute & Assert
@@ -138,6 +141,7 @@ class TestOAuthRouter:
         mock_gateway.oauth_config = {"grant_type": "client_credentials"}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
+        # First-Party
         from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
         # Execute & Assert
@@ -161,6 +165,7 @@ class TestOAuthRouter:
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
             with patch('mcpgateway.routers.oauth_router.TokenStorageService'):
+                # First-Party
                 from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
                 # Execute & Assert
@@ -191,6 +196,7 @@ class TestOAuthRouter:
                 mock_token_storage = Mock()
                 mock_token_storage_class.return_value = mock_token_storage
 
+                # First-Party
                 from mcpgateway.routers.oauth_router import oauth_callback
 
                 # Execute
@@ -225,6 +231,7 @@ class TestOAuthRouter:
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
+        # First-Party
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Execute
@@ -249,6 +256,7 @@ class TestOAuthRouter:
         mock_gateway.oauth_config = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
+        # First-Party
         from mcpgateway.routers.oauth_router import oauth_callback
 
         # Execute
@@ -278,6 +286,7 @@ class TestOAuthRouter:
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
             with patch('mcpgateway.routers.oauth_router.TokenStorageService'):
+                # First-Party
                 from mcpgateway.routers.oauth_router import oauth_callback
 
                 # Execute
@@ -308,6 +317,7 @@ class TestOAuthRouter:
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
             with patch('mcpgateway.routers.oauth_router.TokenStorageService'):
+                # First-Party
                 from mcpgateway.routers.oauth_router import oauth_callback
 
                 # Execute
@@ -330,6 +340,7 @@ class TestOAuthRouter:
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
+        # First-Party
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute
@@ -359,6 +370,7 @@ class TestOAuthRouter:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
+        # First-Party
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute
@@ -380,6 +392,7 @@ class TestOAuthRouter:
         # Setup
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
+        # First-Party
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute & Assert
@@ -397,6 +410,7 @@ class TestOAuthRouter:
         mock_gateway.oauth_config = None
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
+        # First-Party
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute
@@ -415,6 +429,7 @@ class TestOAuthRouter:
         # Setup
         mock_db.execute.side_effect = Exception("Database connection failed")
 
+        # First-Party
         from mcpgateway.routers.oauth_router import get_oauth_status
 
         # Execute & Assert
@@ -441,6 +456,7 @@ class TestOAuthRouter:
             mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value=mock_tools_result)
             mock_gateway_service_class.return_value = mock_gateway_service
 
+            # First-Party
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
@@ -466,6 +482,7 @@ class TestOAuthRouter:
             mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value=mock_tools_result)
             mock_gateway_service_class.return_value = mock_gateway_service
 
+            # First-Party
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute
@@ -489,6 +506,7 @@ class TestOAuthRouter:
             )
             mock_gateway_service_class.return_value = mock_gateway_service
 
+            # First-Party
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute & Assert
@@ -510,6 +528,7 @@ class TestOAuthRouter:
             mock_gateway_service.fetch_tools_after_oauth = AsyncMock(return_value=mock_tools_result)
             mock_gateway_service_class.return_value = mock_gateway_service
 
+            # First-Party
             from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
 
             # Execute

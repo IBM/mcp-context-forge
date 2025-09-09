@@ -23,13 +23,12 @@ import pytest
 
 # First-Party
 from mcpgateway.routers.reverse_proxy import (
+    manager,
     ReverseProxyManager,
     ReverseProxySession,
-    manager,
     router,
 )
 from mcpgateway.utils.verify_credentials import require_auth
-
 
 # --------------------------------------------------------------------------- #
 # Test Fixtures                                                              #
@@ -266,6 +265,7 @@ class TestWebSocketEndpoint:
         mock_websocket.headers = {"X-Session-ID": "test-session"}
         mock_websocket.receive_text.side_effect = asyncio.CancelledError()
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -284,6 +284,7 @@ class TestWebSocketEndpoint:
         mock_websocket.headers = {}  # No X-Session-ID header
         mock_websocket.receive_text.side_effect = asyncio.CancelledError()
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, \
@@ -308,6 +309,7 @@ class TestWebSocketEndpoint:
             asyncio.CancelledError()
         ]
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -331,6 +333,7 @@ class TestWebSocketEndpoint:
         unregister_msg = {"type": "unregister"}
         mock_websocket.receive_text.return_value = json.dumps(unregister_msg)
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -348,6 +351,7 @@ class TestWebSocketEndpoint:
             asyncio.CancelledError()
         ]
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -374,6 +378,7 @@ class TestWebSocketEndpoint:
             asyncio.CancelledError()
         ]
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -394,6 +399,7 @@ class TestWebSocketEndpoint:
             asyncio.CancelledError()
         ]
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -414,6 +420,7 @@ class TestWebSocketEndpoint:
             asyncio.CancelledError()
         ]
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -433,6 +440,7 @@ class TestWebSocketEndpoint:
             asyncio.CancelledError()
         ]
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -460,6 +468,7 @@ class TestWebSocketEndpoint:
             asyncio.CancelledError()
         ]
 
+        # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
         with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
@@ -484,6 +493,7 @@ class TestHTTPEndpoints:
     @pytest.fixture
     def client(self):
         """Create test client."""
+        # Third-Party
         from fastapi import FastAPI
         app = FastAPI()
 
