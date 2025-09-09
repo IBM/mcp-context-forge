@@ -11,14 +11,13 @@ Token scoping utilities for extracting and validating token scopes.
 from typing import Optional
 
 # Third-Party
-from fastapi import Request
-import jwt
+from fastapi import HTTPException, Request
 
 # First-Party
-from mcpgateway.config import settings
+from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 
-def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
+async def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
     """Extract token scopes from JWT in request.
 
     Args:
@@ -30,27 +29,28 @@ def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
     Examples:
         >>> # Test with no authorization header
         >>> from unittest.mock import Mock
+        >>> import asyncio
         >>> mock_request = Mock()
         >>> mock_request.headers = {}
-        >>> extract_token_scopes_from_request(mock_request) is None
+        >>> asyncio.run(extract_token_scopes_from_request(mock_request)) is None
         True
         >>>
         >>> # Test with invalid authorization header
         >>> mock_request = Mock()
         >>> mock_request.headers = {"Authorization": "Invalid token"}
-        >>> extract_token_scopes_from_request(mock_request) is None
+        >>> asyncio.run(extract_token_scopes_from_request(mock_request)) is None
         True
         >>>
         >>> # Test with malformed Bearer token
         >>> mock_request = Mock()
         >>> mock_request.headers = {"Authorization": "Bearer"}
-        >>> extract_token_scopes_from_request(mock_request) is None
+        >>> asyncio.run(extract_token_scopes_from_request(mock_request)) is None
         True
         >>>
         >>> # Test with Bearer but no space
         >>> mock_request = Mock()
         >>> mock_request.headers = {"Authorization": "Bearer123"}
-        >>> extract_token_scopes_from_request(mock_request) is None
+        >>> asyncio.run(extract_token_scopes_from_request(mock_request)) is None
         True
     """
     # Get authorization header
@@ -61,11 +61,14 @@ def extract_token_scopes_from_request(request: Request) -> Optional[dict]:
     token = auth_header.split(" ", 1)[1]
 
     try:
-        # Decode JWT without verification for scope extraction
-        # (verification is handled by the auth system)
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], options={"verify_aud": False, "verify_iss": False})
+        # Use the centralized verify_jwt_token function for consistent JWT validation
+        payload = await verify_jwt_token(token)
         return payload.get("scopes")
-    except jwt.PyJWTError:
+    except HTTPException:
+        # Token validation failed (expired, invalid, etc.)
+        return None
+    except Exception:
+        # Any other error in token validation
         return None
 
 

@@ -24,7 +24,6 @@ from typing import Optional
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer
-import jwt
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -32,6 +31,7 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.middleware.rbac import require_permission
+from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.schemas import (
     AuthenticationResponse,
     AuthEventResponse,
@@ -104,7 +104,7 @@ def get_user_agent(request: Request) -> str:
     return request.headers.get("User-Agent", "unknown")
 
 
-def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None) -> tuple[str, int]:
+async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None) -> tuple[str, int]:
     """Create JWT access token for user with enhanced scoping.
 
     Args:
@@ -149,13 +149,13 @@ def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jt
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},  # Full access for regular user tokens
     }
 
-    # Generate token
-    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    # Generate token using centralized token creation
+    token = await create_jwt_token(payload)
 
     return token, int(expires_delta.total_seconds())
 
 
-def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
+async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     """Create legacy JWT access token for backwards compatibility.
 
     Args:
@@ -181,8 +181,8 @@ def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
         "aud": settings.jwt_audience,
     }
 
-    # Generate token
-    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    # Generate token using centralized token creation
+    token = await create_jwt_token(payload)
 
     return token, int(expires_delta.total_seconds())
 
@@ -226,7 +226,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
         # Create access token
-        access_token, expires_in = create_access_token(user)
+        access_token, expires_in = await create_access_token(user)
 
         # Return authentication response
         return AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))
@@ -274,7 +274,7 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
         )
 
         # Create access token
-        access_token, expires_in = create_access_token(user)
+        access_token, expires_in = await create_access_token(user)
 
         logger.info(f"New user registered: {user.email}")
 

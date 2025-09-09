@@ -714,7 +714,7 @@ class SSOService:
         token_data["scopes"] = {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}}
 
         # Create JWT token
-        token = await create_jwt_token(token_data, expires_in_minutes=settings.token_expiry)
+        token = await create_jwt_token(token_data)
         return token
 
     def _should_user_be_admin(self, email: str, user_info: Dict[str, Any], provider: SSOProvider) -> bool:

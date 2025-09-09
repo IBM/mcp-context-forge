@@ -14,12 +14,12 @@ from typing import Optional
 # Third-Party
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import jwt
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
+from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -73,9 +73,9 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
     email = None
 
     try:
-        # Try JWT token first
+        # Try JWT token first using the centralized verify_jwt_token function
         logger.debug("Attempting JWT token validation")
-        payload = jwt.decode(credentials.credentials, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], audience=settings.jwt_audience, issuer=settings.jwt_issuer)
+        payload = await verify_jwt_token(credentials.credentials)
 
         logger.debug("JWT token validated successfully")
         # Extract user identifier (support both new and legacy token formats)
@@ -113,13 +113,10 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
                 # Log the error but don't fail authentication for admin tokens
                 logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
 
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.PyJWTError as jwt_error:
+    except HTTPException:
+        # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)
+        raise
+    except Exception as jwt_error:
         # JWT validation failed, try database API token
         logger.debug("JWT validation failed with error: %s, trying database API token", jwt_error)
         try:
