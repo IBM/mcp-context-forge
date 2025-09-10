@@ -712,6 +712,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
+    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod

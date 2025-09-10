@@ -1928,3 +1928,51 @@ class TestGatewayService:
             # Verify
             assert "prompts" in capabilities
             assert len(prompts) == 0  # Should be empty due to failure
+
+    @pytest.mark.asyncio
+    async def test_list_gateway_with_tags(self, gateway_service, mock_gateway):
+        """Test listing gateways with tag filtering."""
+        # Third-Party
+        from sqlalchemy import func
+
+        # Mock query chain
+        mock_query = MagicMock()
+        mock_query.where.return_value = mock_query
+
+        session = MagicMock()
+        session.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        session.get_bind.return_value = bind
+
+        mocked_gateway_read = MagicMock()
+        mocked_gateway_read.masked.return_value = "masked_result"
+
+        with patch("mcpgateway.services.gateway_service.select", return_value=mock_query):
+            with patch("mcpgateway.services.gateway_service.json_contains_expr") as mock_json_contains:
+                with patch(
+                    "mcpgateway.services.gateway_service.GatewayRead.model_validate",
+                    return_value=mocked_gateway_read,
+                ) as mock_model_validate:
+                    fake_condition = MagicMock()
+                    mock_json_contains.return_value = fake_condition
+
+                    result = await gateway_service.list_gateways(
+                        session, tags=["test", "production"]
+                    )
+
+                    mock_json_contains.assert_called_once()                       # called exactly once
+                    called_args = mock_json_contains.call_args[0]                # positional args tuple
+                    assert called_args[0] is session                            # session passed through
+                    # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                    assert called_args[2] == ["test", "production"]
+                    # and the fake condition returned must have been passed to where()
+                    mock_query.where.assert_called_with(fake_condition)
+                    # finally, your service should return the list produced by mock_db.execute(...)
+                    assert isinstance(result, list)
+                    assert len(result) == 1
+
+                    mock_model_validate.assert_called_once()
+                    assert result == ["masked_result"]

@@ -89,7 +89,29 @@ class PluginMode(str, Enum):
     DISABLED = "disabled"
 
 
-class ToolTemplate(BaseModel):
+class BaseTemplate(BaseModel):
+    """Base Template.The ToolTemplate, PromptTemplate and ResourceTemplate could be extended using this
+
+    Attributes:
+        context (Optional[list[str]]): specifies the keys of context to be extracted. The context could be global (shared between the plugins) or
+        local (shared within the plugin). Example: global.key1.
+        extensions (Optional[dict[str, Any]]): add custom keys for your specific plugin. Example - 'policy'
+        key for opa plugin.
+
+    Examples:
+        >>> base = BaseTemplate(context=["global.key1.key2", "local.key1.key2"])
+        >>> base.context
+        ['global.key1.key2', 'local.key1.key2']
+        >>> base = BaseTemplate(context=["global.key1.key2"], extensions={"policy" : "sample policy"})
+        >>> base.extensions
+        {'policy': 'sample policy'}
+    """
+
+    context: Optional[list[str]] = None
+    extensions: Optional[dict[str, Any]] = None
+
+
+class ToolTemplate(BaseTemplate):
     """Tool Template.
 
     Attributes:
@@ -115,7 +137,7 @@ class ToolTemplate(BaseModel):
     result: bool = False
 
 
-class PromptTemplate(BaseModel):
+class PromptTemplate(BaseTemplate):
     """Prompt Template.
 
     Attributes:
@@ -139,7 +161,7 @@ class PromptTemplate(BaseModel):
     result: bool = False
 
 
-class ResourceTemplate(BaseModel):
+class ResourceTemplate(BaseTemplate):
     """Resource Template.
 
     Attributes:
@@ -220,6 +242,8 @@ class AppliedTo(BaseModel):
         tools (Optional[list[ToolTemplate]]): tools and fields to be applied.
         prompts (Optional[list[PromptTemplate]]): prompts and fields to be applied.
         resources (Optional[list[ResourceTemplate]]): resources and fields to be applied.
+        global_context (Optional[list[str]]): keys in the context to be applied on globally
+        local_context(Optional[list[str]]): keys in the context to be applied on locally
     """
 
     tools: Optional[list[ToolTemplate]] = None
@@ -313,7 +337,7 @@ class PluginConfig(BaseModel):
     mode: PluginMode = PluginMode.ENFORCE
     priority: Optional[int] = None  # Lower = higher priority
     conditions: Optional[list[PluginCondition]] = None  # When to apply
-    applied_to: Optional[list[AppliedTo]] = None  # Fields to apply to.
+    applied_to: Optional[AppliedTo] = None  # Fields to apply to.
     config: Optional[dict[str, Any]] = None
     mcp: Optional[MCPConfig] = None
 

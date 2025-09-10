@@ -164,6 +164,17 @@ async def test_manager_exception_handling():
         assert result.continue_processing
         assert result.violation is None
 
+    plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
+    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+        plugin_ref = PluginRef(error_plugin)
+        mock_get.return_value = [plugin_ref]
+
+        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+
+        # Should continue in enforce_ignore_error mode
+        assert result.continue_processing
+        assert result.violation is None
+
     await manager.shutdown()
 
 

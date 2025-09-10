@@ -1,0 +1,37 @@
+plugins:
+  - name: "OPAPluginFilter"
+    kind: "opapluginfilter.plugin.OPAPluginFilter"
+    description: "An OPA plugin that enforces rego policies on requests and allows/denies requests as per policies"
+    version: "0.1.0"
+    author: "Shriti Priya"
+    hooks: ["tool_pre_invoke"]
+    tags: ["plugin"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 30
+    applied_to:
+      tools:
+        - tool_name: "fast-time-git-status"
+          context:
+            - "global.opa_policy_context.git_context"
+          extensions:
+            policy: "example"
+            policy_endpoint: "allow"
+    conditions:
+      # Apply to specific tools/servers
+      - server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      # Plugin config dict passed to the plugin constructor
+      opa_base_url: "http://127.0.0.1:8181/v1/data/"
+
+# Plugin directories to scan
+plugin_dirs:
+  - "opapluginfilter"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

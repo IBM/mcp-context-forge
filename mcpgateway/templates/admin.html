@@ -1081,9 +1081,11 @@
           <div class="flex items-center space-x-4">
             <input
               type="text"
+              id="search-servers"
               data-testid="search-input"
               placeholder="Search servers..."
               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+              oninput="filterServerTable(this.value)"
             />
             <div class="flex items-center">
               <input
@@ -1295,9 +1297,9 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    {% if server.owner_email %}
+                    {% if server.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ server.owner_email }}</span
+                      >{{ server.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -1584,6 +1586,13 @@
                     </div>
                   </label>
                   {% endfor %}
+                  <p
+                    id="noResourcesMessage"
+                    class="text-gray-700 dark:text-gray-300"
+                    style="display: none"
+                  >
+                    No resource found containing "<span id="searchResourcesQuery"></span>"
+                  </p>
                 </div>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
@@ -1643,6 +1652,13 @@
                     </div>
                   </label>
                   {% endfor %}
+                  <p
+                    id="noPromptsMessage"
+                    class="text-gray-700 dark:text-gray-300"
+                    style="display: none"
+                  >
+                    No prompt found containing "<span id="searchPromptsQuery"></span>"
+                  </p>
                 </div>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
@@ -1679,10 +1695,7 @@
             </div>
 
             <div>
-              <label
-                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                >Tags</label
-              >
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Tags</label>
               <input
                 type="text"
                 name="tags"
@@ -1690,11 +1703,27 @@
                 class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
               />
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Enter tags separated by commas. Tags help categorize and filter
-                servers.
+                Enter tags separated by commas. Tags help categorize and filter servers.
               </p>
             </div>
-
+            <!-- Visibility options -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-public" checked />
+                  <label for="server-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-team" />
+                  <label for="server-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-private" />
+                  <label for="server-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                </div>
+              </div>
+            </div>
             <div class="mt-6">
               <button
                 type="submit"
@@ -1945,9 +1974,9 @@
                     {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
-                    {% if tool.owner_email %}
+                    {% if tool.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ tool.owner_email }}</span
+                      >{{ tool.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -2627,6 +2656,24 @@
                 tools.
               </p>
             </div>
+            <!-- Visibility options -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-public" checked />
+                  <label for="tool-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-team" />
+                  <label for="tool-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-private" />
+                  <label for="tool-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                </div>
+              </div>
+            </div>
             <div class="mt-6">
               <button
                 type="submit"
@@ -2900,9 +2947,9 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    {% if resource.owner_email %}
+                    {% if resource.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ resource.owner_email }}</span
+                      >{{ resource.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -3256,9 +3303,9 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    {% if prompt.owner_email %}
+                    {% if prompt.ownerEmail %}
                     <span class="text-sm text-gray-900 dark:text-gray-100"
-                      >{{ prompt.owner_email }}</span
+                      >{{ prompt.ownerEmail }}</span
                     >
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -3581,6 +3628,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
                   >
+                    Visibility
+                  </th>
+                  <th
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
+                  >
                     Actions
                   </th>
                 </tr>
@@ -3686,6 +3738,28 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    {% if gateway.visibility == 'private' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800"
+                      >Private</span
+                    >
+                    {% elif gateway.visibility == 'team' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                      >Team</span
+                    >
+                    {% elif gateway.visibility == 'public' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
+                      >Public</span
+                    >
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
+                    {% endif %}
                   </td>
                   <td class="px-3 py-4 whitespace-nowrap text-sm font-medium">
                     <div class="grid grid-cols-2 gap-1 max-w-48">
@@ -3872,6 +3946,42 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   normalized (lowercase, spaces→hyphens).
                 </p>
               </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                  Visibility
+                </label>
+                <div class="mt-1 flex space-x-6">
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="public"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      checked
+                    />
+                    <label for="edit-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="team"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label for="edit-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="private"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label for="edit-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -5554,6 +5664,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       filter tools.
                     </p>
                   </div>
+                  <!-- Visibility options -->
+                    <div id="edit-tool-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-public" />
+                          <label for="edit-tool-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-team" />
+                          <label for="edit-tool-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-private" />
+                          <label for="edit-tool-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                        </div>
+                      </div>
+                    </div>
                   <div
                     class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
                   >
@@ -6231,6 +6359,26 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         automatically normalized.
                       </p>
                     </div>
+
+                    <!-- Visibility options -->
+                    <div id="edit-gateway-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-public" />
+                          <label for="edit-gateway-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-team" />
+                          <label for="edit-gateway-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-private" />
+                          <label for="edit-gateway-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                        </div>
+                      </div>
+                    </div>
+
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
                         >Transport Type</label
@@ -6652,6 +6800,25 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         Enter tags separated by commas. Tags help categorize and
                         filter servers.
                       </p>
+                    </div>
+
+                    <!-- Visibility options -->
+                    <div id="edit-server-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-public" />
+                          <label for="edit-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-team" />
+                          <label for="edit-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-private" />
+                          <label for="edit-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                        </div>
+                      </div>
                     </div>
 
                     <div
@@ -7081,55 +7248,42 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         }
       }
 
-      // updateAvailableTags function moved to admin.js with proper tag element selectors
 
       // Team context switching functions
       function updateTeamContext(teamId) {
-        // Update current page URL with team parameter
-        const url = new URL(window.location);
-        if (teamId && teamId !== '') {
-          url.searchParams.set('team_id', teamId);
-        } else {
-          url.searchParams.delete('team_id');
+        // Prevent double-invocation if user clicks rapidly
+        if (window.__teamSwitchingInProgress) {
+          return;
         }
+        window.__teamSwitchingInProgress = true;
 
-        // Update browser history without reload
-        window.history.pushState({}, '', url);
+        try {
+          const url = new URL(window.location.href);
+          if (teamId && teamId !== '') {
+            url.searchParams.set('team_id', teamId);
+          } else {
+            url.searchParams.delete('team_id');
+          }
 
-        // Reload all resource sections with new team context
-        reloadAllResourceSections(teamId);
-
-        // Update section headers with team context
-        updateSectionHeaders(teamId);
+          // Use assign so browser navigates and we get a brand-new initial render
+          // (pushState + DOM replacements is the root cause of the stack overflow).
+          window.location.assign(url.toString());
+        } finally {
+          // We leave the guard in place for a short time — navigation should occur immediately.
+          // If navigation fails for some reason the guard is cleared after a short timeout.
+          setTimeout(() => {
+            window.__teamSwitchingInProgress = false;
+          }, 2000);
+        }
       }
 
       function reloadAllResourceSections(teamId) {
-        const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways'];
-
-        sections.forEach(section => {
-          const sectionElement = document.getElementById(section + '-section');
-          if (sectionElement) {
-            // Build URL for section reload
-            let sectionUrl = window.ROOT_PATH + '/admin/sections/' + section;
-            if (teamId && teamId !== '') {
-              sectionUrl += '?team_id=' + encodeURIComponent(teamId);
-            }
-
-            // Fetch JSON data and update the section
-            fetch(sectionUrl)
-              .then(response => response.json())
-              .then(data => {
-                if (data.error) {
-                  console.error('Error reloading section:', data.error);
-                  return;
-                }
-                updateSectionDisplay(section, data[section] || []);
-              })
-              .catch(error => {
-                console.error('Error fetching section data:', error);
-              });
-          }
-        });
+        // delegate to the implementation in admin.js
+        if (window.reloadAllResourceSections) {
+          return window.reloadAllResourceSections(teamId);
+        } else {
+          console.warn('reloadAllResourceSections implementation not available.');
+        }
       }
 
       function updateSectionHeaders(teamId) {
@@ -7273,15 +7427,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         return buttons;
       }
 
-      function getTeamNameById(teamId) {
-        // Get team name from Alpine.js data or fallback
-        const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
-        if (teamSelector && teamSelector._x_dataStack && teamSelector._x_dataStack[0].teams) {
-          const team = teamSelector._x_dataStack[0].teams.find(t => t.id === teamId);
-          return team ? team.name : null;
-        }
-        return null;
-      }
+
 
       // Permission Management Functions
       function refreshVisibilityRules() {
@@ -7904,34 +8050,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       });
 
       // Add search functionality for filtering tools
-      document.addEventListener('DOMContentLoaded', function() {
-        const searchBox = document.getElementById('searchTools');
-        const toolItems = document.querySelectorAll('#associatedTools .tool-item');
-        const noToolsMessage = document.getElementById('noToolsMessage');
-        const searchQuerySpan = document.getElementById('searchQuery');
 
-        searchBox.addEventListener('input', function() {
-          const filter = this.value.toLowerCase();
-          let hasVisibleItems = false;
-
-          toolItems.forEach(function(toolItem) {
-            const toolName = toolItem.querySelector('span').textContent.toLowerCase();
-            if (toolName.includes(filter)) {
-              toolItem.style.display = '';
-              hasVisibleItems = true;
-            } else {
-              toolItem.style.display = 'none';
-            }
-          });
-
-          if (hasVisibleItems) {
-            noToolsMessage.style.display = 'none';
-          } else {
-            searchQuerySpan.textContent = filter;
-            noToolsMessage.style.display = 'block';
-          }
-        });
-      });
     </script>
     <script>
       function handleEditIntegrationTypeChange() {

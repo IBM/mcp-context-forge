@@ -1,0 +1,9 @@
+description: "An OPA plugin that enforces rego policies on requests and allows/denies requests as per policies"
+author: "Shriti Priya"
+version: "0.1.0"
+available_hooks:
+  - "prompt_pre_hook"
+  - "prompt_post_hook"
+  - "tool_pre_hook"
+  - "tool_post_hook"
+default_configs:

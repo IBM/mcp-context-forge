@@ -50,6 +50,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Plugin support imports (conditional)
 try:
@@ -391,6 +392,10 @@ class ResourceService:
 
             With tags filter:
             >>> db2 = MagicMock()
+            >>> bind = MagicMock()
+            >>> bind.dialect = MagicMock()
+            >>> bind.dialect.name = "sqlite"           # or "postgresql" / "mysql"
+            >>> db2.get_bind.return_value = bind
             >>> db2.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> result2 = asyncio.run(service.list_resources(db2, tags=['api']))
             >>> isinstance(result2, list)
@@ -402,12 +407,7 @@ class ResourceService:
 
         # Add tag filtering if tags are provided
         if tags:
-            # Filter resources that have any of the specified tags
-            tag_conditions = []
-            for tag in tags:
-                tag_conditions.append(func.json_contains(DbResource.tags, f'"{tag}"'))
-            if tag_conditions:
-                query = query.where(*tag_conditions)
+            query = query.where(json_contains_expr(db, DbResource.tags, tags, match_any=True))
 
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
@@ -436,28 +436,25 @@ class ResourceService:
             >>> import asyncio
             >>> service = ResourceService()
             >>> db = MagicMock()
-            >>> # Patch TeamManagementService used inside the method
-            >>> from mcpgateway.services import resource_service as _rs
-            >>> class _TeamSvc:
-            ...     def __init__(self, _db):
-            ...         pass
-            ...     async def get_user_teams(self, email):
-            ...         Team = type('T', (), {})
-            ...         t = Team(); t.id = 'team-1'
-            ...         return [t]
-            >>> _rs.TeamManagementService = _TeamSvc
-            >>> service._convert_resource_to_read = MagicMock(return_value=MagicMock())
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> out = asyncio.run(service.list_resources_for_user(db, 'user@example.com', team_id='team-1'))
-            >>> isinstance(out, list)
-            True
+            >>> # Patch out TeamManagementService so it doesn't run real logic
+            >>> import mcpgateway.services.resource_service as _rs
+            >>> class FakeTeamService:
+            ...     def __init__(self, db): pass
+            ...     async def get_user_teams(self, email): return []
+            >>> _rs.TeamManagementService = FakeTeamService
+            >>> # Force DB to return one fake row
+            >>> db.execute.return_value.scalars.return_value.all.return_value = ["raw"]
+            >>> service._convert_resource_to_read = MagicMock(return_value="converted")
+            >>> asyncio.run(service.list_resources_for_user(db, "user@example.com"))
+            ['converted']
 
-            Without team_id (public and personal visibility):
-            >>> db3 = MagicMock()
-            >>> db3.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> out2 = asyncio.run(service.list_resources_for_user(db3, 'user@example.com'))
-            >>> isinstance(out2, list)
-            True
+            Without team_id (default/public access):
+            >>> db2 = MagicMock()
+            >>> db2.execute.return_value.scalars.return_value.all.return_value = ["raw_resource2"]
+            >>> service._convert_resource_to_read = MagicMock(return_value="converted2")
+            >>> out2 = asyncio.run(service.list_resources_for_user(db2, "user@example.com"))
+            >>> out2
+            ['converted2']
         """
         # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
