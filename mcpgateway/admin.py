@@ -7197,7 +7197,7 @@ async def export_metrics_csv(
     """Export metrics for a specific entity type to CSV format.
 
     This endpoint retrieves ALL entities of the specified type from the database and
-    exports them to CSV format with their performance metrics for download.
+    exports them to CSV format with their performance metrics for download. 
     Entities without metrics will show 0 executions and N/A for response times.
     Response times are formatted to 3 decimal places.
 
@@ -7209,17 +7209,17 @@ async def export_metrics_csv(
 
     Returns:
         Response: CSV file download response containing the metrics data for ALL entities.
-
+        
     Raises:
         HTTPException: If the entity type is invalid.
     """
     LOGGER.debug(f"User {user} requested CSV export of {entity_type} metrics")
-
+    
     # Validate entity type
     valid_types = ["tools", "resources", "prompts", "servers"]
     if entity_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid entity type. Must be one of: {', '.join(valid_types)}")
-
+    
     # Get ALL entities with their metrics data for CSV export (including those with 0 executions)
     try:
         if entity_type == "tools":
@@ -7227,7 +7227,7 @@ async def export_metrics_csv(
             from sqlalchemy import func, case, desc, Float
             from mcpgateway.db import Tool, ToolMetric
             from mcpgateway.utils.metrics_common import build_top_performers
-
+            
             query = (
                 db.query(
                     Tool.id,
@@ -7247,18 +7247,18 @@ async def export_metrics_csv(
                 .group_by(Tool.id, Tool.name)
                 .order_by(Tool.name)  # Order by name for consistent CSV output
             )
-
+            
             if limit is not None:
                 query = query.limit(limit)
-
+                
             results = query.all()
             performers = build_top_performers(results)
-
+            
         elif entity_type == "resources":
             from sqlalchemy import func, case, Float
             from mcpgateway.db import Resource, ResourceMetric
             from mcpgateway.utils.metrics_common import build_top_performers
-
+            
             query = (
                 db.query(
                     Resource.id,
@@ -7278,18 +7278,18 @@ async def export_metrics_csv(
                 .group_by(Resource.id, Resource.uri)
                 .order_by(Resource.uri)
             )
-
+            
             if limit is not None:
                 query = query.limit(limit)
-
+                
             results = query.all()
             performers = build_top_performers(results)
-
+            
         elif entity_type == "prompts":
             from sqlalchemy import func, case, Float
             from mcpgateway.db import Prompt, PromptMetric
             from mcpgateway.utils.metrics_common import build_top_performers
-
+            
             query = (
                 db.query(
                     Prompt.id,
@@ -7309,18 +7309,18 @@ async def export_metrics_csv(
                 .group_by(Prompt.id, Prompt.name)
                 .order_by(Prompt.name)
             )
-
+            
             if limit is not None:
                 query = query.limit(limit)
-
+                
             results = query.all()
             performers = build_top_performers(results)
-
+            
         elif entity_type == "servers":
             from sqlalchemy import func, case, Float
             from mcpgateway.db import Server, ServerMetric
             from mcpgateway.utils.metrics_common import build_top_performers
-
+            
             query = (
                 db.query(
                     Server.id,
@@ -7340,16 +7340,16 @@ async def export_metrics_csv(
                 .group_by(Server.id, Server.name)
                 .order_by(Server.name)
             )
-
+            
             if limit is not None:
                 query = query.limit(limit)
-
+                
             results = query.all()
             performers = build_top_performers(results)
     except Exception as e:
         LOGGER.error(f"Error exporting {entity_type} metrics to CSV: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to export metrics: {str(e)}")
-
+    
     # Handle empty data case
     if not performers:
         # Return empty CSV with headers
@@ -7359,32 +7359,32 @@ async def export_metrics_csv(
             media_type="text/csv",
             headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
         )
-
+    
     # Create CSV content
     output = StringIO()
     writer = csv.writer(output)
-
+    
     # Write header row
     writer.writerow([
-        "ID",
-        "Name",
-        "Execution Count",
-        "Average Response Time (s)",
-        "Success Rate (%)",
+        "ID", 
+        "Name", 
+        "Execution Count", 
+        "Average Response Time (s)", 
+        "Success Rate (%)", 
         "Last Execution"
     ])
-
+    
     # Write data rows with formatted values
     for performer in performers:
         # Format response time to 3 decimal places
         formatted_response_time = format_response_time(performer.avg_response_time) if performer.avg_response_time is not None else "N/A"
-
+        
         # Format success rate
         success_rate = f"{performer.success_rate:.1f}" if performer.success_rate is not None else "N/A"
-
+        
         # Format timestamp
         last_execution = performer.last_execution.isoformat() if performer.last_execution else "N/A"
-
+        
         writer.writerow([
             performer.id,
             performer.name,
@@ -7393,17 +7393,18 @@ async def export_metrics_csv(
             success_rate,
             last_execution
         ])
-
+    
     # Get the CSV content as a string
     csv_content = output.getvalue()
     output.close()
-
+    
     # Return CSV response
     return Response(
         content=csv_content,
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
     )
+
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
