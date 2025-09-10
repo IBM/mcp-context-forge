@@ -676,26 +676,40 @@ class TestServerAPIs:
         assert response.status_code in [400, 404]
 
     async def test_server_name_conflict(self, client: AsyncClient, mock_auth):
-        """Test creating server with duplicate name."""
-        server_data = {
+        """Test creating server with duplicate (team_id, owner_email, name) for authenticated user."""
+        # Only vary team_id and name, owner_email is set by auth context
+        server_data_1 = {
             "server": {"name": "duplicate_server"},
-            "team_id": None,
+            "team_id": "teamA",
+            "visibility": "private"
+        }
+        server_data_2 = {
+            "server": {"name": "duplicate_server"},
+            "team_id": "teamA",
+            "visibility": "private"
+        }
+        server_data_3 = {
+            "server": {"name": "duplicate_server"},
+            "team_id": "teamB",
             "visibility": "private"
         }
 
-        # Create first server
-        response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        # Create first server (teamA, authenticated user)
+        response = await client.post("/servers", json=server_data_1, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
 
-        # Try to create duplicate - must return 409 Conflict
-        response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        # Try to create duplicate with same team_id, name - must return 409
+        response = await client.post("/servers", json=server_data_2, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
         resp_json = response.json()
         if "message" in resp_json:
             assert "already exists" in resp_json["message"]
         else:
-            # Accept any error format as long as status is correct
             assert response.status_code == 409
+
+        # Create with different team_id (should succeed)
+        response = await client.post("/servers", json=server_data_3, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 201
 
     async def test_create_server_success_and_missing_fields(self, client: AsyncClient, mock_auth):
         """Test POST /servers - create server success and missing fields."""
@@ -1915,16 +1929,35 @@ class TestErrorHandling:
         assert response.status_code == 422
 
     async def test_database_integrity_error(self, client: AsyncClient, mock_auth):
-        """Test DB integrity error by creating duplicate server name."""
-        server_data = {
+        """Test DB integrity error by creating duplicate (team_id, owner_email, name) for authenticated user."""
+        # Only vary team_id and name, owner_email is set by auth context
+        server_data_1 = {
             "server": {"name": "unique_server"},
-            "team_id": None,
+            "team_id": "teamA",
             "visibility": "private"
         }
-        response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+        server_data_2 = {
+            "server": {"name": "unique_server"},
+            "team_id": "teamA",
+            "visibility": "private"
+        }
+        server_data_3 = {
+            "server": {"name": "unique_server"},
+            "team_id": "teamB",
+            "visibility": "private"
+        }
+
+        # Create first server (teamA, authenticated user)
+        response = await client.post("/servers", json=server_data_1, headers=TEST_AUTH_HEADER)
         assert response.status_code == 201
-        response = await client.post("/servers", json=server_data, headers=TEST_AUTH_HEADER)
+
+        # Try to create duplicate with same team_id, name - must return 409 or 400
+        response = await client.post("/servers", json=server_data_2, headers=TEST_AUTH_HEADER)
         assert response.status_code in [400, 409]
+
+        # Create with different team_id (should succeed)
+        response = await client.post("/servers", json=server_data_3, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 201
 
     async def test_root_path_returns_api_info(self, client: AsyncClient, mock_settings):
         """Test GET / returns API info when UI is disabled, or redirects if UI is enabled."""

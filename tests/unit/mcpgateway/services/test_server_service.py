@@ -451,25 +451,95 @@ class TestServerService:
 
     @pytest.mark.asyncio
     async def test_update_server_name_conflict(self, server_service, mock_server, test_db):
-        server1 = mock_server
-        server2 = MagicMock(spec=DbServer)
-        server2.id = 2
-        server2.name = "existing_server"
-        server2.is_active = True
+        import types
+        from mcpgateway.services.server_service import ServerNameConflictError, ServerError
 
-        test_db.get = Mock(return_value=server1)
+        # --- PRIVATE: allow same name across users/teams (should NOT raise ServerNameConflictError) --- #
+        server_private = mock_server
+        server_private.id = "1"
+        server_private.name = "other_server"
+        server_private.visibility = "private"
+        server_private.team_id = "teamA"
+
+        # Simulate no conflict found (should not raise)
+        test_db.get = Mock(return_value=server_private)
         mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = server2
+        mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
         test_db.rollback = Mock()
+        test_db.refresh = Mock()
 
-        with pytest.raises(ServerError) as exc:
+        # Should not raise ServerNameConflictError for private, but should raise IntegrityError for duplicate name
+        from sqlalchemy.exc import IntegrityError
+        test_db.commit = Mock(side_effect=IntegrityError("Duplicate name", None, None))
+        with pytest.raises(IntegrityError):
             await server_service.update_server(
                 test_db,
-                1,
-                ServerUpdate(name="existing_server"),
+                "1",
+                ServerUpdate(name="existing_server", visibility="private"),
             )
-        assert "Server already exists with name" in str(exc.value)
+
+        # --- TEAM: restrict within team only (should raise ServerNameConflictError) --- #
+        server_team = mock_server
+        server_team.id = "2"
+        server_team.name = "other_server"
+        server_team.visibility = "team"
+        server_team.team_id = "teamA"
+
+        conflict_team_server = types.SimpleNamespace(
+            id="3",
+            name="existing_server",
+            is_active=True,
+            visibility="team",
+            team_id="teamA"
+        )
+
+        test_db.get = Mock(return_value=server_team)
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = conflict_team_server
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+
+        with pytest.raises(ServerNameConflictError) as exc:
+            await server_service.update_server(
+                test_db,
+                "2",
+                ServerUpdate(name="existing_server", visibility="team", team_id="teamA"),
+            )
+        assert "Team Server already exists with name" in str(exc.value)
+        test_db.rollback.assert_called()
+
+        # --- PUBLIC: restrict globally (should raise ServerNameConflictError) --- #
+        server_public = mock_server
+        server_public.id = "4"
+        server_public.name = "other_server"
+        server_public.visibility = "public"
+        server_public.team_id = None
+
+        conflict_public_server = types.SimpleNamespace(
+            id="5",
+            name="existing_server",
+            is_active=True,
+            visibility="public",
+            team_id=None
+        )
+
+        test_db.get = Mock(return_value=server_public)
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = conflict_public_server
+        test_db.execute = Mock(return_value=mock_scalar)
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+
+        with pytest.raises(ServerNameConflictError) as exc:
+            await server_service.update_server(
+                test_db,
+                "4",
+                ServerUpdate(name="existing_server", visibility="public"),
+            )
+        assert "Public Server already exists with name" in str(exc.value)
+        test_db.rollback.assert_called()
 
     # -------------------------- toggle --------------------------------- #
     @pytest.mark.asyncio
