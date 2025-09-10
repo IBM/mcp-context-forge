@@ -196,9 +196,34 @@ class PromptService:
         if limit is not None:
             query = query.limit(limit)
 
-        results = query.all()
+        results = query.all()        
 
         return build_top_performers(results)
+
+    async def _record_prompt_metric(self, db: Session, prompt: DbPrompt, start_time: float, success: bool, error_message: Optional[str]) -> None:
+        """
+        Records a metric for a prompt invocation.
+        This function calculates the response time using the provided start time and records
+        the metric details (including whether the invocation was successful and any error message)
+        into the database. The metric is then committed to the database.
+        Args:
+            db (Session): The SQLAlchemy database session.
+            prompt (DbPrompt): The prompt that was invoked.
+            start_time (float): The monotonic start time of the invocation.
+            success (bool): True if the invocation succeeded; otherwise, False.
+            error_message (Optional[str]): The error message if the invocation failed, otherwise None.
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+        metric = PromptMetric(
+            prompt_id=prompt.id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+    
 
     def _convert_db_prompt(self, db_prompt: DbPrompt) -> Dict[str, Any]:
         """
@@ -574,7 +599,10 @@ class PromptService:
         """
 
         start_time = time.monotonic()
-
+        success = False
+        error_message = None
+        prompt = None
+        
         # Create a trace span for prompt rendering
         with create_span(
             "prompt.render",
@@ -587,98 +615,114 @@ class PromptService:
                 "request_id": request_id or "none",
             },
         ) as span:
-            if self._plugin_manager:
-                if not request_id:
-                    request_id = uuid.uuid4().hex
-                global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
-                try:
-                    pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(payload=PromptPrehookPayload(name=name, args=arguments), global_context=global_context, local_contexts=None)
+            try:
+                if self._plugin_manager:
+                    if not request_id:
+                        request_id = uuid.uuid4().hex
+                    global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
+                    try:
+                        pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(payload=PromptPrehookPayload(name=name, args=arguments), global_context=global_context, local_contexts=None)
 
-                    if not pre_result.continue_processing:
-                        # Plugin blocked the request
-                        if pre_result.violation:
-                            plugin_name = pre_result.violation.plugin_name
-                            violation_reason = pre_result.violation.reason
-                            violation_desc = pre_result.violation.description
-                            violation_code = pre_result.violation.code
-                            raise PluginViolationError(f"Pre prompting fetch blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", pre_result.violation)
-                        raise PluginViolationError("Pre prompting fetch blocked by plugin")
+                        if not pre_result.continue_processing:
+                            # Plugin blocked the request
+                            if pre_result.violation:
+                                plugin_name = pre_result.violation.plugin_name
+                                violation_reason = pre_result.violation.reason
+                                violation_desc = pre_result.violation.description
+                                violation_code = pre_result.violation.code
+                                raise PluginViolationError(f"Pre prompting fetch blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", pre_result.violation)
+                            raise PluginViolationError("Pre prompting fetch blocked by plugin")
 
-                    # Use modified payload if provided
-                    if pre_result.modified_payload:
-                        payload = pre_result.modified_payload
-                        name = payload.name
-                        arguments = payload.args
-                except PluginViolationError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Error in pre-prompt fetch plugin hook: {e}")
-                    # Only fail if configured to do so
-                    if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                        # Use modified payload if provided
+                        if pre_result.modified_payload:
+                            payload = pre_result.modified_payload
+                            name = payload.name
+                            arguments = payload.args
+                    except PluginViolationError:
                         raise
+                    except Exception as e:
+                        logger.error(f"Error in pre-prompt fetch plugin hook: {e}")
+                        # Only fail if configured to do so
+                        if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                            raise
 
-            # Find prompt
-            prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
+                # Find prompt
+                prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
 
-            if not prompt:
-                inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
-                if inactive_prompt:
-                    raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
+                if not prompt:
+                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                    if inactive_prompt:
+                        raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
 
-                raise PromptNotFoundError(f"Prompt not found: {name}")
+                    raise PromptNotFoundError(f"Prompt not found: {name}")
 
-            if not arguments:
-                result = PromptResult(
-                    messages=[
-                        Message(
-                            role=Role.USER,
-                            content=TextContent(type="text", text=prompt.template),
-                        )
-                    ],
-                    description=prompt.description,
-                )
-            else:
-                try:
-                    prompt.validate_arguments(arguments)
-                    rendered = self._render_template(prompt.template, arguments)
-                    messages = self._parse_messages(rendered)
-                    result = PromptResult(messages=messages, description=prompt.description)
-                except Exception as e:
-                    if span:
-                        span.set_attribute("error", True)
-                        span.set_attribute("error.message", str(e))
-                    raise PromptError(f"Failed to process prompt: {str(e)}")
+                if not arguments:
+                    result = PromptResult(
+                        messages=[
+                            Message(
+                                role=Role.USER,
+                                content=TextContent(type="text", text=prompt.template),
+                            )
+                        ],
+                        description=prompt.description,
+                    )
+                else:
+                    try:
+                        prompt.validate_arguments(arguments)
+                        rendered = self._render_template(prompt.template, arguments)
+                        messages = self._parse_messages(rendered)
+                        result = PromptResult(messages=messages, description=prompt.description)
+                    except Exception as e:
+                        if span:
+                            span.set_attribute("error", True)
+                            span.set_attribute("error.message", str(e))
+                        raise PromptError(f"Failed to process prompt: {str(e)}")
 
-            if self._plugin_manager:
-                try:
-                    post_result, _ = await self._plugin_manager.prompt_post_fetch(payload=PromptPosthookPayload(name=name, result=result), global_context=global_context, local_contexts=context_table)
-                    if not post_result.continue_processing:
-                        # Plugin blocked the request
-                        if post_result.violation:
-                            plugin_name = post_result.violation.plugin_name
-                            violation_reason = post_result.violation.reason
-                            violation_desc = post_result.violation.description
-                            violation_code = post_result.violation.code
-                            raise PluginViolationError(f"Post prompting fetch blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", post_result.violation)
-                        raise PluginViolationError("Post prompting fetch blocked by plugin")
-                    # Use modified payload if provided
-                    return post_result.modified_payload.result if post_result.modified_payload else result
-                except PluginViolationError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Error in post-prompt fetch plugin hook: {e}")
-                    # Only fail if configured to do so
-                    if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                if self._plugin_manager:
+                    try:
+                        post_result, _ = await self._plugin_manager.prompt_post_fetch(payload=PromptPosthookPayload(name=name, result=result), global_context=global_context, local_contexts=context_table)
+                        if not post_result.continue_processing:
+                            # Plugin blocked the request
+                            if post_result.violation:
+                                plugin_name = post_result.violation.plugin_name
+                                violation_reason = post_result.violation.reason
+                                violation_desc = post_result.violation.description
+                                violation_code = post_result.violation.code
+                                raise PluginViolationError(f"Post prompting fetch blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", post_result.violation)
+                            raise PluginViolationError("Post prompting fetch blocked by plugin")
+                        # Use modified payload if provided
+                        if post_result.modified_payload:
+                            result = post_result.modified_payload.result
+                    except PluginViolationError:
                         raise
+                    except Exception as e:
+                        logger.error(f"Error in post-prompt fetch plugin hook: {e}")
+                        # Only fail if configured to do so
+                        if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                            raise
 
-            # Set success attributes on span
-            if span:
-                span.set_attribute("success", True)
-                span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
-                if result and hasattr(result, "messages"):
-                    span.set_attribute("messages.count", len(result.messages))
+                # Set success attributes on span
+                if span:
+                    span.set_attribute("success", True)
+                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                    if result and hasattr(result, "messages"):
+                        span.set_attribute("messages.count", len(result.messages))
 
-            return result
+                # Mark as successful only after all operations complete successfully
+                success = True
+                return result
+            except Exception as e:
+                error_message = str(e)
+                # Set span error status
+                if span:
+                    span.set_attribute("error", True)
+                    span.set_attribute("error.message", str(e))
+                raise
+            finally:
+                # Record metric regardless of success or failure
+                if prompt:
+                    await self._record_prompt_metric(db, prompt, start_time, success, error_message)
+
 
     async def update_prompt(self, db: Session, name: str, prompt_update: PromptUpdate) -> PromptRead:
         """
