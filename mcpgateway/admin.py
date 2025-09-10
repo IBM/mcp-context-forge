@@ -1920,6 +1920,50 @@ async def admin_ui(
 
     # Small utility to check if a returned model or dict matches the selected_team_id.
     def _matches_selected_team(item, tid: str) -> bool:
+        """
+        Determine whether the given item is associated with the specified team ID.
+
+        This function attempts to determine if the input `item` (which may be a Pydantic model,
+        an object with attributes, or a dictionary) is associated with the given team ID (`tid`).
+        It checks several common attribute names (e.g., `team_id`, `team_ids`, `teams`) to see
+        if any of them match the provided team ID. These fields may contain either a single ID
+        or a list of IDs.
+
+        If `tid` is falsy (e.g., empty string), the function returns True.
+
+        Args:
+            item: An object or dictionary that may contain team identification fields.
+            tid (str): The team ID to match.
+
+        Returns:
+            bool: True if the item is associated with the specified team ID, otherwise False.
+
+        Examples:
+            >>> class Obj:
+            ...     team_id = 'abc123'
+            >>> _matches_selected_team(Obj(), 'abc123')
+            True
+
+            >>> class Obj:
+            ...     team_ids = ['abc123', 'def456']
+            >>> _matches_selected_team(Obj(), 'def456')
+            True
+
+            >>> _matches_selected_team({'teamId': 'xyz789'}, 'xyz789')
+            True
+
+            >>> _matches_selected_team({'teamIds': ['123', '456']}, '789')
+            False
+
+            >>> _matches_selected_team({'teams': ['t1', 't2']}, 't1')
+            True
+
+            >>> _matches_selected_team({}, '')
+            True
+
+            >>> _matches_selected_team(None, 'abc')
+            False
+        """
         if not tid:
             return True
         # item may be a pydantic model or dict-like
@@ -2002,6 +2046,40 @@ async def admin_ui(
 
     # Convert models to dicts and filter as needed
     def _to_dict_and_filter(raw_list):
+        """
+        Convert a list of items (Pydantic models, dicts, or similar) to dictionaries and filter them
+        based on a globally defined `selected_team_id`.
+
+        For each item:
+        - Try to convert it to a dictionary via `.model_dump(by_alias=True)` (if it's a Pydantic model),
+        or keep it as-is if it's already a dictionary.
+        - If the conversion fails, try to coerce the item to a dictionary via `dict(item)`.
+        - If `selected_team_id` is set, include only items that match it via `_matches_selected_team`.
+
+        Args:
+            raw_list (list): A list of Pydantic models, dictionaries, or similar objects.
+
+        Returns:
+            list: A filtered list of dictionaries.
+
+        Examples:
+            >>> global selected_team_id
+            >>> selected_team_id = 'team123'
+            >>> class Model:
+            ...     def __init__(self, team_id): self.team_id = team_id
+            ...     def model_dump(self, by_alias=False): return {'team_id': self.team_id}
+            >>> items = [Model('team123'), Model('team999')]
+            >>> _to_dict_and_filter(items)
+            [{'team_id': 'team123'}]
+
+            >>> selected_team_id = None
+            >>> _to_dict_and_filter([{'team_id': 'any_team'}])
+            [{'team_id': 'any_team'}]
+
+            >>> selected_team_id = 't1'
+            >>> _to_dict_and_filter([{'team_ids': ['t1', 't2']}, {'team_ids': ['t3']}])
+            [{'team_ids': ['t1', 't2']}]
+        """
         out = []
         for item in raw_list or []:
             try:
