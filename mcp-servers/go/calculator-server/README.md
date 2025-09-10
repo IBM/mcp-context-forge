@@ -5,7 +5,7 @@ A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematica
 **Owner & Maintainer:** Avinash Sangle (avinash.sangle123@gmail.com)
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-%3E95%25-brightgreen)]()
 
@@ -829,7 +829,7 @@ Complete guide to mathematical functions available in expressions:
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
