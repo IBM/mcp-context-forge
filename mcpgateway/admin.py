@@ -5083,6 +5083,12 @@ async def admin_edit_tool(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    visibility = str(form.get("visibility", "private"))
+
+    user_email = get_user_email(user)
+    # Determine personal team for default assignment
+    team_id = form.get("team_id", None)
+    team_id = await get_team_for_user(db, user_email, team_id)
 
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
@@ -5101,6 +5107,9 @@ async def admin_edit_tool(
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
         "tags": tags,
+        "visibility": visibility,
+        "owner_email": user_email,
+        "team_id": team_id,
     }
     # Only include integration_type if it's provided (not disabled in form)
     if "integrationType" in form:

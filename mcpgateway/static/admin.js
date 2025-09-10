@@ -1989,6 +1989,34 @@ async function editTool(toolId) {
             tagsField.value = tool.tags ? tool.tags.join(", ") : "";
         }
 
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+
+        if (teamId) {
+            const hiddenInput = document.createElement("input");
+            hiddenInput.type = "hidden";
+            hiddenInput.name = "team_id";
+            hiddenInput.value = teamId;
+            editForm.appendChild(hiddenInput);
+        }
+
+        const visibility = tool.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+        const publicRadio = safeGetElement("edit-tool-visibility-public");
+        const teamRadio = safeGetElement("edit-tool-visibility-team");
+        const privateRadio = safeGetElement("edit-tool-visibility-private");
+
+        if (visibility) {
+            // Check visibility and set the corresponding radio button
+            if (visibility === "public" && publicRadio) {
+                publicRadio.checked = true;
+            } else if (visibility === "team" && teamRadio) {
+                teamRadio.checked = true;
+            } else if (visibility === "private" && privateRadio) {
+                privateRadio.checked = true;
+            }
+        }
+
         // Handle JSON fields safely with validation
         const headersValidation = validateJson(
             JSON.stringify(tool.headers || {}),

@@ -530,6 +530,7 @@ class ServerService:
         if visibility:
             query = query.where(DbServer.visibility == visibility)
 
+        query = query.where(~((DbServer.owner_email != user_email) & (DbServer.visibility == "private")))
         # Apply pagination following existing patterns
         query = query.offset(skip).limit(limit)
 

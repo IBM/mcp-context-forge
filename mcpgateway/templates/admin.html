@@ -5664,6 +5664,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       filter tools.
                     </p>
                   </div>
+                  <!-- Visibility options -->
+                    <div id="edit-tool-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-public" />
+                          <label for="edit-tool-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-team" />
+                          <label for="edit-tool-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-private" />
+                          <label for="edit-tool-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                        </div>
+                      </div>
+                    </div>
                   <div
                     class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
                   >
