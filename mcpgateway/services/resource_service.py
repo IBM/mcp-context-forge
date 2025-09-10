@@ -432,28 +432,25 @@ class ResourceService:
             >>> import asyncio
             >>> service = ResourceService()
             >>> db = MagicMock()
-            >>> # Patch TeamManagementService used inside the method
-            >>> from mcpgateway.services import resource_service as _rs
-            >>> class _TeamSvc:
-            ...     def __init__(self, _db):
-            ...         pass
-            ...     async def get_user_teams(self, email):
-            ...         Team = type('T', (), {})
-            ...         t = Team(); t.id = 'team-1'
-            ...         return [t]
-            >>> _rs.TeamManagementService = _TeamSvc
-            >>> service._convert_resource_to_read = MagicMock(return_value=MagicMock())
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> out = asyncio.run(service.list_resources_for_user(db, 'user@example.com', team_id='team-1'))
-            >>> isinstance(out, list)
-            True
+            >>> # Patch out TeamManagementService so it doesn't run real logic
+            >>> import mcpgateway.services.resource_service as _rs
+            >>> class FakeTeamService:
+            ...     def __init__(self, db): pass
+            ...     async def get_user_teams(self, email): return []
+            >>> _rs.TeamManagementService = FakeTeamService
+            >>> # Force DB to return one fake row
+            >>> db.execute.return_value.scalars.return_value.all.return_value = ["raw"]
+            >>> service._convert_resource_to_read = MagicMock(return_value="converted")
+            >>> asyncio.run(service.list_resources_for_user(db, "user@example.com"))
+            ['converted']
 
-            Without team_id (public and personal visibility):
-            >>> db3 = MagicMock()
-            >>> db3.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> out2 = asyncio.run(service.list_resources_for_user(db3, 'user@example.com'))
-            >>> isinstance(out2, list)
-            True
+            Without team_id (default/public access):
+            >>> db2 = MagicMock()
+            >>> db2.execute.return_value.scalars.return_value.all.return_value = ["raw_resource2"]
+            >>> service._convert_resource_to_read = MagicMock(return_value="converted2")
+            >>> out2 = asyncio.run(service.list_resources_for_user(db2, "user@example.com"))
+            >>> out2
+            ['converted2']
         """
         # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
