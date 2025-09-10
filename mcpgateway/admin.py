@@ -7078,6 +7078,100 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
               and servers.
     """
+    # Get ALL entities with metrics for UI display (same logic as CSV export)
+    from sqlalchemy import func, case, Float
+    from sqlalchemy.sql import desc
+    from mcpgateway.db import Tool, ToolMetric, Resource, ResourceMetric, Prompt, PromptMetric, Server, ServerMetric
+    from mcpgateway.utils.metrics_common import build_top_performers
+    
+    # Get ALL tools (including those with 0 metrics)
+    tools_query = (
+        db.query(
+            Tool.id,
+            Tool.name,
+            func.coalesce(func.count(ToolMetric.id), 0).label("execution_count"),
+            func.avg(ToolMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(ToolMetric.id) > 0,
+                    func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(ToolMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(ToolMetric, Tool.id == ToolMetric.tool_id)
+        .group_by(Tool.id, Tool.name)
+        .order_by(desc("execution_count"), Tool.name)  # Order by exec count, then name
+    )
+    all_tools = build_top_performers(tools_query.all())
+    
+    # Get ALL resources
+    resources_query = (
+        db.query(
+            Resource.id,
+            Resource.uri.label("name"),
+            func.coalesce(func.count(ResourceMetric.id), 0).label("execution_count"),
+            func.avg(ResourceMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(ResourceMetric.id) > 0,
+                    func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(ResourceMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(ResourceMetric, Resource.id == ResourceMetric.resource_id)
+        .group_by(Resource.id, Resource.uri)
+        .order_by(desc("execution_count"), Resource.uri)
+    )
+    all_resources = build_top_performers(resources_query.all())
+    
+    # Get ALL prompts
+    prompts_query = (
+        db.query(
+            Prompt.id,
+            Prompt.name,
+            func.coalesce(func.count(PromptMetric.id), 0).label("execution_count"),
+            func.avg(PromptMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(PromptMetric.id) > 0,
+                    func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(PromptMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(PromptMetric, Prompt.id == PromptMetric.prompt_id)
+        .group_by(Prompt.id, Prompt.name)
+        .order_by(desc("execution_count"), Prompt.name)
+    )
+    all_prompts = build_top_performers(prompts_query.all())
+    
+    # Get ALL servers
+    servers_query = (
+        db.query(
+            Server.id,
+            Server.name,
+            func.coalesce(func.count(ServerMetric.id), 0).label("execution_count"),
+            func.avg(ServerMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(ServerMetric.id) > 0,
+                    func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(ServerMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(ServerMetric, Server.id == ServerMetric.server_id)
+        .group_by(Server.id, Server.name)
+        .order_by(desc("execution_count"), Server.name)
+    )
+    all_servers = build_top_performers(servers_query.all())
+    
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
@@ -7085,7 +7179,7 @@ async def get_aggregated_metrics(
         "servers": await server_service.aggregate_metrics(db),
         "topPerformers": {
             "tools": all_tools,  # Now includes ALL tools
-            "resources": all_resources,  # Now includes ALL resources
+            "resources": all_resources,  # Now includes ALL resources  
             "prompts": all_prompts,  # Now includes ALL prompts
             "servers": all_servers,  # Now includes ALL servers
         },
