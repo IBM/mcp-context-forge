@@ -3489,7 +3489,7 @@ async function viewServer(serverId) {
 
             const fields = [
                 { label: "Server ID", value: server.id },
-                { label: "URL", value: server.url || "N/A" },
+                { label: "URL", value: getCatalogUrl(server) || "N/A" },
                 { label: "Type", value: "Virtual Server" },
             ];
 
@@ -8790,6 +8790,24 @@ function showConfigSelectionModal(serverId, serverName) {
     }
 
     openModal("config-selection-modal");
+}
+/**
+ * Build MCP_SERVER_CATALOG_URL for a given server
+ * @param {Object} server
+ * @returns {string}
+ */
+function getCatalogUrl(server) {
+    const currentHost = window.location.hostname;
+    const currentPort =
+        window.location.port ||
+        (window.location.protocol === "https:" ? "443" : "80");
+    const protocol = window.location.protocol;
+
+    const baseUrl = `${protocol}//${currentHost}${
+        currentPort !== "80" && currentPort !== "443" ? ":" + currentPort : ""
+    }`;
+
+    return `${baseUrl}/servers/${server.id}`;
 }
 
 /**
