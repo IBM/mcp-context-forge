@@ -96,6 +96,7 @@ certs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 mcpgateway-wrapper/src/mcp_gateway_wrapper/__pycache__/
