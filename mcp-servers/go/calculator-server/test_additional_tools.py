@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""
+# -*- coding: utf-8 -*-
+"""Location: ./mcp-servers/go/calculator-server/test_additional_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Avinash Sangle
+
 Additional tests for calculator server tools with corrected parameters
 """
 
