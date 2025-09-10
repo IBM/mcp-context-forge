@@ -475,7 +475,7 @@
                   >
                   <select
                     id="log-level-filter"
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   >
                     <option value="">All Levels</option>
                     <option value="debug">Debug</option>
@@ -493,7 +493,7 @@
                   >
                   <select
                     id="log-entity-filter"
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   >
                     <option value="">All Types</option>
                     <option value="tool">Tool</option>
@@ -512,7 +512,7 @@
                     type="text"
                     id="log-search"
                     placeholder="Search logs..."
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   />
                 </div>
               </div>
@@ -555,7 +555,7 @@
               <!-- Log Stats -->
               <div
                 id="log-stats"
-                class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded"
+                class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300"
               >
                 <span class="text-sm text-gray-600 dark:text-gray-300"
                   >Loading stats...</span
@@ -1330,7 +1330,7 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div class="grid grid-cols-2 gap-1 max-w-48">
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
                         onclick="viewServer('{{ server.id }}')"
@@ -1357,6 +1357,7 @@
                       </button>
 
                       <!-- Row 3: Deactivate/Activate | Delete -->
+                      <div class="col-span-2 flex flex-col space-y-1"> 
                       {% if server.isActive %}
                       <form
                         method="POST"
@@ -1404,6 +1405,7 @@
                           Delete
                         </button>
                       </form>
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -1865,7 +1867,7 @@
                     Status
                   </th>
                   <th
-                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-32"
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-48"
                   >
                     Actions
                   </th>
@@ -1912,11 +1914,11 @@
                     {% set clean_desc = (tool.description or "") | replace('\n',
                     ' ') | replace('\r', ' ') %} {% set refactor_desc =
                     clean_desc | striptags | trim | escape %} {% if
-                    refactor_desc | length is greaterthan 120 %} {{
-                    refactor_desc[:120] }}... {% else %} {{ refactor_desc }} {%
+                    refactor_desc | length is greaterthan 220 %} {{
+                    refactor_desc[:400] }}... {% else %} {{ refactor_desc }} {%
                     endif %}
                   </td>
-                  <td class="px-2 py-4 whitespace-nowrap">
+                  <td class="px-2 py-4 whitespace-normal break-words">
                     {% if tool.annotations %} {% if tool.annotations.title %}
                     <span
                       class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
@@ -2061,7 +2063,7 @@
                   <td
                     class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32"
                   >
-                    <div class="grid grid-cols-2 gap-1 max-w-32">
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
                       <!-- Row 1: Test -->
                       <button
                         onclick="testTool('{{ tool.id }}')"
@@ -2088,6 +2090,7 @@
                       </button>
 
                       <!-- Row 3: Deactivate/Activate | Delete -->
+                       <div class="col-span-2 flex flex-col space-y-1">
                       {% if tool.enabled %}
                       <form
                         method="POST"
@@ -2135,6 +2138,7 @@
                           Delete
                         </button>
                       </form>
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -2956,7 +2960,7 @@
                     </span>
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div class="grid grid-cols-2 gap-1 max-w-48">
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: View | Edit -->
                       <button
                         onclick="viewResource('{{ resource.uri }}')"
@@ -2974,6 +2978,7 @@
                       </button>
 
                       <!-- Row 2: Deactivate/Activate | Delete -->
+                      <div class="col-span-2 flex flex-col space-y-1">
                       {% if resource.isActive %}
                       <form
                         method="POST"
@@ -3021,6 +3026,7 @@
                           Delete
                         </button>
                       </form>
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -3249,12 +3255,12 @@
                     {{ prompt.name }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300"
+                    class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
                   >
                     {{ prompt.description }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300"
+                    class="px-6 py-4 whitespace-normal text-sm text-gray-500 dark:text-gray-300"
                   >
                     {% for arg in prompt.arguments %}{{ arg.name }}{% if not
                     loop.last %}, {% endif %}{% endfor %}
@@ -3312,7 +3318,7 @@
                     </span>
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                    <div class="grid grid-cols-2 gap-1 max-w-48">
+                    <div class="grid grid-cols-2 gap-x-6 gap-y-0 max-w-48">
                       <!-- Row 1: Test -->
                       <button
                         onclick="testPrompt('{{ prompt.name }}')"
@@ -3339,6 +3345,7 @@
                       </button>
 
                       <!-- Row 3: Deactivate/Activate | Delete -->
+                      <div class="col-span-2 flex flex-col space-y-1">
                       {% if prompt.isActive %}
                       <form
                         method="POST"
@@ -3386,6 +3393,7 @@
                           Delete
                         </button>
                       </form>
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -3704,7 +3712,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     gateway.lastSeen else 'Never' }}
                   </td>
                   <td class="px-3 py-4 whitespace-nowrap text-sm font-medium">
-                    <div class="grid grid-cols-2 gap-1 max-w-48">
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
                       <!-- Row 1: Test -->
                       <button
                         onclick="testGateway('{{ gateway.url }}')"
@@ -3766,6 +3774,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       {% endif %}
 
                       <!-- Row 4: Deactivate/Activate | Delete -->
+                      <div class="col-span-2 flex flex-col space-y-1">
                       {% if gateway.enabled %}
                       <form
                         method="POST"
@@ -3813,6 +3822,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           Delete
                         </button>
                       </form>
+                      </div>
                     </div>
 
                     <!-- Debug: Show gateway data for troubleshooting -->
@@ -4376,7 +4386,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     type="email"
                     name="email"
                     required
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm bg-gray-300 dark:bg-gray-700 dark:border-gray-600"
                     placeholder="user@example.com"
                   />
                 </div>
@@ -4390,7 +4400,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     type="text"
                     name="full_name"
                     required
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm bg-gray-200 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                     placeholder="John Smith"
                   />
                 </div>
@@ -4491,7 +4501,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   name="name"
                   required
                   maxlength="255"
-                  class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   placeholder="Production API Access"
                 />
               </div>
@@ -4507,7 +4517,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   min="1"
                   max="365"
                   value="30"
-                  class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   placeholder="30"
                 />
               </div>
@@ -4521,7 +4531,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <textarea
                 name="description"
                 rows="2"
-                class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                 placeholder="Brief description of token usage"
               ></textarea>
             </div>
@@ -4543,7 +4553,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="text"
                     name="server_id"
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                     placeholder="server-abc-123"
                   />
                 </div>
@@ -4556,7 +4566,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="text"
                     name="ip_restrictions"
-                    class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                     placeholder="192.168.1.0/24"
                   />
                 </div>
@@ -4570,7 +4580,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <input
                   type="text"
                   name="permissions"
-                  class="mt-1 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                  class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   placeholder="tools.read, resources.read, tools.execute"
                 />
               </div>
@@ -4983,17 +4993,17 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 {% for root in roots %}
                 <tr>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
-                    {{ root.id }}
+                    {{ loop.index }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100s"
+                    class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300"
                   >
                     {{ root.uri }}
                   </td>
                   <td
-                    class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-500"
+                    class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400"
                   >
                     {{ root.name }}
                   </td>
