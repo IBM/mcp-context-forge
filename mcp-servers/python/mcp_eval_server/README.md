@@ -1,9 +1,9 @@
 # 🏆 MCP Evaluation Server
 ### *The Ultimate AI Evaluation Platform*
 
-> **🚀 Status**: Production Ready | **📊 Tools**: 63 Specialized Evaluation Tools | **🎯 Version**: 0.1.0
-> **👨‍💻 Author**: Mihai Criveti | **🏆 Code Quality**: 10/10 PyLint Score
-> **🔬 Coverage**: Complete AI System Assessment | **⚡ Performance**: Optimized & Scalable
+> **📊 Tools**: 63 Specialized Evaluation Tools
+> 
+> **👨‍💻 Author**: Mihai Criveti 
 
 A **MCP server** providing the most comprehensive AI evaluation platform in the ecosystem. Features **63 specialized tools** across **14 categories** for complete AI system assessment using **LLM-as-a-judge techniques** combined with rule-based metrics.
 
