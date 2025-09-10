@@ -593,7 +593,6 @@ class TeamManagementService:
         If the user is not a member of the specified team, it returns a JSONResponse with an error message.
 
         Args:
-            db: Database session or connection object.
             user_email (str): The email of the user whose teams are being queried.
             team_id (str or None, optional): Specific team ID to check for membership. Defaults to None.
 
@@ -629,7 +628,7 @@ class TeamManagementService:
                 # Check if the provided team_id exists among the user's teams
                 is_team_present = any(team.id == team_id for team in user_teams)
                 if not is_team_present:
-                    return JSONResponse(content={"message": "You are not a member of the team", "success": False}, status_code=422)
+                    return []
         except Exception as e:
             print(f"An error occurred: {e}")
             if not team_id:

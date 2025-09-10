@@ -33,6 +33,7 @@ import uuid
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 import jwt
@@ -85,8 +86,8 @@ from mcpgateway.services.resource_service import ResourceNotFoundError, Resource
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -343,7 +344,6 @@ def get_user_email(user) -> str:
         return user.email
     # Fallback to string representation
     return str(user) if user else "unknown"
-
 
 
 def serialize_datetime(obj):
@@ -1824,9 +1824,6 @@ async def admin_ui(
     team_service = None
     if getattr(settings, "email_auth_enabled", False):
         try:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # local import preserved
-
             team_service = TeamManagementService(db)
             if user_email and "@" in user_email:
                 raw_teams = await team_service.get_user_teams(user_email)
@@ -1863,14 +1860,7 @@ async def admin_ui(
             valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
             if str(team_id) not in valid_team_ids:
                 LOGGER.warning("Requested team_id is not in user's teams; ignoring team filter (team_id=%s)", team_id)
-                # Option A (permissive): ignore invalid team_id
                 selected_team_id = None
-                # Option B (strict): uncomment to return 403 instead of ignoring
-                # raise HTTPException(status_code=403, detail="You are not a member of the requested team")
-    else:
-        # If no explicit team_id provided, you may want to fallback to user's default team.
-        # If you have a method to get default team, set selected_team_id here.
-        selected_team_id = selected_team_id  # no-op, keep None if None
 
     # --------------------------------------------------------------------------------
     # Helper: attempt to call a listing function with team_id if it supports it.
@@ -2037,9 +2027,9 @@ async def admin_ui(
                 out.append(dumped)
         return out
 
-    tools = [tool for tool in sorted(_to_dict_and_filter(raw_tools), key=lambda t: ((t.get("url") or "").lower(), (t.get("original_name") or "").lower()))]
+    tools = list(sorted(_to_dict_and_filter(raw_tools), key=lambda t: ((t.get("url") or "").lower(), (t.get("original_name") or "").lower())))
     servers = _to_dict_and_filter(raw_servers)
-    resources = _to_dict_and_filter(raw_resources)
+    resources = _to_dict_and_filter(raw_resources)  # pylint: disable=unnecessary-comprehension
     prompts = _to_dict_and_filter(raw_prompts)
     gateways = [g.model_dump(by_alias=True) if hasattr(g, "model_dump") else (g if isinstance(g, dict) else {}) for g in (gateways_raw or [])]
     # If gateways need team filtering as dicts too, apply _to_dict_and_filter similarly:
@@ -2515,7 +2505,6 @@ async def admin_list_teams(
     try:
         # First-Party
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
@@ -2624,7 +2613,6 @@ async def admin_create_team(
         # Create team
         # First-Party
         from mcpgateway.schemas import TeamCreateRequest  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         team_service = TeamManagementService(db)
 
@@ -2717,7 +2705,6 @@ async def admin_view_team_members(
 
         # First-Party
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         team_service = TeamManagementService(db)
 
@@ -2954,10 +2941,6 @@ async def admin_get_team_edit(
     try:
         # Get root path for URL construction
         root_path = _request.scope.get("root_path", "") if _request else ""
-
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         team = await team_service.get_team_by_id(team_id)
@@ -3037,10 +3020,6 @@ async def admin_update_team(
     try:
         # Get root path for URL construction
         root_path = request.scope.get("root_path", "") if request else ""
-
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         form = await request.form()
@@ -3116,9 +3095,6 @@ async def admin_delete_team(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         # Get team name for success message
@@ -3176,7 +3152,6 @@ async def admin_add_team_member(
     try:
         # First-Party
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         team_service = TeamManagementService(db)
         auth_service = EmailAuthService(db)
@@ -3259,9 +3234,6 @@ async def admin_update_team_member_role(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         # Check if team exists and validate user permissions
@@ -3345,9 +3317,6 @@ async def admin_remove_team_member(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         # Check if team exists and validate user permissions
@@ -3428,9 +3397,6 @@ async def admin_leave_team(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         # Check if team exists
@@ -3516,9 +3482,6 @@ async def admin_create_join_request(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
@@ -3600,9 +3563,6 @@ async def admin_cancel_join_request(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
@@ -3650,9 +3610,6 @@ async def admin_list_join_requests(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
         request.scope.get("root_path", "")
@@ -3740,9 +3697,6 @@ async def admin_approve_join_request(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
@@ -3802,9 +3756,6 @@ async def admin_reject_join_request(
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 
     try:
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
@@ -4759,7 +4710,6 @@ async def admin_add_tool(
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
-    from mcpgateway.services.team_management_service import TeamManagementService  # local import preserved
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -8635,8 +8585,6 @@ async def get_tools_section(
                 }
             )
             tools.append(tool_dict)
-        # Third-Party
-        from fastapi.encoders import jsonable_encoder
 
         return JSONResponse(content=jsonable_encoder({"tools": tools, "team_id": team_id}))
 

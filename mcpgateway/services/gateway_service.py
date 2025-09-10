@@ -862,7 +862,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             IntegrityError: If there is a database integrity error
             ValidationError: If validation fails
         """
-        try:
+        try:  # pylint: disable=too-many-nested-blocks
             # Find gateway
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
@@ -952,6 +952,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 fields_to_update = False
 
                                 # Checking if any field has changed
+                                # pylint: disable=too-many-boolean-expressions
                                 if (
                                     existing_tool.url != gateway.url
                                     or existing_tool.description != tool.description
@@ -964,6 +965,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                     or existing_tool.auth_value != gateway.auth_value
                                     or existing_tool.visibility != gateway.visibility
                                 ):
+                                    # pylint: enable=too-many-boolean-expressions
                                     fields_to_update = True
                                 # If there are changes, update the existing tool
                                 if fields_to_update:
