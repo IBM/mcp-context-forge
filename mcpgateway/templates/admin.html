@@ -1711,16 +1711,16 @@
               <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
               <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="visibility-public" checked />
-                  <label for="visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-public" checked />
+                  <label for="server-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
                 </div>
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="visibility-team" />
-                  <label for="visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-team" />
+                  <label for="server-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
                 </div>
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="visibility-private" />
-                  <label for="visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-private" />
+                  <label for="server-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
                 </div>
               </div>
             </div>
@@ -2655,6 +2655,24 @@
                 Enter tags separated by commas. Tags help categorize and filter
                 tools.
               </p>
+            </div>
+            <!-- Visibility options -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-public" checked />
+                  <label for="tool-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-team" />
+                  <label for="tool-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                </div>
+                <div class="flex items-center">
+                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-private" />
+                  <label for="tool-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                </div>
+              </div>
             </div>
             <div class="mt-6">
               <button
@@ -7212,55 +7230,42 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         }
       }
 
-      // updateAvailableTags function moved to admin.js with proper tag element selectors
 
       // Team context switching functions
       function updateTeamContext(teamId) {
-        // Update current page URL with team parameter
-        const url = new URL(window.location);
-        if (teamId && teamId !== '') {
-          url.searchParams.set('team_id', teamId);
-        } else {
-          url.searchParams.delete('team_id');
+        // Prevent double-invocation if user clicks rapidly
+        if (window.__teamSwitchingInProgress) {
+          return;
         }
+        window.__teamSwitchingInProgress = true;
 
-        // Update browser history without reload
-        window.history.pushState({}, '', url);
+        try {
+          const url = new URL(window.location.href);
+          if (teamId && teamId !== '') {
+            url.searchParams.set('team_id', teamId);
+          } else {
+            url.searchParams.delete('team_id');
+          }
 
-        // Reload all resource sections with new team context
-        reloadAllResourceSections(teamId);
-
-        // Update section headers with team context
-        updateSectionHeaders(teamId);
+          // Use assign so browser navigates and we get a brand-new initial render
+          // (pushState + DOM replacements is the root cause of the stack overflow).
+          window.location.assign(url.toString());
+        } finally {
+          // We leave the guard in place for a short time — navigation should occur immediately.
+          // If navigation fails for some reason the guard is cleared after a short timeout.
+          setTimeout(() => {
+            window.__teamSwitchingInProgress = false;
+          }, 2000);
+        }
       }
 
       function reloadAllResourceSections(teamId) {
-        const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways'];
-
-        sections.forEach(section => {
-          const sectionElement = document.getElementById(section + '-section');
-          if (sectionElement) {
-            // Build URL for section reload
-            let sectionUrl = window.ROOT_PATH + '/admin/sections/' + section;
-            if (teamId && teamId !== '') {
-              sectionUrl += '?team_id=' + encodeURIComponent(teamId);
-            }
-
-            // Fetch JSON data and update the section
-            fetch(sectionUrl)
-              .then(response => response.json())
-              .then(data => {
-                if (data.error) {
-                  console.error('Error reloading section:', data.error);
-                  return;
-                }
-                updateSectionDisplay(section, data[section] || []);
-              })
-              .catch(error => {
-                console.error('Error fetching section data:', error);
-              });
-          }
-        });
+        // delegate to the implementation in admin.js
+        if (window.reloadAllResourceSections) {
+          return window.reloadAllResourceSections(teamId);
+        } else {
+          console.warn('reloadAllResourceSections implementation not available.');
+        }
       }
 
       function updateSectionHeaders(teamId) {
@@ -7404,15 +7409,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         return buttons;
       }
 
-      function getTeamNameById(teamId) {
-        // Get team name from Alpine.js data or fallback
-        const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
-        if (teamSelector && teamSelector._x_dataStack && teamSelector._x_dataStack[0].teams) {
-          const team = teamSelector._x_dataStack[0].teams.find(t => t.id === teamId);
-          return team ? team.name : null;
-        }
-        return null;
-      }
+      
 
       // Permission Management Functions
       function refreshVisibilityRules() {

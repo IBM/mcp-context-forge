@@ -1757,6 +1757,7 @@ async def admin_toggle_gateway(
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
 async def admin_ui(
     request: Request,
+    team_id: Optional[str] = Query(None),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -1769,11 +1770,18 @@ async def admin_ui(
     servers, tools, resources, prompts, gateways, and roots from their respective
     services, then renders the admin dashboard template with this data.
 
+    Supports optional `team_id` query param to scope the returned data to a team.
+    If `team_id` is provided and email-based team management is enabled, we
+    validate the user is a member of that team. We attempt to pass team_id into
+    service listing functions (preferred). If the service API does not accept a
+    team_id parameter we fall back to post-filtering the returned items.
+
     The endpoint also sets a JWT token as a cookie for authentication in subsequent
     requests. This token is HTTP-only for security reasons.
 
     Args:
         request (Request): FastAPI request object.
+        team_id (Optional[str]): Optional team ID to filter data by team.
         include_inactive (bool): Whether to include inactive items in all listings.
         db (Session): Database session dependency.
         user (dict): Authenticated user context with permissions.
@@ -1881,40 +1889,20 @@ async def admin_ui(
         >>> gateway_service.list_gateways = original_list_gateways
         >>> root_service.list_roots = original_list_roots
     """
-    LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI")
+    LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI (team_id={team_id})")
     user_email = get_user_email(user)
 
-    # Use team-filtered methods to show only resources the user can access
-    tools = [
-        tool.model_dump(by_alias=True)
-        for tool in sorted(await tool_service.list_tools_for_user(db, user_email, include_inactive=include_inactive), key=lambda t: ((t.url or "").lower(), (t.original_name or "").lower()))
-    ]
-    servers = [server.model_dump(by_alias=True) for server in await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive)]
-    resources = [resource.model_dump(by_alias=True) for resource in await resource_service.list_resources_for_user(db, user_email, include_inactive=include_inactive)]
-    prompts = [prompt.model_dump(by_alias=True) for prompt in await prompt_service.list_prompts_for_user(db, user_email, include_inactive=include_inactive)]
-    gateways_raw = await gateway_service.list_gateways(db, include_inactive=include_inactive)
-    gateways = [gateway.model_dump(by_alias=True) for gateway in gateways_raw]
-
-    roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
-
-    # Load A2A agents if enabled
-    a2a_agents = []
-    if a2a_service and settings.mcpgateway_a2a_enabled:
-        a2a_agents_raw = await a2a_service.list_agents(db, include_inactive=include_inactive)
-        a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
-
-    root_path = settings.app_root_path
-    max_name_length = settings.validation_max_name_length
-
-    # Get user teams for team selector
+    # --------------------------------------------------------------------------------
+    # Load user teams so we can validate team_id
+    # --------------------------------------------------------------------------------
     user_teams = []
+    team_service = None
     if getattr(settings, "email_auth_enabled", False):
         try:
             # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.team_management_service import TeamManagementService  # local import preserved
 
             team_service = TeamManagementService(db)
-            user_email = get_user_email(user)
             if user_email and "@" in user_email:
                 raw_teams = await team_service.get_user_teams(user_email)
                 user_teams = []
@@ -1934,6 +1922,216 @@ async def admin_ui(
         except Exception as e:
             LOGGER.warning(f"Failed to load user teams: {e}")
             user_teams = []
+
+    # --------------------------------------------------------------------------------
+    # Validate team_id if provided (only when email-based teams are enabled)
+    # If invalid, we currently *ignore* it and fall back to default behavior.
+    # Optionally you can raise HTTPException(403) if you prefer strict rejection.
+    # --------------------------------------------------------------------------------
+    selected_team_id = team_id
+    if team_id and getattr(settings, "email_auth_enabled", False):
+        # If team list failed to load for some reason, be conservative and drop selection
+        if not user_teams:
+            LOGGER.warning("team_id requested but user_teams not available; ignoring team filter")
+            selected_team_id = None
+        else:
+            valid_team_ids = {t["id"] for t in user_teams if t.get("id")}
+            if str(team_id) not in valid_team_ids:
+                LOGGER.warning("Requested team_id is not in user's teams; ignoring team filter (team_id=%s)", team_id)
+                # Option A (permissive): ignore invalid team_id
+                selected_team_id = None
+                # Option B (strict): uncomment to return 403 instead of ignoring
+                # raise HTTPException(status_code=403, detail="You are not a member of the requested team")
+    else:
+        # If no explicit team_id provided, you may want to fallback to user's default team.
+        # If you have a method to get default team, set selected_team_id here.
+        selected_team_id = selected_team_id  # no-op, keep None if None
+
+    # --------------------------------------------------------------------------------
+    # Helper: attempt to call a listing function with team_id if it supports it.
+    # If the method signature doesn't accept team_id, fall back to calling it without
+    # and then (optionally) filter the returned results.
+    # --------------------------------------------------------------------------------
+    async def _call_list_with_team_support(method, *args, **kwargs):
+        """
+        Attempt to call a method with an optional `team_id` parameter.
+
+        This function tries to call the given asynchronous `method` with all provided
+        arguments and an additional `team_id=selected_team_id`, assuming `selected_team_id`
+        is defined and not None. If the method does not accept a `team_id` keyword argument
+        (raises TypeError), the function retries the call without it.
+
+        This is useful in scenarios where some service methods optionally support team
+        scoping via a `team_id` parameter, but not all do.
+
+        Args:
+            method (Callable): The async function to be called.
+            *args: Positional arguments to pass to the method.
+            **kwargs: Keyword arguments to pass to the method.
+
+        Returns:
+            Any: The result of the awaited method call, typically a list of model instances.
+
+        Raises:
+            Any exception raised by the method itself, except TypeError when `team_id` is unsupported.
+
+
+        Doctest:
+            >>> async def sample_method(a, b):
+            ...     return [a, b]
+            >>> async def sample_method_with_team(a, b, team_id=None):
+            ...     return [a, b, team_id]
+            >>> selected_team_id = 42
+            >>> import asyncio
+            >>> asyncio.run(_call_list_with_team_support(sample_method_with_team, 1, 2))
+            [1, 2, 42]
+            >>> asyncio.run(_call_list_with_team_support(sample_method, 1, 2))
+            [1, 2]
+
+        Notes:
+            - This function depends on a global `selected_team_id` variable.
+            - If `selected_team_id` is None, the method is called without `team_id`.
+        """
+        if selected_team_id is None:
+            return await method(*args, **kwargs)
+
+        try:
+            # Preferred: pass team_id to the service method if it accepts it
+            return await method(*args, team_id=selected_team_id, **kwargs)
+        except TypeError:
+            # The method doesn't accept team_id -> fall back to original API
+            LOGGER.debug("Service method %s does not accept team_id; falling back and will post-filter", getattr(method, "__name__", str(method)))
+            return await method(*args, **kwargs)
+
+    # Small utility to check if a returned model or dict matches the selected_team_id.
+    def _matches_selected_team(item, tid: str) -> bool:
+        if not tid:
+            return True
+        # item may be a pydantic model or dict-like
+        # check common fields for team membership
+        candidates = []
+        try:
+            # If it's an object with attributes
+            candidates.extend(
+                [
+                    getattr(item, "team_id", None),
+                    getattr(item, "teamId", None),
+                    getattr(item, "team_ids", None),
+                    getattr(item, "teamIds", None),
+                    getattr(item, "teams", None),
+                ]
+            )
+        except Exception:
+            pass
+        try:
+            # If it's a dict-like model_dump output (we'll check keys later after model_dump)
+            if isinstance(item, dict):
+                candidates.extend(
+                    [
+                        item.get("team_id"),
+                        item.get("teamId"),
+                        item.get("team_ids"),
+                        item.get("teamIds"),
+                        item.get("teams"),
+                    ]
+                )
+        except Exception:
+            pass
+
+        for c in candidates:
+            if c is None:
+                continue
+            # Some fields may be single id or list of ids
+            if isinstance(c, (list, tuple, set)):
+                if str(tid) in [str(x) for x in c]:
+                    return True
+            else:
+                if str(c) == str(tid):
+                    return True
+        return False
+
+    # --------------------------------------------------------------------------------
+    # Load each resource list using the safe _call_list_with_team_support helper.
+    # For each returned list, try to produce consistent "model_dump(by_alias=True)" dicts,
+    # applying server-side filtering as a fallback if the service didn't accept team_id.
+    # --------------------------------------------------------------------------------
+    try:
+        raw_tools = await _call_list_with_team_support(tool_service.list_tools_for_user, db, user_email, include_inactive=include_inactive)
+    except Exception as e:
+        LOGGER.exception("Failed to load tools for user: %s", e)
+        raw_tools = []
+
+    try:
+        raw_servers = await _call_list_with_team_support(server_service.list_servers_for_user, db, user_email, include_inactive=include_inactive)
+    except Exception as e:
+        LOGGER.exception("Failed to load servers for user: %s", e)
+        raw_servers = []
+
+    try:
+        raw_resources = await _call_list_with_team_support(resource_service.list_resources_for_user, db, user_email, include_inactive=include_inactive)
+    except Exception as e:
+        LOGGER.exception("Failed to load resources for user: %s", e)
+        raw_resources = []
+
+    try:
+        raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts_for_user, db, user_email, include_inactive=include_inactive)
+    except Exception as e:
+        LOGGER.exception("Failed to load prompts for user: %s", e)
+        raw_prompts = []
+
+    try:
+        gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways_for_user, db, user_email, include_inactive=include_inactive)
+    except Exception as e:
+        LOGGER.exception("Failed to load gateways: %s", e)
+        gateways_raw = []
+
+    # Convert models to dicts and filter as needed
+    def _to_dict_and_filter(raw_list):
+        out = []
+        for item in raw_list or []:
+            try:
+                dumped = item.model_dump(by_alias=True) if hasattr(item, "model_dump") else (item if isinstance(item, dict) else None)
+            except Exception:
+                # if dumping failed, try to coerce to dict
+                try:
+                    dumped = dict(item) if hasattr(item, "__iter__") else None
+                except Exception:
+                    dumped = None
+            if dumped is None:
+                continue
+
+            # If we passed team_id to service, server-side filtering applied.
+            # Otherwise, filter by common team-aware fields if selected_team_id is set.
+            if selected_team_id:
+                if _matches_selected_team(item, selected_team_id) or _matches_selected_team(dumped, selected_team_id):
+                    out.append(dumped)
+                else:
+                    # skip items that don't match the selected team
+                    continue
+            else:
+                out.append(dumped)
+        return out
+
+    tools = [tool for tool in sorted(_to_dict_and_filter(raw_tools), key=lambda t: ((t.get("url") or "").lower(), (t.get("original_name") or "").lower()))]
+    servers = _to_dict_and_filter(raw_servers)
+    resources = _to_dict_and_filter(raw_resources)
+    prompts = _to_dict_and_filter(raw_prompts)
+    gateways = [g.model_dump(by_alias=True) if hasattr(g, "model_dump") else (g if isinstance(g, dict) else {}) for g in (gateways_raw or [])]
+    # If gateways need team filtering as dicts too, apply _to_dict_and_filter similarly:
+    gateways = _to_dict_and_filter(gateways_raw) if isinstance(gateways_raw, (list, tuple)) else gateways
+
+    # roots
+    roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
+
+    # Load A2A agents if enabled
+    a2a_agents = []
+    if a2a_service and settings.mcpgateway_a2a_enabled:
+        a2a_agents_raw = await a2a_service.list_agents(db, include_inactive=include_inactive)
+        a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
+
+    # Template variables and context: include selected_team_id so the template and frontend can read it
+    root_path = settings.app_root_path
+    max_name_length = settings.validation_max_name_length
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -1958,6 +2156,7 @@ async def admin_ui(
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+            "selected_team_id": selected_team_id,
         },
     )
 
@@ -4622,6 +4821,7 @@ async def admin_add_tool(
 
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
+    visibility = str(form.get("visibility", "private"))
 
     if request_type is None:
         if integration_type == "REST":
@@ -4630,6 +4830,11 @@ async def admin_add_tool(
             request_type = "SSE"
         else:
             request_type = "GET"
+
+    user_email = get_user_email(user)
+    # Determine personal team for default assignment
+    team_id = form.get("team_id", None)
+    team_id = await get_team_for_user(db, user_email, team_id)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -4653,6 +4858,9 @@ async def admin_add_tool(
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
         "tags": tags,
+        "visibility": visibility,
+        "team_id": team_id,
+        "owner_email": user_email,
     }
     LOGGER.debug(f"Tool data built: {tool_data}")
     try:

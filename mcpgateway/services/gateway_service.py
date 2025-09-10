@@ -797,6 +797,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if team_id:
             # Filter by specific team
             query = query.where(DbGateway.team_id == team_id)
+
             # Validate user has access to team
             # First-Party
             from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
@@ -804,8 +805,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
+
             if team_id not in team_ids:
                 return []  # No access to team
+
         else:
             # Get user's accessible teams
             # First-Party
@@ -826,6 +829,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             access_conditions.append(DbGateway.visibility == "public")
 
             query = query.where(or_(*access_conditions))
+
+        # Filter out private gateways not owned by the user
+        query = query.where(~((DbGateway.owner_email != user_email) & (DbGateway.visibility == "private")))
 
         # Apply visibility filter if specified
         if visibility:
