@@ -2,8 +2,8 @@
 ### *The Ultimate AI Evaluation Platform*
 
 > **📊 Tools**: 63 Specialized Evaluation Tools
-> 
-> **👨‍💻 Author**: Mihai Criveti 
+>
+> **👨‍💻 Author**: Mihai Criveti
 
 A **MCP server** providing the most comprehensive AI evaluation platform in the ecosystem. Features **63 specialized tools** across **14 categories** for complete AI system assessment using **LLM-as-a-judge techniques** combined with rule-based metrics.
 
