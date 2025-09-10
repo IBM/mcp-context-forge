@@ -1476,20 +1476,49 @@ class TestAdminUIRoute:
     @patch.object(PromptService, "list_prompts_for_user", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
-    async def test_admin_ui_with_service_failures(self, mock_roots, mock_gateways, mock_prompts, mock_resources, mock_tools, mock_servers, mock_request, mock_db):
+    async def test_admin_ui_with_service_failures(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+    ):
         """Test admin UI when some services fail."""
+        from unittest.mock import patch
+        from fastapi.responses import HTMLResponse
+
         # Some services succeed
         mock_servers.return_value = []
         mock_tools.return_value = []
 
-        # Some services fail
+        # Simulate a failure in one service
         mock_resources.side_effect = Exception("Resource service down")
 
-        # Should propagate the exception
-        with pytest.raises(Exception) as excinfo:
-            await admin_ui(mock_request, False, mock_db, "admin")
+        # Patch logger to verify logging occurred
+        with patch("mcpgateway.admin.LOGGER.exception") as mock_log:
+            response = await admin_ui(
+                request=mock_request,
+                team_id=None,
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "admin", "is_admin": True},
+            )
 
-        assert "Resource service down" in str(excinfo.value)
+            # Check that the page still rendered
+            assert isinstance(response, HTMLResponse)
+            assert response.status_code == 200
+
+            # Check that the exception was logged
+            mock_log.assert_called()
+            assert any(
+                "Failed to load resources" in str(call.args[0])
+                for call in mock_log.call_args_list
+            )
+
 
     @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
@@ -1512,7 +1541,7 @@ class TestAdminUIRoute:
             mock_settings.app_root_path = "/custom/root"
             mock_settings.gateway_tool_name_separator = "__"
 
-            response = await admin_ui(mock_request, True, mock_db, "admin")
+            response = await admin_ui(mock_request, None, True, mock_db, "admin")
 
             # Check template was called with correct context
             template_call = mock_request.app.state.templates.TemplateResponse.call_args
@@ -1540,7 +1569,7 @@ class TestAdminUIRoute:
         for mock in [mock_servers, mock_tools, mock_resources, mock_prompts, mock_gateways, mock_roots]:
             mock.return_value = []
 
-        response = await admin_ui(mock_request, False, mock_db, "admin")
+        response = await admin_ui(mock_request, None, False, mock_db, "admin")
 
         # Verify response is an HTMLResponse
         assert isinstance(response, HTMLResponse)
