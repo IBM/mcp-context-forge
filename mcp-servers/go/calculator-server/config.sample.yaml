@@ -5,16 +5,13 @@
 server:
   # Transport method: "stdio" or "http"
   transport: "stdio"
-  
   # MCP-compliant streamable HTTP transport configuration (only used when transport is "http")
   http:
     host: "127.0.0.1"  # Default to localhost for security per MCP spec
     port: 8080
-    
     # MCP session management
     session_timeout: "5m"    # Session timeout duration
     max_connections: 100     # Maximum concurrent connections
-    
     # CORS configuration
     cors:
       enabled: true
@@ -36,16 +33,13 @@ tools:
   precision:
     max_decimal_places: 15      # Maximum precision (0-15)
     default_decimal_places: 2   # Default precision for results
-  
   # Expression evaluation settings
   expression_eval:
     timeout: "10s"        # Maximum time for expression evaluation
     max_variables: 100    # Maximum number of variables in expression
-  
   # Statistics settings
   statistics:
     max_data_points: 10000  # Maximum number of data points in dataset
-  
   # Financial calculations settings
   financial:
     currency_default: "USD"   # Default currency code
@@ -56,7 +50,6 @@ security:
   rate_limiting:
     enabled: true
     requests_per_minute: 100  # Maximum requests per minute per IP
-  
   # Request size limits
   request_size_limit: "1MB"   # Maximum request body size
 
