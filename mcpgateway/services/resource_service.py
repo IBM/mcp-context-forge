@@ -903,6 +903,10 @@ class ResourceService:
             db: Database session
             uri: Resource URI
             resource_update: Resource update object
+            modified_by: Username of the person modifying the resource
+            modified_from_ip: IP address where the modification request originated
+            modified_via: Source of modification (ui/api/import)
+            modified_user_agent: User agent string from the modification request
 
         Returns:
             The updated ResourceRead object

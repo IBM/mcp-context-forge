@@ -860,6 +860,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db: Database session
             gateway_id: Gateway ID to update
             gateway_update: Updated gateway data
+            modified_by: Username of the person modifying the gateway
+            modified_from_ip: IP address where the modification request originated
+            modified_via: Source of modification (ui/api/import)
+            modified_user_agent: User agent string from the modification request
             include_inactive: Whether to include inactive gateways
 
         Returns:

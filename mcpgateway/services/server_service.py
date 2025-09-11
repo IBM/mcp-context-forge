@@ -329,6 +329,9 @@ class ServerService:
             server_in (ServerCreate): The server creation schema containing server details and lists of
                 associated tool, resource, and prompt IDs (as strings).
             created_by (Optional[str]): Email of the user creating the server, used for ownership tracking.
+            created_from_ip (Optional[str]): IP address from which the creation request originated.
+            created_via (Optional[str]): Source of creation (api, ui, import).
+            created_user_agent (Optional[str]): User agent string from the creation request.
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).

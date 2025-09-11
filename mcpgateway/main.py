@@ -1207,6 +1207,7 @@ async def update_server(
     Args:
         server_id (str): The ID of the server to update.
         server (ServerUpdate): The updated server data.
+        request (Request): The incoming request object containing metadata.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -2317,6 +2318,7 @@ async def update_resource(
     Args:
         uri (str): URI of the resource.
         resource (ResourceUpdate): New resource data.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -2702,6 +2704,7 @@ async def update_prompt(
     Args:
         name (str): Identifier of the prompt to update.
         prompt (PromptUpdate): New prompt content and metadata.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
@@ -2950,6 +2953,7 @@ async def update_gateway(
     Args:
         gateway_id: Gateway ID.
         gateway: Gateway update data.
+        request (Request): The FastAPI request object for metadata extraction.
         db: Database session.
         user: Authenticated user.
 

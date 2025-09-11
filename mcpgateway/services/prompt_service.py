@@ -703,6 +703,10 @@ class PromptService:
             db: Database session
             name: Name of prompt to update
             prompt_update: Prompt update object
+            modified_by: Username of the person modifying the prompt
+            modified_from_ip: IP address where the modification originated
+            modified_via: Source of modification (ui/api/import)
+            modified_user_agent: User agent string from the modification request
 
         Returns:
             The updated PromptRead object
