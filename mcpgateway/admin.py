@@ -867,6 +867,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
     except CoreValidationError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+    except ServerNameConflictError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValueError as ex:
@@ -2826,8 +2828,8 @@ async def admin_view_team_members(
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         hx-trigger="change">
-                        <option value="member" {'selected' if membership.role == 'member' else ''}>Member</option>
-                        <option value="owner" {'selected' if membership.role == 'owner' else ''}>Owner</option>
+                        <option value="member" {"selected" if membership.role == "member" else ""}>Member</option>
+                        <option value="owner" {"selected" if membership.role == "owner" else ""}>Owner</option>
                     </select>
                 """
             else:
@@ -2874,7 +2876,7 @@ async def admin_view_team_members(
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center space-x-2">
                                 <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member_user.full_name or member_user.email}</p>
-                                {' '.join(indicators)}
+                                {" ".join(indicators)}
                             </div>
                             <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member_user.email}</p>
                             <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {membership.joined_at.strftime("%b %d, %Y") if membership.joined_at else "Unknown"}</p>
@@ -3953,8 +3955,8 @@ async def admin_list_users(
                             <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{user_obj.full_name or "N/A"}</h3>
                             {admin_badge}
                             <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
-                            {'<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' if is_current_user else ''}
-                            {'<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>' if is_last_admin else ''}
+                            {'<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' if is_current_user else ""}
+                            {'<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>' if is_last_admin else ""}
                         </div>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
