@@ -72,6 +72,8 @@ def mock_resource():
     resource.binary_content = None
     resource.size = 12
     resource.is_active = True
+    resource.created_by = "test_user"
+    resource.modified_by = "test_user"
     resource.created_at = datetime.now(timezone.utc)
     resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []
@@ -104,6 +106,8 @@ def mock_inactive_resource():
     resource.binary_content = None
     resource.size = 0
     resource.is_active = False
+    resource.created_by = "test_user"
+    resource.modified_by = "test_user"
     resource.created_at = datetime.now(timezone.utc)
     resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []

@@ -1140,6 +1140,7 @@ async def create_server(
 
     Args:
         server (ServerCreate): The data for the new server.
+        request (Request): The incoming request object for extracting metadata.
         team_id (Optional[str]): Team ID to assign the server to.
         visibility (str): Server visibility level (private, team, public).
         db (Session): The database session used to interact with the data store.
