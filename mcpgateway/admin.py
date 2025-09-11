@@ -1025,7 +1025,7 @@ async def admin_edit_server(
             owner_email=user_email,
         )
 
-        await server_service.update_server(db, server_id, server)
+        await server_service.update_server(db, server_id, server, user_email)
 
         return JSONResponse(
             content={"message": "Server updated successfully!", "success": True},

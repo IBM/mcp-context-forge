@@ -1203,7 +1203,9 @@ async def update_server(
     """
     try:
         logger.debug(f"User {user} is updating server with ID {server_id}")
-        return await server_service.update_server(db, server_id, server)
+
+        user_email: str = get_user_email(user)
+        return await server_service.update_server(db, server_id, server, user_email)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerNameConflictError as e:
