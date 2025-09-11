@@ -8308,19 +8308,36 @@ async def admin_test_a2a_agent(
         # Get the agent by ID
         agent = await a2a_service.get_agent(db, agent_id)
 
-        # Prepare test parameters based on agent type and endpoint
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # JSONRPC format for agents that expect it
-            test_params = {
-                "method": "message/send",
-                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": "Hello from MCP Gateway Admin UI test!"}]}},
-            }
-        else:
-            # Generic test format
-            test_params = {"message": "Hello from MCP Gateway Admin UI test!", "test": True, "timestamp": int(time.time())}
+        # Reject testing discovery endpoints
+        if ".well-known/agent.json" in agent.endpoint_url:
+            return JSONResponse(content={"success": False, "error": "Discovery endpoints (.well-known/agent.json) are not supported for testing. Please use direct agent endpoint URLs."}, status_code=400)
 
-        # Invoke the agent
-        result = await a2a_service.invoke_agent(db, agent.name, test_params, "admin_test")
+        # Use the endpoint URL directly
+        actual_endpoint = agent.endpoint_url
+        
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                # First try GET to test connectivity
+                get_response = await client.get(actual_endpoint)
+                if get_response.status_code == 200:
+                    result = {"status": "success", "method": "GET", "response": get_response.text[:200]}
+                else:
+                    # Try different POST formats based on agent type
+                    if agent.agent_type == "jsonrpc" or "jsonrpc" in actual_endpoint.lower():
+                        # JSONRPC format
+                        test_data = {"jsonrpc": "2.0", "method": "ping", "params": {}, "id": 1}
+                    else:
+                        # Simple REST format
+                        test_data = {"message": "test"}
+                    
+                    post_response = await client.post(actual_endpoint, json=test_data)
+                    if post_response.status_code == 200:
+                        result = {"status": "success", "method": "POST", "response": post_response.text[:200]}
+                    else:
+                        result = {"status": "error", "method": "POST", "code": post_response.status_code, "response": post_response.text[:200]}
+            except Exception as e:
+                result = {"status": "error", "method": "EXCEPTION", "error": str(e)[:200]}
 
         return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 

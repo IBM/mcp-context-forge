@@ -14,6 +14,7 @@ and interactions with A2A-compatible agents.
 # Standard
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
+from urllib.parse import urlparse
 
 # Third-Party
 import httpx
@@ -170,6 +171,10 @@ class A2AAgentService:
         Raises:
             A2AAgentNameConflictError: If an agent with the same name already exists.
         """
+        # Reject discovery endpoints
+        if ".well-known/agent.json" in agent_data.endpoint_url:
+            raise A2AAgentError("Discovery endpoints (.well-known/agent.json) are not supported. Please use direct agent endpoint URLs.")
+        
         # Check for existing agent with same name
         existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
         existing_agent = db.execute(existing_query).scalar_one_or_none()
@@ -384,6 +389,10 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
+        # Reject discovery endpoints if endpoint_url is being updated
+        if agent_data.endpoint_url and ".well-known/agent.json" in agent_data.endpoint_url:
+            raise A2AAgentError("Discovery endpoints (.well-known/agent.json) are not supported. Please use direct agent endpoint URLs.")
+
         # Check for name conflict if name is being updated
         if agent_data.name and agent_data.name != agent.name:
             existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name, DbA2AAgent.id != agent_id)
@@ -470,6 +479,8 @@ class A2AAgentService:
 
         logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 
+
+
     async def invoke_agent(self, db: Session, agent_name: str, parameters: Dict[str, Any], interaction_type: str = "query") -> Dict[str, Any]:
         """Invoke an A2A agent.
 
@@ -497,9 +508,12 @@ class A2AAgentService:
         response = None
 
         try:
+            # Use the endpoint URL directly
+            actual_endpoint = agent.endpoint_url
+            
             # Prepare the request to the A2A agent
             # Format request based on agent type and endpoint
-            if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+            if agent.agent_type in ["generic", "jsonrpc"] or actual_endpoint.endswith("/"):
                 # Use JSONRPC format for agents that expect it
                 request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": parameters.get("params", parameters), "id": 1}
             else:
@@ -516,7 +530,7 @@ class A2AAgentService:
                 elif agent.auth_type == "bearer" and agent.auth_value:
                     headers["Authorization"] = f"Bearer {agent.auth_value}"
 
-                http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
+                http_response = await client.post(actual_endpoint, json=request_data, headers=headers)
 
                 if http_response.status_code == 200:
                     response = http_response.json()
