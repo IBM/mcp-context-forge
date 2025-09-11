@@ -2424,7 +2424,10 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
         ):
-            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        # Verify result still succeeded despite plugin error
+        assert result.content[0].text == '{\n  "result": "original response"\n}'
 
         await tool_service._plugin_manager.shutdown()
 

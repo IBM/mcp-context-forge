@@ -26,11 +26,12 @@ Structure:
 """
 
 # Standard
-import asyncio, sys
-from datetime import datetime
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 import json
 import os as _os  # local alias to avoid collisions
+import sys
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
@@ -376,7 +377,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                 await service.shutdown()
             except Exception as e:
                 logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
-        logger.info("Shutdown complete")        
+        logger.info("Shutdown complete")
 
 
 # Initialize FastAPI app
@@ -388,14 +389,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 async def validate_security_configuration():
     """Validate security configuration on startup."""
     logger.info("🔒 Validating security configuration...")
-    
+
     # Get security status
     security_status = settings.get_security_status()
-    warnings = security_status['warnings']
-    
+    warnings = security_status["warnings"]
+
     # Log warnings
     if warnings:
         logger.warning("=" * 60)
@@ -404,28 +406,19 @@ async def validate_security_configuration():
         for warning in warnings:
             logger.warning(f"  {warning}")
         logger.warning("=" * 60)
-    
+
     # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
     critical_issues = []
-    
-    if settings.jwt_secret_key == 'my-test-key' and not settings.dev_mode:
-        critical_issues.append(
-            "Using default JWT secret in non-dev mode. "
-            "Set JWT_SECRET_KEY environment variable!"
-        )
-    
-    if settings.basic_auth_password == 'changeme' and settings.mcpgateway_ui_enabled:
-        critical_issues.append(
-            "Admin UI enabled with default password. "
-            "Set BASIC_AUTH_PASSWORD environment variable!"
-        )
-    
+
+    if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:
+        critical_issues.append("Using default JWT secret in non-dev mode. " "Set JWT_SECRET_KEY environment variable!")
+
+    if settings.basic_auth_password == "changeme" and settings.mcpgateway_ui_enabled:
+        critical_issues.append("Admin UI enabled with default password. " "Set BASIC_AUTH_PASSWORD environment variable!")
+
     if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
-        critical_issues.append(
-            "Federation enabled without authentication in non-dev mode. "
-            "This is a critical security risk!"
-        )
-    
+        critical_issues.append("Federation enabled without authentication in non-dev mode. " "This is a critical security risk!")
+
     # Handle critical issues based on REQUIRE_STRONG_SECRETS setting
     if critical_issues:
         if settings.require_strong_secrets:
@@ -446,28 +439,28 @@ async def validate_security_configuration():
             for issue in critical_issues:
                 logger.warning(f"  • {issue}")
             logger.warning("=" * 60)
-    
+
     # Log security recommendations
-    if not security_status['secure_secrets'] or not security_status['auth_enabled']:
+    if not security_status["secure_secrets"] or not security_status["auth_enabled"]:
         logger.info("=" * 60)
         logger.info("📋 SECURITY RECOMMENDATIONS:")
         logger.info("=" * 60)
-        
-        if settings.jwt_secret_key == 'my-test-key':
+
+        if settings.jwt_secret_key == "my-test-key":
             logger.info("  • Generate a strong JWT secret:")
             logger.info("    python -c 'import secrets; print(secrets.token_urlsafe(32))'")
-        
-        if settings.basic_auth_password == 'changeme':
+
+        if settings.basic_auth_password == "changeme":
             logger.info("  • Set a strong admin password in BASIC_AUTH_PASSWORD")
-        
+
         if not settings.auth_required:
             logger.info("  • Enable authentication: AUTH_REQUIRED=true")
-        
+
         if settings.skip_ssl_verify:
             logger.info("  • Enable SSL verification: SKIP_SSL_VERIFY=false")
-        
+
         logger.info("=" * 60)
-    
+
     logger.info("✅ Security validation completed")
 
 
@@ -3835,43 +3828,58 @@ async def readiness_check(db: Session = Depends(get_db)):
         error_message = f"Readiness check failed: {str(e)}"
         logger.error(error_message)
         return JSONResponse(content={"status": "not ready", "error": error_message}, status_code=503)
-    
+
+
 @app.get("/health/security", tags=["health"])
 async def security_health(request: Request):
-    """Get security configuration health status."""
+    """
+    Get the security configuration health status.
+
+    Args:
+        request (Request): The incoming HTTP request containing headers for authentication.
+
+    Returns:
+        dict: A dictionary containing the overall security health status, score,
+            individual checks, warning count, and timestamp. Warnings are included
+            only if authentication passes or when running in development mode.
+
+    Raises:
+        HTTPException: If authentication is required and the request does not
+            include a valid bearer token in the Authorization header.
+    """
     # Check authentication
     if settings.auth_required:
         # Verify the request is authenticated
         auth_header = request.headers.get("authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             raise HTTPException(401, "Authentication required for security health")
-    
+
     security_status = settings.get_security_status()
-    
+
     # Determine overall health
-    score = security_status['security_score']
+    score = security_status["security_score"]
     is_healthy = score >= 60  # Minimum acceptable score
-    
+
     # Build response
     response = {
         "status": "healthy" if is_healthy else "unhealthy",
         "score": score,
         "checks": {
-            "authentication": security_status['auth_enabled'],
-            "secure_secrets": security_status['secure_secrets'],
-            "ssl_verification": security_status['ssl_verification'],
-            "debug_disabled": security_status['debug_disabled'],
-            "cors_restricted": security_status['cors_restricted'],
-            "ui_protected": security_status['ui_protected']
+            "authentication": security_status["auth_enabled"],
+            "secure_secrets": security_status["secure_secrets"],
+            "ssl_verification": security_status["ssl_verification"],
+            "debug_disabled": security_status["debug_disabled"],
+            "cors_restricted": security_status["cors_restricted"],
+            "ui_protected": security_status["ui_protected"],
         },
-        "warning_count": len(security_status['warnings']),
-        "timestamp": datetime.utcnow().isoformat()
+        "warning_count": len(security_status["warnings"]),
+        "timestamp": datetime.utcnow().isoformat(),
     }
-    
+
     # Include warnings only if authenticated or in dev mode
     if settings.dev_mode:
-        response["warnings"] = security_status['warnings']
-    
+        response["warnings"] = security_status["warnings"]
+
     return response
 
 
@@ -4391,6 +4399,9 @@ if UI_ENABLED:
 
         Returns:
             RedirectResponse: Redirects to /admin.
+
+        Raises:
+            HTTPException: If there is an error during redirection.
         """
         logger.debug("Redirecting root path to /admin")
         root_path = request.scope.get("root_path", "")
