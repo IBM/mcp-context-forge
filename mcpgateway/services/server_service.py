@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import case, delete, desc, Float, func, select, and_, or_
+from sqlalchemy import and_, case, delete, desc, Float, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -546,8 +546,13 @@ class ServerService:
             if team_id not in team_ids:
                 return []  # No access to team
 
+            access_conditions = []
             # Filter by specific team
-            query = query.where(and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])))
+            access_conditions.append(and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])))
+
+            access_conditions.append(and_(DbServer.team_id == team_id, DbServer.owner_email == user_email))
+
+            query = query.where(or_(*access_conditions))
         else:
             # Get user's accessible teams
             # Build access conditions following existing patterns
