@@ -2,7 +2,7 @@
 
 A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematical computations, implementing **13 mathematical tools** with advanced features and high precision calculations.
 
-**Owner & Maintainer:** Avinash Sangle (avinash.sangle123@gmail.com)
+**Owner & Maintainer:** Avinash Sangle 
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -829,14 +829,6 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
   - [`gonum`](https://gonum.org/): Scientific computing
   - [`gopkg.in/yaml.v3`](https://gopkg.in/yaml.v3): YAML configuration support
 
-## 📞 Support & Contact
-
-**Primary Contact:**
-- **Maintainer**: Avinash Sangle
-- **Email**: avinash.sangle123@gmail.com
-- **GitHub**: [https://github.com/avisangle](https://github.com/avisangle)
-- **Website**: [https://avisangle.github.io/](https://avisangle.github.io/)
-
 **Project Resources:**
 - **Issues**: [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues)
 - **Documentation**: This README and inline code documentation
@@ -855,6 +847,5 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 **Connect with the Author:**
 - 🌐 Website: [https://avisangle.github.io/](https://avisangle.github.io/)
 - 💻 GitHub: [https://github.com/avisangle](https://github.com/avisangle)
-- 📧 Email: avinash.sangle123@gmail.com
 
 For more information about MCP servers and the Context Forge project, visit the [IBM MCP Context Forge repository](https://github.com/IBM/mcp-context-forge).

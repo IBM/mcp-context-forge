@@ -11,7 +11,7 @@
       "max_connections": 100,
       "cors": {
         "enabled": true,
-        "origins": ["*"]
+        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"]
       }
     }
   },
@@ -54,7 +54,10 @@
       "server": {
         "transport": "http",
         "http": {
+          "host": "127.0.0.1",
           "port": 8080,
+          "session_timeout": "10m",
+          "max_connections": 50,
           "cors": {
             "enabled": true,
             "origins": ["http://localhost:3000", "http://localhost:8080"]
@@ -63,7 +66,8 @@
       },
       "logging": {
         "level": "debug",
-        "format": "text"
+        "format": "text",
+        "output": "stdout"
       }
     },
     
@@ -71,15 +75,13 @@
       "server": {
         "transport": "http",
         "http": {
+          "host": "127.0.0.1",
           "port": 8080,
+          "session_timeout": "5m",
+          "max_connections": 200,
           "cors": {
             "enabled": true,
             "origins": ["https://your-production-domain.com"]
-          },
-          "tls": {
-            "enabled": true,
-            "cert_file": "/path/to/cert.pem",
-            "key_file": "/path/to/key.pem"
           }
         }
       },
@@ -90,8 +92,10 @@
       },
       "security": {
         "rate_limiting": {
+          "enabled": true,
           "requests_per_minute": 1000
-        }
+        },
+        "request_size_limit": "1MB"
       }
     }
   }
