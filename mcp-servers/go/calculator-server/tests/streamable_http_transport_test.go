@@ -66,7 +66,7 @@ func TestStreamableHTTPTransportIntegrationWithConfig(t *testing.T) {
 		}
 
 		requestBody, _ := json.Marshal(mcpRequest)
-		
+
 		client := &http.Client{Timeout: 5 * time.Second}
 		req, _ := http.NewRequest("POST", fmt.Sprintf("http://localhost:%d/mcp", cfg.Server.HTTP.Port), bytes.NewBuffer(requestBody))
 		req.Header.Set("Content-Type", "application/json")
@@ -106,7 +106,7 @@ func TestStreamableHTTPTransportIntegrationWithConfig(t *testing.T) {
 		}
 
 		requestBody, _ := json.Marshal(mcpRequest)
-		
+
 		client := &http.Client{Timeout: 5 * time.Second}
 		req, _ := http.NewRequest("POST", fmt.Sprintf("http://localhost:%d/mcp", cfg.Server.HTTP.Port), bytes.NewBuffer(requestBody))
 		req.Header.Set("Content-Type", "application/json")
@@ -142,7 +142,7 @@ func TestStreamableHTTPTransportIntegrationWithConfig(t *testing.T) {
 		req, _ := http.NewRequest("OPTIONS", fmt.Sprintf("http://localhost:%d/mcp", cfg.Server.HTTP.Port), nil)
 		req.Header.Set("Origin", "http://localhost:3000")
 		req.Header.Set("Access-Control-Request-Method", "POST")
-		
+
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("CORS preflight failed: %v", err)
@@ -182,7 +182,7 @@ func TestMCPProtocolCompliance(t *testing.T) {
 		CORSEnabled:    true,
 		CORSOrigins:    []string{"*"},
 	}
-	
+
 	httpTransport := mcp.NewStreamableHTTPTransport(server, config)
 
 	// Start server for compliance testing
@@ -196,11 +196,11 @@ func TestMCPProtocolCompliance(t *testing.T) {
 
 	t.Run("MCP Protocol Headers Required", func(t *testing.T) {
 		client := &http.Client{Timeout: 5 * time.Second}
-		
+
 		// Test missing MCP-Protocol-Version
 		req, _ := http.NewRequest("POST", fmt.Sprintf("http://127.0.0.1:%d/mcp", config.Port), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
 		req.Header.Set("Content-Type", "application/json")
-		
+
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("Request failed: %v", err)
@@ -214,10 +214,10 @@ func TestMCPProtocolCompliance(t *testing.T) {
 
 	t.Run("Single MCP Endpoint Only", func(t *testing.T) {
 		client := &http.Client{Timeout: 5 * time.Second}
-		
+
 		// Test that non-MCP endpoints don't exist (MCP spec requires single endpoint)
 		nonMCPEndpoints := []string{"/health", "/tools", "/metrics", "/status"}
-		
+
 		for _, endpoint := range nonMCPEndpoints {
 			req, _ := http.NewRequest("GET", fmt.Sprintf("http://127.0.0.1:%d%s", config.Port, endpoint), nil)
 			resp, err := client.Do(req)
@@ -225,7 +225,7 @@ func TestMCPProtocolCompliance(t *testing.T) {
 				continue // Expected for non-existent endpoints
 			}
 			defer resp.Body.Close()
-			
+
 			if resp.StatusCode == http.StatusOK {
 				t.Errorf("Non-MCP endpoint %s should not exist (MCP spec requires single endpoint)", endpoint)
 			}
@@ -258,7 +258,7 @@ func getBasicMathSchema() map[string]interface{} {
 				"minItems": 2,
 			},
 			"precision": map[string]interface{}{
-				"type": "integer",
+				"type":    "integer",
 				"minimum": 0,
 				"maximum": 15,
 				"default": 2,
@@ -267,4 +267,3 @@ func getBasicMathSchema() map[string]interface{} {
 		"required": []string{"operation", "operands"},
 	}
 }
-

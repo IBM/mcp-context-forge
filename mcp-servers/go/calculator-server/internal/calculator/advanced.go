@@ -3,7 +3,7 @@ package calculator
 import (
 	"fmt"
 	"math"
-	
+
 	"calculator-server/internal/types"
 )
 
@@ -93,9 +93,13 @@ func (ac *AdvancedCalculator) Calculate(req types.AdvancedMathRequest) (types.Ca
 		}
 		result = math.Exp(value)
 	case "pow":
-		// For power function, we need a second parameter
-		// This is a simplified implementation assuming power of 2
-		result = math.Pow(value, 2)
+		// For power function, we use the existing Power method
+		exponent := req.Exponent
+		var err error
+		result, err = ac.Power(value, exponent)
+		if err != nil {
+			return types.CalculationResult{}, err
+		}
 	default:
 		return types.CalculationResult{}, fmt.Errorf("unsupported function: %s", req.Function)
 	}
@@ -121,7 +125,7 @@ func (ac *AdvancedCalculator) Power(base, exponent float64) (float64, error) {
 	if base < 0 && exponent != math.Floor(exponent) {
 		return 0, fmt.Errorf("complex result: negative base with non-integer exponent")
 	}
-	
+
 	result := math.Pow(base, exponent)
 	if math.IsNaN(result) {
 		return 0, fmt.Errorf("calculation resulted in NaN")
@@ -129,7 +133,7 @@ func (ac *AdvancedCalculator) Power(base, exponent float64) (float64, error) {
 	if math.IsInf(result, 0) {
 		return 0, fmt.Errorf("calculation resulted in infinity")
 	}
-	
+
 	return result, nil
 }
 
@@ -140,12 +144,12 @@ func (ac *AdvancedCalculator) factorial(n int) (float64, error) {
 	if n == 0 || n == 1 {
 		return 1, nil
 	}
-	
+
 	result := 1.0
 	for i := 2; i <= n; i++ {
 		result *= float64(i)
 	}
-	
+
 	return result, nil
 }
 
@@ -173,13 +177,13 @@ func (ac *AdvancedCalculator) ValidateFunction(function string) error {
 		"sin", "cos", "tan", "asin", "acos", "atan",
 		"log", "log10", "ln", "sqrt", "abs", "factorial", "exp", "pow",
 	}
-	
+
 	for _, validFunc := range validFunctions {
 		if function == validFunc {
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("invalid function: %s. Valid functions are: %v", function, validFunctions)
 }
 
@@ -197,13 +201,13 @@ func (ac *AdvancedCalculator) ValidateUnit(unit string) error {
 	if unit == "" {
 		return nil // Empty unit is valid (defaults to radians)
 	}
-	
+
 	validUnits := []string{"radians", "degrees"}
 	for _, validUnit := range validUnits {
 		if unit == validUnit {
 			return nil
 		}
 	}
-	
+
 	return fmt.Errorf("invalid unit: %s. Valid units are: %v", unit, validUnits)
 }

@@ -3,13 +3,13 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	
+
 	"calculator-server/internal/calculator"
 	"calculator-server/internal/types"
 )
 
 type StatsHandler struct {
-	statsCalc    *calculator.StatisticsCalculator
+	statsCalc     *calculator.StatisticsCalculator
 	unitConverter *calculator.UnitConverter
 }
 
@@ -63,83 +63,6 @@ func (sh *StatsHandler) HandleStatistics(params map[string]interface{}) (interfa
 		"count":                result.Count,
 		"data_preview":         sh.getDataPreview(req.Data),
 		"supported_operations": supportedOps,
-	}
-
-	return response, nil
-}
-
-func (sh *StatsHandler) HandleUnitConversion(params map[string]interface{}) (interface{}, error) {
-	// Convert params to UnitConversionRequest
-	paramsJSON, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal parameters: %v", err)
-	}
-
-	var req types.UnitConversionRequest
-	if err := json.Unmarshal(paramsJSON, &req); err != nil {
-		return nil, fmt.Errorf("invalid parameters for unit conversion: %v", err)
-	}
-
-	// Validate category
-	supportedCategories := sh.unitConverter.GetSupportedCategories()
-	isCategorySupported := false
-	for _, cat := range supportedCategories {
-		if req.Category == cat {
-			isCategorySupported = true
-			break
-		}
-	}
-	if !isCategorySupported {
-		return nil, fmt.Errorf("unsupported category: %s. Supported categories: %v", req.Category, supportedCategories)
-	}
-
-	// Validate units for the category
-	supportedUnits, err := sh.unitConverter.GetSupportedUnits(req.Category)
-	if err != nil {
-		return nil, err
-	}
-
-	isFromUnitSupported := false
-	isToUnitSupported := false
-	for _, unit := range supportedUnits {
-		if req.FromUnit == unit {
-			isFromUnitSupported = true
-		}
-		if req.ToUnit == unit {
-			isToUnitSupported = true
-		}
-	}
-
-	if !isFromUnitSupported {
-		return nil, fmt.Errorf("unsupported from unit: %s. Supported units for %s: %v", req.FromUnit, req.Category, supportedUnits)
-	}
-	if !isToUnitSupported {
-		return nil, fmt.Errorf("unsupported to unit: %s. Supported units for %s: %v", req.ToUnit, req.Category, supportedUnits)
-	}
-
-	// Perform conversion
-	result, err := sh.unitConverter.Convert(req)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add additional information
-	response := map[string]interface{}{
-		"original_value":       req.Value,
-		"original_unit":        req.FromUnit,
-		"converted_value":      result.Result,
-		"converted_unit":       result.Unit,
-		"category":             req.Category,
-		"supported_units":      supportedUnits,
-		"supported_categories": supportedCategories,
-	}
-
-	// Add conversion factor if possible
-	if req.Category != "temperature" { // Temperature conversions are not linear
-		factor, err := sh.unitConverter.GetConversionFactor(req.FromUnit, req.ToUnit, req.Category)
-		if err == nil {
-			response["conversion_factor"] = factor
-		}
 	}
 
 	return response, nil
@@ -211,10 +134,10 @@ func (sh *StatsHandler) HandlePercentileCalculation(params map[string]interface{
 	}
 
 	response := map[string]interface{}{
-		"percentile":       percentile,
-		"value":            result,
-		"data_count":       len(data),
-		"data_preview":     sh.getDataPreview(data),
+		"percentile":   percentile,
+		"value":        result,
+		"data_count":   len(data),
+		"data_preview": sh.getDataPreview(data),
 	}
 
 	return response, nil
@@ -257,12 +180,12 @@ func (sh *StatsHandler) HandleMultipleConversions(params map[string]interface{})
 	}
 
 	response := map[string]interface{}{
-		"original_values": values,
+		"original_values":  values,
 		"converted_values": results,
-		"fromUnit": fromUnit,
-		"toUnit": toUnit,
-		"category": category,
-		"count": len(values),
+		"fromUnit":         fromUnit,
+		"toUnit":           toUnit,
+		"category":         category,
+		"count":            len(values),
 	}
 
 	return response, nil
@@ -291,10 +214,10 @@ func (sh *StatsHandler) convertToFloatSlice(data interface{}) ([]float64, error)
 
 func (sh *StatsHandler) getDataPreview(data []float64) map[string]interface{} {
 	preview := make(map[string]interface{})
-	
+
 	count := len(data)
 	preview["count"] = count
-	
+
 	if count == 0 {
 		return preview
 	}

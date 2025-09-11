@@ -16,10 +16,12 @@ server:
     cors:
       enabled: true
       origins:
-        - "*"
+        - "http://localhost:3000"
+        - "http://127.0.0.1:3000"
         # For production, specify allowed origins:
         # - "https://your-frontend.com"
         # - "https://api.your-app.com"
+        # WARNING: Never use "*" in production as it allows ALL origins
 
 # Logging configuration
 logging:

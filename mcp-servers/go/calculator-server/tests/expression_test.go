@@ -3,14 +3,14 @@ package tests
 import (
 	"math"
 	"testing"
-	
+
 	"calculator-server/internal/calculator"
 	"calculator-server/internal/types"
 )
 
 func TestExpressionCalculator_BasicExpressions(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.ExpressionRequest
@@ -100,23 +100,23 @@ func TestExpressionCalculator_BasicExpressions(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Evaluate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -126,7 +126,7 @@ func TestExpressionCalculator_BasicExpressions(t *testing.T) {
 
 func TestExpressionCalculator_WithVariables(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.ExpressionRequest
@@ -200,23 +200,23 @@ func TestExpressionCalculator_WithVariables(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Evaluate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -226,7 +226,7 @@ func TestExpressionCalculator_WithVariables(t *testing.T) {
 
 func TestExpressionCalculator_WithConstants(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.ExpressionRequest
@@ -283,23 +283,23 @@ func TestExpressionCalculator_WithConstants(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Evaluate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -309,7 +309,7 @@ func TestExpressionCalculator_WithConstants(t *testing.T) {
 
 func TestExpressionCalculator_WithFunctions(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.ExpressionRequest
@@ -393,24 +393,69 @@ func TestExpressionCalculator_WithFunctions(t *testing.T) {
 			tolerance: 0.0001,
 			shouldErr: false,
 		},
+		{
+			name: "Factorial function - 0!",
+			request: types.ExpressionRequest{
+				Expression: "factorial(0)",
+			},
+			expected:  1,
+			tolerance: 0.0001,
+			shouldErr: false,
+		},
+		{
+			name: "Factorial function - 5!",
+			request: types.ExpressionRequest{
+				Expression: "factorial(5)",
+			},
+			expected:  120,
+			tolerance: 0.0001,
+			shouldErr: false,
+		},
+		{
+			name: "Factorial function - negative input error",
+			request: types.ExpressionRequest{
+				Expression: "factorial(-1)",
+			},
+			expected:  0,
+			tolerance: 0.0001,
+			shouldErr: true,
+		},
+		{
+			name: "Factorial function - non-integer input error",
+			request: types.ExpressionRequest{
+				Expression: "factorial(5.5)",
+			},
+			expected:  0,
+			tolerance: 0.0001,
+			shouldErr: true,
+		},
+		{
+			name: "Factorial function - overflow protection",
+			request: types.ExpressionRequest{
+				Expression: "factorial(25)",
+			},
+			expected:  0,
+			tolerance: 0.0001,
+			shouldErr: true,
+		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Evaluate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -420,7 +465,7 @@ func TestExpressionCalculator_WithFunctions(t *testing.T) {
 
 func TestExpressionCalculator_ValidateExpression(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name       string
 		expression string
@@ -467,11 +512,11 @@ func TestExpressionCalculator_ValidateExpression(t *testing.T) {
 			shouldErr:  false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := calc.ValidateExpression(tc.expression)
-			
+
 			if tc.shouldErr && err == nil {
 				t.Errorf("Expected error, but got none")
 			} else if !tc.shouldErr && err != nil {
@@ -483,7 +528,7 @@ func TestExpressionCalculator_ValidateExpression(t *testing.T) {
 
 func TestExpressionCalculator_VariableValidation(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name         string
 		variableName string
@@ -530,12 +575,17 @@ func TestExpressionCalculator_VariableValidation(t *testing.T) {
 			expected:     false,
 		},
 		{
+			name:         "Invalid - reserved word (factorial)",
+			variableName: "factorial",
+			expected:     false,
+		},
+		{
 			name:         "Valid - mixed case",
 			variableName: "MyVar",
 			expected:     true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// This is testing the private method through the Evaluate function
@@ -546,9 +596,9 @@ func TestExpressionCalculator_VariableValidation(t *testing.T) {
 					tc.variableName: 5,
 				},
 			}
-			
+
 			_, err := calc.Evaluate(request)
-			
+
 			if tc.expected {
 				// Variable should be valid, so no error expected
 				if err != nil && err.Error() == "invalid variable name: "+tc.variableName {
@@ -568,7 +618,7 @@ func TestExpressionCalculator_VariableValidation(t *testing.T) {
 
 func TestExpressionCalculator_ErrorHandling(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name    string
 		request types.ExpressionRequest
@@ -604,11 +654,11 @@ func TestExpressionCalculator_ErrorHandling(t *testing.T) {
 			},
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := calc.Evaluate(tc.request)
-			
+
 			if err == nil {
 				t.Errorf("Expected error, but got none")
 			}
@@ -618,15 +668,15 @@ func TestExpressionCalculator_ErrorHandling(t *testing.T) {
 
 func TestExpressionCalculator_GetSupportedFunctions(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	functions := calc.GetSupportedFunctions()
-	
-	expectedFunctions := []string{"sin(x)", "cos(x)", "tan(x)", "log(x)", "ln(x)", "abs(x)", "sqrt(x)", "pow(x, y)", "exp(x)", "pi", "e"}
-	
+
+	expectedFunctions := []string{"sin(x)", "cos(x)", "tan(x)", "log(x)", "ln(x)", "abs(x)", "sqrt(x)", "pow(x, y)", "exp(x)", "factorial(x)", "pi", "e"}
+
 	if len(functions) == 0 {
 		t.Errorf("No supported functions returned")
 	}
-	
+
 	// Check if all expected functions are present
 	for _, expected := range expectedFunctions {
 		found := false
@@ -644,15 +694,15 @@ func TestExpressionCalculator_GetSupportedFunctions(t *testing.T) {
 
 func TestExpressionCalculator_GetSupportedOperators(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	operators := calc.GetSupportedOperators()
-	
+
 	expectedOperators := []string{"+", "-", "*", "/", "^", "%", "(", ")"}
-	
+
 	if len(operators) == 0 {
 		t.Errorf("No supported operators returned")
 	}
-	
+
 	// Check if all expected operators are present
 	for _, expected := range expectedOperators {
 		found := false
@@ -671,7 +721,7 @@ func TestExpressionCalculator_GetSupportedOperators(t *testing.T) {
 // New comprehensive tests for enhanced expression evaluator
 func TestExpressionCalculator_EnhancedFunctions(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.ExpressionRequest
@@ -784,23 +834,23 @@ func TestExpressionCalculator_EnhancedFunctions(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Evaluate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -810,7 +860,7 @@ func TestExpressionCalculator_EnhancedFunctions(t *testing.T) {
 
 func TestExpressionCalculator_InverseTrigFunctions(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.ExpressionRequest
@@ -864,23 +914,23 @@ func TestExpressionCalculator_InverseTrigFunctions(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Evaluate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -888,9 +938,153 @@ func TestExpressionCalculator_InverseTrigFunctions(t *testing.T) {
 	}
 }
 
+func TestExpressionCalculator_ExtractVariables(t *testing.T) {
+	calc := calculator.NewExpressionCalculator()
+
+	testCases := []struct {
+		name       string
+		expression string
+		expected   []string
+		shouldErr  bool
+	}{
+		{
+			name:       "Empty expression",
+			expression: "",
+			expected:   []string{},
+			shouldErr:  false,
+		},
+		{
+			name:       "Whitespace only expression",
+			expression: "   ",
+			expected:   []string{},
+			shouldErr:  false,
+		},
+		{
+			name:       "Expression with no variables",
+			expression: "2 + 3",
+			expected:   []string{},
+			shouldErr:  false,
+		},
+		{
+			name:       "Single variable",
+			expression: "x + 5",
+			expected:   []string{"x"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Multiple variables",
+			expression: "a * b + c",
+			expected:   []string{"a", "b", "c"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Variables with underscores",
+			expression: "var_1 + var_2",
+			expected:   []string{"var_1", "var_2"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Duplicate variables",
+			expression: "x + x * y + y",
+			expected:   []string{"x", "y"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Complex expression with variables",
+			expression: "(x + y) * z / 2 + abs(w)",
+			expected:   []string{"w", "x", "y", "z"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Variables with constants - should exclude constants",
+			expression: "x + pi * y + e",
+			expected:   []string{"x", "y"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Variables with uppercase constants",
+			expression: "a + PI * b + E",
+			expected:   []string{"a", "b"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Variables with functions - should exclude function names",
+			expression: "sin(x) + cos(y) + log(z)",
+			expected:   []string{"x", "y", "z"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Mixed case variables",
+			expression: "MyVar + myOtherVar",
+			expected:   []string{"MyVar", "myOtherVar"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Variables in function arguments",
+			expression: "pow(base, exponent) + sqrt(value)",
+			expected:   []string{"base", "exponent", "value"},
+			shouldErr:  false,
+		},
+		{
+			name:       "All built-in identifiers - should return empty",
+			expression: "sin(pi) + cos(e) + log(PI) + abs(E)",
+			expected:   []string{},
+			shouldErr:  false,
+		},
+		{
+			name:       "Business formula with meaningful variable names",
+			expression: "principal * pow(1 + interest_rate, years)",
+			expected:   []string{"interest_rate", "principal", "years"},
+			shouldErr:  false,
+		},
+		{
+			name:       "Invalid expression - unmatched parentheses",
+			expression: "((x + y",
+			expected:   nil,
+			shouldErr:  true,
+		},
+		{
+			name:       "Invalid expression - consecutive operators",
+			expression: "x ++ y",
+			expected:   nil,
+			shouldErr:  true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := calc.ExtractVariables(tc.expression)
+
+			if tc.shouldErr {
+				if err == nil {
+					t.Errorf("Expected error, but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if len(result) != len(tc.expected) {
+				t.Errorf("Expected %d variables, got %d. Expected: %v, Got: %v",
+					len(tc.expected), len(result), tc.expected, result)
+				return
+			}
+
+			for i, expected := range tc.expected {
+				if result[i] != expected {
+					t.Errorf("At index %d: expected %s, got %s", i, expected, result[i])
+				}
+			}
+		})
+	}
+}
+
 func TestExpressionCalculator_ComplexBusinessLogic(t *testing.T) {
 	calc := calculator.NewExpressionCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.ExpressionRequest
@@ -968,23 +1162,23 @@ func TestExpressionCalculator_ComplexBusinessLogic(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Evaluate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}

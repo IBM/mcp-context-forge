@@ -3,14 +3,14 @@ package tests
 import (
 	"math"
 	"testing"
-	
+
 	"calculator-server/internal/calculator"
 	"calculator-server/internal/types"
 )
 
 func TestAdvancedCalculator_TrigonometricFunctions(t *testing.T) {
 	calc := calculator.NewAdvancedCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.AdvancedMathRequest
@@ -96,23 +96,23 @@ func TestAdvancedCalculator_TrigonometricFunctions(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -122,7 +122,7 @@ func TestAdvancedCalculator_TrigonometricFunctions(t *testing.T) {
 
 func TestAdvancedCalculator_InverseTrigonometricFunctions(t *testing.T) {
 	calc := calculator.NewAdvancedCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.AdvancedMathRequest
@@ -208,23 +208,23 @@ func TestAdvancedCalculator_InverseTrigonometricFunctions(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -234,7 +234,7 @@ func TestAdvancedCalculator_InverseTrigonometricFunctions(t *testing.T) {
 
 func TestAdvancedCalculator_LogarithmicFunctions(t *testing.T) {
 	calc := calculator.NewAdvancedCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.AdvancedMathRequest
@@ -313,23 +313,23 @@ func TestAdvancedCalculator_LogarithmicFunctions(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -339,7 +339,7 @@ func TestAdvancedCalculator_LogarithmicFunctions(t *testing.T) {
 
 func TestAdvancedCalculator_OtherFunctions(t *testing.T) {
 	calc := calculator.NewAdvancedCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.AdvancedMathRequest
@@ -468,23 +468,23 @@ func TestAdvancedCalculator_OtherFunctions(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result.Result, tc.tolerance)
 			}
@@ -494,7 +494,7 @@ func TestAdvancedCalculator_OtherFunctions(t *testing.T) {
 
 func TestAdvancedCalculator_PowerFunction(t *testing.T) {
 	calc := calculator.NewAdvancedCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		base      float64
@@ -544,23 +544,23 @@ func TestAdvancedCalculator_PowerFunction(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Power(tc.base, tc.exponent)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result-tc.expected) > tc.tolerance {
 				t.Errorf("Expected %f, got %f (tolerance: %f)", tc.expected, result, tc.tolerance)
 			}
@@ -570,17 +570,17 @@ func TestAdvancedCalculator_PowerFunction(t *testing.T) {
 
 func TestAdvancedCalculator_Validation(t *testing.T) {
 	calc := calculator.NewAdvancedCalculator()
-	
+
 	// Test function validation
 	t.Run("ValidateFunction", func(t *testing.T) {
 		validFunctions := []string{"sin", "cos", "tan", "asin", "acos", "atan", "log", "log10", "ln", "sqrt", "abs", "factorial", "exp", "pow"}
-		
+
 		for _, fn := range validFunctions {
 			if err := calc.ValidateFunction(fn); err != nil {
 				t.Errorf("Valid function %s rejected: %v", fn, err)
 			}
 		}
-		
+
 		invalidFunctions := []string{"invalid", "", "sine", "cosine"}
 		for _, fn := range invalidFunctions {
 			if err := calc.ValidateFunction(fn); err == nil {
@@ -588,17 +588,17 @@ func TestAdvancedCalculator_Validation(t *testing.T) {
 			}
 		}
 	})
-	
+
 	// Test value validation
 	t.Run("ValidateValue", func(t *testing.T) {
 		validValues := []float64{0, 1, -1, 3.14159, 100, -100}
-		
+
 		for _, val := range validValues {
 			if err := calc.ValidateValue(val); err != nil {
 				t.Errorf("Valid value %f rejected: %v", val, err)
 			}
 		}
-		
+
 		invalidValues := []float64{math.NaN(), math.Inf(1), math.Inf(-1)}
 		for _, val := range invalidValues {
 			if err := calc.ValidateValue(val); err == nil {
@@ -606,17 +606,17 @@ func TestAdvancedCalculator_Validation(t *testing.T) {
 			}
 		}
 	})
-	
+
 	// Test unit validation
 	t.Run("ValidateUnit", func(t *testing.T) {
 		validUnits := []string{"", "radians", "degrees"}
-		
+
 		for _, unit := range validUnits {
 			if err := calc.ValidateUnit(unit); err != nil {
 				t.Errorf("Valid unit '%s' rejected: %v", unit, err)
 			}
 		}
-		
+
 		invalidUnits := []string{"invalid", "grads", "turns"}
 		for _, unit := range invalidUnits {
 			if err := calc.ValidateUnit(unit); err == nil {

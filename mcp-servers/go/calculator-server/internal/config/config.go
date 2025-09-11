@@ -20,11 +20,11 @@ type ServerConfig struct {
 
 // HTTPConfig contains MCP-compliant HTTP transport configuration
 type HTTPConfig struct {
-	Host             string        `yaml:"host" json:"host"`
-	Port             int           `yaml:"port" json:"port"`
-	SessionTimeout   time.Duration `yaml:"session_timeout" json:"session_timeout"`
-	MaxConnections   int           `yaml:"max_connections" json:"max_connections"`
-	CORS             CORSConfig    `yaml:"cors" json:"cors"`
+	Host           string        `yaml:"host" json:"host"`
+	Port           int           `yaml:"port" json:"port"`
+	SessionTimeout time.Duration `yaml:"session_timeout" json:"session_timeout"`
+	MaxConnections int           `yaml:"max_connections" json:"max_connections"`
+	CORS           CORSConfig    `yaml:"cors" json:"cors"`
 }
 
 // CORSConfig contains CORS configuration
@@ -78,8 +78,8 @@ type SecurityConfig struct {
 
 // RateLimitingConfig contains rate limiting configuration
 type RateLimitingConfig struct {
-	Enabled            bool `yaml:"enabled" json:"enabled"`
-	RequestsPerMinute  int  `yaml:"requests_per_minute" json:"requests_per_minute"`
+	Enabled           bool `yaml:"enabled" json:"enabled"`
+	RequestsPerMinute int  `yaml:"requests_per_minute" json:"requests_per_minute"`
 }
 
 // Default returns a configuration with default values
@@ -88,13 +88,13 @@ func Default() *Config {
 		Server: ServerConfig{
 			Transport: "stdio",
 			HTTP: HTTPConfig{
-				Host:             "127.0.0.1", // Default to localhost for security
-				Port:             8080,
-				SessionTimeout:   5 * time.Minute,
-				MaxConnections:   100,
+				Host:           "127.0.0.1", // Default to localhost for security
+				Port:           8080,
+				SessionTimeout: 5 * time.Minute,
+				MaxConnections: 100,
 				CORS: CORSConfig{
 					Enabled: true,
-					Origins: []string{"*"},
+					Origins: []string{"http://localhost:3000", "http://127.0.0.1:3000"},
 				},
 			},
 		},

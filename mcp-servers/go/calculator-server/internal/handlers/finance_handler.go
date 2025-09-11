@@ -3,7 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	
+
 	"calculator-server/internal/calculator"
 	"calculator-server/internal/types"
 )
@@ -126,11 +126,11 @@ func (fh *FinanceHandler) HandleNPV(params map[string]interface{}) (interface{},
 	}
 
 	response := map[string]interface{}{
-		"npv":           npv,
-		"cashFlows":     cashFlows,
-		"discountRate":  discountRate,
-		"periods":       len(cashFlows),
-		"description":   "Net Present Value calculation",
+		"npv":            npv,
+		"cashFlows":      cashFlows,
+		"discountRate":   discountRate,
+		"periods":        len(cashFlows),
+		"description":    "Net Present Value calculation",
 		"interpretation": fh.interpretNPV(npv),
 	}
 
@@ -157,10 +157,10 @@ func (fh *FinanceHandler) HandleIRR(params map[string]interface{}) (interface{},
 	}
 
 	response := map[string]interface{}{
-		"irr":           irr,
-		"cashFlows":     cashFlows,
-		"periods":       len(cashFlows),
-		"description":   "Internal Rate of Return calculation",
+		"irr":            irr,
+		"cashFlows":      cashFlows,
+		"periods":        len(cashFlows),
+		"description":    "Internal Rate of Return calculation",
 		"interpretation": fh.interpretIRR(irr),
 	}
 
@@ -182,7 +182,7 @@ func (fh *FinanceHandler) HandleLoanComparison(params map[string]interface{}) (i
 	}
 
 	results := make([]map[string]interface{}, len(loans))
-	
+
 	for i, loanInterface := range loans {
 		loanMap, ok := loanInterface.(map[string]interface{})
 		if !ok {
@@ -196,15 +196,15 @@ func (fh *FinanceHandler) HandleLoanComparison(params map[string]interface{}) (i
 		result, err := fh.HandleFinancialCalculation(loanMap)
 		if err != nil {
 			results[i] = map[string]interface{}{
-				"error": err.Error(),
+				"error":      err.Error(),
 				"loan_index": i,
 			}
 		} else {
 			resultMap := result.(map[string]interface{})
 			results[i] = map[string]interface{}{
 				"loan_index": i,
-				"result": resultMap["result"],
-				"breakdown": resultMap["breakdown"],
+				"result":     resultMap["result"],
+				"breakdown":  resultMap["breakdown"],
 			}
 		}
 	}
@@ -212,7 +212,7 @@ func (fh *FinanceHandler) HandleLoanComparison(params map[string]interface{}) (i
 	// Find best loan (lowest monthly payment)
 	bestLoanIndex := -1
 	lowestPayment := float64(999999999)
-	
+
 	for i, result := range results {
 		if payment, ok := result["result"].(float64); ok {
 			if payment < lowestPayment {
@@ -224,9 +224,9 @@ func (fh *FinanceHandler) HandleLoanComparison(params map[string]interface{}) (i
 
 	response := map[string]interface{}{
 		"loan_comparisons": results,
-		"best_loan_index": bestLoanIndex,
-		"lowest_payment": lowestPayment,
-		"description": "Loan comparison analysis",
+		"best_loan_index":  bestLoanIndex,
+		"lowest_payment":   lowestPayment,
+		"description":      "Loan comparison analysis",
 	}
 
 	return response, nil
@@ -245,7 +245,7 @@ func (fh *FinanceHandler) HandleInvestmentScenarios(params map[string]interface{
 	}
 
 	results := make([]map[string]interface{}, len(scenarios))
-	
+
 	for i, scenarioInterface := range scenarios {
 		scenarioMap, ok := scenarioInterface.(map[string]interface{})
 		if !ok {
@@ -261,15 +261,15 @@ func (fh *FinanceHandler) HandleInvestmentScenarios(params map[string]interface{
 		result, err := fh.HandleFinancialCalculation(scenarioMap)
 		if err != nil {
 			results[i] = map[string]interface{}{
-				"error": err.Error(),
+				"error":          err.Error(),
 				"scenario_index": i,
 			}
 		} else {
 			resultMap := result.(map[string]interface{})
 			results[i] = map[string]interface{}{
 				"scenario_index": i,
-				"final_amount": resultMap["result"],
-				"breakdown": resultMap["breakdown"],
+				"final_amount":   resultMap["result"],
+				"breakdown":      resultMap["breakdown"],
 			}
 		}
 	}
@@ -277,7 +277,7 @@ func (fh *FinanceHandler) HandleInvestmentScenarios(params map[string]interface{
 	// Find best scenario (highest final amount)
 	bestScenarioIndex := -1
 	highestAmount := float64(-1)
-	
+
 	for i, result := range results {
 		if amount, ok := result["final_amount"].(float64); ok {
 			if amount > highestAmount {
@@ -289,9 +289,9 @@ func (fh *FinanceHandler) HandleInvestmentScenarios(params map[string]interface{
 
 	response := map[string]interface{}{
 		"investment_scenarios": results,
-		"best_scenario_index": bestScenarioIndex,
-		"highest_return": highestAmount,
-		"description": "Investment scenario analysis",
+		"best_scenario_index":  bestScenarioIndex,
+		"highest_return":       highestAmount,
+		"description":          "Investment scenario analysis",
 	}
 
 	return response, nil

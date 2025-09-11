@@ -60,7 +60,7 @@ func (l *Loader) Load(configPath string) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error loading config file %s: %w", configFile, err)
 		}
-		
+
 		// Merge file configuration with defaults
 		if err := mergeConfig(config, fileConfig); err != nil {
 			return nil, fmt.Errorf("error merging configuration: %w", err)
@@ -82,7 +82,7 @@ func (l *Loader) Load(configPath string) (*Config, error) {
 func (l *Loader) findConfigFile() (string, error) {
 	configNames := []string{
 		"calculator-server.yaml",
-		"calculator-server.yml", 
+		"calculator-server.yml",
 		"calculator-server.json",
 		"config.yaml",
 		"config.yml",
@@ -92,7 +92,7 @@ func (l *Loader) findConfigFile() (string, error) {
 	for _, searchPath := range l.searchPaths {
 		// Expand environment variables in path
 		expandedPath := os.ExpandEnv(searchPath)
-		
+
 		for _, configName := range configNames {
 			configPath := filepath.Join(expandedPath, configName)
 			if _, err := os.Stat(configPath); err == nil {
@@ -112,10 +112,10 @@ func (l *Loader) loadFromFile(configPath string) (*Config, error) {
 	}
 
 	config := &Config{}
-	
+
 	// Determine file format by extension
 	ext := strings.ToLower(filepath.Ext(configPath))
-	
+
 	switch ext {
 	case ".yaml", ".yml":
 		if err := yaml.Unmarshal(data, config); err != nil {
@@ -190,7 +190,7 @@ func (l *Loader) loadFromEnvironment(config *Config) {
 func mergeConfig(dest, src *Config) error {
 	// Simple field-by-field merge
 	// In a production system, you might want to use reflection or a library like mergo
-	
+
 	if src.Server.Transport != "" {
 		dest.Server.Transport = src.Server.Transport
 	}
@@ -200,12 +200,14 @@ func mergeConfig(dest, src *Config) error {
 	if src.Server.HTTP.Port != 0 {
 		dest.Server.HTTP.Port = src.Server.HTTP.Port
 	}
-	
+
 	// Merge CORS settings
+	// Note: Always merge CORS Enabled since false is a valid override value
+	dest.Server.HTTP.CORS.Enabled = src.Server.HTTP.CORS.Enabled
 	if len(src.Server.HTTP.CORS.Origins) > 0 {
 		dest.Server.HTTP.CORS.Origins = src.Server.HTTP.CORS.Origins
 	}
-	
+
 	// Merge session settings
 	if src.Server.HTTP.SessionTimeout != 0 {
 		dest.Server.HTTP.SessionTimeout = src.Server.HTTP.SessionTimeout
@@ -213,7 +215,7 @@ func mergeConfig(dest, src *Config) error {
 	if src.Server.HTTP.MaxConnections != 0 {
 		dest.Server.HTTP.MaxConnections = src.Server.HTTP.MaxConnections
 	}
-	
+
 	// Merge logging settings
 	if src.Logging.Level != "" {
 		dest.Logging.Level = src.Logging.Level
@@ -224,7 +226,7 @@ func mergeConfig(dest, src *Config) error {
 	if src.Logging.Output != "" {
 		dest.Logging.Output = src.Logging.Output
 	}
-	
+
 	// Merge tools settings
 	if src.Tools.Precision.MaxDecimalPlaces != 0 {
 		dest.Tools.Precision.MaxDecimalPlaces = src.Tools.Precision.MaxDecimalPlaces
@@ -232,22 +234,22 @@ func mergeConfig(dest, src *Config) error {
 	if src.Tools.Precision.DefaultDecimalPlaces != 0 {
 		dest.Tools.Precision.DefaultDecimalPlaces = src.Tools.Precision.DefaultDecimalPlaces
 	}
-	
+
 	if src.Tools.ExpressionEval.Timeout != 0 {
 		dest.Tools.ExpressionEval.Timeout = src.Tools.ExpressionEval.Timeout
 	}
 	if src.Tools.ExpressionEval.MaxVariables != 0 {
 		dest.Tools.ExpressionEval.MaxVariables = src.Tools.ExpressionEval.MaxVariables
 	}
-	
+
 	if src.Tools.Statistics.MaxDataPoints != 0 {
 		dest.Tools.Statistics.MaxDataPoints = src.Tools.Statistics.MaxDataPoints
 	}
-	
+
 	if src.Tools.Financial.CurrencyDefault != "" {
 		dest.Tools.Financial.CurrencyDefault = src.Tools.Financial.CurrencyDefault
 	}
-	
+
 	// Merge security settings
 	if src.Security.RateLimiting.RequestsPerMinute != 0 {
 		dest.Security.RateLimiting.RequestsPerMinute = src.Security.RateLimiting.RequestsPerMinute
@@ -255,7 +257,7 @@ func mergeConfig(dest, src *Config) error {
 	if src.Security.RequestSizeLimit != "" {
 		dest.Security.RequestSizeLimit = src.Security.RequestSizeLimit
 	}
-	
+
 	return nil
 }
 

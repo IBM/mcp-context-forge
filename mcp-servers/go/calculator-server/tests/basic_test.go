@@ -3,14 +3,14 @@ package tests
 import (
 	"math"
 	"testing"
-	
+
 	"calculator-server/internal/calculator"
 	"calculator-server/internal/types"
 )
 
 func TestBasicCalculator_Add(t *testing.T) {
 	calc := calculator.NewBasicCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.BasicMathRequest
@@ -68,23 +68,23 @@ func TestBasicCalculator_Add(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > 0.01 {
 				t.Errorf("Expected %f, got %f", tc.expected, result.Result)
 			}
@@ -94,7 +94,7 @@ func TestBasicCalculator_Add(t *testing.T) {
 
 func TestBasicCalculator_Subtract(t *testing.T) {
 	calc := calculator.NewBasicCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.BasicMathRequest
@@ -132,23 +132,23 @@ func TestBasicCalculator_Subtract(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > 0.01 {
 				t.Errorf("Expected %f, got %f", tc.expected, result.Result)
 			}
@@ -158,7 +158,7 @@ func TestBasicCalculator_Subtract(t *testing.T) {
 
 func TestBasicCalculator_Multiply(t *testing.T) {
 	calc := calculator.NewBasicCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.BasicMathRequest
@@ -206,23 +206,23 @@ func TestBasicCalculator_Multiply(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > 0.01 {
 				t.Errorf("Expected %f, got %f", tc.expected, result.Result)
 			}
@@ -232,7 +232,7 @@ func TestBasicCalculator_Multiply(t *testing.T) {
 
 func TestBasicCalculator_Divide(t *testing.T) {
 	calc := calculator.NewBasicCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		request   types.BasicMathRequest
@@ -280,23 +280,23 @@ func TestBasicCalculator_Divide(t *testing.T) {
 			shouldErr: false,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if tc.shouldErr {
 				if err == nil {
 					t.Errorf("Expected error, but got none")
 				}
 				return
 			}
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > 0.01 {
 				t.Errorf("Expected %f, got %f", tc.expected, result.Result)
 			}
@@ -306,7 +306,7 @@ func TestBasicCalculator_Divide(t *testing.T) {
 
 func TestBasicCalculator_ValidateOperands(t *testing.T) {
 	calc := calculator.NewBasicCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		operands  []float64
@@ -338,11 +338,11 @@ func TestBasicCalculator_ValidateOperands(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := calc.ValidateOperands(tc.operands)
-			
+
 			if tc.shouldErr && err == nil {
 				t.Errorf("Expected error, but got none")
 			} else if !tc.shouldErr && err != nil {
@@ -354,7 +354,7 @@ func TestBasicCalculator_ValidateOperands(t *testing.T) {
 
 func TestBasicCalculator_ValidateOperation(t *testing.T) {
 	calc := calculator.NewBasicCalculator()
-	
+
 	testCases := []struct {
 		name      string
 		operation string
@@ -391,11 +391,11 @@ func TestBasicCalculator_ValidateOperation(t *testing.T) {
 			shouldErr: true,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := calc.ValidateOperation(tc.operation)
-			
+
 			if tc.shouldErr && err == nil {
 				t.Errorf("Expected error, but got none")
 			} else if !tc.shouldErr && err != nil {
@@ -407,11 +407,11 @@ func TestBasicCalculator_ValidateOperation(t *testing.T) {
 
 func TestBasicCalculator_Precision(t *testing.T) {
 	calc := calculator.NewBasicCalculator()
-	
+
 	testCases := []struct {
-		name      string
-		request   types.BasicMathRequest
-		expected  float64
+		name     string
+		request  types.BasicMathRequest
+		expected float64
 	}{
 		{
 			name: "Precision 0",
@@ -441,16 +441,16 @@ func TestBasicCalculator_Precision(t *testing.T) {
 			expected: 3.333,
 		},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result, err := calc.Calculate(tc.request)
-			
+
 			if err != nil {
 				t.Errorf("Unexpected error: %v", err)
 				return
 			}
-			
+
 			if math.Abs(result.Result-tc.expected) > 0.0001 {
 				t.Errorf("Expected %f, got %f", tc.expected, result.Result)
 			}
