@@ -79,7 +79,7 @@ class SecurityValidator:
 
     # MCP-compliant limits (configurable)
     MAX_NAME_LENGTH = settings.validation_max_name_length  # Default: 255
-    MAX_DESCRIPTION_LENGTH = settings.validation_max_description_length  # Default: 4096
+    MAX_DESCRIPTION_LENGTH = settings.validation_max_description_length  # Default: 8192 (8KB)
     MAX_TEMPLATE_LENGTH = settings.validation_max_template_length  # Default: 65536
     MAX_CONTENT_LENGTH = settings.validation_max_content_length  # Default: 1048576 (1MB)
     MAX_JSON_DEPTH = settings.validation_max_json_depth  # Default: 10
