@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import case, delete, desc, Float, func, select
+from sqlalchemy import case, delete, desc, Float, func, select, and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,7 @@ from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
@@ -530,10 +531,11 @@ class ServerService:
         Returns:
             List[ServerRead]: Servers the user has access to
         """
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
         # Build query following existing patterns from list_servers()
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email)
+        team_ids = [team.id for team in user_teams]
+
         query = select(DbServer)
 
         # Apply active/inactive filter
@@ -541,26 +543,14 @@ class ServerService:
             query = query.where(DbServer.is_active)
 
         if team_id:
-            # Filter by specific team
-            query = query.where(DbServer.team_id == team_id)
-
-            # Validate user has access to team
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             if team_id not in team_ids:
                 return []  # No access to team
+
+            # Filter by specific team
+            query = query.where(and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])))
         else:
             # Get user's accessible teams
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             # Build access conditions following existing patterns
-            # Third-Party
-            from sqlalchemy import and_, or_  # pylint: disable=import-outside-toplevel
-
             access_conditions = []
 
             # 1. User's personal resources (owner_email matches)
@@ -579,7 +569,6 @@ class ServerService:
         if visibility:
             query = query.where(DbServer.visibility == visibility)
 
-        query = query.where(~((DbServer.owner_email != user_email) & (DbServer.visibility == "private")))
         # Apply pagination following existing patterns
         query = query.offset(skip).limit(limit)
 
