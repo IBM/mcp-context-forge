@@ -858,8 +858,20 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
+        # Extract metadata for server creation
+        creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
+
         # Ensure default visibility is private and assign to personal team when available
-        await server_service.register_server(db, server, created_by=user_email, team_id=team_id, visibility=visibility)
+        await server_service.register_server(
+            db,
+            server,
+            created_by=user_email,  # Use the consistent user_email
+            created_from_ip=creation_metadata["created_from_ip"],
+            created_via=creation_metadata["created_via"],
+            created_user_agent=creation_metadata["created_user_agent"],
+            team_id=team_id,
+            visibility=visibility,
+        )
         return JSONResponse(
             content={"message": "Server created successfully!", "success": True},
             status_code=200,
@@ -1011,6 +1023,8 @@ async def admin_edit_server(
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
@@ -1025,7 +1039,15 @@ async def admin_edit_server(
             owner_email=user_email,
         )
 
-        await server_service.update_server(db, server_id, server)
+        await server_service.update_server(
+            db,
+            server_id,
+            server,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
 
         return JSONResponse(
             content={"message": "Server updated successfully!", "success": True},
@@ -5805,7 +5827,17 @@ async def admin_edit_gateway(
             owner_email=user_email,
             team_id=team_id,
         )
-        await gateway_service.update_gateway(db, gateway_id, gateway)
+
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+        await gateway_service.update_gateway(
+            db,
+            gateway_id,
+            gateway,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
         return JSONResponse(
             content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
@@ -6204,6 +6236,7 @@ async def admin_edit_resource(
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         resource = ResourceUpdate(
             name=str(form["name"]),
             description=str(form.get("description")),
@@ -6212,7 +6245,15 @@ async def admin_edit_resource(
             template=str(form.get("template")),
             tags=tags,
         )
-        await resource_service.update_resource(db, uri, resource)
+        await resource_service.update_resource(
+            db,
+            uri,
+            resource,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
         return JSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
             status_code=200,
@@ -6684,6 +6725,7 @@ async def admin_edit_prompt(
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
             name=str(form["name"]),
             description=str(form.get("description")),
@@ -6691,7 +6733,15 @@ async def admin_edit_prompt(
             arguments=arguments,
             tags=tags,
         )
-        await prompt_service.update_prompt(db, name, prompt)
+        await prompt_service.update_prompt(
+            db,
+            name,
+            prompt,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
 
         root_path = request.scope.get("root_path", "")
         is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))

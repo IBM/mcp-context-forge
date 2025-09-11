@@ -249,6 +249,14 @@ class ResourceService:
             "last_execution_time": last_time,
         }
         resource_dict["tags"] = resource.tags or []
+
+        # Include metadata fields for proper API response
+        resource_dict["created_by"] = getattr(resource, "created_by", None)
+        resource_dict["modified_by"] = getattr(resource, "modified_by", None)
+        resource_dict["created_at"] = getattr(resource, "created_at", None)
+        resource_dict["updated_at"] = getattr(resource, "updated_at", None)
+        resource_dict["version"] = getattr(resource, "version", None)
+
         return ResourceRead.model_validate(resource_dict)
 
     async def register_resource(
@@ -878,7 +886,16 @@ class ResourceService:
             db.rollback()
             logger.error(f"Failed to unsubscribe: {str(e)}")
 
-    async def update_resource(self, db: Session, uri: str, resource_update: ResourceUpdate) -> ResourceRead:
+    async def update_resource(
+        self,
+        db: Session,
+        uri: str,
+        resource_update: ResourceUpdate,
+        modified_by: Optional[str] = None,
+        modified_from_ip: Optional[str] = None,
+        modified_via: Optional[str] = None,
+        modified_user_agent: Optional[str] = None,
+    ) -> ResourceRead:
         """
         Update a resource.
 
@@ -950,7 +967,21 @@ class ResourceService:
             # Update tags if provided
             if resource_update.tags is not None:
                 resource.tags = resource_update.tags
+
+            # Update metadata fields
             resource.updated_at = datetime.now(timezone.utc)
+            if modified_by:
+                resource.modified_by = modified_by
+            if modified_from_ip:
+                resource.modified_from_ip = modified_from_ip
+            if modified_via:
+                resource.modified_via = modified_via
+            if modified_user_agent:
+                resource.modified_user_agent = modified_user_agent
+            if hasattr(resource, "version") and resource.version is not None:
+                resource.version = resource.version + 1
+            else:
+                resource.version = 1
             db.commit()
             db.refresh(resource)
 
