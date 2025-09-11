@@ -14,7 +14,6 @@ and interactions with A2A-compatible agents.
 # Standard
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
-from urllib.parse import urlparse
 
 # Third-Party
 import httpx
@@ -169,12 +168,13 @@ class A2AAgentService:
             The created agent data.
 
         Raises:
+            A2AAgentError: If discovery endpoints are used or other agent errors occur.
             A2AAgentNameConflictError: If an agent with the same name already exists.
         """
         # Reject discovery endpoints
         if ".well-known/agent.json" in agent_data.endpoint_url:
             raise A2AAgentError("Discovery endpoints (.well-known/agent.json) are not supported. Please use direct agent endpoint URLs.")
-        
+
         # Check for existing agent with same name
         existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
         existing_agent = db.execute(existing_query).scalar_one_or_none()
@@ -380,6 +380,7 @@ class A2AAgentService:
             Updated agent data.
 
         Raises:
+            A2AAgentError: If discovery endpoints are used or other agent errors occur.
             A2AAgentNotFoundError: If the agent is not found.
             A2AAgentNameConflictError: If name conflicts with another agent.
         """
@@ -479,8 +480,6 @@ class A2AAgentService:
 
         logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
 
-
-
     async def invoke_agent(self, db: Session, agent_name: str, parameters: Dict[str, Any], interaction_type: str = "query") -> Dict[str, Any]:
         """Invoke an A2A agent.
 
@@ -510,7 +509,7 @@ class A2AAgentService:
         try:
             # Use the endpoint URL directly
             actual_endpoint = agent.endpoint_url
-            
+
             # Prepare the request to the A2A agent
             # Format request based on agent type and endpoint
             if agent.agent_type in ["generic", "jsonrpc"] or actual_endpoint.endswith("/"):

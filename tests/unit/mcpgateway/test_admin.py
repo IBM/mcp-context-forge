@@ -1887,18 +1887,30 @@ class TestA2AAgentManagement:
         mock_delete_agent.assert_called_with(mock_db, "agent-1")
 
     @patch.object(A2AAgentService, "get_agent")
-    @patch.object(A2AAgentService, "invoke_agent")
-    async def test_admin_test_a2a_agent_success(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
+    @patch("mcpgateway.admin.httpx.AsyncClient")
+    async def test_admin_test_a2a_agent_success(self, mock_httpx_client, mock_get_agent, mock_request, mock_db):
         """Test testing A2A agent."""
         # First-Party
         from mcpgateway.admin import admin_test_a2a_agent
 
-        # Mock agent and invocation
+        # Mock agent
         mock_agent = MagicMock()
         mock_agent.name = "Test Agent"
+        mock_agent.endpoint_url = "https://example.com/api"
+        mock_agent.agent_type = "generic"
         mock_get_agent.return_value = mock_agent
 
-        mock_invoke_agent.return_value = {"result": "success", "message": "Test completed"}
+        # Mock HTTP response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '{"result": "success"}'
+        
+        # Mock HTTP client
+        mock_client_instance = AsyncMock()
+        mock_client_instance.get = AsyncMock(return_value=mock_response)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=None)
+        mock_httpx_client.return_value = mock_client_instance
 
         form_data = FakeForm({"test_message": "Hello, test!"})
         mock_request.form = AsyncMock(return_value=form_data)
@@ -1910,7 +1922,28 @@ class TestA2AAgentManagement:
         assert body["success"] is True
         assert "result" in body
         mock_get_agent.assert_called_with(mock_db, "agent-1")
-        mock_invoke_agent.assert_called_once()
+        mock_client_instance.get.assert_called_once()
+
+    @patch.object(A2AAgentService, "get_agent")
+    async def test_admin_test_a2a_agent_discovery_url_rejected(self, mock_get_agent, mock_request, mock_db):
+        """Test testing A2A agent with discovery URL is rejected."""
+        # First-Party
+        from mcpgateway.admin import admin_test_a2a_agent
+
+        # Mock agent with discovery URL
+        mock_agent = MagicMock()
+        mock_agent.name = "Discovery Agent"
+        mock_agent.endpoint_url = "https://example.com/.well-known/agent.json"
+        mock_get_agent.return_value = mock_agent
+
+        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, "test-user")
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "Discovery endpoints (.well-known/agent.json) are not supported" in body["error"]
+        mock_get_agent.assert_called_with(mock_db, "agent-1")
 
 
 class TestExportImportEndpoints:

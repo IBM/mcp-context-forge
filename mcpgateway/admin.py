@@ -8310,12 +8310,16 @@ async def admin_test_a2a_agent(
 
         # Reject testing discovery endpoints
         if ".well-known/agent.json" in agent.endpoint_url:
-            return JSONResponse(content={"success": False, "error": "Discovery endpoints (.well-known/agent.json) are not supported for testing. Please use direct agent endpoint URLs."}, status_code=400)
+            return JSONResponse(
+                content={"success": False, "error": "Discovery endpoints (.well-known/agent.json) are not supported for testing. Please use direct agent endpoint URLs."}, status_code=400
+            )
 
         # Use the endpoint URL directly
         actual_endpoint = agent.endpoint_url
-        
+
+        # Third-Party
         import httpx
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 # First try GET to test connectivity
@@ -8330,7 +8334,7 @@ async def admin_test_a2a_agent(
                     else:
                         # Simple REST format
                         test_data = {"message": "test"}
-                    
+
                     post_response = await client.post(actual_endpoint, json=test_data)
                     if post_response.status_code == 200:
                         result = {"status": "success", "method": "POST", "response": post_response.text[:200]}
