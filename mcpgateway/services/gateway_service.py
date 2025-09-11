@@ -896,8 +896,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if team_id not in team_ids:
                 return []  # No access to team
 
+            access_conditions = []
             # Filter by specific team
-            query = query.where(DbGateway.team_id == team_id)
+            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
+
+            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email))
+
+            query = query.where(or_(*access_conditions))
         else:
             # Get user's accessible teams
             # Build access conditions following existing patterns
