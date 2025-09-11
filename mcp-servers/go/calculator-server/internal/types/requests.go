@@ -61,6 +61,7 @@ type BasicMathRequest struct {
 type AdvancedMathRequest struct {
 	Function string  `json:"function"`
 	Value    float64 `json:"value"`
+	Exponent float64 `json:"exponent,omitempty"`
 	Unit     string  `json:"unit,omitempty"`
 }
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	
+
 	"calculator-server/internal/types"
 	"gonum.org/v1/gonum/stat"
 )
@@ -148,7 +148,7 @@ func (sc *StatisticsCalculator) variance(data []float64) float64 {
 
 func (sc *StatisticsCalculator) percentiles(data []float64, percentiles []float64) map[string]float64 {
 	result := make(map[string]float64)
-	
+
 	// Create a copy and sort it
 	sortedData := make([]float64, len(data))
 	copy(sortedData, data)
@@ -245,26 +245,26 @@ func (sc *StatisticsCalculator) Summary(data []float64) (map[string]interface{},
 	}
 
 	summary := make(map[string]interface{})
-	
+
 	summary["count"] = len(data)
 	summary["mean"] = sc.mean(data)
 	summary["median"] = sc.median(data)
 	summary["std_dev"] = sc.standardDeviation(data)
 	summary["variance"] = sc.variance(data)
-	
+
 	dataRange, _ := sc.Range(data)
 	summary["range"] = dataRange
-	
+
 	// Min and Max
 	sortedData := make([]float64, len(data))
 	copy(sortedData, data)
 	sort.Float64s(sortedData)
 	summary["min"] = sortedData[0]
 	summary["max"] = sortedData[len(sortedData)-1]
-	
+
 	// Common percentiles
 	summary["percentiles"] = sc.percentiles(data, []float64{25, 50, 75})
-	
+
 	return summary, nil
 }
 
@@ -283,7 +283,7 @@ func (sc *StatisticsCalculator) validateData(data []float64) error {
 // GetSupportedOperations returns a list of supported statistical operations
 func (sc *StatisticsCalculator) GetSupportedOperations() []string {
 	return []string{
-		"mean", "median", "mode", "std_dev", "variance", 
+		"mean", "median", "mode", "std_dev", "variance",
 		"percentile", "range", "skewness", "kurtosis", "summary",
 	}
 }

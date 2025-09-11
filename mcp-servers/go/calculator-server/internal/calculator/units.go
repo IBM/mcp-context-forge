@@ -3,7 +3,7 @@ package calculator
 import (
 	"fmt"
 	"math"
-	
+
 	"calculator-server/internal/types"
 )
 
@@ -56,17 +56,17 @@ func (uc *UnitConverter) initializeConversions() {
 	// Length conversions (to meters)
 	uc.conversions["length"] = map[string]map[string]float64{
 		"to_base": {
-			"mm":   0.001,
-			"cm":   0.01,
-			"m":    1.0,
-			"km":   1000.0,
-			"in":   0.0254,
-			"ft":   0.3048,
-			"yd":   0.9144,
-			"mi":   1609.344,
-			"mil":  0.0000254,
-			"μm":   0.000001,
-			"nm":   0.000000001,
+			"mm":  0.001,
+			"cm":  0.01,
+			"m":   1.0,
+			"km":  1000.0,
+			"in":  0.0254,
+			"ft":  0.3048,
+			"yd":  0.9144,
+			"mi":  1609.344,
+			"mil": 0.0000254,
+			"μm":  0.000001,
+			"nm":  0.000000001,
 		},
 	}
 
@@ -87,35 +87,35 @@ func (uc *UnitConverter) initializeConversions() {
 	// Volume conversions (to liters)
 	uc.conversions["volume"] = map[string]map[string]float64{
 		"to_base": {
-			"ml":      0.001,
-			"cl":      0.01,
-			"dl":      0.1,
-			"l":       1.0,
-			"kl":      1000.0,
-			"fl_oz":   0.0295735, // US fluid ounce
-			"cup":     0.236588,  // US cup
-			"pt":      0.473176,  // US pint
-			"qt":      0.946353,  // US quart
-			"gal":     3.78541,   // US gallon
-			"tsp":     0.00492892, // US teaspoon
-			"tbsp":    0.0147868, // US tablespoon
-			"bbl":     158.987,   // barrel
+			"ml":    0.001,
+			"cl":    0.01,
+			"dl":    0.1,
+			"l":     1.0,
+			"kl":    1000.0,
+			"fl_oz": 0.0295735,  // US fluid ounce
+			"cup":   0.236588,   // US cup
+			"pt":    0.473176,   // US pint
+			"qt":    0.946353,   // US quart
+			"gal":   3.78541,    // US gallon
+			"tsp":   0.00492892, // US teaspoon
+			"tbsp":  0.0147868,  // US tablespoon
+			"bbl":   158.987,    // barrel
 		},
 	}
 
 	// Area conversions (to square meters)
 	uc.conversions["area"] = map[string]map[string]float64{
 		"to_base": {
-			"mm2":   0.000001,
-			"cm2":   0.0001,
-			"m2":    1.0,
-			"km2":   1000000.0,
-			"in2":   0.00064516,
-			"ft2":   0.092903,
-			"yd2":   0.836127,
-			"mi2":   2589988.11,
-			"acre":  4046.86,
-			"ha":    10000.0, // hectare
+			"mm2":  0.000001,
+			"cm2":  0.0001,
+			"m2":   1.0,
+			"km2":  1000000.0,
+			"in2":  0.00064516,
+			"ft2":  0.092903,
+			"yd2":  0.836127,
+			"mi2":  2589988.11,
+			"acre": 4046.86,
+			"ha":   10000.0, // hectare
 		},
 	}
 }
@@ -269,7 +269,7 @@ func (uc *UnitConverter) GetSupportedCategories() []string {
 // ConvertMultiple converts multiple values at once
 func (uc *UnitConverter) ConvertMultiple(values []float64, fromUnit, toUnit, category string) ([]float64, error) {
 	results := make([]float64, len(values))
-	
+
 	for i, value := range values {
 		req := types.UnitConversionRequest{
 			Value:    value,
@@ -277,15 +277,15 @@ func (uc *UnitConverter) ConvertMultiple(values []float64, fromUnit, toUnit, cat
 			ToUnit:   toUnit,
 			Category: category,
 		}
-		
+
 		result, err := uc.Convert(req)
 		if err != nil {
 			return nil, fmt.Errorf("error converting value at index %d: %v", i, err)
 		}
-		
+
 		results[i] = result.Result
 	}
-	
+
 	return results, nil
 }
 

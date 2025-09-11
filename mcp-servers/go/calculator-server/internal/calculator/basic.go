@@ -3,7 +3,7 @@ package calculator
 import (
 	"fmt"
 	"math"
-	
+
 	"calculator-server/internal/types"
 	"github.com/shopspring/decimal"
 )
@@ -55,7 +55,7 @@ func (bc *BasicCalculator) add(operands []float64) float64 {
 	for i := 1; i < len(operands); i++ {
 		result = result.Add(decimal.NewFromFloat(operands[i]))
 	}
-	
+
 	floatResult, _ := result.Float64()
 	return floatResult
 }
@@ -66,7 +66,7 @@ func (bc *BasicCalculator) subtract(operands []float64) float64 {
 	for i := 1; i < len(operands); i++ {
 		result = result.Sub(decimal.NewFromFloat(operands[i]))
 	}
-	
+
 	floatResult, _ := result.Float64()
 	return floatResult
 }
@@ -77,7 +77,7 @@ func (bc *BasicCalculator) multiply(operands []float64) float64 {
 	for i := 1; i < len(operands); i++ {
 		result = result.Mul(decimal.NewFromFloat(operands[i]))
 	}
-	
+
 	floatResult, _ := result.Float64()
 	return floatResult
 }
@@ -95,7 +95,7 @@ func (bc *BasicCalculator) divide(operands []float64) (float64, error) {
 	for i := 1; i < len(operands); i++ {
 		result = result.Div(decimal.NewFromFloat(operands[i]))
 	}
-	
+
 	floatResult, _ := result.Float64()
 	return floatResult, nil
 }
@@ -113,7 +113,7 @@ func (bc *BasicCalculator) ValidateOperands(operands []float64) error {
 	if len(operands) < 2 {
 		return fmt.Errorf("at least 2 operands required")
 	}
-	
+
 	// Check for invalid numbers (NaN, Inf)
 	for i, operand := range operands {
 		if math.IsNaN(operand) {
@@ -123,7 +123,7 @@ func (bc *BasicCalculator) ValidateOperands(operands []float64) error {
 			return fmt.Errorf("operand %d is infinite", i)
 		}
 	}
-	
+
 	return nil
 }
 

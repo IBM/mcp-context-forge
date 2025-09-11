@@ -1,6 +1,6 @@
 # Calculator Server - Go MCP Server
 
-A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematical computations, implementing 6+ mathematical tools with advanced features and high precision calculations.
+A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematical computations, implementing **13 mathematical tools** with advanced features and high precision calculations.
 
 **Owner & Maintainer:** Avinash Sangle (avinash.sangle123@gmail.com)
 
@@ -11,7 +11,9 @@ A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematica
 
 ## 🧮 Features
 
-### Core Mathematical Tools (6 Tools)
+### Core Mathematical Tools (13 Tools)
+
+#### Basic Mathematical Tools (6 Tools)
 
 1. **Basic Math Operations** - Precision arithmetic with configurable decimal places
    - Addition, subtraction, multiplication, division
@@ -23,6 +25,7 @@ A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematica
    - Logarithmic: `log`, `log10`, `ln`
    - Other: `sqrt`, `abs`, `factorial`, `exp`, `pow`
    - Unit support: degrees/radians for trig functions
+   - Power function with base and exponent parameters
 
 3. **Expression Evaluation** - Complex mathematical expressions
    - Variable substitution support
@@ -37,11 +40,11 @@ A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematica
    - Data validation and error handling
 
 5. **Unit Conversion** - Multi-category unit conversion
-   - **Length**: mm, cm, m, km, in, ft, yd, mi
-   - **Weight**: mg, g, kg, t, oz, lb, stone
-   - **Temperature**: °C, °F, K, R
-   - **Volume**: ml, l, fl oz, cup, pint, quart, gallon
-   - **Area**: m², cm², km², in², ft², acre, hectare
+   - **Length**: mm, cm, m, km, in, ft, yd, mi, mil, μm, nm
+   - **Weight**: mg, g, kg, t, oz, lb, st (stone), ton (US ton)
+   - **Temperature**: °C, °F, K, R (Rankine)
+   - **Volume**: ml, cl, dl, l, kl, fl_oz, cup, pt, qt, gal, tsp, tbsp, bbl
+   - **Area**: mm², cm², m², km², in², ft², yd², mi², acre, ha
 
 6. **Financial Calculations** - Comprehensive financial modeling
    - Interest calculations: simple & compound
@@ -50,7 +53,44 @@ A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematica
    - Present/Future value calculations
    - Net Present Value (NPV) & Internal Rate of Return (IRR)
 
-### Additional Features
+#### Advanced Specialized Tools (7 Tools)
+
+7. **Statistics Summary** - Comprehensive statistical summary of datasets
+   - Complete statistical overview including all measures
+   - Data preview with first/last elements
+   - Common percentiles (25th, 50th, 75th)
+
+8. **Percentile Calculation** - Calculate specific percentiles (0-100)
+   - Any percentile value between 0 and 100
+   - Data count and preview information
+   - Accurate percentile calculations using empirical method
+
+9. **Batch Unit Conversion** - Convert multiple values between units at once
+   - Bulk conversion operations
+   - Same unit categories as single conversion
+   - Efficient batch processing
+
+10. **Net Present Value (NPV)** - Advanced NPV calculations with cash flows
+    - Multiple cash flow periods
+    - Discount rate calculations
+    - Investment decision support
+
+11. **Internal Rate of Return (IRR)** - IRR calculations for investment analysis
+    - Cash flow analysis
+    - Newton-Raphson method for accurate IRR calculation
+    - Investment performance evaluation
+
+12. **Loan Comparison** - Compare multiple loan scenarios
+    - Multiple loan option analysis
+    - Payment calculations for each scenario
+    - Comparison metrics and recommendations
+
+13. **Investment Scenarios** - Compare multiple investment scenarios
+    - Multiple investment option analysis
+    - Future value calculations for each scenario
+    - Investment comparison and recommendations
+
+### Technical Features
 
 - **High Precision**: Uses `shopspring/decimal` for financial calculations
 - **Scientific Computing**: Powered by `gonum.org/v1/gonum`
@@ -59,6 +99,7 @@ A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematica
 - **Error Handling**: Detailed error messages and validation
 - **MCP Protocol**: Full compliance with MCP specification
 - **Build Automation**: Complete Makefile with CI/CD support
+- **Streamable HTTP Transport**: MCP-compliant HTTP transport with SSE support
 
 ## 🚀 Quick Start
 
@@ -142,15 +183,15 @@ go build -o calculator-server ./cmd/server
   "params": {
     "name": "advanced_math",
     "arguments": {
-      "function": "sin",
-      "value": 90,
-      "unit": "degrees"
+      "function": "pow",
+      "value": 2,
+      "exponent": 8
     }
   }
 }
 ```
 
-### Expression Evaluation
+### Statistics Summary
 
 ```json
 {
@@ -158,16 +199,15 @@ go build -o calculator-server ./cmd/server
   "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "expression_eval",
+    "name": "stats_summary",
     "arguments": {
-      "expression": "sqrt(x^2 + y^2)",
-      "variables": {"x": 3, "y": 4}
+      "data": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     }
   }
 }
 ```
 
-### Statistical Analysis
+### Percentile Calculation
 
 ```json
 {
@@ -175,16 +215,16 @@ go build -o calculator-server ./cmd/server
   "id": 4,
   "method": "tools/call",
   "params": {
-    "name": "statistics",
+    "name": "percentile",
     "arguments": {
       "data": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-      "operation": "mean"
+      "percentile": 90
     }
   }
 }
 ```
 
-### Unit Conversion
+### Net Present Value
 
 ```json
 {
@@ -192,18 +232,16 @@ go build -o calculator-server ./cmd/server
   "id": 5,
   "method": "tools/call",
   "params": {
-    "name": "unit_conversion",
+    "name": "npv",
     "arguments": {
-      "value": 100,
-      "fromUnit": "cm",
-      "toUnit": "m",
-      "category": "length"
+      "cashFlows": [-50000, 15000, 20000, 25000, 30000],
+      "discountRate": 8
     }
   }
 }
 ```
 
-### Financial Calculations
+### Batch Unit Conversion
 
 ```json
 {
@@ -211,13 +249,12 @@ go build -o calculator-server ./cmd/server
   "id": 6,
   "method": "tools/call",
   "params": {
-    "name": "financial",
+    "name": "batch_conversion",
     "arguments": {
-      "operation": "compound_interest",
-      "principal": 10000,
-      "rate": 5.5,
-      "time": 3,
-      "periods": 12
+      "values": [100, 200, 300],
+      "fromUnit": "cm",
+      "toUnit": "m",
+      "category": "length"
     }
   }
 }
@@ -277,52 +314,11 @@ curl -X POST http://localhost:8080/mcp \
     "id": 1,
     "method": "tools/call",
     "params": {
-      "name": "statistics",
-      "arguments": {"data": [1,2,3,4,5], "operation": "mean"}
+      "name": "stats_summary",
+      "arguments": {"data": [1,2,3,4,5]}
     }
   }'
-
-# Establish SSE stream connection
-curl -X GET http://localhost:8080/mcp \
-  -H "Accept: text/event-stream" \
-  -H "MCP-Protocol-Version: 2024-11-05"
 ```
-
-### Session Management
-
-The server supports optional MCP session management:
-
-```bash
-# Request with session ID
-curl -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -H "MCP-Protocol-Version: 2024-11-05" \
-  -H "Mcp-Session-Id: abc123def456" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-```
-
-### Configuration
-
-```yaml
-server:
-  transport: "http"
-  http:
-    host: "127.0.0.1"  # Localhost for security (per MCP spec)
-    port: 8080
-    session_timeout: "5m"
-    max_connections: 100
-    cors:
-      enabled: true
-      origins: ["*"]  # Configure appropriately for production
-```
-
-### Security Features
-
-- **Origin Validation**: CORS origin checking
-- **Session Security**: Cryptographically secure session IDs
-- **Local Binding**: Default to localhost for security
-- **Protocol Enforcement**: Strict MCP protocol compliance
 
 ## 🏗️ Project Structure
 
@@ -341,19 +337,27 @@ calculator-server/
 │   │   └── financial.go       # Financial calculations
 │   ├── handlers/
 │   │   ├── math_handler.go    # Math operation handlers
-│   │   ├── stats_handler.go   # Statistics handlers
+│   │   ├── stats_handler.go   # Statistics & specialized handlers
 │   │   └── finance_handler.go # Financial handlers
+│   ├── config/
+│   │   ├── config.go          # Configuration structures
+│   │   ├── loader.go          # Configuration loader
+│   │   └── errors.go          # Configuration errors
 │   └── types/
 │       └── requests.go        # Request/response types
 ├── pkg/
 │   └── mcp/
-│       ├── server.go          # MCP server implementation
-│       └── protocol.go        # MCP protocol handling
+│       ├── protocol.go        # MCP protocol handling
+│       └── streamable_http_transport.go # HTTP transport
 ├── tests/
 │   ├── basic_test.go         # Basic math tests
 │   ├── advanced_test.go      # Advanced math tests
 │   ├── expression_test.go    # Expression evaluation tests
-│   └── integration_test.go   # Integration tests
+│   ├── integration_test.go   # Integration tests
+│   ├── config_test.go        # Configuration tests
+│   └── streamable_http_transport_test.go # HTTP transport tests
+├── config.sample.yaml        # Sample YAML configuration
+├── config.sample.json        # Sample JSON configuration
 ├── go.mod                    # Go module definition
 ├── go.sum                    # Go module checksums
 ├── Makefile                  # Build automation
@@ -405,6 +409,12 @@ make vet
 
 # Run all quality checks
 make quality
+
+# Pre-commit checks
+make pre-commit
+
+# CI pipeline
+make ci
 ```
 
 ### Development Mode
@@ -419,7 +429,9 @@ make run
 
 ## 📋 Available Tools
 
-### 1. `basic_math`
+### Core Tools (6)
+
+#### 1. `basic_math`
 **Purpose:** Basic arithmetic operations with precision control
 
 **Parameters:**
@@ -427,29 +439,30 @@ make run
 - `operands` (array of numbers): Numbers to operate on (minimum 2)
 - `precision` (integer, optional): Decimal places (0-15, default: 2)
 
-### 2. `advanced_math`
+#### 2. `advanced_math`
 **Purpose:** Advanced mathematical functions
 
 **Parameters:**
-- `function` (string): Function name (sin, cos, tan, log, sqrt, etc.)
-- `value` (number): Input value
+- `function` (string): Function name (sin, cos, tan, asin, acos, atan, log, log10, ln, sqrt, abs, factorial, pow, exp)
+- `value` (number): Input value (base for pow function)
+- `exponent` (number, optional): Exponent for pow function (required for pow)
 - `unit` (string, optional): "radians" or "degrees" for trig functions
 
-### 3. `expression_eval`
+#### 3. `expression_eval`
 **Purpose:** Evaluate mathematical expressions with variables
 
 **Parameters:**
 - `expression` (string): Mathematical expression to evaluate
 - `variables` (object, optional): Variable name-value pairs
 
-### 4. `statistics`
+#### 4. `statistics`
 **Purpose:** Statistical analysis of datasets
 
 **Parameters:**
 - `data` (array of numbers): Dataset to analyze
 - `operation` (string): Statistical operation (mean, median, mode, std_dev, variance, percentile)
 
-### 5. `unit_conversion`
+#### 5. `unit_conversion`
 **Purpose:** Convert between measurement units
 
 **Parameters:**
@@ -458,16 +471,65 @@ make run
 - `toUnit` (string): Target unit
 - `category` (string): Unit category (length, weight, temperature, volume, area)
 
-### 6. `financial`
+#### 6. `financial`
 **Purpose:** Financial calculations and modeling
 
 **Parameters:**
-- `operation` (string): Financial operation type
+- `operation` (string): Financial operation type (compound_interest, simple_interest, loan_payment, roi, present_value, future_value)
 - `principal` (number): Principal amount
 - `rate` (number): Interest rate (percentage)
 - `time` (number): Time period in years
 - `periods` (integer, optional): Compounding periods per year
 - `futureValue` (number, optional): Future value for some calculations
+
+### Specialized Tools (7)
+
+#### 7. `stats_summary`
+**Purpose:** Comprehensive statistical summary of datasets
+
+**Parameters:**
+- `data` (array of numbers): Dataset for summary statistics
+
+#### 8. `percentile`
+**Purpose:** Calculate specific percentiles
+
+**Parameters:**
+- `data` (array of numbers): Dataset to analyze
+- `percentile` (number): Percentile to calculate (0-100)
+
+#### 9. `batch_conversion`
+**Purpose:** Convert multiple values between units
+
+**Parameters:**
+- `values` (array of numbers): Values to convert
+- `fromUnit` (string): Source unit
+- `toUnit` (string): Target unit
+- `category` (string): Unit category
+
+#### 10. `npv`
+**Purpose:** Calculate Net Present Value
+
+**Parameters:**
+- `cashFlows` (array of numbers): Cash flows (negative for outflows, positive for inflows)
+- `discountRate` (number): Discount rate as percentage
+
+#### 11. `irr`
+**Purpose:** Calculate Internal Rate of Return
+
+**Parameters:**
+- `cashFlows` (array of numbers): Cash flows (minimum 2 values)
+
+#### 12. `loan_comparison`
+**Purpose:** Compare multiple loan scenarios
+
+**Parameters:**
+- `loans` (array of objects): Loan scenarios with principal, rate, and time
+
+#### 13. `investment_scenarios`
+**Purpose:** Compare multiple investment scenarios
+
+**Parameters:**
+- `scenarios` (array of objects): Investment scenarios with principal, rate, and time
 
 ## 🔧 Configuration
 
@@ -482,7 +544,7 @@ Options:
   -port int
         Port for HTTP transport (default 8080)
   -host string
-        Host for HTTP transport (default "0.0.0.0")
+        Host for HTTP transport (default "127.0.0.1")
   -config string
         Path to configuration file (YAML or JSON)
 
@@ -491,7 +553,6 @@ Examples:
   ./calculator-server -transport=http          # Run with HTTP transport on port 8080
   ./calculator-server -transport=http -port=9000 -host=localhost  # Custom host/port
   ./calculator-server -config=config.yaml     # Load configuration from file
-  ./calculator-server -config=config.yaml -transport=http  # Override config with CLI flags
 ```
 
 ### Configuration Files
@@ -509,19 +570,13 @@ The server supports configuration files in YAML and JSON formats. Configuration 
 server:
   transport: "http"
   http:
-    host: "0.0.0.0"
+    host: "127.0.0.1"  # Localhost for security
     port: 8080
+    session_timeout: "5m"
+    max_connections: 100
     cors:
       enabled: true
-      origins: ["*"]
-    timeout:
-      read: "30s"
-      write: "30s"
-      idle: "120s"
-    tls:
-      enabled: false
-      cert_file: ""
-      key_file: ""
+      origins: ["http://localhost:3000", "http://127.0.0.1:3000"]  # Never use "*" in production
 
 logging:
   level: "info"
@@ -547,8 +602,6 @@ security:
   request_size_limit: "1MB"
 ```
 
-See `config.sample.yaml` and `config.sample.json` for complete configuration examples.
-
 ### Environment Variables
 
 Environment variables override configuration file settings:
@@ -558,11 +611,7 @@ Environment variables override configuration file settings:
 - `CALCULATOR_HTTP_PORT`: HTTP server port
 - `CALCULATOR_LOG_LEVEL`: Set logging level (debug, info, warn, error)
 - `CALCULATOR_LOG_FORMAT`: Log format (json, text)
-- `CALCULATOR_LOG_OUTPUT`: Log output (stdout, stderr, file path)
-- `CALCULATOR_MAX_PRECISION`: Override maximum precision limit (0-15)
-- `CALCULATOR_DEFAULT_PRECISION`: Default precision for results
-- `CALCULATOR_RATE_LIMIT_ENABLED`: Enable rate limiting (true, false)
-- `CALCULATOR_REQUESTS_PER_MINUTE`: Requests per minute limit
+- `CALCULATOR_LOG_OUTPUT`: Log output (stdout, stderr)
 
 ## 📈 Performance
 
@@ -594,12 +643,10 @@ The project includes comprehensive tests with >95% coverage:
 # Run specific test suites
 go test ./tests/basic_test.go -v
 go test ./tests/advanced_test.go -v
-go test ./tests/expression_test.go -v
 go test ./tests/integration_test.go -v
 
 # Generate coverage report
 make coverage
-open ./coverage/coverage.html
 ```
 
 ## 🚢 Deployment
@@ -647,38 +694,36 @@ All tools include comprehensive JSON Schema definitions for parameter validation
 - Default values and constraints
 - Documentation strings
 
-### 📏 Unit Conversion Reference
+## 📏 Unit Conversion Reference
 
-Complete list of supported units by category:
+### Length Units
+| Unit | Abbreviation | Conversion to Meters |
+|------|--------------|---------------------|
+| Millimeter | `mm` | 0.001 |
+| Centimeter | `cm` | 0.01 |
+| Meter | `m` | 1.0 |
+| Kilometer | `km` | 1000.0 |
+| Inch | `in` | 0.0254 |
+| Foot | `ft` | 0.3048 |
+| Yard | `yd` | 0.9144 |
+| Mile | `mi` | 1609.344 |
+| Mil | `mil` | 0.0000254 |
+| Micrometer | `μm` | 0.000001 |
+| Nanometer | `nm` | 0.000000001 |
 
-#### Length Units
-| Unit | Abbreviation | Description | Conversion to Meters |
-|------|--------------|-------------|---------------------|
-| Millimeter | `mm` | 0.001 meters | 0.001 |
-| Centimeter | `cm` | 0.01 meters | 0.01 |
-| Meter | `m` | Base unit | 1.0 |
-| Kilometer | `km` | 1000 meters | 1000.0 |
-| Inch | `in` | Imperial inch | 0.0254 |
-| Foot | `ft` | Imperial foot | 0.3048 |
-| Yard | `yd` | Imperial yard | 0.9144 |
-| Mile | `mi` | Imperial mile | 1609.344 |
-| Mil | `mil` | 1/1000 inch | 0.0000254 |
-| Micrometer | `μm` | 0.000001 meters | 0.000001 |
-| Nanometer | `nm` | 0.000000001 meters | 0.000000001 |
+### Weight/Mass Units
+| Unit | Abbreviation | Conversion to Grams |
+|------|--------------|-------------------|
+| Milligram | `mg` | 0.001 |
+| Gram | `g` | 1.0 |
+| Kilogram | `kg` | 1000.0 |
+| Metric Ton | `t` | 1000000.0 |
+| Ounce | `oz` | 28.3495 |
+| Pound | `lb` | 453.592 |
+| Stone | `st` | 6350.29 |
+| US Ton | `ton` | 907185 |
 
-#### Weight/Mass Units
-| Unit | Abbreviation | Description | Conversion to Grams |
-|------|--------------|-------------|-------------------|
-| Milligram | `mg` | 0.001 grams | 0.001 |
-| Gram | `g` | Base unit | 1.0 |
-| Kilogram | `kg` | 1000 grams | 1000.0 |
-| Metric Ton | `t` | 1,000,000 grams | 1000000.0 |
-| Ounce | `oz` | Imperial ounce | 28.3495 |
-| Pound | `lb` | Imperial pound | 453.592 |
-| Stone | `st` | Imperial stone | 6350.29 |
-| US Ton | `ton` | US ton | 907185 |
-
-#### Temperature Units
+### Temperature Units
 | Unit | Abbreviation | Description |
 |------|--------------|-------------|
 | Celsius | `C` | Degrees Celsius |
@@ -686,44 +731,40 @@ Complete list of supported units by category:
 | Kelvin | `K` | Kelvin (absolute) |
 | Rankine | `R` | Degrees Rankine |
 
-**Note**: Temperature conversions are non-linear and handled specially.
+### Volume Units
+| Unit | Abbreviation | Conversion to Liters |
+|------|--------------|---------------------|
+| Milliliter | `ml` | 0.001 |
+| Centiliter | `cl` | 0.01 |
+| Deciliter | `dl` | 0.1 |
+| Liter | `l` | 1.0 |
+| Kiloliter | `kl` | 1000.0 |
+| US Fluid Ounce | `fl_oz` | 0.0295735 |
+| US Cup | `cup` | 0.236588 |
+| US Pint | `pt` | 0.473176 |
+| US Quart | `qt` | 0.946353 |
+| US Gallon | `gal` | 3.78541 |
+| Teaspoon | `tsp` | 0.00492892 |
+| Tablespoon | `tbsp` | 0.0147868 |
+| Barrel | `bbl` | 158.987 |
 
-#### Volume Units
-| Unit | Abbreviation | Description | Conversion to Liters |
-|------|--------------|-------------|---------------------|
-| Milliliter | `ml` | 0.001 liters | 0.001 |
-| Centiliter | `cl` | 0.01 liters | 0.01 |
-| Deciliter | `dl` | 0.1 liters | 0.1 |
-| Liter | `l` | Base unit | 1.0 |
-| Kiloliter | `kl` | 1000 liters | 1000.0 |
-| US Fluid Ounce | `fl_oz` | US fluid ounce | 0.0295735 |
-| US Cup | `cup` | US cup | 0.236588 |
-| US Pint | `pt` | US pint | 0.473176 |
-| US Quart | `qt` | US quart | 0.946353 |
-| US Gallon | `gal` | US gallon | 3.78541 |
-| Teaspoon | `tsp` | US teaspoon | 0.00492892 |
-| Tablespoon | `tbsp` | US tablespoon | 0.0147868 |
-| Barrel | `bbl` | Barrel | 158.987 |
+### Area Units
+| Unit | Abbreviation | Conversion to m² |
+|------|--------------|------------------|
+| Square Millimeter | `mm2` | 0.000001 |
+| Square Centimeter | `cm2` | 0.0001 |
+| Square Meter | `m2` | 1.0 |
+| Square Kilometer | `km2` | 1000000.0 |
+| Square Inch | `in2` | 0.00064516 |
+| Square Foot | `ft2` | 0.092903 |
+| Square Yard | `yd2` | 0.836127 |
+| Square Mile | `mi2` | 2589988.11 |
+| Acre | `acre` | 4046.86 |
+| Hectare | `ha` | 10000.0 |
 
-#### Area Units
-| Unit | Abbreviation | Description | Conversion to m² |
-|------|--------------|-------------|-----------------|
-| Square Millimeter | `mm2` | Square mm | 0.000001 |
-| Square Centimeter | `cm2` | Square cm | 0.0001 |
-| Square Meter | `m2` | Base unit | 1.0 |
-| Square Kilometer | `km2` | Square km | 1000000.0 |
-| Square Inch | `in2` | Square inch | 0.00064516 |
-| Square Foot | `ft2` | Square foot | 0.092903 |
-| Square Yard | `yd2` | Square yard | 0.836127 |
-| Square Mile | `mi2` | Square mile | 2589988.11 |
-| Acre | `acre` | Acre | 4046.86 |
-| Hectare | `ha` | Hectare | 10000.0 |
+## 🔢 Mathematical Functions Reference
 
-### 🔢 Mathematical Functions Reference
-
-Complete guide to mathematical functions available in expressions:
-
-#### Trigonometric Functions
+### Trigonometric Functions
 | Function | Syntax | Description | Example |
 |----------|--------|-------------|---------|
 | Sine | `sin(x)` | Sine of x (radians) | `sin(pi/2)` → 1.0 |
@@ -733,83 +774,30 @@ Complete guide to mathematical functions available in expressions:
 | Arccosine | `acos(x)` | Inverse cosine | `acos(1)` → 0.0 |
 | Arctangent | `atan(x)` | Inverse tangent | `atan(1)` → 0.7854 |
 
-#### Logarithmic Functions
+### Logarithmic Functions
 | Function | Syntax | Description | Example |
 |----------|--------|-------------|---------|
 | Common Log | `log(x)` | Base-10 logarithm | `log(100)` → 2.0 |
 | Natural Log | `ln(x)` | Natural logarithm (base e) | `ln(e)` → 1.0 |
 
-#### Power & Root Functions
+### Power & Root Functions
 | Function | Syntax | Description | Example |
 |----------|--------|-------------|---------|
 | Square Root | `sqrt(x)` | Square root of x | `sqrt(16)` → 4.0 |
 | Power | `pow(x, y)` | x raised to power y | `pow(2, 3)` → 8.0 |
 | Exponential | `exp(x)` | e raised to power x | `exp(1)` → 2.7183 |
 
-#### Other Functions
+### Other Functions
 | Function | Syntax | Description | Example |
 |----------|--------|-------------|---------|
 | Absolute Value | `abs(x)` | Absolute value of x | `abs(-5)` → 5.0 |
+| Factorial | `factorial(x)` | Factorial of x | `factorial(5)` → 120.0 |
 
-#### Mathematical Constants
+### Mathematical Constants
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `pi` | 3.14159... | Pi (π) |
 | `e` | 2.71828... | Euler's number |
-| `PI` | 3.14159... | Pi (uppercase) |
-| `E` | 2.71828... | Euler's number (uppercase) |
-
-#### Complex Expression Examples
-```javascript
-// Pythagorean theorem
-"sqrt(x^2 + y^2)"
-
-// Trigonometric identity
-"sin(x)^2 + cos(x)^2"
-
-// Compound calculations
-"2 * sqrt(25) + pow(3, 2) - abs(-4)"
-
-// Using constants
-"2 * pi * r"
-
-// Financial formula
-"1000 * pow(1 + 0.05, 10)"
-```
-
-### ⚠️ Error Codes Reference
-
-#### MCP Protocol Error Codes
-| Code | Name | Description |
-|------|------|-------------|
-| -32600 | Invalid Request | Malformed JSON-RPC request |
-| -32601 | Method Not Found | Requested method doesn't exist |
-| -32602 | Invalid Params | Invalid method parameters |
-| -32603 | Internal Error | Server internal error |
-
-#### Mathematical Error Types
-| Error Category | Description | Example |
-|----------------|-------------|---------|
-| Domain Error | Input outside function domain | `sqrt(-1)`, `log(-5)` |
-| Division by Zero | Attempt to divide by zero | `10 / 0` |
-| Overflow Error | Result too large | `exp(1000)` |
-| Precision Error | Loss of precision warning | Very large calculations |
-| Validation Error | Invalid input parameters | Empty data set, invalid units |
-
-#### Common Error Messages
-- `"expression cannot be empty"` - Empty expression string
-- `"invalid variable name: x"` - Variable name violates naming rules
-- `"division by zero"` - Mathematical division by zero
-- `"domain error: value must be positive"` - Logarithm of negative number
-- `"unsupported unit: xyz"` - Unit not recognized for category
-- `"evaluation error: ..."` - Expression parsing or evaluation failed
-
-#### Troubleshooting Guide
-1. **Function Not Found**: Ensure function name is spelled correctly and is supported
-2. **Domain Errors**: Check input values are within valid ranges
-3. **Variable Errors**: Use valid variable names (letters, digits, underscore only)
-4. **Unit Errors**: Use exact unit abbreviations from reference tables
-5. **Expression Syntax**: Check parentheses balance and operator placement
 
 ## 🤝 Contributing
 
@@ -839,6 +827,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
   - [`shopspring/decimal`](https://github.com/shopspring/decimal): Precise decimal arithmetic
   - [`Knetic/govaluate`](https://github.com/Knetic/govaluate): Expression evaluation
   - [`gonum`](https://gonum.org/): Scientific computing
+  - [`gopkg.in/yaml.v3`](https://gopkg.in/yaml.v3): YAML configuration support
 
 ## 📞 Support & Contact
 
@@ -858,29 +847,6 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 2. Review the test files for usage examples
 3. Submit issues with detailed error information
 4. Contact the maintainer for direct support
-
-## 🗺️ Roadmap
-
-### Version 1.1 ✅ Completed
-- [x] HTTP transport support
-- [x] Configuration file support (YAML/JSON)
-- [x] TLS/HTTPS support
-- [x] CORS configuration
-- [x] Environment variable overrides
-- [ ] WebSocket transport support
-- [ ] Advanced statistical functions
-
-### Version 1.2
-- [ ] Graphing and visualization tools
-- [ ] Matrix operations
-- [ ] Complex number support
-- [ ] Custom function definitions
-
-### Version 2.0
-- [ ] Plugin system
-- [ ] Database integration
-- [ ] REST API endpoints
-- [ ] Web-based interface
 
 ---
 

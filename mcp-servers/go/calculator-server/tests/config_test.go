@@ -22,16 +22,23 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Expected default HTTP port to be 8080, got %d", cfg.Server.HTTP.Port)
 	}
 
-	if cfg.Server.HTTP.Host != "0.0.0.0" {
-		t.Errorf("Expected default HTTP host to be '0.0.0.0', got '%s'", cfg.Server.HTTP.Host)
+	if cfg.Server.HTTP.Host != "127.0.0.1" {
+		t.Errorf("Expected default HTTP host to be '127.0.0.1', got '%s'", cfg.Server.HTTP.Host)
 	}
 
 	if !cfg.Server.HTTP.CORS.Enabled {
 		t.Error("Expected CORS to be enabled by default")
 	}
 
-	if len(cfg.Server.HTTP.CORS.Origins) != 1 || cfg.Server.HTTP.CORS.Origins[0] != "*" {
-		t.Errorf("Expected default CORS origins to be ['*'], got %v", cfg.Server.HTTP.CORS.Origins)
+	expectedOrigins := []string{"http://localhost:3000", "http://127.0.0.1:3000"}
+	if len(cfg.Server.HTTP.CORS.Origins) != len(expectedOrigins) {
+		t.Errorf("Expected default CORS origins length to be %d, got %d", len(expectedOrigins), len(cfg.Server.HTTP.CORS.Origins))
+	}
+	for i, expected := range expectedOrigins {
+		if i >= len(cfg.Server.HTTP.CORS.Origins) || cfg.Server.HTTP.CORS.Origins[i] != expected {
+			t.Errorf("Expected default CORS origins to be %v, got %v", expectedOrigins, cfg.Server.HTTP.CORS.Origins)
+			break
+		}
 	}
 
 	if cfg.Tools.Precision.MaxDecimalPlaces != 15 {
@@ -107,7 +114,7 @@ func TestConfigValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := tt.config()
 			err := cfg.Validate()
-			
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Config validation error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -130,13 +137,11 @@ server:
   http:
     host: "127.0.0.1"
     port: 9090
+    session_timeout: "45s"
+    max_connections: 200
     cors:
       enabled: false
       origins: ["https://example.com"]
-    timeout:
-      read: "45s"
-      write: "45s"
-      idle: "300s"
 
 logging:
   level: "debug"
@@ -250,11 +255,11 @@ func TestConfigLoaderJSON(t *testing.T) {
 func TestConfigLoaderEnvironmentVariables(t *testing.T) {
 	// Set environment variables
 	envVars := map[string]string{
-		"CALCULATOR_TRANSPORT":        "http",
-		"CALCULATOR_HTTP_HOST":        "example.com",
-		"CALCULATOR_HTTP_PORT":        "9999",
-		"CALCULATOR_LOG_LEVEL":        "error",
-		"CALCULATOR_MAX_PRECISION":    "12",
+		"CALCULATOR_TRANSPORT":         "http",
+		"CALCULATOR_HTTP_HOST":         "example.com",
+		"CALCULATOR_HTTP_PORT":         "9999",
+		"CALCULATOR_LOG_LEVEL":         "error",
+		"CALCULATOR_MAX_PRECISION":     "12",
 		"CALCULATOR_DEFAULT_PRECISION": "4",
 	}
 
@@ -298,7 +303,7 @@ func TestConfigLoaderEnvironmentVariables(t *testing.T) {
 
 func TestConfigLoaderFileNotFound(t *testing.T) {
 	loader := config.NewLoader()
-	
+
 	// Should return default config when no config file found
 	cfg, err := loader.Load("")
 	if err != nil {

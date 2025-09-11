@@ -3,10 +3,23 @@ package calculator
 import (
 	"fmt"
 	"math"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
-	
+
 	"calculator-server/internal/types"
 	"github.com/Knetic/govaluate"
+)
+
+const (
+	// MaxExpArgument is the maximum argument value for exp function to prevent overflow
+	// e^700 ≈ 1.01e+304, approaching float64 max (~1.8e+308)
+	MaxExpArgument = 700.0
+
+	// MaxFactorialArgument is the maximum argument for factorial function to prevent overflow
+	// 20! = 2.43e+18, which fits in float64, but 21! would exceed practical limits
+	MaxFactorialArgument = 20
 )
 
 type ExpressionCalculator struct{}
@@ -32,13 +45,13 @@ func (ec *ExpressionCalculator) Evaluate(req types.ExpressionRequest) (types.Cal
 
 	// Prepare parameters (variables + constants)
 	parameters := make(map[string]interface{})
-	
+
 	// Add mathematical constants
 	parameters["pi"] = math.Pi
 	parameters["e"] = math.E
 	parameters["PI"] = math.Pi
 	parameters["E"] = math.E
-	
+
 	// Add user-provided variables
 	if req.Variables != nil {
 		for key, value := range req.Variables {
@@ -209,10 +222,45 @@ func (ec *ExpressionCalculator) getMathFunctions() map[string]govaluate.Expressi
 		if !ok {
 			return nil, fmt.Errorf("exp function expects numeric argument")
 		}
-		if val > 700 {
+		if val > MaxExpArgument {
 			return nil, fmt.Errorf("exp function overflow: value too large")
 		}
 		return math.Exp(val), nil
+	}
+
+	// Factorial function
+	functions["factorial"] = func(args ...interface{}) (interface{}, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("factorial function expects 1 argument")
+		}
+		val, ok := args[0].(float64)
+		if !ok {
+			return nil, fmt.Errorf("factorial function expects numeric argument")
+		}
+
+		// Check for negative numbers
+		if val < 0 {
+			return nil, fmt.Errorf("factorial function domain error: argument must be non-negative")
+		}
+
+		// Check if input is an integer (within floating point precision)
+		intVal := int(val)
+		if val != float64(intVal) {
+			return nil, fmt.Errorf("factorial function domain error: argument must be an integer")
+		}
+
+		// Prevent overflow by limiting to reasonable range
+		if intVal > MaxFactorialArgument {
+			return nil, fmt.Errorf("factorial function overflow: argument must be ≤ %d", MaxFactorialArgument)
+		}
+
+		// Calculate factorial
+		result := 1.0
+		for i := 2; i <= intVal; i++ {
+			result *= float64(i)
+		}
+
+		return result, nil
 	}
 
 	// Additional inverse trigonometric functions
@@ -265,35 +313,34 @@ func (ec *ExpressionCalculator) preprocessExpression(expr string) string {
 	return expr
 }
 
-
 // isValidVariableName checks if a variable name is valid
 func (ec *ExpressionCalculator) isValidVariableName(name string) bool {
 	if len(name) == 0 {
 		return false
 	}
-	
+
 	// First character must be a letter
 	if !((name[0] >= 'a' && name[0] <= 'z') || (name[0] >= 'A' && name[0] <= 'Z')) {
 		return false
 	}
-	
+
 	// Remaining characters can be letters, digits, or underscore
 	for i := 1; i < len(name); i++ {
 		char := name[i]
-		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || 
-			 (char >= '0' && char <= '9') || char == '_') {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_') {
 			return false
 		}
 	}
-	
+
 	// Check against reserved words
-	reserved := []string{"pi", "e", "PI", "E", "sin", "cos", "tan", "asin", "acos", "atan", "log", "ln", "abs", "pow", "exp", "sqrt"}
+	reserved := []string{"pi", "e", "PI", "E", "sin", "cos", "tan", "asin", "acos", "atan", "log", "ln", "abs", "pow", "exp", "sqrt", "factorial"}
 	for _, res := range reserved {
 		if strings.ToLower(name) == strings.ToLower(res) {
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -303,7 +350,7 @@ func (ec *ExpressionCalculator) GetSupportedFunctions() []string {
 		"sin(x)", "cos(x)", "tan(x)",
 		"asin(x)", "acos(x)", "atan(x)",
 		"log(x)", "ln(x)", "abs(x)",
-		"sqrt(x)", "pow(x, y)", "exp(x)",
+		"sqrt(x)", "pow(x, y)", "exp(x)", "factorial(x)",
 		"pi", "e", // constants
 	}
 }
@@ -323,7 +370,7 @@ func (ec *ExpressionCalculator) ValidateExpression(expression string) error {
 	if strings.TrimSpace(expression) == "" {
 		return fmt.Errorf("expression cannot be empty")
 	}
-	
+
 	// Check for balanced parentheses
 	openCount := 0
 	for _, char := range expression {
@@ -339,7 +386,7 @@ func (ec *ExpressionCalculator) ValidateExpression(expression string) error {
 	if openCount != 0 {
 		return fmt.Errorf("unmatched opening parenthesis")
 	}
-	
+
 	// Check for consecutive operators (basic check)
 	operators := []string{"++", "--", "**", "//", "^^"}
 	for _, op := range operators {
@@ -347,38 +394,66 @@ func (ec *ExpressionCalculator) ValidateExpression(expression string) error {
 			return fmt.Errorf("invalid consecutive operators: %s", op)
 		}
 	}
-	
+
 	return nil
 }
 
 // ExtractVariables extracts variable names from an expression
 func (ec *ExpressionCalculator) ExtractVariables(expression string) ([]string, error) {
-	// This is a simplified variable extraction
-	// In a production system, you'd want more sophisticated parsing
-	
-	expr, err := govaluate.NewEvaluableExpression(expression)
-	if err != nil {
+	if strings.TrimSpace(expression) == "" {
+		return []string{}, nil
+	}
+
+	// Validate expression first
+	if err := ec.ValidateExpression(expression); err != nil {
 		return nil, fmt.Errorf("invalid expression: %v", err)
 	}
-	
-	// Try to evaluate with empty parameters to find missing variables
-	_, err = expr.Evaluate(map[string]interface{}{
-		"pi": math.Pi,
-		"e":  math.E,
-		"PI": math.Pi,
-		"E":  math.E,
-	})
-	
-	if err != nil {
-		// Parse the error message to extract variable names
-		// This is a simplified approach
-		errStr := err.Error()
-		if strings.Contains(errStr, "No parameter") {
-			// Extract variable name from error message
-			// This would need more robust implementation
-			return []string{}, fmt.Errorf("cannot extract variables automatically: %v", err)
-		}
+
+	// Define built-in constants and function names that should be excluded
+	builtInIdentifiers := map[string]bool{
+		"pi": true, "PI": true, "e": true, "E": true,
+		"sin": true, "cos": true, "tan": true, "asin": true, "acos": true, "atan": true,
+		"log": true, "ln": true, "abs": true, "sqrt": true, "pow": true, "exp": true, "factorial": true,
 	}
-	
-	return []string{}, nil
+
+	// Regular expression to match variable names
+	// Variables must start with a letter or underscore, followed by letters, numbers, or underscores
+	variablePattern := regexp.MustCompile(`\b[a-zA-Z_][a-zA-Z0-9_]*\b`)
+
+	// Find all potential variable matches
+	matches := variablePattern.FindAllString(expression, -1)
+
+	// Use a map to ensure uniqueness
+	variableMap := make(map[string]bool)
+
+	for _, match := range matches {
+		// Skip built-in identifiers
+		if builtInIdentifiers[match] {
+			continue
+		}
+
+		// Skip numeric literals (though regex shouldn't match them)
+		if isNumeric(match) {
+			continue
+		}
+
+		variableMap[match] = true
+	}
+
+	// Convert map to sorted slice
+	var variables []string
+	for variable := range variableMap {
+		variables = append(variables, variable)
+	}
+
+	// Sort for consistent output
+	sort.Strings(variables)
+
+	return variables, nil
+}
+
+// isNumeric checks if a string represents a number
+func isNumeric(s string) bool {
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
 }

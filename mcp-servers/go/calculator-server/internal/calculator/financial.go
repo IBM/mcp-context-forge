@@ -3,7 +3,7 @@ package calculator
 import (
 	"fmt"
 	"math"
-	
+
 	"calculator-server/internal/types"
 	"github.com/shopspring/decimal"
 )
@@ -101,13 +101,13 @@ func (fc *FinancialCalculator) compoundInterest(req types.FinancialRequest) (flo
 	interestEarned := finalAmount - req.Principal
 
 	breakdown := map[string]interface{}{
-		"principal":         req.Principal,
-		"rate_percent":      req.Rate,
-		"time_years":        req.Time,
+		"principal":          req.Principal,
+		"rate_percent":       req.Rate,
+		"time_years":         req.Time,
 		"compounds_per_year": periods,
-		"final_amount":      finalAmount,
-		"interest_earned":   interestEarned,
-		"effective_rate":    (finalAmount/req.Principal - 1) / req.Time * 100,
+		"final_amount":       finalAmount,
+		"interest_earned":    interestEarned,
+		"effective_rate":     (finalAmount/req.Principal - 1) / req.Time * 100,
 	}
 
 	return finalAmount, breakdown, nil
@@ -129,11 +129,11 @@ func (fc *FinancialCalculator) simpleInterest(req types.FinancialRequest) (float
 	finalAmount := req.Principal + interest
 
 	breakdown := map[string]interface{}{
-		"principal":      req.Principal,
-		"rate_percent":   req.Rate,
-		"time_years":     req.Time,
-		"interest":       interest,
-		"final_amount":   finalAmount,
+		"principal":    req.Principal,
+		"rate_percent": req.Rate,
+		"time_years":   req.Time,
+		"interest":     interest,
+		"final_amount": finalAmount,
 	}
 
 	return interest, breakdown, nil
@@ -157,7 +157,7 @@ func (fc *FinancialCalculator) loanPayment(req types.FinancialRequest) (float64,
 
 	// Convert annual rate to period rate
 	periodRate := (req.Rate / 100) / float64(periods)
-	
+
 	// Total number of payments
 	totalPayments := req.Time * float64(periods)
 
@@ -166,7 +166,7 @@ func (fc *FinancialCalculator) loanPayment(req types.FinancialRequest) (float64,
 		// If no interest, payment is just principal divided by number of payments
 		monthlyPayment := req.Principal / totalPayments
 		totalPaid := monthlyPayment * totalPayments
-		
+
 		breakdown := map[string]interface{}{
 			"loan_amount":       req.Principal,
 			"rate_percent":      req.Rate,
@@ -176,28 +176,28 @@ func (fc *FinancialCalculator) loanPayment(req types.FinancialRequest) (float64,
 			"total_paid":        totalPaid,
 			"total_interest":    0.0,
 		}
-		
+
 		return monthlyPayment, breakdown, nil
 	}
 
 	// Calculate (1 + r)^n
 	factor := math.Pow(1+periodRate, totalPayments)
-	
+
 	// Calculate monthly payment
 	monthlyPayment := req.Principal * (periodRate * factor) / (factor - 1)
-	
+
 	// Calculate totals
 	totalPaid := monthlyPayment * totalPayments
 	totalInterest := totalPaid - req.Principal
 
 	breakdown := map[string]interface{}{
-		"loan_amount":       req.Principal,
-		"rate_percent":      req.Rate,
-		"term_years":        req.Time,
-		"payments_per_year": periods,
-		"monthly_payment":   monthlyPayment,
-		"total_paid":        totalPaid,
-		"total_interest":    totalInterest,
+		"loan_amount":         req.Principal,
+		"rate_percent":        req.Rate,
+		"term_years":          req.Time,
+		"payments_per_year":   periods,
+		"monthly_payment":     monthlyPayment,
+		"total_paid":          totalPaid,
+		"total_interest":      totalInterest,
 		"interest_percentage": (totalInterest / req.Principal) * 100,
 	}
 
@@ -214,9 +214,9 @@ func (fc *FinancialCalculator) returnOnInvestment(req types.FinancialRequest) (f
 
 	// ROI = (Final Value - Initial Investment) / Initial Investment * 100
 	roi := ((req.FutureValue - req.Principal) / req.Principal) * 100
-	
+
 	gain := req.FutureValue - req.Principal
-	
+
 	breakdown := map[string]interface{}{
 		"initial_investment": req.Principal,
 		"final_value":        req.FutureValue,
@@ -253,10 +253,10 @@ func (fc *FinancialCalculator) presentValue(req types.FinancialRequest) (float64
 	// Formula: PV = FV / (1 + r/n)^(nt)
 	periodRate := (req.Rate / 100) / float64(periods)
 	totalPeriods := req.Time * float64(periods)
-	
+
 	discountFactor := math.Pow(1+periodRate, totalPeriods)
 	presentValue := req.FutureValue / discountFactor
-	
+
 	discount := req.FutureValue - presentValue
 
 	breakdown := map[string]interface{}{

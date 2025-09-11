@@ -96,7 +96,7 @@ func TestIntegrationHTTPTransportWithConfig(t *testing.T) {
 			JSONRPC: "2.0",
 			ID:      1,
 			Method:  "tools/call",
-			Params: json.RawMessage(`{"name":"basic_math","arguments":{"operation":"add","operands":[10,20,30],"precision":2}}`),
+			Params:  json.RawMessage(`{"name":"basic_math","arguments":{"operation":"add","operands":[10,20,30],"precision":2}}`),
 		}
 
 		requestBody, _ := json.Marshal(mcpRequest)
@@ -136,7 +136,7 @@ func TestIntegrationHTTPTransportWithConfig(t *testing.T) {
 		req, _ := http.NewRequest("OPTIONS", "http://localhost:8082/mcp", nil)
 		req.Header.Set("Origin", "http://localhost:3000")
 		req.Header.Set("Access-Control-Request-Method", "POST")
-		
+
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatalf("CORS preflight failed: %v", err)
