@@ -20,7 +20,9 @@ from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework.models import (
     PluginViolation,
 )
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+from mcpgateway.plugins.framework import PluginViolationError
+
 
 
 class TestResourceServicePluginIntegration:
@@ -145,7 +147,7 @@ class TestResourceServicePluginIntegration:
             )
         )
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(PluginViolationError) as exc_info:
             await service.read_resource(mock_db, "file:///etc/passwd")
 
         assert "Resource blocked: Protocol not allowed" in str(exc_info.value)
@@ -311,7 +313,7 @@ class TestResourceServicePluginIntegration:
             )
         )
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(PluginViolationError) as exc_info:
             await service.read_resource(mock_db, "test://resource")
 
         assert "Resource content blocked: Content contains sensitive data" in str(exc_info.value)

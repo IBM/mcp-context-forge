@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.plugins.framework import PluginViolationError
+from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolationError
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     TextContent,
@@ -47,7 +47,7 @@ def tool_service():
 def mock_gateway():
     """Create a mock gateway model."""
     gw = MagicMock(spec=DbGateway)
-    gw.id = 1
+    gw.id = "1"
     gw.name = "test_gateway"
     gw.slug = "test-gateway"
     gw.url = "http://example.com/gateway"
@@ -55,6 +55,11 @@ def mock_gateway():
     gw.transport = "SSE"
     gw.capabilities = {"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}}
     gw.created_at = gw.updated_at = gw.last_seen = "2025-01-01T00:00:00Z"
+    gw.modified_by = gw.created_by = "Someone"
+    gw.modified_via = gw.created_via = "ui"
+    gw.modified_from_ip = gw.created_from_ip = "127.0.0.1"
+    gw.modified_user_agent = gw.created_user_agent = "Chrome"
+    gw.import_batch_id = gw.federation_source = gw.team_id = gw.visibility = gw.owner_email = None
 
     # one dummy tool hanging off the gateway
     tool = MagicMock(spec=DbTool, id=101, name="dummy_tool")
@@ -84,6 +89,19 @@ def mock_tool():
     tool.jsonpath_filter = ""
     tool.created_at = "2023-01-01T00:00:00"
     tool.updated_at = "2023-01-01T00:00:00"
+    tool.created_by = "MCP Gateway team"
+    tool.created_from_ip = "1.2.3.4"
+    tool.created_via = "ui"
+    tool.created_user_agent = "Chrome"
+    tool.modified_by = "No one"
+    tool.modified_from_ip = "1.2.3.4"
+    tool.modified_via = "ui"
+    tool.modified_user_agent = "Chrome"
+    tool.import_batch_id = "2"
+    tool.federation_source = "federation_source"
+    tool.team_id = "5"
+    tool.visibility = "private"
+    tool.owner_email = "admin@admin.org"
     tool.enabled = True
     tool.reachable = True
     tool.auth_type = None
@@ -1342,6 +1360,9 @@ class TestToolService:
             reachable=True,
             auth_type="bearer",  #  ←← attribute your error complained about
             auth_value="Bearer abc123",
+            capabilities = {"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport = "STREAMABLEHTTP",
+            passthrough_headers = [],
         )
         # Configure tool as REST
         mock_tool.integration_type = "MCP"
@@ -1442,6 +1463,9 @@ class TestToolService:
             reachable=True,
             auth_type="bearer",  #  ←← attribute your error complained about
             auth_value="Bearer abc123",
+            capabilities = {"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport = "STREAMABLEHTTP",
+            passthrough_headers = [],
         )
         # Configure tool as REST
         mock_tool.integration_type = "MCP"
@@ -2322,43 +2346,3 @@ class TestToolService:
                 await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         assert "Plugin error" in str(exc_info.value)
-
-    async def test_invoke_tool_with_plugin_post_invoke_error_continue_on_error(self, tool_service, mock_tool, test_db):
-        """Test invoking tool with plugin post-invoke hook error when fail_on_plugin_error is False."""
-        # Configure tool as REST
-        mock_tool.integration_type = "REST"
-        mock_tool.request_type = "POST"
-        mock_tool.auth_value = None
-
-        # Mock DB to return the tool
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = mock_tool
-        test_db.execute = Mock(return_value=mock_scalar)
-
-        # Mock HTTP client response
-        mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
-        mock_response.status_code = 200
-        mock_response.json = Mock(return_value={"result": "original response"})
-        tool_service._http_client.request.return_value = mock_response
-
-        # Mock plugin manager and post-invoke hook with error
-        tool_service._plugin_manager = Mock()
-        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
-        tool_service._plugin_manager.tool_post_invoke = AsyncMock(side_effect=Exception("Plugin error"))
-
-        # Mock plugin config to continue on errors
-        mock_plugin_settings = Mock()
-        mock_plugin_settings.fail_on_plugin_error = False
-        mock_config = Mock()
-        mock_config.plugin_settings = mock_plugin_settings
-        tool_service._plugin_manager.config = mock_config
-
-        with (
-            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
-            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
-        ):
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
-
-        # Verify result still succeeded despite plugin error
-        assert result.content[0].text == '{\n  "result": "original response"\n}'

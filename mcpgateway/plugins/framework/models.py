@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeVar
 
 # Third-Party
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, RootModel, ValidationInfo
 
 # First-Party
 from mcpgateway.models import PromptResult
@@ -30,6 +30,8 @@ class HookType(str, Enum):
     """MCP Forge Gateway hook points.
 
     Attributes:
+        http_pre_forwarding_call: The pre hook before an http forwarding request.
+        http_post_forwarding_call: The post hook after an http forwarding request.
         prompt_pre_fetch: The prompt pre hook.
         prompt_post_fetch: The prompt post hook.
         tool_pre_invoke: The tool pre invoke hook.
@@ -48,6 +50,8 @@ class HookType(str, Enum):
         [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>, <HookType.TOOL_PRE_INVOKE: 'tool_pre_invoke'>, <HookType.TOOL_POST_INVOKE: 'tool_post_invoke'>, ...]
     """
 
+    HTTP_PRE_FORWARDING_CALL = "http_pre_forwarding_call"
+    HTTP_POST_FORWARDING_CALL = "http_post_forwarding_call"
     PROMPT_PRE_FETCH = "prompt_pre_fetch"
     PROMPT_POST_FETCH = "prompt_post_fetch"
     TOOL_PRE_INVOKE = "tool_pre_invoke"
@@ -603,12 +607,47 @@ PromptPrehookResult = PluginResult[PromptPrehookPayload]
 PromptPosthookResult = PluginResult[PromptPosthookPayload]
 
 
+class HttpHeaderPayload(RootModel[dict[str, str]]):
+    """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""
+
+    def __iter__(self):
+        """Custom iterator function to override root attribute.
+
+        Returns:
+            A custom iterator for header dictionary.
+        """
+        return iter(self.root)
+
+    def __getitem__(self, item: str) -> str:
+        """Custom getitem function to override root attribute.
+
+        Args:
+            item: The http header key.
+
+        Returns:
+            A custom accesser for the header dictionary.
+        """
+        return self.root[item]
+
+    def __len__(self):
+        """Custom len function to override root attribute.
+
+        Returns:
+            The len of the header dictionary.
+        """
+        return len(self.root)
+
+
+HttpHeaderPayloadResult = PluginResult[HttpHeaderPayload]
+
+
 class ToolPreInvokePayload(BaseModel):
     """A tool payload for a tool pre-invoke hook.
 
     Args:
         name: The tool name.
         args: The tool arguments for invocation.
+        headers: The http pass through headers.
 
     Examples:
         >>> payload = ToolPreInvokePayload(name="test_tool", args={"input": "data"})
@@ -629,6 +668,7 @@ class ToolPreInvokePayload(BaseModel):
 
     name: str
     args: Optional[dict[str, Any]] = Field(default_factory=dict)
+    headers: Optional[HttpHeaderPayload] = None
 
 
 class ToolPostInvokePayload(BaseModel):
