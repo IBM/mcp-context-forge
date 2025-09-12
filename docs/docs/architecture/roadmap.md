@@ -12,7 +12,7 @@
 | 1.2.0   | 11 Nov 2025 | 0  %        | Open       | Catalog Enhancements, Ratings, experience and UI |
 | 1.1.0   | 28 Oct 2025 | 0  %        | Open       | Post-GA Testing, Bugfixing, Documentation, Performance and Scale |
 | 1.0.0   | 14 Oct 2025 | 0  %        | Open       | General Availability & Release Candidate Hardening - stable & audited |
-| 0.9.0   | 30 Sep 2025 | 6  %        | Open       | Interoperability, marketplaces & advanced connectivity |
+| 0.9.0   | 30 Sep 2025 | 6  %        | Open       | Interoperability, marketplaces, registry & advanced connectivity |
 | 0.8.0   | 16 Sep 2025 | 6  %        | Open       | Enterprise Security & Policy Guardrails |
 | 0.7.0   | 02 Sep 2025 | 1  %        | Open       | Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A) |
 | 0.6.0   | 19 Aug 2025 | 100 %        | **Closed** | Security, Scale & Smart Automation |
@@ -411,7 +411,7 @@
     - [**#546**](https://github.com/IBM/mcp-context-forge/issues/546) - Protocol Version Negotiation & Backward Compatibility
     - [**#545**](https://github.com/IBM/mcp-context-forge/issues/545) - Hot-Reload Configuration Without Restart (move from .env to configuration database table) (draft)
     - [**#298**](https://github.com/IBM/mcp-context-forge/issues/298) - A2A Initial Support - Add A2A Servers as Tools
-    - [**#295**](https://github.com/IBM/mcp-context-forge/issues/295) - MCP Server Marketplace
+    - [**#295**](https://github.com/IBM/mcp-context-forge/issues/295) - MCP Server Marketplace & Registry Spec
     - [**#294**](https://github.com/IBM/mcp-context-forge/issues/294) - Automated MCP Server Testing and Certification
     - [**#288**](https://github.com/IBM/mcp-context-forge/issues/288) - MariaDB Support Testing, Documentation, CI/CD (alongside PostgreSQL & SQLite)
     - [**#268**](https://github.com/IBM/mcp-context-forge/issues/268) - Sample MCP Server - Haskell Implementation ("pandoc-server") (html, docx, pptx, latex conversion)
