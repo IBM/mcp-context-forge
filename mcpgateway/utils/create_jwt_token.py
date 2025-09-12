@@ -79,6 +79,31 @@ def _create_jwt_token(
     secret: str = "",
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
+    """Create a signed JWT token with automatic key selection and validation.
+
+    This internal function handles JWT token creation with both symmetric (HMAC) and
+    asymmetric (RSA/ECDSA) algorithms. It automatically validates the JWT configuration,
+    selects the appropriate signing key based on the configured algorithm, and creates
+    a properly formatted JWT token with standard claims.
+
+    Args:
+        data: Dictionary containing payload data to encode in the token.
+        expires_in_minutes: Token expiration time in minutes. Set to 0 to disable expiration.
+        secret: Legacy parameter (ignored - uses configuration-based key selection).
+        algorithm: Legacy parameter (ignored - uses configured JWT_ALGORITHM).
+
+    Returns:
+        str: The signed JWT token string.
+
+    Raises:
+        JWTConfigurationError: If JWT configuration is invalid or keys are missing.
+        FileNotFoundError: If asymmetric key files don't exist.
+
+    Note:
+        This is an internal function. Use create_jwt_token() for the async interface.
+        The function automatically determines the signing key and algorithm from
+        configuration settings, ignoring the legacy secret and algorithm parameters.
+    """
     # Validate JWT configuration before creating token
     # First-Party
     from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret, validate_jwt_algo_and_keys
