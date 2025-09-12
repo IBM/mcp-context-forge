@@ -76,11 +76,16 @@ async def verify_jwt_token(token: str) -> dict:
 
     Returns:
         dict: The decoded token payload containing claims (e.g., user info).
+
+    Raises:
+        HTTPException: If token is invalid, expired, or missing required claims.
+        MissingRequiredClaimError: If token is missing required expiration claim.
     """
     try:
         validate_jwt_algo_and_keys()
 
         # Import the verification key helper
+        # First-Party
         from mcpgateway.utils.jwt_config_helper import get_jwt_public_key_or_secret
 
         # First decode to check claims
@@ -720,7 +725,6 @@ async def require_admin_auth(
     # Try email authentication first if enabled
     if getattr(settings, "email_auth_enabled", False):
         try:
-
             # First-Party
             from mcpgateway.db import get_db
             from mcpgateway.services.email_auth_service import EmailAuthService
