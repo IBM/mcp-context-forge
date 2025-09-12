@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/plugins/framework/external/mcp/server/runtime.py: 100%</title>
+    <title>Coverage for mcpgateway/plugins/framework/external/mcp/server/runtime.py: 92%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_58284776.png">
     <link rel="stylesheet" href="style_cb_6b508a39.css" type="text/css">
     <script src="coverage_html_cb_6fb7b396.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway/plugins/framework/external/mcp/server/runtime.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">92%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -56,8 +56,8 @@
         </aside>
         <h2>
             <span class="text">40 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">40<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">37<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">3<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">42<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
         </h2>
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_822f96aab523e3c3_server_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-02 21:04 +0100
+            created at 2025-09-10 00:04 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -259,7 +259,7 @@
     <p class="pln"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t"><span class="str">        The transformed or filtered response from the plugin hook.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t177" href="#t177">177</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t178" href="#t178">178</a></span><span class="t">    <span class="key">def</span> <span class="nam">tool_post_invoke_func</span><span class="op">(</span><span class="nam">plugin</span><span class="op">:</span> <span class="nam">Plugin</span><span class="op">,</span> <span class="nam">payload</span><span class="op">:</span> <span class="nam">ToolPostInvokePayload</span><span class="op">,</span> <span class="nam">context</span><span class="op">:</span> <span class="nam">PluginContext</span><span class="op">)</span> <span class="op">-></span> <span class="nam">ToolPostInvokeResult</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t178" href="#t178">178</a></span><span class="t">    <span class="key">def</span> <span class="nam">tool_post_invoke_func</span><span class="op">(</span><span class="nam">plugin</span><span class="op">:</span> <span class="nam">Plugin</span><span class="op">,</span> <span class="nam">payload</span><span class="op">:</span> <span class="nam">ToolPostInvokePayload</span><span class="op">,</span> <span class="nam">context</span><span class="op">:</span> <span class="nam">PluginContext</span><span class="op">)</span> <span class="op">-></span> <span class="nam">ToolPostInvokeResult</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t179" href="#t179">179</a></span><span class="t">        <span class="str">"""Wrapper function for hook.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t180" href="#t180">180</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t181" href="#t181">181</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
@@ -270,9 +270,9 @@
     <p class="pln"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t"><span class="str">            The transformed or filtered response from the plugin hook.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t">        <span class="key">return</span> <span class="nam">plugin</span><span class="op">.</span><span class="nam">tool_post_invoke</span><span class="op">(</span><span class="nam">payload</span><span class="op">,</span> <span class="nam">context</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t">        <span class="key">return</span> <span class="nam">plugin</span><span class="op">.</span><span class="nam">tool_post_invoke</span><span class="op">(</span><span class="nam">payload</span><span class="op">,</span> <span class="nam">context</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t">    <span class="key">return</span> <span class="key">await</span> <span class="nam">SERVER</span><span class="op">.</span><span class="nam">invoke_hook</span><span class="op">(</span><span class="nam">ToolPostInvokePayload</span><span class="op">,</span> <span class="nam">tool_post_invoke_func</span><span class="op">,</span> <span class="nam">plugin_name</span><span class="op">,</span> <span class="nam">payload</span><span class="op">,</span> <span class="nam">context</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t">    <span class="key">return</span> <span class="key">await</span> <span class="nam">SERVER</span><span class="op">.</span><span class="nam">invoke_hook</span><span class="op">(</span><span class="nam">ToolPostInvokePayload</span><span class="op">,</span> <span class="nam">tool_post_invoke_func</span><span class="op">,</span> <span class="nam">plugin_name</span><span class="op">,</span> <span class="nam">payload</span><span class="op">,</span> <span class="nam">context</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t192" href="#t192">192</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t193" href="#t193">193</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t194" href="#t194">194</a></span><span class="t"><span class="op">@</span><span class="nam">mcp_tool</span><span class="op">(</span><span class="nam">name</span><span class="op">=</span><span class="str">"resource_pre_fetch"</span><span class="op">,</span> <span class="nam">description</span><span class="op">=</span><span class="str">"Execute resource prefetch hook for a plugin"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -369,7 +369,7 @@
             <a class="nav" href="z_822f96aab523e3c3_server_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-02 21:04 +0100
+            created at 2025-09-10 00:04 +0100
         </p>
     </div>
 </footer>

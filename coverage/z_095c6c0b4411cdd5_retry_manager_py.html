@@ -55,8 +55,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">121 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">121<span class="text"> run</span></button>
+            <span class="text">122 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">122<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_security_cookies_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-02 21:04 +0100
+            created at 2025-09-08 08:26 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -679,65 +679,67 @@
     <p class="run"><span class="n"><a id="t595" href="#t595">595</a></span><span class="t">                    <span class="key">raise</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t596" href="#t596">596</a></span><span class="t">                <span class="nam">logging</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"Error opening stream (will retry): %s"</span><span class="op">,</span> <span class="nam">exc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t597" href="#t597">597</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t598" href="#t598">598</a></span><span class="t">            <span class="nam">backoff</span> <span class="op">=</span> <span class="nam">min</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">base_backoff</span> <span class="op">*</span> <span class="op">(</span><span class="num">2</span><span class="op">**</span><span class="nam">attempt</span><span class="op">)</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">max_delay</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t599" href="#t599">599</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_sleep_with_jitter</span><span class="op">(</span><span class="nam">backoff</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t600" href="#t600">600</a></span><span class="t">            <span class="nam">attempt</span> <span class="op">+=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t601" href="#t601">601</a></span><span class="t">            <span class="nam">logging</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"Retrying stream open (attempt %d) after backoff %.2f"</span><span class="op">,</span> <span class="nam">attempt</span> <span class="op">+</span> <span class="num">1</span><span class="op">,</span> <span class="nam">backoff</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t602" href="#t602">602</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t603" href="#t603">603</a></span><span class="t">        <span class="key">if</span> <span class="nam">last_exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t604" href="#t604">604</a></span><span class="t">            <span class="key">raise</span> <span class="nam">RuntimeError</span><span class="op">(</span><span class="nam">last_exc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t605" href="#t605">605</a></span><span class="t">        <span class="key">raise</span> <span class="nam">RuntimeError</span><span class="op">(</span><span class="str">"Max retries reached opening stream"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t606" href="#t606">606</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t607" href="#t607">607</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">aclose</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t608" href="#t608">608</a></span><span class="t">        <span class="str">"""Close the underlying HTTP client gracefully.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t609" href="#t609">609</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t610" href="#t610">610</a></span><span class="t"><span class="str">        Ensures proper cleanup of the httpx.AsyncClient and its resources.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t598" href="#t598">598</a></span><span class="t">            <span class="nam">backoff</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">base_backoff</span> <span class="op">*</span> <span class="op">(</span><span class="num">2</span><span class="op">**</span><span class="nam">attempt</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t599" href="#t599">599</a></span><span class="t">            <span class="nam">jitter_range</span> <span class="op">=</span> <span class="nam">backoff</span> <span class="op">*</span> <span class="nam">self</span><span class="op">.</span><span class="nam">jitter_max</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t600" href="#t600">600</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_sleep_with_jitter</span><span class="op">(</span><span class="nam">backoff</span><span class="op">,</span> <span class="nam">jitter_range</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t601" href="#t601">601</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t602" href="#t602">602</a></span><span class="t">            <span class="nam">attempt</span> <span class="op">+=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t603" href="#t603">603</a></span><span class="t">            <span class="nam">logging</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"Retrying stream open (attempt %d) after backoff %.2f"</span><span class="op">,</span> <span class="nam">attempt</span> <span class="op">+</span> <span class="num">1</span><span class="op">,</span> <span class="nam">backoff</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t604" href="#t604">604</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t605" href="#t605">605</a></span><span class="t">        <span class="key">if</span> <span class="nam">last_exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t606" href="#t606">606</a></span><span class="t">            <span class="key">raise</span> <span class="nam">RuntimeError</span><span class="op">(</span><span class="nam">last_exc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t607" href="#t607">607</a></span><span class="t">        <span class="key">raise</span> <span class="nam">RuntimeError</span><span class="op">(</span><span class="str">"Max retries reached opening stream"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t608" href="#t608">608</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t609" href="#t609">609</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">aclose</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t610" href="#t610">610</a></span><span class="t">        <span class="str">"""Close the underlying HTTP client gracefully.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t611" href="#t611">611</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t612" href="#t612">612</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t613" href="#t613">613</a></span><span class="t"><span class="str">            >>> client = ResilientHttpClient()</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t614" href="#t614">614</a></span><span class="t"><span class="str">            >>> callable(client.aclose)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t615" href="#t615">615</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t616" href="#t616">616</a></span><span class="t"><span class="str">            >>> import inspect</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t617" href="#t617">617</a></span><span class="t"><span class="str">            >>> inspect.iscoroutinefunction(client.aclose)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t618" href="#t618">618</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t619" href="#t619">619</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t620" href="#t620">620</a></span><span class="t">        <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">client</span><span class="op">.</span><span class="nam">aclose</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t621" href="#t621">621</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t622" href="#t622">622</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">__aenter__</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t623" href="#t623">623</a></span><span class="t">        <span class="str">"""Asynchronous context manager entry point.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t624" href="#t624">624</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t625" href="#t625">625</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t626" href="#t626">626</a></span><span class="t"><span class="str">            The client instance for use in async with statements</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t627" href="#t627">627</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t628" href="#t628">628</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t629" href="#t629">629</a></span><span class="t"><span class="str">            >>> client = ResilientHttpClient()</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t630" href="#t630">630</a></span><span class="t"><span class="str">            >>> callable(client.__aenter__)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t631" href="#t631">631</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t632" href="#t632">632</a></span><span class="t"><span class="str">            >>> import inspect</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t633" href="#t633">633</a></span><span class="t"><span class="str">            >>> inspect.iscoroutinefunction(client.__aenter__)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t634" href="#t634">634</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t635" href="#t635">635</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t636" href="#t636">636</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t637" href="#t637">637</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t638" href="#t638">638</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">__aexit__</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="op">*</span><span class="nam">args</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t639" href="#t639">639</a></span><span class="t">        <span class="str">"""Asynchronous context manager exit point.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t640" href="#t640">640</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t641" href="#t641">641</a></span><span class="t"><span class="str">        Ensures the HTTP client is properly closed after use, even if</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t642" href="#t642">642</a></span><span class="t"><span class="str">        exceptions occur during the context manager block.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t643" href="#t643">643</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t644" href="#t644">644</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t645" href="#t645">645</a></span><span class="t"><span class="str">            *args: Exception information passed by the context manager</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t646" href="#t646">646</a></span><span class="t"><span class="str">                  (exc_type, exc_value, traceback) or None values if no exception</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t647" href="#t647">647</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t648" href="#t648">648</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t649" href="#t649">649</a></span><span class="t"><span class="str">            >>> client = ResilientHttpClient()</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t650" href="#t650">650</a></span><span class="t"><span class="str">            >>> callable(client.__aexit__)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t651" href="#t651">651</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t652" href="#t652">652</a></span><span class="t"><span class="str">            >>> import inspect</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t653" href="#t653">653</a></span><span class="t"><span class="str">            >>> inspect.iscoroutinefunction(client.__aexit__)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t654" href="#t654">654</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t655" href="#t655">655</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t656" href="#t656">656</a></span><span class="t">        <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">aclose</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t612" href="#t612">612</a></span><span class="t"><span class="str">        Ensures proper cleanup of the httpx.AsyncClient and its resources.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t613" href="#t613">613</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t614" href="#t614">614</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t615" href="#t615">615</a></span><span class="t"><span class="str">            >>> client = ResilientHttpClient()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t616" href="#t616">616</a></span><span class="t"><span class="str">            >>> callable(client.aclose)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t617" href="#t617">617</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t618" href="#t618">618</a></span><span class="t"><span class="str">            >>> import inspect</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t619" href="#t619">619</a></span><span class="t"><span class="str">            >>> inspect.iscoroutinefunction(client.aclose)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t620" href="#t620">620</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t621" href="#t621">621</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t622" href="#t622">622</a></span><span class="t">        <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">client</span><span class="op">.</span><span class="nam">aclose</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t623" href="#t623">623</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t624" href="#t624">624</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">__aenter__</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t625" href="#t625">625</a></span><span class="t">        <span class="str">"""Asynchronous context manager entry point.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t626" href="#t626">626</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t627" href="#t627">627</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t628" href="#t628">628</a></span><span class="t"><span class="str">            The client instance for use in async with statements</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t629" href="#t629">629</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t630" href="#t630">630</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t631" href="#t631">631</a></span><span class="t"><span class="str">            >>> client = ResilientHttpClient()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t632" href="#t632">632</a></span><span class="t"><span class="str">            >>> callable(client.__aenter__)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t633" href="#t633">633</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t634" href="#t634">634</a></span><span class="t"><span class="str">            >>> import inspect</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t635" href="#t635">635</a></span><span class="t"><span class="str">            >>> inspect.iscoroutinefunction(client.__aenter__)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t636" href="#t636">636</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t637" href="#t637">637</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t638" href="#t638">638</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t639" href="#t639">639</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t640" href="#t640">640</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">__aexit__</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="op">*</span><span class="nam">args</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t641" href="#t641">641</a></span><span class="t">        <span class="str">"""Asynchronous context manager exit point.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t642" href="#t642">642</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t643" href="#t643">643</a></span><span class="t"><span class="str">        Ensures the HTTP client is properly closed after use, even if</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t644" href="#t644">644</a></span><span class="t"><span class="str">        exceptions occur during the context manager block.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t645" href="#t645">645</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t646" href="#t646">646</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t647" href="#t647">647</a></span><span class="t"><span class="str">            *args: Exception information passed by the context manager</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t648" href="#t648">648</a></span><span class="t"><span class="str">                  (exc_type, exc_value, traceback) or None values if no exception</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t649" href="#t649">649</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t650" href="#t650">650</a></span><span class="t"><span class="str">        Examples:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t651" href="#t651">651</a></span><span class="t"><span class="str">            >>> client = ResilientHttpClient()</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t652" href="#t652">652</a></span><span class="t"><span class="str">            >>> callable(client.__aexit__)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t653" href="#t653">653</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t654" href="#t654">654</a></span><span class="t"><span class="str">            >>> import inspect</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t655" href="#t655">655</a></span><span class="t"><span class="str">            >>> inspect.iscoroutinefunction(client.__aexit__)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t656" href="#t656">656</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t657" href="#t657">657</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t658" href="#t658">658</a></span><span class="t">        <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">aclose</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -747,7 +749,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_security_cookies_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-02 21:04 +0100
+            created at 2025-09-08 08:26 +0100
         </p>
     </div>
 </footer>

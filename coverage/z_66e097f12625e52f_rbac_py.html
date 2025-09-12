@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_reverse_proxy_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-03 07:56 +0100
+            created at 2025-09-09 11:05 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -96,7 +96,7 @@
     <p class="pln"><span class="n"><a id="t12" href="#t12">12</a></span><span class="t"><span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t13" href="#t13">13</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t14" href="#t14">14</a></span><span class="t"><span class="com"># Standard</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="key">from</span> <span class="nam">datetime</span> <span class="key">import</span> <span class="nam">datetime</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t15" href="#t15">15</a></span><span class="t"><span class="key">from</span> <span class="nam">datetime</span> <span class="key">import</span> <span class="nam">datetime</span><span class="op">,</span> <span class="nam">timezone</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t16" href="#t16">16</a></span><span class="t"><span class="key">import</span> <span class="nam">logging</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t17" href="#t17">17</a></span><span class="t"><span class="key">from</span> <span class="nam">typing</span> <span class="key">import</span> <span class="nam">Generator</span><span class="op">,</span> <span class="nam">List</span><span class="op">,</span> <span class="nam">Optional</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t18" href="#t18">18</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -505,7 +505,7 @@
     <p class="mis mis2 show_mis"><span class="n"><a id="t421" href="#t421">421</a></span><span class="t">            <span class="nam">user_agent</span><span class="op">=</span><span class="nam">user</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"user_agent"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis mis2 show_mis"><span class="n"><a id="t422" href="#t422">422</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t423" href="#t423">423</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t424" href="#t424">424</a></span><span class="t">        <span class="key">return</span> <span class="nam">PermissionCheckResponse</span><span class="op">(</span><span class="nam">user_email</span><span class="op">=</span><span class="nam">check_data</span><span class="op">.</span><span class="nam">user_email</span><span class="op">,</span> <span class="nam">permission</span><span class="op">=</span><span class="nam">check_data</span><span class="op">.</span><span class="nam">permission</span><span class="op">,</span> <span class="nam">granted</span><span class="op">=</span><span class="nam">granted</span><span class="op">,</span> <span class="nam">checked_at</span><span class="op">=</span><span class="nam">datetime</span><span class="op">.</span><span class="nam">utcnow</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">checked_by</span><span class="op">=</span><span class="nam">user</span><span class="op">[</span><span class="str">"email"</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t424" href="#t424">424</a></span><span class="t">        <span class="key">return</span> <span class="nam">PermissionCheckResponse</span><span class="op">(</span><span class="nam">user_email</span><span class="op">=</span><span class="nam">check_data</span><span class="op">.</span><span class="nam">user_email</span><span class="op">,</span> <span class="nam">permission</span><span class="op">=</span><span class="nam">check_data</span><span class="op">.</span><span class="nam">permission</span><span class="op">,</span> <span class="nam">granted</span><span class="op">=</span><span class="nam">granted</span><span class="op">,</span> <span class="nam">checked_at</span><span class="op">=</span><span class="nam">datetime</span><span class="op">.</span><span class="nam">now</span><span class="op">(</span><span class="nam">tz</span><span class="op">=</span><span class="nam">timezone</span><span class="op">.</span><span class="nam">utc</span><span class="op">)</span><span class="op">,</span> <span class="nam">checked_by</span><span class="op">=</span><span class="nam">user</span><span class="op">[</span><span class="str">"email"</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t425" href="#t425">425</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t426" href="#t426">426</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t427" href="#t427">427</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Permission check failed: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -640,7 +640,7 @@
             <a class="nav" href="z_66e097f12625e52f_reverse_proxy_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-03 07:56 +0100
+            created at 2025-09-09 11:05 +0100
         </p>
     </div>
 </footer>

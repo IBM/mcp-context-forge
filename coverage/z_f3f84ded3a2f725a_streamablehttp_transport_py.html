@@ -55,8 +55,8 @@
             </div>
         </aside>
         <h2>
-            <span class="text">228 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">227<span class="text"> run</span></button>
+            <span class="text">232 statements &nbsp;</span>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">231<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">1<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">1<span class="text"> partial</span></button>
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_f3f84ded3a2f725a_websocket_transport_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-02 21:04 +0100
+            created at 2025-09-08 08:26 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -828,26 +828,35 @@
     <p class="pln"><span class="n"><a id="t744" href="#t744">744</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t745" href="#t745">745</a></span><span class="t">    <span class="nam">headers</span> <span class="op">=</span> <span class="nam">Headers</span><span class="op">(</span><span class="nam">scope</span><span class="op">=</span><span class="nam">scope</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t746" href="#t746">746</a></span><span class="t">    <span class="nam">authorization</span> <span class="op">=</span> <span class="nam">headers</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"authorization"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t747" href="#t747">747</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t748" href="#t748">748</a></span><span class="t">    <span class="nam">token</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t749" href="#t749">749</a></span><span class="t">    <span class="key">if</span> <span class="nam">authorization</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t750" href="#t750">750</a></span><span class="t">        <span class="nam">scheme</span><span class="op">,</span> <span class="nam">credentials</span> <span class="op">=</span> <span class="nam">get_authorization_scheme_param</span><span class="op">(</span><span class="nam">authorization</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t751" href="#t751">751</a></span><span class="t">        <span class="key">if</span> <span class="nam">scheme</span><span class="op">.</span><span class="nam">lower</span><span class="op">(</span><span class="op">)</span> <span class="op">==</span> <span class="str">"bearer"</span> <span class="key">and</span> <span class="nam">credentials</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t752" href="#t752">752</a></span><span class="t">            <span class="nam">token</span> <span class="op">=</span> <span class="nam">credentials</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t753" href="#t753">753</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t754" href="#t754">754</a></span><span class="t">        <span class="key">if</span> <span class="nam">token</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t755" href="#t755">755</a></span><span class="t">            <span class="key">raise</span> <span class="nam">Exception</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t756" href="#t756">756</a></span><span class="t">        <span class="key">await</span> <span class="nam">verify_credentials</span><span class="op">(</span><span class="nam">token</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t757" href="#t757">757</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t758" href="#t758">758</a></span><span class="t">        <span class="nam">response</span> <span class="op">=</span> <span class="nam">JSONResponse</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t759" href="#t759">759</a></span><span class="t">            <span class="op">{</span><span class="str">"detail"</span><span class="op">:</span> <span class="str">"Authentication failed"</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t760" href="#t760">760</a></span><span class="t">            <span class="nam">status_code</span><span class="op">=</span><span class="nam">HTTP_401_UNAUTHORIZED</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t761" href="#t761">761</a></span><span class="t">            <span class="nam">headers</span><span class="op">=</span><span class="op">{</span><span class="str">"WWW-Authenticate"</span><span class="op">:</span> <span class="str">"Bearer"</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t762" href="#t762">762</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t763" href="#t763">763</a></span><span class="t">        <span class="key">await</span> <span class="nam">response</span><span class="op">(</span><span class="nam">scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t764" href="#t764">764</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t765" href="#t765">765</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t766" href="#t766">766</a></span><span class="t">    <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t747" href="#t747">747</a></span><span class="t">    <span class="nam">proxy_user</span> <span class="op">=</span> <span class="nam">headers</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">settings</span><span class="op">.</span><span class="nam">proxy_user_header</span><span class="op">)</span> <span class="key">if</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">trust_proxy_auth</span> <span class="key">else</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t748" href="#t748">748</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t749" href="#t749">749</a></span><span class="t">    <span class="com"># Determine authentication strategy based on settings</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t750" href="#t750">750</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">mcp_client_auth_enabled</span> <span class="key">and</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">trust_proxy_auth</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t751" href="#t751">751</a></span><span class="t">        <span class="com"># Client auth disabled &#8594; allow proxy header</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t752" href="#t752">752</a></span><span class="t">        <span class="key">if</span> <span class="nam">proxy_user</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t753" href="#t753">753</a></span><span class="t">            <span class="key">return</span> <span class="key">True</span>  <span class="com"># Trusted proxy supplied user</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t754" href="#t754">754</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t755" href="#t755">755</a></span><span class="t">    <span class="com"># --- Standard JWT authentication flow (client auth enabled) ---</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t756" href="#t756">756</a></span><span class="t">    <span class="nam">token</span><span class="op">:</span> <span class="nam">str</span> <span class="op">|</span> <span class="key">None</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t757" href="#t757">757</a></span><span class="t">    <span class="key">if</span> <span class="nam">authorization</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t758" href="#t758">758</a></span><span class="t">        <span class="nam">scheme</span><span class="op">,</span> <span class="nam">credentials</span> <span class="op">=</span> <span class="nam">get_authorization_scheme_param</span><span class="op">(</span><span class="nam">authorization</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t759" href="#t759">759</a></span><span class="t">        <span class="key">if</span> <span class="nam">scheme</span><span class="op">.</span><span class="nam">lower</span><span class="op">(</span><span class="op">)</span> <span class="op">==</span> <span class="str">"bearer"</span> <span class="key">and</span> <span class="nam">credentials</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t760" href="#t760">760</a></span><span class="t">            <span class="nam">token</span> <span class="op">=</span> <span class="nam">credentials</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t761" href="#t761">761</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t762" href="#t762">762</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t763" href="#t763">763</a></span><span class="t">        <span class="key">if</span> <span class="nam">token</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t764" href="#t764">764</a></span><span class="t">            <span class="key">raise</span> <span class="nam">Exception</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t765" href="#t765">765</a></span><span class="t">        <span class="key">await</span> <span class="nam">verify_credentials</span><span class="op">(</span><span class="nam">token</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t766" href="#t766">766</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t767" href="#t767">767</a></span><span class="t">        <span class="nam">response</span> <span class="op">=</span> <span class="nam">JSONResponse</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t768" href="#t768">768</a></span><span class="t">            <span class="op">{</span><span class="str">"detail"</span><span class="op">:</span> <span class="str">"Authentication failed"</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t769" href="#t769">769</a></span><span class="t">            <span class="nam">status_code</span><span class="op">=</span><span class="nam">HTTP_401_UNAUTHORIZED</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t770" href="#t770">770</a></span><span class="t">            <span class="nam">headers</span><span class="op">=</span><span class="op">{</span><span class="str">"WWW-Authenticate"</span><span class="op">:</span> <span class="str">"Bearer"</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t771" href="#t771">771</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t772" href="#t772">772</a></span><span class="t">        <span class="key">await</span> <span class="nam">response</span><span class="op">(</span><span class="nam">scope</span><span class="op">,</span> <span class="nam">receive</span><span class="op">,</span> <span class="nam">send</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t773" href="#t773">773</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t774" href="#t774">774</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t775" href="#t775">775</a></span><span class="t">    <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -857,7 +866,7 @@
             <a class="nav" href="z_f3f84ded3a2f725a_websocket_transport_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-02 21:04 +0100
+            created at 2025-09-08 08:26 +0100
         </p>
     </div>
 </footer>
