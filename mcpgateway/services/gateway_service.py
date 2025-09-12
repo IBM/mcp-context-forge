@@ -72,6 +72,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import ServerMetric
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
@@ -590,37 +591,25 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(db_gateway).masked()
-        except* GatewayConnectionError as ge:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ge: ExceptionGroup[GatewayConnectionError]
-            logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
-            raise ge.exceptions[0]
-        except* GatewayNameConflictError as gnce:  # pragma: no mutate
-            if TYPE_CHECKING:
-                gnce: ExceptionGroup[GatewayNameConflictError]
-            logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
-            raise gnce.exceptions[0]
-        except* ValueError as ve:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ve: ExceptionGroup[ValueError]
-            logger.error(f"ValueErrors in group: {ve.exceptions}")
-            raise ve.exceptions[0]
-        except* RuntimeError as re:  # pragma: no mutate
-            if TYPE_CHECKING:
-                re: ExceptionGroup[RuntimeError]
-            logger.error(f"RuntimeErrors in group: {re.exceptions}")
-            raise re.exceptions[0]
-        except* IntegrityError as ie:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ie: ExceptionGroup[IntegrityError]
-            logger.error(f"IntegrityErrors in group: {ie.exceptions}")
-            raise ie.exceptions[0]
-        except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
-            if TYPE_CHECKING:
-                other: ExceptionGroup[BaseException]
-            logger.error(f"Other grouped errors: {other.exceptions}")
-            raise other.exceptions[0]
-
+        except GatewayConnectionError as ge:  # pragma: no mutate
+            logger.error(f"GatewayConnectionError: {ge}")
+            raise ge
+        except GatewayNameConflictError as gnce:  # pragma: no mutate
+            logger.error(f"GatewayNameConflictError: {gnce}")
+            raise gnce
+        except ValueError as ve:  # pragma: no mutate
+            logger.error(f"ValueError: {ve}")
+            raise ve
+        except RuntimeError as re:  # pragma: no mutate
+            logger.error(f"RuntimeError: {re}")
+            raise re
+        except IntegrityError as ie:  # pragma: no mutate
+            logger.error(f"IntegrityError: {ie}")
+            raise ie
+        except BaseException as other:  # catches every other sub-exception  # pragma: no mutate
+            logger.error(f"Other error: {other}")
+            raise other
+            
     async def fetch_tools_after_oauth(self, db: Session, gateway_id: str) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
@@ -1750,6 +1739,32 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.debug(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
+    async def _record_server_metric(self, db: Session, server: DbGateway, start_time: float, success: bool, error_message: Optional[str]) -> None:
+        """
+        Records a metric for a server interaction.
+
+        This function calculates the response time using the provided start time and records
+        the metric details (including whether the interaction was successful and any error message)
+        into the database. The metric is then committed to the database.
+
+        Args:
+            db (Session): The SQLAlchemy database session.
+            server (DbGateway): The server/gateway that was accessed.
+            start_time (float): The monotonic start time of the interaction.
+            success (bool): True if the interaction succeeded; otherwise, False.
+            error_message (Optional[str]): The error message if the interaction failed, otherwise None.
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+        metric = ServerMetric(
+            server_id=server.id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+        
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
 

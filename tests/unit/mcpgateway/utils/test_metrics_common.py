@@ -87,7 +87,7 @@ class TestMetricsCommon(unittest.TestCase):
 
         # Test with a list of results
         performers = build_top_performers([result1, result2])
-        
+
         # Verify the results
         self.assertEqual(len(performers), 2)
         self.assertEqual(performers[0].id, 1)
@@ -96,7 +96,7 @@ class TestMetricsCommon(unittest.TestCase):
         self.assertEqual(performers[0].avg_response_time, 1.5)
         self.assertEqual(performers[0].success_rate, 85.0)
         self.assertIsNone(performers[0].last_execution)
-        
+
         self.assertEqual(performers[1].id, 2)
         self.assertEqual(performers[1].name, "test2")
         self.assertEqual(performers[1].execution_count, 20)
