@@ -138,7 +138,7 @@ class ServerService:
         logger.info("Server service shutdown complete")
 
     # get_top_server
-    async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_servers(self, db: Session, limit: int = 5) -> List[TopPerformer]:
         """Retrieve the top-performing servers based on execution count.
 
         Queries the database to get servers with their metrics, ordered by the number of executions
@@ -147,8 +147,7 @@ class ServerService:
 
         Args:
             db (Session): Database session for querying server metrics.
-            limit (Optional[int]): Maximum number of resources to return. Defaults to 5.
-                If None, returns all resources.
+            limit (int): Maximum number of servers to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -159,7 +158,7 @@ class ServerService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        query = (
+        results = (
             db.query(
                 DbServer.id,
                 DbServer.name,
@@ -177,12 +176,9 @@ class ServerService:
             .outerjoin(ServerMetric)
             .group_by(DbServer.id, DbServer.name)
             .order_by(desc("execution_count"))
+            .limit(limit)
+            .all()
         )
-
-        if limit is not None:
-            query = query.limit(limit)
-
-        results = query.all()
 
         return build_top_performers(results)
 
