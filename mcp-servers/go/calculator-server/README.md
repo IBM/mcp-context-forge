@@ -2,7 +2,7 @@
 
 A comprehensive **Go-based MCP (Model Context Protocol) server** for mathematical computations, implementing **13 mathematical tools** with advanced features and high precision calculations.
 
-**Owner & Maintainer:** Avinash Sangle 
+**Owner & Maintainer:** Avinash Sangle
 
 [![Go Version](https://img.shields.io/badge/go-%3E%3D1.21-blue)](https://golang.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -165,7 +165,7 @@ go build -o calculator-server ./cmd/server
   "result": {
     "content": [
       {
-        "type": "text", 
+        "type": "text",
         "text": "{\"result\": 46.0}"
       }
     ]
@@ -266,11 +266,11 @@ The server implements **MCP-compliant streamable HTTP transport** according to t
 
 ### MCP Protocol Compliance
 
-✅ **Single Endpoint**: `/mcp` only (per MCP specification)  
-✅ **Required Headers**: `MCP-Protocol-Version`, `Accept`  
-✅ **Session Management**: Cryptographically secure session IDs  
-✅ **SSE Streaming**: Server-Sent Events for real-time responses  
-✅ **CORS Support**: Origin validation and security headers  
+✅ **Single Endpoint**: `/mcp` only (per MCP specification)
+✅ **Required Headers**: `MCP-Protocol-Version`, `Accept`
+✅ **Session Management**: Cryptographically secure session IDs
+✅ **SSE Streaming**: Server-Sent Events for real-time responses
+✅ **CORS Support**: Origin validation and security headers
 
 ### HTTP Endpoints
 
@@ -618,7 +618,7 @@ Environment variables override configuration file settings:
 ### Benchmarks
 
 - **Basic Operations**: ~1-5 μs per operation
-- **Advanced Functions**: ~10-50 μs per operation  
+- **Advanced Functions**: ~10-50 μs per operation
 - **Expression Evaluation**: ~100-500 μs per expression
 - **Statistical Operations**: ~10-100 μs per dataset (depends on size)
 - **Unit Conversions**: ~1-10 μs per conversion
