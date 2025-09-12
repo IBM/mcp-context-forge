@@ -25,13 +25,13 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import EmailTeam as DbEmailTeam
+from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import EmailTeam as DbEmailTeam
-from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -656,6 +656,7 @@ class ServerService:
             ServerNameConflictError: If a new name conflicts with an existing server.
             ServerError: For other update errors.
             IntegrityError: If a database integrity error occurs.
+            ValueError: If visibility or team constraints are violated.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -718,34 +719,31 @@ class ServerService:
                 if new_visibility == "team":
                     if not server.team_id and not server_update.team_id:
                         raise ValueError("Cannot set visibility to 'team' without a team_id")
-                    
+
                     # Verify team exists and user is a member
                     if server.team_id:
                         team_id = server.team_id
                     else:
                         team_id = server_update.team_id
-                    
-                    team = db.query(DbEmailTeam).filter(
-                        DbEmailTeam.id == team_id
-                    ).first()
+
+                    team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id).first()
                     if not team:
                         raise ValueError(f"Team {team_id} not found")
-                    
+
                     # Verify user is a member of the team
-                    membership = db.query(DbEmailTeamMember).filter(
-                        DbEmailTeamMember.team_id == team_id,
-                        DbEmailTeamMember.user_email == user_email,
-                        DbEmailTeamMember.is_active == True,
-                        DbEmailTeamMember.role == "owner"
-                    ).first()
+                    membership = (
+                        db.query(DbEmailTeamMember)
+                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+                        .first()
+                    )
                     if not membership:
                         raise ValueError("User membership in team not sufficient for this update.")
-                
+
                 elif new_visibility == "public":
                     # Optional: Check if user has permission to make resources public
                     # This could be a platform-level permission
                     pass
-                
+
                 server.visibility = new_visibility
 
             if server_update.team_id is not None:
