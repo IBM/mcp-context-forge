@@ -46,7 +46,14 @@ services:
       # - DATABASE_URL=mongodb://admin:${MONGO_PASSWORD:-changeme}@mongodb:27017/mcp
       - CACHE_TYPE=redis # backend for caching (memory, redis, database, or none)
       - REDIS_URL=redis://redis:6379/0
+      # JWT Configuration - Choose ONE approach:
+      # Option 1: HMAC (Default - Simple deployments)
+      - JWT_ALGORITHM=HS256
       - JWT_SECRET_KEY=my-test-key
+      # Option 2: RSA (Production - Asymmetric, uncomment and generate certs)
+      # - JWT_ALGORITHM=RS256
+      # - JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem
+      # - JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
       - EMAIL_AUTH_ENABLED=true
@@ -88,7 +95,12 @@ services:
       start_period: 30s
 
     # volumes:
-    #   - ./certs:/app/certs:ro   # mount certs folder read-only
+    #   - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
+    #
+    # For JWT asymmetric keys:
+    # 1. Generate keys: make certs-jwt
+    # 2. Uncomment volumes mount above
+    # 3. Switch JWT_ALGORITHM to RS256 and uncomment JWT_*_KEY_PATH variables
 
 ###############################################################################
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL

@@ -35,6 +35,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 * **Email-based Authentication** (#544) - Complete user authentication system with Argon2id password hashing replacing basic auth
 * **Complete RBAC System** (#283) - Platform Admin, Team Owner, Team Member roles with full multi-tenancy support
 * **Enhanced JWT Tokens** (#87) - JWT tokens with team context, scoped permissions, and per-user expiry
+* **Asymmetric JWT Algorithm Support** - Complete support for RSA (RS256/384/512) and ECDSA (ES256/384/512) algorithms alongside existing HMAC support
+  - **Multiple Algorithm Support**: HS256/384/512 (HMAC), RS256/384/512 (RSA), ES256/384/512 (ECDSA)
+  - **Enterprise Security**: Public/private key separation for distributed architectures
+  - **Configuration Validation**: Runtime validation ensures proper keys exist for chosen algorithm
+  - **Backward Compatibility**: Existing HMAC JWT configurations continue working unchanged
+  - **Key Management Integration**: `make certs-jwt` and `make certs-jwt-ecdsa` for secure key generation
+  - **Container Support**: `make container-run-ssl-jwt` for full TLS + JWT asymmetric deployment
+  - **Dynamic Client Registration**: Configurable audience verification for DCR scenarios
 * **Password Policy Engine** (#426) - Configurable security requirements with password complexity rules
 * **Password Change API** - Secure `/auth/email/change-password` endpoint for changing user passwords with old password verification
 * **Multi-Provider SSO Framework** (#220, #278, #859) - GitHub, Google, and IBM Security Verify integration

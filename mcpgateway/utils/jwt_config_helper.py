@@ -16,7 +16,6 @@ from mcpgateway.config import settings
 
 class JWTConfigurationError(Exception):
     """Raised when JWT configuration is invalid or incomplete."""
-    pass
 
 
 def validate_jwt_algo_and_keys() -> None:
@@ -32,13 +31,10 @@ def validate_jwt_algo_and_keys() -> None:
     """
     algorithm = settings.jwt_algorithm
 
-
     # HMAC algorithms (symmetric)
     if algorithm.startswith("HS"):
         if not settings.jwt_secret_key:
-            raise JWTConfigurationError(
-                f"JWT algorithm {algorithm} requires jwt_secret_key to be set"
-            )
+            raise JWTConfigurationError(f"JWT algorithm {algorithm} requires jwt_secret_key to be set")
     # All other algorithms are asymmetric
     else:
         _validate_asymmetric_keys(algorithm)
@@ -55,10 +51,7 @@ def _validate_asymmetric_keys(algorithm: str) -> None:
         FileNotFoundError: If key files don't exist
     """
     if not settings.jwt_public_key_path or not settings.jwt_private_key_path:
-        raise JWTConfigurationError(
-            f"JWT algorithm {algorithm} requires both jwt_public_key_path "
-            f"and jwt_private_key_path to be set"
-        )
+        raise JWTConfigurationError(f"JWT algorithm {algorithm} requires both jwt_public_key_path and jwt_private_key_path to be set")
 
     # Resolve paths
     public_key_path = Path(settings.jwt_public_key_path)
@@ -92,7 +85,7 @@ def get_jwt_private_key_or_secret() -> str:
     path = Path(settings.jwt_private_key_path)
     if not path.is_absolute():
         path = Path.cwd() / path
-    with open(path, 'r') as f:
+    with open(path, "r") as f:
         return f.read()
 
 
@@ -112,5 +105,5 @@ def get_jwt_public_key_or_secret() -> str:
     path = Path(settings.jwt_public_key_path)
     if not path.is_absolute():
         path = Path.cwd() / path
-    with open(path, 'r') as f:
+    with open(path, "r") as f:
         return f.read()

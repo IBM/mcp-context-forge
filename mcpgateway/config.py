@@ -167,8 +167,8 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "my-test-key"
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
-    jwt_audience: str = "JRKETZQLRBELYNGI5M3CUUNAL5"
-    jwt_issuer: str = "http://localhost:5556"
+    jwt_audience: str = "mcpgateway-api"
+    jwt_issuer: str = "mcpgateway"
     jwt_audience_verification: bool = True
     auth_required: bool = True
     token_expiry: int = 10080  # minutes

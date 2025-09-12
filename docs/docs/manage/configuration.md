@@ -180,10 +180,20 @@ KEY_FILE=/app/certs/key.pem
 ### Authentication & Security
 
 ```bash
-# JWT Configuration
-JWT_SECRET_KEY=your-secret-key-here
+# JWT Algorithm Configuration
+JWT_ALGORITHM=HS256                    # HMAC: HS256, HS384, HS512 | RSA: RS256, RS384, RS512 | ECDSA: ES256, ES384, ES512
+
+# Symmetric (HMAC) JWT Configuration - Default
+JWT_SECRET_KEY=your-secret-key-here    # Required for HMAC algorithms (HS256, HS384, HS512)
+
+# Asymmetric (RSA/ECDSA) JWT Configuration - Enterprise
+JWT_PUBLIC_KEY_PATH=jwt/public.pem     # Required for asymmetric algorithms (RS*/ES*)
+JWT_PRIVATE_KEY_PATH=jwt/private.pem   # Required for asymmetric algorithms (RS*/ES*)
+
+# JWT Claims & Validation
 JWT_AUDIENCE=mcpgateway-api
 JWT_ISSUER=mcpgateway
+JWT_AUDIENCE_VERIFICATION=true         # Set to false for Dynamic Client Registration
 REQUIRE_TOKEN_EXPIRATION=true
 
 # Basic Auth (Admin UI)
@@ -263,6 +273,104 @@ DEBUG=true
 METRICS_ENABLED=true
 HEALTH_CHECK_ENABLED=true
 ```
+
+---
+
+## 🔐 JWT Configuration Examples
+
+MCP Gateway supports both symmetric (HMAC) and asymmetric (RSA/ECDSA) JWT algorithms for different deployment scenarios.
+
+### HMAC (Symmetric) - Simple Deployments
+
+Best for single-service deployments where you control both token creation and verification.
+
+```bash
+# Standard HMAC configuration
+JWT_ALGORITHM=HS256
+JWT_SECRET_KEY=your-256-bit-secret-key-here
+JWT_AUDIENCE=mcpgateway-api
+JWT_ISSUER=mcpgateway
+JWT_AUDIENCE_VERIFICATION=true
+```
+
+### RSA (Asymmetric) - Enterprise Deployments
+
+Ideal for distributed systems, microservices, and enterprise environments.
+
+```bash
+# RSA configuration
+JWT_ALGORITHM=RS256
+JWT_PUBLIC_KEY_PATH=certs/jwt/public.pem      # Path to RSA public key
+JWT_PRIVATE_KEY_PATH=certs/jwt/private.pem    # Path to RSA private key
+JWT_AUDIENCE=mcpgateway-api
+JWT_ISSUER=mcpgateway
+JWT_AUDIENCE_VERIFICATION=true
+```
+
+#### Generate RSA Keys
+
+```bash
+# Option 1: Use Makefile (Recommended)
+make certs-jwt                   # Generates certs/jwt/{private,public}.pem with proper permissions
+
+# Option 2: Manual generation
+mkdir -p certs/jwt
+openssl genrsa -out certs/jwt/private.pem 4096
+openssl rsa -in certs/jwt/private.pem -pubout -out certs/jwt/public.pem
+chmod 600 certs/jwt/private.pem
+chmod 644 certs/jwt/public.pem
+```
+
+### ECDSA (Asymmetric) - High Performance
+
+Modern elliptic curve cryptography for performance-sensitive deployments.
+
+```bash
+# ECDSA configuration
+JWT_ALGORITHM=ES256
+JWT_PUBLIC_KEY_PATH=certs/jwt/ec_public.pem
+JWT_PRIVATE_KEY_PATH=certs/jwt/ec_private.pem
+JWT_AUDIENCE=mcpgateway-api
+JWT_ISSUER=mcpgateway
+JWT_AUDIENCE_VERIFICATION=true
+```
+
+#### Generate ECDSA Keys
+
+```bash
+# Option 1: Use Makefile (Recommended)
+make certs-jwt-ecdsa             # Generates certs/jwt/{ec_private,ec_public}.pem with proper permissions
+
+# Option 2: Manual generation
+mkdir -p certs/jwt
+openssl ecparam -genkey -name prime256v1 -noout -out certs/jwt/ec_private.pem
+openssl ec -in certs/jwt/ec_private.pem -pubout -out certs/jwt/ec_public.pem
+chmod 600 certs/jwt/ec_private.pem
+chmod 644 certs/jwt/ec_public.pem
+```
+
+### Dynamic Client Registration (DCR)
+
+For scenarios where JWT audience varies by client:
+
+```bash
+JWT_ALGORITHM=RS256
+JWT_PUBLIC_KEY_PATH=certs/jwt/public.pem
+JWT_PRIVATE_KEY_PATH=certs/jwt/private.pem
+JWT_AUDIENCE_VERIFICATION=false         # Disable audience validation for DCR
+JWT_ISSUER=your-identity-provider
+```
+
+### Security Considerations
+
+- **Key Storage**: Store private keys securely, never commit to version control
+- **Permissions**: Set restrictive file permissions (600) on private keys
+- **Key Rotation**: Implement regular key rotation procedures
+- **Path Security**: Use absolute paths or secure relative paths for key files
+- **Algorithm Choice**:
+  - Use RS256 for broad compatibility
+  - Use ES256 for better performance and smaller signatures
+  - Use HS256 only for simple, single-service deployments
 
 ---
 

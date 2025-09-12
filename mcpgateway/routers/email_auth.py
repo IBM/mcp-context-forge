@@ -31,7 +31,6 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.middleware.rbac import require_permission
-from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.schemas import (
     AuthenticationResponse,
     AuthEventResponse,
@@ -44,6 +43,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_jwt_token import create_jwt_token
 
 # Initialize logging
 logging_service = LoggingService()

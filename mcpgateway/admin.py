@@ -47,7 +47,6 @@ from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.models import LogLevel
-from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
     GatewayCreate,
@@ -88,7 +87,7 @@ from mcpgateway.services.server_service import ServerError, ServerNameConflictEr
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
-from mcpgateway.utils.create_jwt_token import get_jwt_token
+from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_encryption import get_oauth_encryption
