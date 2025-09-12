@@ -1,7 +1,7 @@
 {
   "_comment": "Calculator Server Configuration - JSON Format",
   "_description": "Complete configuration file with all options and their default values",
-  
+
   "server": {
     "transport": "stdio",
     "http": {
@@ -15,13 +15,13 @@
       }
     }
   },
-  
+
   "logging": {
     "level": "info",
     "format": "json",
     "output": "stdout"
   },
-  
+
   "tools": {
     "precision": {
       "max_decimal_places": 15,
@@ -38,7 +38,7 @@
       "currency_default": "USD"
     }
   },
-  
+
   "security": {
     "rate_limiting": {
       "enabled": true,
@@ -46,10 +46,10 @@
     },
     "request_size_limit": "1MB"
   },
-  
+
   "_examples": {
     "_comment": "Example configurations for different environments",
-    
+
     "_development": {
       "server": {
         "transport": "http",
@@ -70,7 +70,7 @@
         "output": "stdout"
       }
     },
-    
+
     "_production": {
       "server": {
         "transport": "http",

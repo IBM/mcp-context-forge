@@ -106,27 +106,27 @@ build: deps ## Build the application
 build-all: ## Build for multiple platforms
 	@echo "$(BLUE)Building for multiple platforms...$(NC)"
 	@mkdir -p $(BUILD_DIR)
-	
+
 	# Linux AMD64
 	@echo "Building for Linux AMD64..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
-	
+
 	# Linux ARM64
 	@echo "Building for Linux ARM64..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 $(MAIN_PATH)
-	
+
 	# macOS AMD64
 	@echo "Building for macOS AMD64..."
 	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
-	
+
 	# macOS ARM64 (M1/M2)
 	@echo "Building for macOS ARM64..."
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_PATH)
-	
+
 	# Windows AMD64
 	@echo "Building for Windows AMD64..."
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(GO_BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
-	
+
 	@echo "$(GREEN)Multi-platform build completed$(NC)"
 	@ls -la $(BUILD_DIR)/
 

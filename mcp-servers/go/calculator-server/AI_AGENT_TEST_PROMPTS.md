@@ -10,7 +10,7 @@ This document provides ready-to-use prompts for testing the calculator server to
 ```
 Test the basic_math tool with these calculations:
 1. Add these numbers: 15, 25, 10
-2. Subtract 45 from 100  
+2. Subtract 45 from 100
 3. Multiply 12 by 8
 4. Divide 144 by 12
 5. Calculate 22 divided by 7 with 4 decimal places precision
@@ -40,7 +40,7 @@ Report any interesting behaviors or limitations you observe.
 ```
 Use the advanced_math tool to calculate:
 1. sin(90) in degrees
-2. cos(0) in radians  
+2. cos(0) in radians
 3. tan(45) in degrees
 4. sin(π/2) in radians (use 1.5708 as approximation)
 5. cos(π) in radians (use 3.1416 as approximation)
@@ -86,7 +86,7 @@ Test the stats_summary tool with this dataset: [5, 10, 15, 20, 25, 30, 35, 40, 4
 
 Then use the percentile tool to find:
 1. 25th percentile
-2. 75th percentile  
+2. 75th percentile
 3. 90th percentile
 
 Explain what these percentiles mean in practical terms.
@@ -163,7 +163,7 @@ Interpret the results for investment decision-making.
 ```
 Test the expression_eval tool with:
 1. Simple arithmetic: "10 + 5 * 2"
-2. With parentheses: "(10 + 5) * 2"  
+2. With parentheses: "(10 + 5) * 2"
 3. Using pi constant: "pi * 4"
 4. Using e constant: "e * 2"
 5. With variables: "x * 2 + y" where x=10, y=5
@@ -175,7 +175,7 @@ Note which expressions work and which encounter errors.
 ```
 Test these more complex expressions to identify limitations:
 1. "sqrt(16) + 4"
-2. "sin(pi/2) + cos(0)"  
+2. "sin(pi/2) + cos(0)"
 3. "pow(2, 3) + 1"
 4. "2^3 + sqrt(9)"
 5. "abs(-5) + ln(e)"
@@ -234,7 +234,7 @@ Document how each tool handles invalid inputs.
 ```
 Test boundary conditions:
 1. Very large numbers: 999999999999 × 999999999999
-2. Very small numbers: 0.000000001 × 0.000000001  
+2. Very small numbers: 0.000000001 × 0.000000001
 3. Maximum precision: Calculate 1/7 with maximum decimal places
 4. Large datasets: Generate and analyze statistics for 100 random numbers
 5. Extreme temperatures: Convert -273°C to Kelvin and Fahrenheit
@@ -280,7 +280,7 @@ For rapid testing, use these single-line prompts:
 # Quick basic math test
 "Calculate: 15+25, 100-45, 12*8, 144/12 using basic_math tool"
 
-# Quick advanced math test  
+# Quick advanced math test
 "Calculate: sin(90°), cos(0), sqrt(64), factorial(5) using advanced_math tool"
 
 # Quick statistics test
