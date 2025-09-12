@@ -575,7 +575,9 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to re-key authentication data: {str(e)}")
 
-    async def _process_single_entity(self, db: Session, entity_type: str, entity_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
+    async def _process_single_entity(
+        self, db: Session, entity_type: str, entity_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str
+    ) -> None:
         """Process a single entity with conflict resolution.
 
         Args:
@@ -585,6 +587,7 @@ class ImportService:
             conflict_strategy: How to handle conflicts
             dry_run: Whether this is a dry run
             status: Import status tracker
+            imported_by: Username of the person performing the import
 
         Raises:
             ImportError: If processing fails
@@ -689,7 +692,7 @@ class ImportService:
         """
         gateway_name = gateway_data["name"]
 
-        if dry_run:
+        if dry_run is True:
             status.warnings.append(f"Would import gateway: {gateway_name}")
             return
 
@@ -744,6 +747,7 @@ class ImportService:
             conflict_strategy: How to handle conflicts
             dry_run: Whether this is a dry run
             status: Import status tracker
+            imported_by: Username of the person performing the import
 
         Raises:
             ImportError: If processing fails
