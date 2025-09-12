@@ -12,7 +12,12 @@ the base plugin layer including configurations, and contexts.
 # Standard
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, Optional, Self, TypeVar
+from typing import Any, Generic, Optional, TypeVar
+
+try:
+    from typing import Self  # Python 3.11+
+except ImportError:
+    from typing_extensions import Self  # Python 3.10
 
 # Third-Party
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo

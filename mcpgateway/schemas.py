@@ -26,7 +26,12 @@ from enum import Enum
 import json
 import logging
 import re
-from typing import Any, Dict, List, Literal, Optional, Self, Union
+from typing import Any, Dict, List, Literal, Optional, Union
+try:
+    from typing import Self
+except ImportError:
+    # Python < 3.11 compatibility
+    from typing_extensions import Self
 
 # Third-Party
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo

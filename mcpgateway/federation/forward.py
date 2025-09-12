@@ -27,6 +27,7 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Third-Party
@@ -37,6 +38,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import ToolResult
 from mcpgateway.services.logging_service import LoggingService
@@ -435,6 +437,10 @@ class ForwardingService:
         if not self._check_rate_limit(gateway.url):
             raise ForwardingError("Rate limit exceeded")
 
+        start_time = time.monotonic()
+        success = False
+        error_message = None
+
         try:
             # Build request
             request = {"jsonrpc": "2.0", "id": 1, "method": method}
@@ -462,16 +468,24 @@ class ForwardingService:
 
                     # Handle response
                     if "error" in result:
-                        raise ForwardingError(f"Gateway error: {result['error'].get('message')}")
+                        error_message = result['error'].get('message')
+                        raise ForwardingError(f"Gateway error: {error_message}")
+
+                    success = True
                     return result.get("result")
 
-                except httpx.TimeoutException:
+                except httpx.TimeoutException as e:
+                    error_message = f"Timeout on attempt {attempt + 1}: {str(e)}"
                     if attempt == settings.max_tool_retries - 1:
                         raise
                     await asyncio.sleep(1 * (attempt + 1))
 
         except Exception as e:
+            error_message = str(e)
             raise ForwardingError(f"Failed to forward to {gateway.name}: {str(e)}")
+        finally:
+            # Always record server metrics
+            await self._record_server_metric(db, gateway, start_time, success, error_message)
 
     async def _forward_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None, request_headers: Optional[Dict[str, str]] = None) -> List[Any]:
         """Forward request to all active gateways.
@@ -738,3 +752,29 @@ class ForwardingService:
         """
         api_key = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
         return {"Authorization": f"Basic {api_key}", "X-API-Key": api_key}
+
+    async def _record_server_metric(self, db: Session, gateway: DbGateway, start_time: float, success: bool, error_message: Optional[str]) -> None:
+        """
+        Records a metric for a server interaction.
+
+        This function calculates the response time using the provided start time and records
+        the metric details (including whether the interaction was successful and any error message)
+        into the database. The metric is then committed to the database.
+
+        Args:
+            db (Session): The SQLAlchemy database session.
+            gateway (DbGateway): The gateway that was accessed.
+            start_time (float): The monotonic start time of the interaction.
+            success (bool): True if the interaction succeeded; otherwise, False.
+            error_message (Optional[str]): The error message if the interaction failed, otherwise None.
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+        metric = ServerMetric(
+            server_id=gateway.id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
