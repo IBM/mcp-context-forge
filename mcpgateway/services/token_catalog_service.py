@@ -21,7 +21,6 @@ from typing import List, Optional
 import uuid
 
 # Third-Party
-import jwt
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -29,6 +28,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import EmailApiToken, EmailUser, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_jwt_token import create_jwt_token
 
 # Initialize logging
 logging_service = LoggingService()
@@ -183,10 +183,20 @@ class TokenCatalogService:
     """Service for managing user API token catalogs.
 
     This service provides comprehensive token lifecycle management including
-    creation, scoping, revocation, usage tracking, and analytics.
+    creation, scoping, revocation, usage tracking, and analytics. It handles
+    JWT-based API tokens with fine-grained access control, team support,
+    and comprehensive audit logging.
+
+    Key features:
+    - Token creation with customizable scopes and permissions
+    - Team-based token management with role-based access
+    - Token revocation and blacklisting
+    - Usage tracking and analytics
+    - IP and time-based restrictions
+    - Automatic cleanup of expired tokens
 
     Attributes:
-        db (Session): SQLAlchemy database session
+        db (Session): SQLAlchemy database session for token operations
 
     Examples:
         >>> from mcpgateway.services.token_catalog_service import TokenCatalogService
@@ -203,38 +213,26 @@ class TokenCatalogService:
         """
         self.db = db
 
-    def _generate_token(self, user_email: str, team_id: Optional[str] = None, expires_at: Optional[datetime] = None, scope: Optional["TokenScope"] = None, user: Optional[object] = None) -> str:
+    async def _generate_token(self, user_email: str, team_id: Optional[str] = None, expires_at: Optional[datetime] = None, scope: Optional["TokenScope"] = None, user: Optional[object] = None) -> str:
         """Generate a JWT token for API access.
+
+        This internal method creates a properly formatted JWT token with all
+        necessary claims including user identity, scopes, team membership,
+        and expiration. The token follows the MCP Gateway JWT structure.
 
         Args:
             user_email: User's email address for the token subject
             team_id: Optional team ID for team-scoped tokens
             expires_at: Optional expiration datetime
-            scope: Optional token scope information
+            scope: Optional token scope information for access control
             user: Optional user object to extract admin privileges
 
         Returns:
-            str: JWT token string
+            str: Signed JWT token string ready for API authentication
 
-        Examples:
-            Basic token generation and payload shape:
-            >>> service = TokenCatalogService(None)
-            >>> token = service._generate_token("user@example.com")
-            >>> import jwt as _jwt
-            >>> payload = _jwt.decode(token, options={"verify_signature": False})
-            >>> payload["sub"]
-            'user@example.com'
-            >>> isinstance(payload.get('scopes'), dict)
-            True
-
-            Include team and scoped permissions:
-            >>> scope = TokenScope(permissions=["tools.read"], ip_restrictions=["10.0.0.0/24"], time_restrictions={"weekdays_only": True})
-            >>> token2 = service._generate_token("u@example.com", team_id="team-1", scope=scope)
-            >>> payload2 = _jwt.decode(token2, options={"verify_signature": False})
-            >>> 'team-1' in payload2.get('teams', [])
-            True
-            >>> payload2['scopes']['permissions']
-            ['tools.read']
+        Note:
+            This is an internal method. Use create_token() to generate
+            tokens with proper database tracking and validation.
         """
         now = datetime.now(timezone.utc)
 
@@ -270,8 +268,9 @@ class TokenCatalogService:
                 "time_restrictions": {},
             }
 
-        # Generate JWT token
-        return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+        # Generate JWT token using the centralized token creation utility
+        # The create_jwt_token will handle expiration and other standard claims
+        return await create_jwt_token(payload)
 
     def _hash_token(self, token: str) -> str:
         """Create secure hash of token for storage.
@@ -367,7 +366,7 @@ class TokenCatalogService:
             expires_at = utc_now() + timedelta(days=expires_in_days)
 
         # Generate JWT token with proper claims and user admin status
-        raw_token = self._generate_token(user_email=user_email, team_id=team_id, expires_at=expires_at, scope=scope, user=user)
+        raw_token = await self._generate_token(user_email=user_email, team_id=team_id, expires_at=expires_at, scope=scope, user=user)
         token_hash = self._hash_token(raw_token)
 
         # Create token record

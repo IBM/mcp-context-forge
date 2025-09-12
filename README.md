@@ -1040,36 +1040,39 @@ You can get started by copying the provided [.env.example](.env.example) to `.en
 
 ### Basic
 
-| Setting         | Description                              | Default                | Options                |
-| --------------- | ---------------------------------------- | ---------------------- | ---------------------- |
-| `APP_NAME`      | Gateway / OpenAPI title                  | `MCP Gateway`          | string                 |
-| `HOST`          | Bind address for the app                 | `127.0.0.1`            | IPv4/IPv6              |
-| `PORT`          | Port the server listens on               | `4444`                 | 1-65535                |
-| `DATABASE_URL`  | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
-| `APP_ROOT_PATH` | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
-| `TEMPLATES_DIR` | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
-| `STATIC_DIR`    | Path to static files                     | `mcpgateway/static`    | path                   |
-| `PROTOCOL_VERSION` | MCP protocol version supported          | `2025-03-26`           | string                 |
+| Setting            | Description                              | Default                | Options                |
+|--------------------|------------------------------------------|------------------------|------------------------|
+| `APP_NAME`         | Gateway / OpenAPI title                  | `MCP Gateway`          | string                 |
+| `HOST`             | Bind address for the app                 | `127.0.0.1`            | IPv4/IPv6              |
+| `PORT`             | Port the server listens on               | `4444`                 | 1-65535                |
+| `DATABASE_URL`     | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
+| `APP_ROOT_PATH`    | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
+| `TEMPLATES_DIR`    | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
+| `STATIC_DIR`       | Path to static files                     | `mcpgateway/static`    | path                   |
+| `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-03-26`           | string                 |
 
 > 💡 Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
 
 ### Authentication
 
-| Setting               | Description                                                      | Default       | Options    |
-| --------------------- | ---------------------------------------------------------------- | ------------- | ---------- |
-| `BASIC_AUTH_USER`     | Username for Admin UI login and HTTP Basic authentication        | `admin`       | string     |
-| `BASIC_AUTH_PASSWORD` | Password for Admin UI login and HTTP Basic authentication        | `changeme`    | string     |
-| `PLATFORM_ADMIN_EMAIL` | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string |
-| `AUTH_REQUIRED`       | Require authentication for all API routes                        | `true`        | bool       |
-| `JWT_SECRET_KEY`      | Secret key used to **sign JWT tokens** for API access            | `my-test-key` | string     |
-| `JWT_ALGORITHM`       | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based) | `HS256`       | PyJWT algs |
-| `JWT_AUDIENCE`        | JWT audience claim for token validation                           | `mcpgateway-api` | string  |
-| `JWT_ISSUER`          | JWT issuer claim for token validation                             | `mcpgateway`  | string     |
-| `TOKEN_EXPIRY`        | Expiry of generated JWTs in minutes                              | `10080`       | int > 0    |
-| `REQUIRE_TOKEN_EXPIRATION` | Require all JWT tokens to have expiration claims           | `false`       | bool       |
-| `AUTH_ENCRYPTION_SECRET` | Passphrase used to derive AES key for encrypting tool auth headers | `my-test-salt` | string |
-| `OAUTH_REQUEST_TIMEOUT` | OAuth request timeout in seconds                             | `30`          | int > 0    |
-| `OAUTH_MAX_RETRIES`   | Maximum retries for OAuth token requests                        | `3`           | int > 0    |
+| Setting                     | Description                                                                  | Default             | Options     |
+|-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
+| `BASIC_AUTH_USER`           | Username for Admin UI login and HTTP Basic authentication                    | `admin`             | string      |
+| `BASIC_AUTH_PASSWORD`       | Password for Admin UI login and HTTP Basic authentication                    | `changeme`          | string      |
+| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
+| `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
+| `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
+| `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key`       | string      |
+| `JWT_PUBLIC_KEY_PATH`       | If an asymmetric algorithm is used, a public key is required                 | (empty)             | path to pem |
+| `JWT_PRIVATE_KEY_PATH`      | If an asymmetric algorithm is used, a private key is required                | (empty)             | path to pem |
+| `JWT_AUDIENCE`              | JWT audience claim for token validation                                      | `mcpgateway-api`    | string      |
+| `JWT_AUDIENCE_VERIFICATION` | Disables jwt audience verification (useful for DCR)                          | `true`              | boolean     |
+| `JWT_ISSUER`                | JWT issuer claim for token validation                                        | `mcpgateway`        | string      |
+| `TOKEN_EXPIRY`              | Expiry of generated JWTs in minutes                                          | `10080`             | int > 0     |
+| `REQUIRE_TOKEN_EXPIRATION`  | Require all JWT tokens to have expiration claims                             | `false`             | bool        |
+| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
+| `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
+| `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 
 > 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
 >

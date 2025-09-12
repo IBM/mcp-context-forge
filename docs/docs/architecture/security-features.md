@@ -10,7 +10,12 @@
 
 ### 🔐 Authentication & Identity Management
 
-* **JWT Token Management** - Configurable JWT tokens with expiration, per-user token catalogs, and revocation support ([#87](https://github.com/IBM/mcp-context-forge/issues/87), ✅ [#425](https://github.com/IBM/mcp-context-forge/issues/425))
+* **JWT Token Management** - Configurable JWT tokens with **symmetric (HMAC) and asymmetric (RSA/ECDSA) algorithm support**, expiration, per-user token catalogs, and revocation support ([#87](https://github.com/IBM/mcp-context-forge/issues/87), ✅ [#425](https://github.com/IBM/mcp-context-forge/issues/425))
+  - **HMAC Support**: HS256, HS384, HS512 for simple deployments
+  - **RSA Support**: RS256, RS384, RS512 for enterprise and distributed architectures
+  - **ECDSA Support**: ES256, ES384, ES512 for modern cryptographic requirements
+  - **Key Management**: Configurable public/private key paths for asymmetric algorithms
+  - **Dynamic Configuration**: Runtime algorithm validation and key loading
 
 * **Database-Backed User Authentication** - Argon2id password hashing replacing basic auth ([#544](https://github.com/IBM/mcp-context-forge/issues/544)) 🚧
 

@@ -55,6 +55,7 @@ import jwt
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.jwt_config_helper import validate_jwt_algo_and_keys
 
 basic_security = HTTPBasic(auto_error=False)
 security = HTTPBearer(auto_error=False)
@@ -77,68 +78,16 @@ async def verify_jwt_token(token: str) -> dict:
         dict: The decoded token payload containing claims (e.g., user info).
 
     Raises:
-        HTTPException: 401 status if the token has expired or is invalid.
-        MissingRequiredClaimError: If the 'exp' claim is required but missing.
-
-    Examples:
-        >>> from mcpgateway.utils import verify_credentials as vc
-        >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
-        ...     jwt_algorithm = 'HS256'
-        ...     jwt_audience = 'mcpgateway-api'
-        ...     jwt_issuer = 'mcpgateway'
-        ...     basic_auth_user = 'user'
-        ...     basic_auth_password = 'pass'
-        ...     auth_required = True
-        ...     require_token_expiration = False
-        ...     docs_allow_basic_auth = False
-        >>> vc.settings = DummySettings()
-        >>> import jwt
-        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
-        >>> import asyncio
-        >>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
-        True
-
-        Test expired token:
-        >>> from datetime import datetime, timezone, timedelta
-        >>> expired_payload = {'sub': 'bob', 'exp': datetime.now(timezone.utc) - timedelta(hours=1)}
-        >>> expired_token = jwt.encode(expired_payload, 'secret', algorithm='HS256')
-        >>> try:
-        ...     asyncio.run(vc.verify_jwt_token(expired_token))
-        ... except vc.HTTPException as e:
-        ...     print(e.status_code, e.detail)
-        401 Token has expired
-
-        Test invalid token:
-        >>> invalid_token = 'invalid.token.here'
-        >>> try:
-        ...     asyncio.run(vc.verify_jwt_token(invalid_token))
-        ... except vc.HTTPException as e:
-        ...     print(e.status_code, e.detail)
-        401 Invalid token
+        HTTPException: If token is invalid, expired, or missing required claims.
+        MissingRequiredClaimError: If token is missing required expiration claim.
     """
-    # try:
-    #     Decode and validate token
-    #     payload = jwt.decode(
-    #         token,
-    #         settings.jwt_secret_key,
-    #         algorithms=[settings.jwt_algorithm],
-    #         # options={"require": ["exp"]},  # Require expiration
-    #     )
-    #     return payload  # Contains the claims (e.g., user info)
-    # except jwt.ExpiredSignatureError:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="Token has expired",
-    #         headers={"WWW-Authenticate": "Bearer"},
-    #     )
-    # except PyJWTError:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_401_UNAUTHORIZED,
-    #         detail="Invalid token",
-    #         headers={"WWW-Authenticate": "Bearer"},
-    #     )
     try:
+        validate_jwt_algo_and_keys()
+
+        # Import the verification key helper
+        # First-Party
+        from mcpgateway.utils.jwt_config_helper import get_jwt_public_key_or_secret
+
         # First decode to check claims
         unverified = jwt.decode(token, options={"verify_signature": False})
 
@@ -154,10 +103,11 @@ async def verify_jwt_token(token: str) -> dict:
         options = {}
         if settings.require_token_expiration:
             options["require"] = ["exp"]
+            options["verify_aud"] = settings.jwt_audience_verification
 
         # Use configured audience and issuer for validation (security fix)
         decode_kwargs = {
-            "key": settings.jwt_secret_key,
+            "key": get_jwt_public_key_or_secret(),
             "algorithms": [settings.jwt_algorithm],
             "options": options,
             "audience": settings.jwt_audience,
@@ -775,10 +725,6 @@ async def require_admin_auth(
     # Try email authentication first if enabled
     if getattr(settings, "email_auth_enabled", False):
         try:
-            # Try to get JWT token from cookie first, then from credentials
-            # Third-Party
-            import jwt as jwt_lib
-
             # First-Party
             from mcpgateway.db import get_db
             from mcpgateway.services.email_auth_service import EmailAuthService
@@ -791,7 +737,7 @@ async def require_admin_auth(
                 db_session = next(get_db())
                 try:
                     # Decode and verify JWT token
-                    payload = jwt_lib.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], audience=settings.jwt_audience, issuer=settings.jwt_issuer)
+                    payload = await verify_jwt_token(token)
                     username = payload.get("sub") or payload.get("username")  # Support both new and legacy formats
 
                     if username:
@@ -812,10 +758,8 @@ async def require_admin_auth(
                                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
                         else:
                             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-                except jwt_lib.ExpiredSignatureError:
-                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-                except jwt_lib.InvalidTokenError:
-                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+                except Exception:
+                    raise Exception
                 finally:
                     db_session.close()
         except HTTPException as e:

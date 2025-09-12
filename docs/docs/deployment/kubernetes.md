@@ -98,12 +98,13 @@ You can load your `.env` as a ConfigMap:
 
 === "With SQLite (Default)"
     ```bash
-    # Create .env file
+    # Create .env file for HMAC (development/simple deployments)
     cat > .env << EOF
     HOST=0.0.0.0
     PORT=4444
     DATABASE_URL=sqlite:///./mcp.db
-    JWT_SECRET_KEY=your-secret-key
+    JWT_ALGORITHM=HS256
+    JWT_SECRET_KEY=your-strong-secret-key-here
     BASIC_AUTH_USER=admin
     BASIC_AUTH_PASSWORD=changeme
     MCPGATEWAY_UI_ENABLED=true
@@ -111,6 +112,21 @@ You can load your `.env` as a ConfigMap:
     EOF
 
     kubectl create configmap mcpgateway-env --from-env-file=.env
+
+    # For production with asymmetric JWT (RSA/ECDSA)
+    # 1. Generate keys locally:
+    #    mkdir jwt && openssl genrsa -out jwt/private.pem 4096
+    #    openssl rsa -in jwt/private.pem -pubout -out jwt/public.pem
+    #
+    # 2. Create secret for JWT keys:
+    #    kubectl create secret generic jwt-keys \
+    #      --from-file=private.pem=jwt/private.pem \
+    #      --from-file=public.pem=jwt/public.pem
+    #
+    # 3. Update environment configuration:
+    #    JWT_ALGORITHM=RS256
+    #    JWT_PUBLIC_KEY_PATH=/etc/jwt/public.pem
+    #    JWT_PRIVATE_KEY_PATH=/etc/jwt/private.pem
     ```
 
 === "With MariaDB"
@@ -230,6 +246,176 @@ spec:
   resources:
     requests:
       storage: 10Gi
+```
+
+---
+
+## 🔐 Production Deployment with Asymmetric JWT
+
+For enterprise production deployments, use asymmetric JWT with proper secret management:
+
+### Step 1: Generate and Store JWT Keys
+
+```bash
+# Option 1: Use Makefile (Recommended)
+make certs-jwt                   # Generates certs/jwt/{private,public}.pem
+
+# Create Kubernetes secret for JWT keys
+kubectl create secret generic jwt-keys \
+  --from-file=private.pem=certs/jwt/private.pem \
+  --from-file=public.pem=certs/jwt/public.pem
+
+# Option 2: Manual generation (Alternative)
+mkdir -p certs/jwt
+openssl genrsa -out certs/jwt/private.pem 4096
+openssl rsa -in certs/jwt/private.pem -pubout -out certs/jwt/public.pem
+kubectl create secret generic jwt-keys \
+  --from-file=private.pem=certs/jwt/private.pem \
+  --from-file=public.pem=certs/jwt/public.pem
+
+# Note: Keep local keys for development, they're in .gitignore
+```
+
+### Step 2: Production ConfigMap with Asymmetric JWT
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcpgateway-config-prod
+data:
+  HOST: "0.0.0.0"
+  PORT: "4444"
+  DATABASE_URL: "mysql+pymysql://mysql:changeme@mysql-service:3306/mcp"
+
+  # Asymmetric JWT Configuration
+  JWT_ALGORITHM: "RS256"
+  JWT_PUBLIC_KEY_PATH: "/etc/jwt/public.pem"
+  JWT_PRIVATE_KEY_PATH: "/etc/jwt/private.pem"
+  JWT_AUDIENCE: "mcpgateway-production"
+  JWT_ISSUER: "your-organization"
+  JWT_AUDIENCE_VERIFICATION: "true"
+  REQUIRE_TOKEN_EXPIRATION: "true"
+
+  # Security settings
+  ENVIRONMENT: "production"
+  MCPGATEWAY_UI_ENABLED: "false"        # Disable for production
+  MCPGATEWAY_ADMIN_API_ENABLED: "false" # Disable for production
+  BASIC_AUTH_USER: "admin"
+  BASIC_AUTH_PASSWORD: "changeme"
+```
+
+### Step 3: Production Deployment with JWT Keys
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcpgateway-prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mcpgateway-prod
+  template:
+    metadata:
+      labels:
+        app: mcpgateway-prod
+    spec:
+      containers:
+        - name: mcpgateway
+          image: ghcr.io/ibm/mcp-context-forge:latest
+          ports:
+            - containerPort: 4444
+          envFrom:
+            - configMapRef:
+                name: mcpgateway-config-prod
+          volumeMounts:
+            # Mount JWT keys as read-only
+            - name: jwt-keys
+              mountPath: /etc/jwt
+              readOnly: true
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: jwt-keys
+          secret:
+            secretName: jwt-keys
+            defaultMode: 0600
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mcpgateway-prod-service
+spec:
+  selector:
+    app: mcpgateway-prod
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4444
+  type: ClusterIP
+```
+
+### Step 4: Security Considerations
+
+**Key Rotation Strategy:**
+```bash
+# 1. Generate new key pair
+openssl genrsa -out jwt/private_new.pem 4096
+openssl rsa -in jwt/private_new.pem -pubout -out jwt/public_new.pem
+
+# 2. Update secret with new keys
+kubectl create secret generic jwt-keys-new \
+  --from-file=private.pem=jwt/private_new.pem \
+  --from-file=public.pem=jwt/public_new.pem
+
+# 3. Update deployment to use new secret
+kubectl patch deployment mcpgateway-prod \
+  -p '{"spec":{"template":{"spec":{"volumes":[{"name":"jwt-keys","secret":{"secretName":"jwt-keys-new"}}]}}}}'
+
+# 4. Clean up old secret after rollout
+kubectl delete secret jwt-keys
+```
+
+**RBAC for JWT Keys:**
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mcpgateway-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jwt-key-reader
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["jwt-keys"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcpgateway-jwt-access
+subjects:
+  - kind: ServiceAccount
+    name: mcpgateway-sa
+roleRef:
+  kind: Role
+  name: jwt-key-reader
+  apiGroup: rbac.authorization.k8s.io
 ```
 
 !!! info "MariaDB & MySQL Kubernetes Support"

@@ -19,11 +19,10 @@ from typing import Optional
 # Third-Party
 from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
-import jwt
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.db import Permissions
+from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -47,7 +46,7 @@ class TokenScopingMiddleware:
             True
         """
 
-    def _extract_token_scopes(self, request: Request) -> Optional[dict]:
+    async def _extract_token_scopes(self, request: Request) -> Optional[dict]:
         """Extract token scopes from JWT in request.
 
         Args:
@@ -64,11 +63,14 @@ class TokenScopingMiddleware:
         token = auth_header.split(" ", 1)[1]
 
         try:
-            # Decode JWT with signature verification but skip audience/issuer checks for scope extraction
-            # (full verification including audience/issuer is handled by the auth system)
-            payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], options={"verify_aud": False, "verify_iss": False})
+            # Use the centralized verify_jwt_token function for consistent JWT validation
+            payload = await verify_jwt_token(token)
             return payload.get("scopes")
-        except jwt.PyJWTError:
+        except HTTPException:
+            # Token validation failed (expired, invalid, etc.)
+            return None
+        except Exception:
+            # Any other error in token validation
             return None
 
     def _get_client_ip(self, request: Request) -> str:
@@ -352,7 +354,7 @@ class TokenScopingMiddleware:
             return await call_next(request)
 
         # Extract token scopes
-        scopes = self._extract_token_scopes(request)
+        scopes = await self._extract_token_scopes(request)
 
         # If no scopes, continue (regular auth will handle this)
         if not scopes:

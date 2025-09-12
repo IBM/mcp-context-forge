@@ -61,7 +61,6 @@ import uuid
 
 # Third-Party
 from fastapi import HTTPException, status
-import jwt
 
 # First-Party
 from mcpgateway import __version__
@@ -71,6 +70,7 @@ from mcpgateway.models import Implementation, InitializeResult, ServerCapabiliti
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
+from mcpgateway.utils.create_jwt_token import create_jwt_token
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
@@ -1319,7 +1319,8 @@ class SessionRegistry(SessionBackend):
                             "auth_provider": "internal",
                         },
                     }
-                    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+                    # Generate token using centralized token creation
+                    token = await create_jwt_token(payload)
 
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                 # Extract root URL from base_url (remove /servers/{id} path)

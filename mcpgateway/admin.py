@@ -36,7 +36,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
-import jwt
 from pydantic import ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
@@ -88,7 +87,7 @@ from mcpgateway.services.server_service import ServerError, ServerNameConflictEr
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
-from mcpgateway.utils.create_jwt_token import get_jwt_token
+from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_encryption import get_oauth_encryption
@@ -2201,7 +2200,8 @@ async def admin_ui(
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 
-            token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+            # Generate token using centralized token creation
+            token = await create_jwt_token(payload)
 
             # Set HTTP-only cookie for security
             response.set_cookie(
@@ -2338,7 +2338,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             # First-Party
             from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
 
-            token, _ = create_access_token(user)  # expires_seconds not needed here
+            token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
             root_path = request.scope.get("root_path", "")

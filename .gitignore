@@ -46,6 +46,7 @@ node_modules/
 .tmp*
 mcp.db-journal
 certs/
+jwt/
 FIXMEs
 *.old
 logs/
