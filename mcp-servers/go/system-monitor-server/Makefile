@@ -1,22 +1,24 @@
 # System Monitor Server Makefile
 # This Makefile provides common build, test, and development tasks
 
-.PHONY: help build test clean run install deps lint fmt vet
+.PHONY: help build test test-coverage coverage clean run install deps lint fmt vet
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  build     - Build the system-monitor-server binary"
-	@echo "  test      - Run all tests"
-	@echo "  clean     - Clean build artifacts"
-	@echo "  run       - Run the server in stdio mode"
-	@echo "  install   - Install the binary to GOPATH/bin"
-	@echo "  deps      - Download and verify dependencies"
-	@echo "  lint      - Run linters"
-	@echo "  fmt       - Format code"
-	@echo "  vet       - Run go vet"
-	@echo "  docker    - Build Docker image"
-	@echo "  examples  - Run example commands"
+	@echo "  build         - Build the system-monitor-server binary"
+	@echo "  test          - Run all tests"
+	@echo "  test-coverage - Run comprehensive test suite with coverage report"
+	@echo "  coverage      - Generate coverage report only"
+	@echo "  clean         - Clean build artifacts"
+	@echo "  run           - Run the server in stdio mode"
+	@echo "  install       - Install the binary to GOPATH/bin"
+	@echo "  deps          - Download and verify dependencies"
+	@echo "  lint          - Run linters"
+	@echo "  fmt           - Format code"
+	@echo "  vet           - Run go vet"
+	@echo "  docker        - Build Docker image"
+	@echo "  examples      - Run example commands"
 
 # Build the binary
 build:
@@ -27,15 +29,27 @@ build:
 # Run tests
 test:
 	@echo "Running tests..."
-	@go test -v -race -coverprofile=coverage.out ./...
-	@go tool cover -html=coverage.out -o coverage.html
-	@echo "Test coverage report: coverage.html"
+	@go test -v -race ./...
+	@echo "Tests completed!"
+
+# Run comprehensive test suite with coverage
+test-coverage:
+	@echo "Running comprehensive test suite with coverage..."
+	@chmod +x ./test_coverage.sh
+	@./test_coverage.sh
+
+# Generate coverage report only
+coverage:
+	@echo "Generating coverage report..."
+	@chmod +x ./test_coverage.sh
+	@./test_coverage.sh
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -f system-monitor-server
 	@rm -f coverage.out coverage.html
+	@rm -rf coverage/
 	@go clean
 
 # Run the server in stdio mode
