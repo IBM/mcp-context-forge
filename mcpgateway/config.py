@@ -349,7 +349,7 @@ class Settings(BaseSettings):
             str: The validated admin password value.
         """
         if v == "changeme":
-            logger.warning("🔓 SECURITY WARNING: Default admin password detected! " "Please change the BASIC_AUTH_PASSWORD immediately.")
+            logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
 
         if len(v) < 12:  # Using hardcoded value
             logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least 12 characters long. " f"Current length: {len(v)}")
@@ -362,7 +362,7 @@ class Settings(BaseSettings):
 
         complexity_score = sum([has_upper, has_lower, has_digit, has_special])
         if complexity_score < 3:
-            logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. " "Should contain at least 3 of: uppercase, lowercase, digits, special characters")
+            logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
 
         return v
 
@@ -405,7 +405,7 @@ class Settings(BaseSettings):
         # Check for hardcoded passwords in non-SQLite databases
         if not v.startswith("sqlite"):
             if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
-                logger.warning("Potentially weak database password detected. " "Consider using a stronger password.")
+                logger.warning("Potentially weak database password detected. Consider using a stronger password.")
 
         # Warn about SQLite in production
         if v.startswith("sqlite"):
@@ -426,17 +426,17 @@ class Settings(BaseSettings):
         """
         # Check for dangerous combinations - only log warnings, don't raise errors
         if not values.auth_required and values.mcpgateway_ui_enabled:
-            logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. " "Consider setting AUTH_REQUIRED=true for production.")
+            logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
 
         if values.skip_ssl_verify and not values.dev_mode:
-            logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. " "This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
+            logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
 
         if values.debug and not values.dev_mode:
-            logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. " "This may leak sensitive information! Set DEBUG=false for production.")
+            logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
         # Warn about federation without auth
         if values.federation_enabled and not values.auth_required:
-            logger.warning("🌐 SECURITY WARNING: Federation is enabled without authentication. " "This may expose your gateway to unauthorized access.")
+            logger.warning("🌐 SECURITY WARNING: Federation is enabled without authentication. This may expose your gateway to unauthorized access.")
 
         return values
 

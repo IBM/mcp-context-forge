@@ -411,13 +411,13 @@ async def validate_security_configuration():
     critical_issues = []
 
     if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:
-        critical_issues.append("Using default JWT secret in non-dev mode. " "Set JWT_SECRET_KEY environment variable!")
+        critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
 
     if settings.basic_auth_password == "changeme" and settings.mcpgateway_ui_enabled:
-        critical_issues.append("Admin UI enabled with default password. " "Set BASIC_AUTH_PASSWORD environment variable!")
+        critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
     if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
-        critical_issues.append("Federation enabled without authentication in non-dev mode. " "This is a critical security risk!")
+        critical_issues.append("Federation enabled without authentication in non-dev mode. This is a critical security risk!")
 
     # Handle critical issues based on REQUIRE_STRONG_SECRETS setting
     if critical_issues:
