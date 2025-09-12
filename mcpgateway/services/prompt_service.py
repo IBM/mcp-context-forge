@@ -35,7 +35,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginError, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -565,6 +565,7 @@ class PromptService:
             PluginViolationError: If prompt violates a plugin policy
             PromptNotFoundError: If prompt not found
             PromptError: For other prompt errors
+            PluginError: If encounters issue with plugin
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -615,7 +616,7 @@ class PromptService:
                         payload = pre_result.modified_payload
                         name = payload.name
                         arguments = payload.args
-                except PluginViolationError:
+                except (PluginError, PluginViolationError):
                     raise
                 except Exception as e:
                     logger.error(f"Error in pre-prompt fetch plugin hook: {e}")
@@ -669,7 +670,7 @@ class PromptService:
                         raise PluginViolationError("Post prompting fetch blocked by plugin")
                     # Use modified payload if provided
                     return post_result.modified_payload.result if post_result.modified_payload else result
-                except PluginViolationError:
+                except (PluginError, PluginViolationError):
                     raise
                 except Exception as e:
                     logger.error(f"Error in post-prompt fetch plugin hook: {e}")

@@ -230,7 +230,7 @@ class TestResourcePluginIntegration:
 
                 # Try to read a blocked protocol
                 # First-Party
-                from mcpgateway.services.resource_service import ResourceError
+                from mcpgateway.plugins.framework import PluginViolationError
 
                 blocked_resource = ResourceCreate(
                     uri="file:///etc/passwd",
@@ -240,7 +240,7 @@ class TestResourcePluginIntegration:
                 )
                 await service.register_resource(test_db, blocked_resource)
 
-                with pytest.raises(ResourceError) as exc_info:
+                with pytest.raises(PluginViolationError) as exc_info:
                     await service.read_resource(test_db, "file:///etc/passwd")
                 assert "Protocol not allowed" in str(exc_info.value)
 

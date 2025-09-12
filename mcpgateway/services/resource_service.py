@@ -55,7 +55,7 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import GlobalContext, PluginError, PluginManager, PluginViolationError, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -573,6 +573,8 @@ class ResourceService:
         Raises:
             ResourceNotFoundError: If resource not found
             ResourceError: If blocked by plugin
+            PluginError: If encounters issue with plugin
+            PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -654,14 +656,14 @@ class ResourceService:
                         # Plugin blocked the resource fetch
                         if pre_result.violation:
                             logger.warning(f"Resource blocked by plugin: {pre_result.violation.reason} (URI: {uri})")
-                            raise ResourceError(f"Resource blocked: {pre_result.violation.reason}")
-                        raise ResourceError("Resource fetch blocked by plugin")
+                            raise PluginViolationError(f"Resource blocked: {pre_result.violation.reason}")
+                        raise PluginViolationError("Resource fetch blocked by plugin")
 
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
                         logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
-                except ResourceError:
+                except (PluginError, PluginViolationError, ResourceError):
                     raise
                 except Exception as e:
                     logger.error(f"Error in resource pre-fetch hooks: {e}")
@@ -704,14 +706,14 @@ class ResourceService:
                         # Plugin blocked the resource after fetching
                         if post_result.violation:
                             logger.warning(f"Resource content blocked by plugin: {post_result.violation.reason} (URI: {original_uri})")
-                            raise ResourceError(f"Resource content blocked: {post_result.violation.reason}")
-                        raise ResourceError("Resource content blocked by plugin")
+                            raise PluginViolationError(f"Resource content blocked: {post_result.violation.reason}")
+                        raise PluginViolationError("Resource content blocked by plugin")
 
                     # Use modified content if plugin changed it
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
                         logger.debug(f"Resource content modified by plugin for URI: {original_uri}")
-                except ResourceError:
+                except (PluginError, PluginViolationError, ResourceError):
                     raise
                 except Exception as e:
                     logger.error(f"Error in resource post-fetch hooks: {e}")
