@@ -444,7 +444,9 @@ class TestServerService:
             associated_prompts=["302"],
         )
 
-        result = await server_service.update_server(test_db, 1, server_update)
+        test_user_email = "user@example.com"
+
+        result = await server_service.update_server(test_db, 1, server_update, test_user_email)
 
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
@@ -455,8 +457,10 @@ class TestServerService:
     async def test_update_server_not_found(self, server_service, test_db):
         test_db.get = Mock(return_value=None)
         update_data = ServerUpdate(name="updated_server")
+        test_user_email = "user@example.com"
+
         with pytest.raises(ServerError) as exc:
-            await server_service.update_server(test_db, 999, update_data)
+            await server_service.update_server(test_db, 999, update_data, test_user_email)
         assert "Server not found" in str(exc.value)
 
     @pytest.mark.asyncio
@@ -482,11 +486,15 @@ class TestServerService:
         # Should not raise ServerNameConflictError for private, but should raise IntegrityError for duplicate name
         from sqlalchemy.exc import IntegrityError
         test_db.commit = Mock(side_effect=IntegrityError("Duplicate name", None, None))
+
+        test_user_email = "user@example.com"
+
         with pytest.raises(IntegrityError):
             await server_service.update_server(
                 test_db,
                 "1",
                 ServerUpdate(name="existing_server", visibility="private"),
+                test_user_email,
             )
 
         # --- TEAM: restrict within team only (should raise ServerNameConflictError) --- #
@@ -511,11 +519,14 @@ class TestServerService:
         test_db.rollback = Mock()
         test_db.refresh = Mock()
 
+        test_user_email = "user@example.com"
+
         with pytest.raises(ServerNameConflictError) as exc:
             await server_service.update_server(
                 test_db,
                 "2",
                 ServerUpdate(name="existing_server", visibility="team", team_id="teamA"),
+                test_user_email,
             )
         assert "Team Server already exists with name" in str(exc.value)
         test_db.rollback.assert_called()
@@ -542,11 +553,14 @@ class TestServerService:
         test_db.rollback = Mock()
         test_db.refresh = Mock()
 
+        test_user_email = "user@example.com"
+
         with pytest.raises(ServerNameConflictError) as exc:
             await server_service.update_server(
                 test_db,
                 "4",
                 ServerUpdate(name="existing_server", visibility="public"),
+                test_user_email,
             )
         assert "Public Server already exists with name" in str(exc.value)
         test_db.rollback.assert_called()
@@ -920,8 +934,10 @@ class TestServerService:
             description="Updated description"
         )
 
+        test_user_email = "user@example.com"
+
         # Call the service method
-        result = await server_service.update_server(test_db, "oldserverid", server_update)
+        result = await server_service.update_server(test_db, "oldserverid", server_update, test_user_email)
 
         # Verify UUID was set correctly (note: actual normalization happens at create time)
         # The update method currently just sets the ID directly
