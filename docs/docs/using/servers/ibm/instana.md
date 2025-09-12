@@ -1,4 +1,4 @@
-# IBM Instance MCP Server
+# IBM Instana MCP Server
 
 ## Overview
 
