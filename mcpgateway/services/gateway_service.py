@@ -843,13 +843,27 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         gateways = db.execute(query).scalars().all()
         return [GatewayRead.model_validate(g).masked() for g in gateways]
 
-    async def update_gateway(self, db: Session, gateway_id: str, gateway_update: GatewayUpdate, include_inactive: bool = True) -> GatewayRead:
+    async def update_gateway(
+        self,
+        db: Session,
+        gateway_id: str,
+        gateway_update: GatewayUpdate,
+        modified_by: Optional[str] = None,
+        modified_from_ip: Optional[str] = None,
+        modified_via: Optional[str] = None,
+        modified_user_agent: Optional[str] = None,
+        include_inactive: bool = True,
+    ) -> GatewayRead:
         """Update a gateway.
 
         Args:
             db: Database session
             gateway_id: Gateway ID to update
             gateway_update: Updated gateway data
+            modified_by: Username of the person modifying the gateway
+            modified_from_ip: IP address where the modification request originated
+            modified_via: Source of modification (ui/api/import)
+            modified_user_agent: User agent string from the modification request
             include_inactive: Whether to include inactive gateways
 
         Returns:
@@ -1036,7 +1050,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
 
+                # Update metadata fields
                 gateway.updated_at = datetime.now(timezone.utc)
+                if modified_by:
+                    gateway.modified_by = modified_by
+                if modified_from_ip:
+                    gateway.modified_from_ip = modified_from_ip
+                if modified_via:
+                    gateway.modified_via = modified_via
+                if modified_user_agent:
+                    gateway.modified_user_agent = modified_user_agent
+                if hasattr(gateway, "version") and gateway.version is not None:
+                    gateway.version = gateway.version + 1
+                else:
+                    gateway.version = 1
+
                 db.commit()
                 db.refresh(gateway)
 

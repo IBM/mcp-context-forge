@@ -2461,36 +2461,69 @@ async function viewResource(resourceUri) {
             const metadataFields = [
                 {
                     label: "Created By",
-                    value: resource.createdBy || "Legacy Entity",
+                    value:
+                        resource.created_by ||
+                        resource.createdBy ||
+                        "Legacy Entity",
                 },
                 {
                     label: "Created At",
-                    value: resource.createdAt
-                        ? new Date(resource.createdAt).toLocaleString()
-                        : "Pre-metadata",
+                    value:
+                        resource.created_at || resource.createdAt
+                            ? new Date(
+                                  resource.created_at || resource.createdAt,
+                              ).toLocaleString()
+                            : "Pre-metadata",
                 },
                 {
                     label: "Created From",
-                    value: resource.createdFromIp || "Unknown",
+                    value:
+                        resource.created_from_ip ||
+                        resource.createdFromIp ||
+                        "Unknown",
                 },
                 {
                     label: "Created Via",
-                    value: resource.createdVia || "Unknown",
+                    value:
+                        resource.created_via ||
+                        resource.createdVia ||
+                        "Unknown",
                 },
                 {
                     label: "Last Modified By",
-                    value: resource.modifiedBy || "N/A",
+                    value: resource.modified_by || resource.modifiedBy || "N/A",
                 },
                 {
                     label: "Last Modified At",
-                    value: resource.modifiedAt
-                        ? new Date(resource.modifiedAt).toLocaleString()
-                        : "N/A",
+                    value:
+                        resource.updated_at || resource.updatedAt
+                            ? new Date(
+                                  resource.updated_at || resource.updatedAt,
+                              ).toLocaleString()
+                            : "N/A",
                 },
-                { label: "Version", value: resource.version || "1" },
+                {
+                    label: "Modified From",
+                    value:
+                        resource.modified_from_ip ||
+                        resource.modifiedFromIp ||
+                        "N/A",
+                },
+                {
+                    label: "Modified Via",
+                    value:
+                        resource.modified_via || resource.modifiedVia || "N/A",
+                },
+                {
+                    label: "Version",
+                    value: resource.version || "1",
+                },
                 {
                     label: "Import Batch",
-                    value: resource.importBatchId || "N/A",
+                    value:
+                        resource.import_batch_id ||
+                        resource.importBatchId ||
+                        "N/A",
                 },
             ];
 
@@ -2816,28 +2849,54 @@ async function viewPrompt(promptName) {
             const metadataFields = [
                 {
                     label: "Created By",
-                    value: prompt.createdBy || "Legacy Entity",
+                    value:
+                        prompt.created_by ||
+                        prompt.createdBy ||
+                        "Legacy Entity",
                 },
                 {
                     label: "Created At",
-                    value: prompt.createdAt
-                        ? new Date(prompt.createdAt).toLocaleString()
-                        : "Pre-metadata",
+                    value:
+                        prompt.created_at || prompt.createdAt
+                            ? new Date(
+                                  prompt.created_at || prompt.createdAt,
+                              ).toLocaleString()
+                            : "Pre-metadata",
                 },
                 {
                     label: "Created From",
-                    value: prompt.createdFromIp || "Unknown",
+                    value:
+                        prompt.created_from_ip ||
+                        prompt.createdFromIp ||
+                        "Unknown",
                 },
-                { label: "Created Via", value: prompt.createdVia || "Unknown" },
+                {
+                    label: "Created Via",
+                    value: prompt.created_via || prompt.createdVia || "Unknown",
+                },
                 {
                     label: "Last Modified By",
-                    value: prompt.modifiedBy || "N/A",
+                    value: prompt.modified_by || prompt.modifiedBy || "N/A",
                 },
                 {
                     label: "Last Modified At",
-                    value: prompt.modifiedAt
-                        ? new Date(prompt.modifiedAt).toLocaleString()
-                        : "N/A",
+                    value:
+                        prompt.updated_at || prompt.updatedAt
+                            ? new Date(
+                                  prompt.updated_at || prompt.updatedAt,
+                              ).toLocaleString()
+                            : "N/A",
+                },
+                {
+                    label: "Modified From",
+                    value:
+                        prompt.modified_from_ip ||
+                        prompt.modifiedFromIp ||
+                        "N/A",
+                },
+                {
+                    label: "Modified Via",
+                    value: prompt.modified_via || prompt.modifiedVia || "N/A",
                 },
                 { label: "Version", value: prompt.version || "1" },
                 { label: "Import Batch", value: prompt.importBatchId || "N/A" },
@@ -3089,31 +3148,55 @@ async function viewGateway(gatewayId) {
             const metadataFields = [
                 {
                     label: "Created By",
-                    value: gateway.createdBy || "Legacy Entity",
+                    value:
+                        gateway.created_by ||
+                        gateway.createdBy ||
+                        "Legacy Entity",
                 },
                 {
                     label: "Created At",
-                    value: gateway.createdAt
-                        ? new Date(gateway.createdAt).toLocaleString()
-                        : "Pre-metadata",
+                    value:
+                        gateway.created_at || gateway.createdAt
+                            ? new Date(
+                                  gateway.created_at || gateway.createdAt,
+                              ).toLocaleString()
+                            : "Pre-metadata",
                 },
                 {
                     label: "Created From",
-                    value: gateway.createdFromIp || "Unknown",
+                    value:
+                        gateway.created_from_ip ||
+                        gateway.createdFromIp ||
+                        "Unknown",
                 },
                 {
                     label: "Created Via",
-                    value: gateway.createdVia || "Unknown",
+                    value:
+                        gateway.created_via || gateway.createdVia || "Unknown",
                 },
                 {
                     label: "Last Modified By",
-                    value: gateway.modifiedBy || "N/A",
+                    value: gateway.modified_by || gateway.modifiedBy || "N/A",
                 },
                 {
                     label: "Last Modified At",
-                    value: gateway.modifiedAt
-                        ? new Date(gateway.modifiedAt).toLocaleString()
-                        : "N/A",
+                    value:
+                        gateway.updated_at || gateway.updatedAt
+                            ? new Date(
+                                  gateway.updated_at || gateway.updatedAt,
+                              ).toLocaleString()
+                            : "N/A",
+                },
+                {
+                    label: "Modified From",
+                    value:
+                        gateway.modified_from_ip ||
+                        gateway.modifiedFromIp ||
+                        "N/A",
+                },
+                {
+                    label: "Modified Via",
+                    value: gateway.modified_via || gateway.modifiedVia || "N/A",
                 },
                 { label: "Version", value: gateway.version || "1" },
                 {
@@ -3771,44 +3854,52 @@ async function viewServer(serverId) {
             const metadataFields = [
                 {
                     label: "Created By",
-                    value: server.created_by || "Legacy Entity",
+                    value: server.createdBy || "Legacy Entity",
                 },
                 {
                     label: "Created At",
-                    value: server.created_at
-                        ? new Date(server.created_at).toLocaleString()
+                    value: server.createdAt
+                        ? new Date(server.createdAt).toLocaleString()
                         : "Pre-metadata",
                 },
                 {
                     label: "Created From IP",
-                    value: server.created_from_ip || "Unknown",
+                    value:
+                        server.created_from_ip ||
+                        server.createdFromIp ||
+                        "Unknown",
                 },
                 {
                     label: "Created Via",
-                    value: server.created_via || "Unknown",
+                    value: server.created_via || server.createdVia || "Unknown",
                 },
                 {
                     label: "Last Modified By",
-                    value: server.modified_by || "N/A",
+                    value: server.modified_by || server.modifiedBy || "N/A",
                 },
                 {
                     label: "Last Modified At",
                     value: server.updated_at
                         ? new Date(server.updated_at).toLocaleString()
-                        : "N/A",
+                        : server.updatedAt
+                          ? new Date(server.updatedAt).toLocaleString()
+                          : "N/A",
                 },
                 {
                     label: "Modified From IP",
-                    value: server.modified_from_ip || "N/A",
+                    value:
+                        server.modified_from_ip ||
+                        server.modifiedFromIp ||
+                        "N/A",
                 },
                 {
                     label: "Modified Via",
-                    value: server.modified_via || "N/A",
+                    value: server.modified_via || server.modifiedVia || "N/A",
                 },
                 { label: "Version", value: server.version || "1" },
                 {
                     label: "Import Batch",
-                    value: server.import_batch_id || "N/A",
+                    value: server.importBatchId || "N/A",
                 },
             ];
 
@@ -6811,33 +6902,48 @@ async function viewTool(toolId) {
             // Set metadata fields safely with appropriate fallbacks for legacy entities
             setTextSafely(
                 ".metadata-created-by",
-                tool.createdBy || "Legacy Entity",
+                tool.created_by || tool.createdBy || "Legacy Entity",
             );
             setTextSafely(
                 ".metadata-created-at",
-                tool.createdAt
-                    ? new Date(tool.createdAt).toLocaleString()
-                    : "Pre-metadata",
+                tool.created_at
+                    ? new Date(tool.created_at).toLocaleString()
+                    : tool.createdAt
+                      ? new Date(tool.createdAt).toLocaleString()
+                      : "Pre-metadata",
             );
             setTextSafely(
                 ".metadata-created-from",
-                tool.createdFromIp || "Unknown",
+                tool.created_from_ip || tool.createdFromIp || "Unknown",
             );
             setTextSafely(
                 ".metadata-created-via",
-                tool.createdVia || "Unknown",
+                tool.created_via || tool.createdVia || "Unknown",
             );
-            setTextSafely(".metadata-modified-by", tool.modifiedBy || "N/A");
+            setTextSafely(
+                ".metadata-modified-by",
+                tool.modified_by || tool.modifiedBy || "N/A",
+            );
             setTextSafely(
                 ".metadata-modified-at",
-                tool.modifiedAt
-                    ? new Date(tool.modifiedAt).toLocaleString()
-                    : "N/A",
+                tool.updated_at
+                    ? new Date(tool.updated_at).toLocaleString()
+                    : tool.updatedAt
+                      ? new Date(tool.updatedAt).toLocaleString()
+                      : "N/A",
+            );
+            setTextSafely(
+                ".metadata-modified-from",
+                tool.modified_from_ip || tool.modifiedFromIp || "N/A",
+            );
+            setTextSafely(
+                ".metadata-modified-via",
+                tool.modified_via || tool.modifiedVia || "N/A",
             );
             setTextSafely(".metadata-version", tool.version || "1");
             setTextSafely(
                 ".metadata-import-batch",
-                tool.importBatchId || "N/A",
+                tool.import_batch_id || tool.importBatchId || "N/A",
             );
         }
 
@@ -10754,7 +10860,7 @@ function displayTokensList(tokens) {
                         ${token.description ? `<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">${escapeHtml(token.description)}</p>` : ""}
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
                             <div>
-                                <span class="font-medium">Created:</span> ${new Date(token.created_at).toLocaleDateString()}
+                                <span class="font-medium">Created:</span> ${new Date(token.createdAt).toLocaleDateString()}
                             </div>
                             <div>
                                 <span class="font-medium">Expires:</span> ${expiresText}

@@ -40,6 +40,8 @@ def mock_tool():
     tool = MagicMock(spec=DbTool)
     tool.id = "101"
     tool.name = "test_tool"
+    tool.created_by = "test_user"
+    tool.modified_by = "test_user"
     tool._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return tool
 
@@ -49,6 +51,8 @@ def mock_resource():
     res = MagicMock(spec=DbResource)
     res.id = "201"
     res.name = "test_resource"
+    res.created_by = "test_user"
+    res.modified_by = "test_user"
     res._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return res
 
@@ -58,6 +62,8 @@ def mock_prompt():
     pr = MagicMock(spec=DbPrompt)
     pr.id = "301"
     pr.name = "test_prompt"
+    pr.created_by = "test_user"
+    pr.modified_by = "test_user"
     pr._sa_instance_state = MagicMock()  # Mock the SQLAlchemy instance state
     return pr
 
@@ -70,6 +76,8 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.name = "test_server"
     server.description = "A test server"
     server.icon = "server-icon"
+    server.created_by = "test_user"
+    server.modified_by = "test_user"
     server.created_at = "2023-01-01T00:00:00"
     server.updated_at = "2023-01-01T00:00:00"
     server.is_active = True
@@ -108,6 +116,8 @@ class TestServerService:
         mock_db_server.name = "test_server"
         mock_db_server.description = "A test server"
         mock_db_server.icon = "http://example.com/image.jpg"
+        mock_db_server.created_by = "test_user"
+        mock_db_server.modified_by = "test_user"
         mock_db_server.created_at = "2023-01-01T00:00:00"
         mock_db_server.updated_at = "2023-01-01T00:00:00"
         mock_db_server.is_active = True

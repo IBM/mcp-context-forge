@@ -248,6 +248,16 @@ class PromptService:
                 "lastExecutionTime": last_time,
             },
             "tags": db_prompt.tags or [],
+            # Include metadata fields for proper API response
+            "created_by": getattr(db_prompt, "created_by", None),
+            "modified_by": getattr(db_prompt, "modified_by", None),
+            "created_from_ip": getattr(db_prompt, "created_from_ip", None),
+            "created_via": getattr(db_prompt, "created_via", None),
+            "created_user_agent": getattr(db_prompt, "created_user_agent", None),
+            "modified_from_ip": getattr(db_prompt, "modified_from_ip", None),
+            "modified_via": getattr(db_prompt, "modified_via", None),
+            "modified_user_agent": getattr(db_prompt, "modified_user_agent", None),
+            "version": getattr(db_prompt, "version", None),
         }
 
     async def register_prompt(
@@ -676,7 +686,16 @@ class PromptService:
 
             return result
 
-    async def update_prompt(self, db: Session, name: str, prompt_update: PromptUpdate) -> PromptRead:
+    async def update_prompt(
+        self,
+        db: Session,
+        name: str,
+        prompt_update: PromptUpdate,
+        modified_by: Optional[str] = None,
+        modified_from_ip: Optional[str] = None,
+        modified_via: Optional[str] = None,
+        modified_user_agent: Optional[str] = None,
+    ) -> PromptRead:
         """
         Update a prompt template.
 
@@ -684,6 +703,10 @@ class PromptService:
             db: Database session
             name: Name of prompt to update
             prompt_update: Prompt update object
+            modified_by: Username of the person modifying the prompt
+            modified_from_ip: IP address where the modification originated
+            modified_via: Source of modification (ui/api/import)
+            modified_user_agent: User agent string from the modification request
 
         Returns:
             The updated PromptRead object
@@ -744,7 +767,21 @@ class PromptService:
             if prompt_update.tags is not None:
                 prompt.tags = prompt_update.tags
 
+            # Update metadata fields
             prompt.updated_at = datetime.now(timezone.utc)
+            if modified_by:
+                prompt.modified_by = modified_by
+            if modified_from_ip:
+                prompt.modified_from_ip = modified_from_ip
+            if modified_via:
+                prompt.modified_via = modified_via
+            if modified_user_agent:
+                prompt.modified_user_agent = modified_user_agent
+            if hasattr(prompt, "version") and prompt.version is not None:
+                prompt.version = prompt.version + 1
+            else:
+                prompt.version = 1
+
             db.commit()
             db.refresh(prompt)
 

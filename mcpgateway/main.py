@@ -1129,6 +1129,7 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends
 @require_permission("servers.create")
 async def create_server(
     server: ServerCreate,
+    request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign server to"),
     visibility: str = Body("private", description="Server visibility: private, team, public"),
     db: Session = Depends(get_db),
@@ -1139,6 +1140,7 @@ async def create_server(
 
     Args:
         server (ServerCreate): The data for the new server.
+        request (Request): The incoming request object for extracting metadata.
         team_id (Optional[str]): Team ID to assign the server to.
         visibility (str): Server visibility level (private, team, public).
         db (Session): The database session used to interact with the data store.
@@ -1151,6 +1153,9 @@ async def create_server(
         HTTPException: If there is a conflict with the server name or other errors.
     """
     try:
+        # Extract metadata from request
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
+
         # Get user email and handle team assignment
         user_email = get_user_email(user)
 
@@ -1165,7 +1170,17 @@ async def create_server(
             team_id = personal_team.id if personal_team else None
 
         logger.debug(f"User {user_email} is creating a new server for team {team_id}")
-        return await server_service.register_server(db, server, created_by=user_email, team_id=team_id, owner_email=user_email, visibility=visibility)
+        return await server_service.register_server(
+            db,
+            server,
+            created_by=metadata["created_by"],
+            created_from_ip=metadata["created_from_ip"],
+            created_via=metadata["created_via"],
+            created_user_agent=metadata["created_user_agent"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
+        )
     except ServerNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ServerError as e:
@@ -1183,6 +1198,7 @@ async def create_server(
 async def update_server(
     server_id: str,
     server: ServerUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
@@ -1192,6 +1208,7 @@ async def update_server(
     Args:
         server_id (str): The ID of the server to update.
         server (ServerUpdate): The updated server data.
+        request (Request): The incoming request object containing metadata.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
@@ -1203,7 +1220,18 @@ async def update_server(
     """
     try:
         logger.debug(f"User {user} is updating server with ID {server_id}")
-        return await server_service.update_server(db, server_id, server)
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
+
+        return await server_service.update_server(
+            db,
+            server_id,
+            server,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerNameConflictError as e:
@@ -2281,6 +2309,7 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
 async def update_resource(
     uri: str,
     resource: ResourceUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
@@ -2290,6 +2319,7 @@ async def update_resource(
     Args:
         uri (str): URI of the resource.
         resource (ResourceUpdate): New resource data.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -2301,7 +2331,18 @@ async def update_resource(
     """
     try:
         logger.debug(f"User {user} is updating resource with URI {uri}")
-        result = await resource_service.update_resource(db, uri, resource)
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
+
+        result = await resource_service.update_resource(
+            db,
+            uri,
+            resource,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:
@@ -2654,6 +2695,7 @@ async def get_prompt_no_args(
 async def update_prompt(
     name: str,
     prompt: PromptUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> PromptRead:
@@ -2663,6 +2705,7 @@ async def update_prompt(
     Args:
         name (str): Identifier of the prompt to update.
         prompt (PromptUpdate): New prompt content and metadata.
+        request (Request): The FastAPI request object for metadata extraction.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
 
@@ -2676,7 +2719,18 @@ async def update_prompt(
     logger.info(f"User: {user} requested to update prompt: {name} with data={prompt}")
     logger.debug(f"User: {user} requested to update prompt: {name} with data={prompt}")
     try:
-        return await prompt_service.update_prompt(db, name, prompt)
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
+
+        return await prompt_service.update_prompt(
+            db,
+            name,
+            prompt,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
     except Exception as e:
         if isinstance(e, PromptNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -2890,6 +2944,7 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
 async def update_gateway(
     gateway_id: str,
     gateway: GatewayUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> GatewayRead:
@@ -2899,6 +2954,7 @@ async def update_gateway(
     Args:
         gateway_id: Gateway ID.
         gateway: Gateway update data.
+        request (Request): The FastAPI request object for metadata extraction.
         db: Database session.
         user: Authenticated user.
 
@@ -2907,7 +2963,18 @@ async def update_gateway(
     """
     logger.debug(f"User '{user}' requested update on gateway {gateway_id} with data={gateway}")
     try:
-        return await gateway_service.update_gateway(db, gateway_id, gateway)
+        # Extract modification metadata
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
+
+        return await gateway_service.update_gateway(
+            db,
+            gateway_id,
+            gateway,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
     except Exception as ex:
         if isinstance(ex, GatewayNotFoundError):
             return JSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
