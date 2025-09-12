@@ -1337,9 +1337,36 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db.rollback()
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
-    async def forward_request(self, gateway: DbGateway, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    async def forward_request(self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None) -> Any:  # noqa: F811 # pylint: disable=function-redefined
         """
-        Forward a request to a gateway.
+        Forward a request to a gateway or multiple gateways.
+
+        This method handles two calling patterns:
+        1. forward_request(gateway, method, params) - Forward to a specific gateway
+        2. forward_request(db, method, params) - Forward to active gateways in the database
+
+        Args:
+            gateway_or_db: Either a DbGateway object or database Session
+            method: RPC method name
+            params: Optional method parameters
+
+        Returns:
+            Gateway response
+
+        Raises:
+            GatewayConnectionError: If forwarding fails
+            GatewayError: If gateway gave an error
+        """
+        # Dispatch based on first parameter type
+        if hasattr(gateway_or_db, "execute"):
+            # This is a database session - forward to all active gateways
+            return await self._forward_request_to_all(gateway_or_db, method, params)
+        # This is a gateway object - forward to specific gateway
+        return await self._forward_request_to_gateway(gateway_or_db, method, params)
+
+    async def _forward_request_to_gateway(self, gateway: DbGateway, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        """
+        Forward a request to a specific gateway.
 
         Args:
             gateway: Gateway to forward to
@@ -1352,17 +1379,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Raises:
             GatewayConnectionError: If forwarding fails
             GatewayError: If gateway gave an error
-
-        Examples:
-            >>> from mcpgateway.services.gateway_service import GatewayService
-            >>> from unittest.mock import MagicMock
-            >>> service = GatewayService()
-            >>> gateway = MagicMock()
-            >>> import asyncio
-            >>> try:
-            ...     asyncio.run(service.forward_request(gateway, 'method'))
-            ... except Exception:
-            ...     pass
         """
         start_time = time.monotonic()
 
@@ -1383,6 +1399,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if not gateway.enabled:
                 raise GatewayConnectionError(f"Cannot forward request to inactive gateway: {gateway.name}")
 
+            response = None  # Initialize response to avoid UnboundLocalError
             try:
                 # Build RPC request
                 request = {"jsonrpc": "2.0", "id": 1, "method": method}
@@ -1391,8 +1408,38 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if span:
                         span.set_attribute("rpc.params_count", len(params))
 
+                # Handle OAuth authentication for the specific gateway
+                headers = {}
+
+                if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
+                    try:
+                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                        if grant_type == "client_credentials":
+                            # Use OAuth manager to get access token for Client Credentials flow
+                            access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                            headers = {"Authorization": f"Bearer {access_token}"}
+                        elif grant_type == "authorization_code":
+                            # For Authorization Code flow, try to get a stored token
+                            # First-Party
+                            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                            with SessionLocal() as token_db:
+                                token_storage = TokenStorageService(token_db)
+                                access_token = await token_storage.get_any_valid_token(gateway.id)
+                                if access_token:
+                                    headers = {"Authorization": f"Bearer {access_token}"}
+                                else:
+                                    raise GatewayConnectionError(f"No valid OAuth token found for authorization_code gateway {gateway.name}")
+                    except Exception as oauth_error:
+                        raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
+                else:
+                    # Handle non-OAuth authentication (existing logic)
+                    auth_data = gateway.auth_value or {}
+                    headers = decode_auth(auth_data) if auth_data else self._get_auth_headers()
+
                 # Directly use the persistent HTTP client (no async with)
-                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=self._get_auth_headers())
+                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
@@ -1417,6 +1464,96 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 raise GatewayError(f"Gateway error: {result['error'].get('message')}")
 
             return result.get("result")
+
+    async def _forward_request_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        """
+        Forward a request to all active gateways that can handle the method.
+
+        Args:
+            db: Database session
+            method: RPC method name
+            params: Optional method parameters
+
+        Returns:
+            Gateway response from the first successful gateway
+
+        Raises:
+            GatewayConnectionError: If no gateways can handle the request
+        """
+        # Get all active gateways
+        active_gateways = db.execute(select(DbGateway).where(DbGateway.enabled.is_(True))).scalars().all()
+
+        if not active_gateways:
+            raise GatewayConnectionError("No active gateways available to forward request")
+
+        errors = []
+
+        # Try each active gateway in order
+        for gateway in active_gateways:
+            try:
+                # Handle OAuth authentication for the specific gateway
+                headers = {}
+
+                if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
+                    try:
+                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                        if grant_type == "client_credentials":
+                            # Use OAuth manager to get access token for Client Credentials flow
+                            access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                            headers = {"Authorization": f"Bearer {access_token}"}
+                        elif grant_type == "authorization_code":
+                            # For Authorization Code flow, try to get a stored token
+                            # First-Party
+                            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                            token_storage = TokenStorageService(db)
+                            access_token = await token_storage.get_any_valid_token(gateway.id)
+                            if access_token:
+                                headers = {"Authorization": f"Bearer {access_token}"}
+                            else:
+                                logger.warning(f"No valid OAuth token found for authorization_code gateway {gateway.name}. Skipping.")
+                                continue
+                    except Exception as oauth_error:
+                        logger.warning(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
+                        errors.append(f"Gateway {gateway.name}: OAuth error - {str(oauth_error)}")
+                        continue
+                else:
+                    # Handle non-OAuth authentication
+                    auth_data = gateway.auth_value or {}
+                    headers = decode_auth(auth_data)
+
+                # Build RPC request
+                request = {"jsonrpc": "2.0", "id": 1, "method": method}
+                if params:
+                    request["params"] = params
+
+                # Forward request with proper authentication headers
+                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+                # Update last seen timestamp
+                gateway.last_seen = datetime.now(timezone.utc)
+
+                # Check for RPC errors
+                if "error" in result:
+                    errors.append(f"Gateway {gateway.name}: {result['error'].get('message', 'Unknown RPC error')}")
+                    continue
+
+                # Success - return the result
+                logger.info(f"Successfully forwarded request to gateway {gateway.name}")
+                return result.get("result")
+
+            except Exception as e:
+                error_msg = f"Gateway {gateway.name}: {str(e)}"
+                errors.append(error_msg)
+                logger.warning(f"Failed to forward request to gateway {gateway.name}: {e}")
+                continue
+
+        # If we get here, all gateways failed
+        error_summary = "; ".join(errors)
+        raise GatewayConnectionError(f"All gateways failed to handle request '{method}': {error_summary}")
 
     async def _handle_gateway_failure(self, gateway: str) -> None:
         """Tracks and handles gateway failures during health checks.
@@ -1526,9 +1663,38 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     ) as span:
                         logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
                         try:
-                            # Ensure auth_value is a dict
-                            auth_data = gateway.auth_value or {}
-                            headers = decode_auth(auth_data)
+                            # Handle different authentication types
+                            headers = {}
+
+                            if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
+                                # Handle OAuth authentication for health checks
+                                try:
+                                    grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                                    if grant_type == "client_credentials":
+                                        # Use OAuth manager to get access token for Client Credentials flow
+                                        access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                        headers = {"Authorization": f"Bearer {access_token}"}
+                                    elif grant_type == "authorization_code":
+                                        # For Authorization Code flow, try to get a stored token
+                                        # First-Party
+                                        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                        with SessionLocal() as token_db:
+                                            token_storage = TokenStorageService(token_db)
+                                            access_token = await token_storage.get_any_valid_token(gateway.id)
+                                            if access_token:
+                                                headers = {"Authorization": f"Bearer {access_token}"}
+                                            else:
+                                                logger.warning(f"No valid OAuth token found for authorization_code gateway {gateway.name}. Health check may fail.")
+                                                headers = {}
+                                except Exception as oauth_error:
+                                    logger.warning(f"Failed to obtain OAuth token for health check of gateway {gateway.name}: {oauth_error}")
+                                    headers = {}
+                            else:
+                                # Handle non-OAuth authentication (existing logic)
+                                auth_data = gateway.auth_value or {}
+                                headers = decode_auth(auth_data)
 
                             # Perform the GET and raise on 4xx/5xx
                             if (gateway.transport).lower() == "sse":
@@ -1755,7 +1921,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     return {}, [], [], []
                 # For Client Credentials flow, we can get the token immediately
                 try:
-                    print(f"oauth_config: {oauth_config}")
+                    logger.debug("Obtaining OAuth access token for Client Credentials flow")
                     access_token = await self.oauth_manager.get_access_token(oauth_config)
                     authentication = {"Authorization": f"Bearer {access_token}"}
                 except Exception as e:
