@@ -898,7 +898,7 @@ class EmailTeamMember(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
 
     # Foreign keys
-    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
 
     # Membership details
@@ -958,7 +958,7 @@ class EmailTeamInvitation(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
 
     # Foreign keys
-    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
 
     # Invitation details
     email: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1061,7 +1061,7 @@ class EmailTeamJoinRequest(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
 
     # Foreign keys
-    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
+    team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
 
     # Request details
@@ -1495,7 +1495,7 @@ class Tool(Base):
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
 
     # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
@@ -1703,11 +1703,6 @@ class Tool(Base):
             "avg_response_time": self.avg_response_time,
             "last_execution_time": self.last_execution_time,
         }
-
-    # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
-    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
 
 class Resource(Base):
@@ -1921,7 +1916,7 @@ class Resource(Base):
         return max(m.timestamp for m in self.metrics)
 
     # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
@@ -2126,7 +2121,7 @@ class Prompt(Base):
         return max(m.timestamp for m in self.metrics)
 
     # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
@@ -2295,7 +2290,7 @@ class Server(Base):
         return max(m.timestamp for m in self.metrics)
 
     # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
     __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),)
@@ -2364,7 +2359,7 @@ class Gateway(Base):
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
 
     # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
@@ -2461,7 +2456,7 @@ class A2AAgent(Base):
     version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
@@ -2634,7 +2629,7 @@ class EmailApiToken(Base):
     # Core identity fields
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=True, index=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     jti: Mapped[str] = mapped_column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
