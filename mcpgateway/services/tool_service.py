@@ -216,7 +216,7 @@ class ToolService:
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -225,8 +225,7 @@ class ToolService:
 
         Args:
             db (Session): Database session for querying tool metrics.
-            limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
-                If None, returns all tools.
+            limit (int): Maximum number of tools to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -237,7 +236,7 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        query = (
+        results = (
             db.query(
                 DbTool.id,
                 DbTool.name,
@@ -255,13 +254,9 @@ class ToolService:
             .outerjoin(ToolMetric)
             .group_by(DbTool.id, DbTool.name)
             .order_by(desc("execution_count"))
+            .limit(limit)
+            .all()
         )
-        
-
-        if limit is not None:
-            query = query.limit(limit)
-
-        results = query.all()        
 
         return build_top_performers(results)
 

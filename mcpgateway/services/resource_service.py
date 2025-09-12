@@ -151,7 +151,7 @@ class ResourceService:
         self._event_subscribers.clear()
         logger.info("Resource service shutdown complete")
 
-    async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
+    async def get_top_resources(self, db: Session, limit: int = 5) -> List[TopPerformer]:
         """Retrieve the top-performing resources based on execution count.
 
         Queries the database to get resources with their metrics, ordered by the number of executions
@@ -160,8 +160,7 @@ class ResourceService:
 
         Args:
             db (Session): Database session for querying resource metrics.
-            limit (Optional[int]): Maximum number of resources to return. Defaults to 5.
-                If None, returns all resources.
+            limit (int): Maximum number of resources to return. Defaults to 5.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -172,7 +171,7 @@ class ResourceService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        query = (
+        results = (
             db.query(
                 DbResource.id,
                 DbResource.uri.label("name"),  # Using URI as the name field for TopPerformer
@@ -190,12 +189,9 @@ class ResourceService:
             .outerjoin(ResourceMetric)
             .group_by(DbResource.id, DbResource.uri)
             .order_by(desc("execution_count"))
+            .limit(limit)
+            .all()
         )
-
-        if limit is not None:
-            query = query.limit(limit)
-
-        results = query.all()
 
         return build_top_performers(results)
 

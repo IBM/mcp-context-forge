@@ -24,7 +24,6 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 import html
 import io
-from io import StringIO
 import json
 from pathlib import Path
 import time
@@ -838,6 +837,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         visibility = str(form.get("visibility", "private"))
         LOGGER.info(f" user input id::{server_id}")
         server = ServerCreate(
+            id=form.get("id") or None,
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
@@ -7012,9 +7012,6 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
 # Metrics
 MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, PromptMetrics]]
 
-# Import the response time formatting function
-from mcpgateway.utils.metrics_common import format_response_time
-
 
 # @admin_router.get("/metrics", response_model=MetricsDict)
 # async def admin_get_metrics(
@@ -7078,333 +7075,19 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
               and servers.
     """
-    # Get ALL entities with metrics for UI display (same logic as CSV export)
-    from sqlalchemy import func, case, Float
-    from sqlalchemy.sql import desc
-    from mcpgateway.db import Tool, ToolMetric, Resource, ResourceMetric, Prompt, PromptMetric, Server, ServerMetric
-    from mcpgateway.utils.metrics_common import build_top_performers
-    
-    # Get ALL tools (including those with 0 metrics)
-    tools_query = (
-        db.query(
-            Tool.id,
-            Tool.name,
-            func.coalesce(func.count(ToolMetric.id), 0).label("execution_count"),
-            func.avg(ToolMetric.response_time).label("avg_response_time"),
-            case(
-                (
-                    func.count(ToolMetric.id) > 0,
-                    func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,
-                ),
-                else_=None,
-            ).label("success_rate"),
-            func.max(ToolMetric.timestamp).label("last_execution"),
-        )
-        .outerjoin(ToolMetric, Tool.id == ToolMetric.tool_id)
-        .group_by(Tool.id, Tool.name)
-        .order_by(desc("execution_count"), Tool.name)  # Order by exec count, then name
-    )
-    all_tools = build_top_performers(tools_query.all())
-    
-    # Get ALL resources
-    resources_query = (
-        db.query(
-            Resource.id,
-            Resource.uri.label("name"),
-            func.coalesce(func.count(ResourceMetric.id), 0).label("execution_count"),
-            func.avg(ResourceMetric.response_time).label("avg_response_time"),
-            case(
-                (
-                    func.count(ResourceMetric.id) > 0,
-                    func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,
-                ),
-                else_=None,
-            ).label("success_rate"),
-            func.max(ResourceMetric.timestamp).label("last_execution"),
-        )
-        .outerjoin(ResourceMetric, Resource.id == ResourceMetric.resource_id)
-        .group_by(Resource.id, Resource.uri)
-        .order_by(desc("execution_count"), Resource.uri)
-    )
-    all_resources = build_top_performers(resources_query.all())
-    
-    # Get ALL prompts
-    prompts_query = (
-        db.query(
-            Prompt.id,
-            Prompt.name,
-            func.coalesce(func.count(PromptMetric.id), 0).label("execution_count"),
-            func.avg(PromptMetric.response_time).label("avg_response_time"),
-            case(
-                (
-                    func.count(PromptMetric.id) > 0,
-                    func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,
-                ),
-                else_=None,
-            ).label("success_rate"),
-            func.max(PromptMetric.timestamp).label("last_execution"),
-        )
-        .outerjoin(PromptMetric, Prompt.id == PromptMetric.prompt_id)
-        .group_by(Prompt.id, Prompt.name)
-        .order_by(desc("execution_count"), Prompt.name)
-    )
-    all_prompts = build_top_performers(prompts_query.all())
-    
-    # Get ALL servers
-    servers_query = (
-        db.query(
-            Server.id,
-            Server.name,
-            func.coalesce(func.count(ServerMetric.id), 0).label("execution_count"),
-            func.avg(ServerMetric.response_time).label("avg_response_time"),
-            case(
-                (
-                    func.count(ServerMetric.id) > 0,
-                    func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,
-                ),
-                else_=None,
-            ).label("success_rate"),
-            func.max(ServerMetric.timestamp).label("last_execution"),
-        )
-        .outerjoin(ServerMetric, Server.id == ServerMetric.server_id)
-        .group_by(Server.id, Server.name)
-        .order_by(desc("execution_count"), Server.name)
-    )
-    all_servers = build_top_performers(servers_query.all())
-    
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
         "prompts": await prompt_service.aggregate_metrics(db),
         "servers": await server_service.aggregate_metrics(db),
         "topPerformers": {
-            "tools": all_tools,  # Now includes ALL tools
-            "resources": all_resources,  # Now includes ALL resources  
-            "prompts": all_prompts,  # Now includes ALL prompts
-            "servers": all_servers,  # Now includes ALL servers
+            "tools": await tool_service.get_top_tools(db, limit=5),
+            "resources": await resource_service.get_top_resources(db, limit=5),
+            "prompts": await prompt_service.get_top_prompts(db, limit=5),
+            "servers": await server_service.get_top_servers(db, limit=5),
         },
     }
     return metrics
-
-
-@admin_router.get("/metrics/export", response_class=Response)
-async def export_metrics_csv(
-    db: Session = Depends(get_db),
-    entity_type: str = Query(..., description="Entity type to export (tools, resources, prompts, servers)"),
-    limit: Optional[int] = Query(None, description="Maximum number of results to return. If not provided, all results are returned."),
-    user: str = Depends(require_auth),
-) -> Response:
-    """Export metrics for a specific entity type to CSV format.
-
-    This endpoint retrieves ALL entities of the specified type from the database and
-    exports them to CSV format with their performance metrics for download. 
-    Entities without metrics will show 0 executions and N/A for response times.
-    Response times are formatted to 3 decimal places.
-
-    Args:
-        db (Session): Database session dependency for querying metrics.
-        entity_type (str): Type of entity to export (tools, resources, prompts, servers).
-        limit (Optional[int]): Maximum number of results to return. If None, all results are returned.
-        user (str): Authenticated user.
-
-    Returns:
-        Response: CSV file download response containing the metrics data for ALL entities.
-        
-    Raises:
-        HTTPException: If the entity type is invalid.
-    """
-    LOGGER.debug(f"User {user} requested CSV export of {entity_type} metrics")
-    
-    # Validate entity type
-    valid_types = ["tools", "resources", "prompts", "servers"]
-    if entity_type not in valid_types:
-        raise HTTPException(status_code=400, detail=f"Invalid entity type. Must be one of: {', '.join(valid_types)}")
-    
-    # Get ALL entities with their metrics data for CSV export (including those with 0 executions)
-    try:
-        if entity_type == "tools":
-            # Import required SQLAlchemy functions and models
-            from sqlalchemy import func, case, desc, Float
-            from mcpgateway.db import Tool, ToolMetric
-            from mcpgateway.utils.metrics_common import build_top_performers
-            
-            query = (
-                db.query(
-                    Tool.id,
-                    Tool.name,
-                    func.coalesce(func.count(ToolMetric.id), 0).label("execution_count"),
-                    func.avg(ToolMetric.response_time).label("avg_response_time"),
-                    case(
-                        (
-                            func.count(ToolMetric.id) > 0,
-                            func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,
-                        ),
-                        else_=None,
-                    ).label("success_rate"),
-                    func.max(ToolMetric.timestamp).label("last_execution"),
-                )
-                .outerjoin(ToolMetric, Tool.id == ToolMetric.tool_id)
-                .group_by(Tool.id, Tool.name)
-                .order_by(Tool.name)  # Order by name for consistent CSV output
-            )
-            
-            if limit is not None:
-                query = query.limit(limit)
-                
-            results = query.all()
-            performers = build_top_performers(results)
-            
-        elif entity_type == "resources":
-            from sqlalchemy import func, case, Float
-            from mcpgateway.db import Resource, ResourceMetric
-            from mcpgateway.utils.metrics_common import build_top_performers
-            
-            query = (
-                db.query(
-                    Resource.id,
-                    Resource.uri.label("name"),  # Use URI as name for resources
-                    func.coalesce(func.count(ResourceMetric.id), 0).label("execution_count"),
-                    func.avg(ResourceMetric.response_time).label("avg_response_time"),
-                    case(
-                        (
-                            func.count(ResourceMetric.id) > 0,
-                            func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,
-                        ),
-                        else_=None,
-                    ).label("success_rate"),
-                    func.max(ResourceMetric.timestamp).label("last_execution"),
-                )
-                .outerjoin(ResourceMetric, Resource.id == ResourceMetric.resource_id)
-                .group_by(Resource.id, Resource.uri)
-                .order_by(Resource.uri)
-            )
-            
-            if limit is not None:
-                query = query.limit(limit)
-                
-            results = query.all()
-            performers = build_top_performers(results)
-            
-        elif entity_type == "prompts":
-            from sqlalchemy import func, case, Float
-            from mcpgateway.db import Prompt, PromptMetric
-            from mcpgateway.utils.metrics_common import build_top_performers
-            
-            query = (
-                db.query(
-                    Prompt.id,
-                    Prompt.name,
-                    func.coalesce(func.count(PromptMetric.id), 0).label("execution_count"),
-                    func.avg(PromptMetric.response_time).label("avg_response_time"),
-                    case(
-                        (
-                            func.count(PromptMetric.id) > 0,
-                            func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,
-                        ),
-                        else_=None,
-                    ).label("success_rate"),
-                    func.max(PromptMetric.timestamp).label("last_execution"),
-                )
-                .outerjoin(PromptMetric, Prompt.id == PromptMetric.prompt_id)
-                .group_by(Prompt.id, Prompt.name)
-                .order_by(Prompt.name)
-            )
-            
-            if limit is not None:
-                query = query.limit(limit)
-                
-            results = query.all()
-            performers = build_top_performers(results)
-            
-        elif entity_type == "servers":
-            from sqlalchemy import func, case, Float
-            from mcpgateway.db import Server, ServerMetric
-            from mcpgateway.utils.metrics_common import build_top_performers
-            
-            query = (
-                db.query(
-                    Server.id,
-                    Server.name,
-                    func.coalesce(func.count(ServerMetric.id), 0).label("execution_count"),
-                    func.avg(ServerMetric.response_time).label("avg_response_time"),
-                    case(
-                        (
-                            func.count(ServerMetric.id) > 0,
-                            func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,
-                        ),
-                        else_=None,
-                    ).label("success_rate"),
-                    func.max(ServerMetric.timestamp).label("last_execution"),
-                )
-                .outerjoin(ServerMetric, Server.id == ServerMetric.server_id)
-                .group_by(Server.id, Server.name)
-                .order_by(Server.name)
-            )
-            
-            if limit is not None:
-                query = query.limit(limit)
-                
-            results = query.all()
-            performers = build_top_performers(results)
-    except Exception as e:
-        LOGGER.error(f"Error exporting {entity_type} metrics to CSV: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to export metrics: {str(e)}")
-    
-    # Handle empty data case
-    if not performers:
-        # Return empty CSV with headers
-        csv_content = "ID,Name,Execution Count,Average Response Time (s),Success Rate (%),Last Execution\n"
-        return Response(
-            content=csv_content,
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
-        )
-    
-    # Create CSV content
-    output = StringIO()
-    writer = csv.writer(output)
-    
-    # Write header row
-    writer.writerow([
-        "ID", 
-        "Name", 
-        "Execution Count", 
-        "Average Response Time (s)", 
-        "Success Rate (%)", 
-        "Last Execution"
-    ])
-    
-    # Write data rows with formatted values
-    for performer in performers:
-        # Format response time to 3 decimal places
-        formatted_response_time = format_response_time(performer.avg_response_time) if performer.avg_response_time is not None else "N/A"
-        
-        # Format success rate
-        success_rate = f"{performer.success_rate:.1f}" if performer.success_rate is not None else "N/A"
-        
-        # Format timestamp
-        last_execution = performer.last_execution.isoformat() if performer.last_execution else "N/A"
-        
-        writer.writerow([
-            performer.id,
-            performer.name,
-            performer.execution_count,
-            formatted_response_time,
-            success_rate,
-            last_execution
-        ])
-    
-    # Get the CSV content as a string
-    csv_content = output.getvalue()
-    output.close()
-    
-    # Return CSV response
-    return Response(
-        content=csv_content,
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
-    )
-
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
