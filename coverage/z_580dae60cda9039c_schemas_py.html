@@ -56,10 +56,10 @@
         </aside>
         <h2>
             <span class="text">1624 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">1450<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">174<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">1455<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">169<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">61<span class="text"> partial</span></button>
+            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">64<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_66e097f12625e52f_well_known_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_a2a_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-12 01:50 +0100
+            created at 2025-09-13 07:32 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -4493,9 +4493,9 @@
     <p class="pln"><span class="n"><a id="t4409" href="#t4409">4409</a></span><span class="t"><span class="str">        Raises:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4410" href="#t4410">4410</a></span><span class="t"><span class="str">            ValueError: If team name is empty</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4411" href="#t4411">4411</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t4412" href="#t4412">4412</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t4412" href="#t4412">4412</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">4412&#x202F;&#x219B;&#x202F;4413</span><span class="annotate long">line 4412 didn't jump to line 4413 because the condition on line 4412 was never true</span></span></p>
     <p class="mis show_mis"><span class="n"><a id="t4413" href="#t4413">4413</a></span><span class="t">            <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">"Team name cannot be empty"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t4414" href="#t4414">4414</a></span><span class="t">        <span class="key">return</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t4414" href="#t4414">4414</a></span><span class="t">        <span class="key">return</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4415" href="#t4415">4415</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t4416" href="#t4416">4416</a></span><span class="t">    <span class="op">@</span><span class="nam">field_validator</span><span class="op">(</span><span class="str">"slug"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t4417" href="#t4417">4417</a></span><span class="t">    <span class="op">@</span><span class="nam">classmethod</span>&nbsp;</span><span class="r"></span></p>
@@ -4558,10 +4558,10 @@
     <p class="pln"><span class="n"><a id="t4474" href="#t4474">4474</a></span><span class="t"><span class="str">        Raises:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4475" href="#t4475">4475</a></span><span class="t"><span class="str">            ValueError: If team name is empty</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4476" href="#t4476">4476</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t4477" href="#t4477">4477</a></span><span class="t">        <span class="key">if</span> <span class="nam">v</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t4478" href="#t4478">4478</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t4477" href="#t4477">4477</a></span><span class="t">        <span class="key">if</span> <span class="nam">v</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">4477&#x202F;&#x219B;&#x202F;4481</span><span class="annotate long">line 4477 didn't jump to line 4481 because the condition on line 4477 was always true</span></span></p>
+    <p class="par run show_par"><span class="n"><a id="t4478" href="#t4478">4478</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">4478&#x202F;&#x219B;&#x202F;4479</span><span class="annotate long">line 4478 didn't jump to line 4479 because the condition on line 4478 was never true</span></span></p>
     <p class="mis show_mis"><span class="n"><a id="t4479" href="#t4479">4479</a></span><span class="t">                <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">"Team name cannot be empty"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t4480" href="#t4480">4480</a></span><span class="t">            <span class="key">return</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t4480" href="#t4480">4480</a></span><span class="t">            <span class="key">return</span> <span class="nam">v</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t4481" href="#t4481">4481</a></span><span class="t">        <span class="key">return</span> <span class="nam">v</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4482" href="#t4482">4482</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t4483" href="#t4483">4483</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -5398,7 +5398,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_a2a_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-12 01:50 +0100
+            created at 2025-09-13 07:32 +0100
         </p>
     </div>
 </footer>
