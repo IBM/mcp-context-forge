@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Test HTTP download functionality."""
 
+# Standard
 import asyncio
 import os
+from pathlib import Path
 import sys
 import threading
-import time
+
+# Third-Party
 import requests
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
@@ -15,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 def start_http_server():
     """Start HTTP server in background."""
     try:
-        import uvicorn
+        # Third-Party
         from pptx_server.http_server import app
+        import uvicorn
 
         uvicorn.run(app, host="localhost", port=9000, log_level="warning")
     except Exception as e:
@@ -50,7 +54,8 @@ async def test_download_workflow():
         return False
 
     # Create presentation and download link
-    from pptx_server.server import create_presentation, create_download_link
+    # Third-Party
+    from pptx_server.server import create_download_link, create_presentation
 
     print("\n📊 Creating presentation...")
     pres = await create_presentation("download_demo.pptx", "Download Demo")
@@ -77,7 +82,9 @@ async def test_download_workflow():
 
             # Verify it's a valid PowerPoint file
             try:
+                # Third-Party
                 from pptx import Presentation
+
                 verify_prs = Presentation(test_download_path)
                 print(f"✅ Valid PowerPoint: {len(verify_prs.slides)} slides")
 

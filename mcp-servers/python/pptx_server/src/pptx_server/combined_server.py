@@ -1,18 +1,23 @@
+# -*- coding: utf-8 -*-
 """Combined MCP and HTTP server for PowerPoint automation with downloads."""
 
+# Standard
 import asyncio
 import threading
-import time
 from typing import Optional
 
-from .http_server import start_download_server
-from .server import main as mcp_main, config
+# Local
+from .server import config
+from .server import main as mcp_main
 
 
 def start_http_server_thread(host: str, port: int):
     """Start HTTP server in a separate thread."""
     try:
+        # Third-Party
         import uvicorn
+
+        # Local
         from .http_server import app
 
         print(f"🌐 Starting HTTP download server on {host}:{port}")
@@ -21,11 +26,7 @@ def start_http_server_thread(host: str, port: int):
         print(f"❌ HTTP server error: {e}")
 
 
-async def start_combined_server(
-    http_host: Optional[str] = None,
-    http_port: Optional[int] = None,
-    enable_http: bool = True
-):
+async def start_combined_server(http_host: Optional[str] = None, http_port: Optional[int] = None, enable_http: bool = True):
     """Start both MCP server (stdio) and HTTP download server."""
 
     print("🚀 PowerPoint MCP Server with HTTP Downloads")
@@ -36,11 +37,7 @@ async def start_combined_server(
         host = http_host or config.server_host
         port = http_port or config.server_port
 
-        http_thread = threading.Thread(
-            target=start_http_server_thread,
-            args=(host, port),
-            daemon=True
-        )
+        http_thread = threading.Thread(target=start_http_server_thread, args=(host, port), daemon=True)
         http_thread.start()
 
         # Give HTTP server time to start

@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Security Vulnerability Test & Secure Solution Demo
 
 Demonstrates the multi-agent security issue and shows the proper secure usage pattern.
 """
 
+# Standard
 import asyncio
 import os
-import sys
 from pathlib import Path
+import sys
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+# Third-Party
 from pptx_server.server import (
-    create_secure_session,
     create_presentation,
+    create_secure_session,
     get_server_status,
     list_session_files,
-    create_download_link,
-    cleanup_session,
 )
 
 
@@ -41,8 +42,8 @@ async def demonstrate_security_issue():
         print(f"   Path: {pres_b['message'].split(': ')[1]}")
 
         # Check if paths are the same (security issue!)
-        path_a = pres_a['message'].split(': ')[1]
-        path_b = pres_b['message'].split(': ')[1]
+        path_a = pres_a["message"].split(": ")[1]
+        path_b = pres_b["message"].split(": ")[1]
 
         print(f"\n🚨 SECURITY ANALYSIS:")
         if path_a == path_b:
@@ -97,11 +98,7 @@ async def demonstrate_secure_solution():
         print(f"   Each agent gets isolated download tokens")
         print(f"   No cross-session access possible")
 
-        return {
-            "session_a": session_a_id,
-            "session_b": session_b_id,
-            "isolated": session_a_id != session_b_id
-        }
+        return {"session_a": session_a_id, "session_b": session_b_id, "isolated": session_a_id != session_b_id}
 
     except Exception as e:
         print(f"❌ Error in secure demo: {e}")

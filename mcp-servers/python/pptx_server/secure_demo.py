@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Secure PowerPoint MCP Server Demo
 
@@ -6,27 +7,25 @@ Demonstrates enterprise security features including sessions, file uploads,
 secure downloads, and comprehensive workspace management.
 """
 
+# Standard
 import asyncio
-import base64
 import os
-import sys
 from pathlib import Path
+import sys
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+# Third-Party
 from pptx_server.server import (
-    get_server_status,
-    create_secure_session,
-    upload_file,
-    create_presentation,
-    create_title_slide,
+    apply_brand_theme,
     create_data_slide,
     create_download_link,
+    create_presentation,
+    create_secure_session,
+    create_title_slide,
+    get_server_status,
     list_session_files,
-    cleanup_session,
-    apply_brand_theme,
-    save_presentation,
 )
 
 
@@ -73,13 +72,7 @@ async def secure_enterprise_demo():
         exec_path = exec_pres["message"].split(": ")[1]
         print(f"✅ Executive presentation: {os.path.basename(exec_path)}")
 
-        await create_title_slide(
-            "board_meeting_q4.pptx",
-            "Q4 Board Meeting",
-            "Strategic Review & 2025 Planning",
-            "Executive Leadership Team",
-            "December 15, 2024"
-        )
+        await create_title_slide("board_meeting_q4.pptx", "Q4 Board Meeting", "Strategic Review & 2025 Planning", "Executive Leadership Team", "December 15, 2024")
 
         # Finance presentation with data
         finance_pres = await create_presentation("finance_q4_report.pptx", "Finance Q4 Report")
@@ -91,16 +84,10 @@ async def secure_enterprise_demo():
             ["Revenue", "$2.5M", "$3.2M", "+28%"],
             ["Expenses", "$1.8M", "$2.1M", "+17%"],
             ["Profit", "$0.7M", "$1.1M", "+57%"],
-            ["Cash Flow", "$0.9M", "$1.4M", "+56%"]
+            ["Cash Flow", "$0.9M", "$1.4M", "+56%"],
         ]
 
-        await create_data_slide(
-            "finance_q4_report.pptx",
-            "Q4 Financial Performance",
-            financial_data,
-            include_chart=True,
-            chart_type="column"
-        )
+        await create_data_slide("finance_q4_report.pptx", "Q4 Financial Performance", financial_data, include_chart=True, chart_type="column")
 
         # Apply corporate branding
         await apply_brand_theme("board_meeting_q4.pptx", "#003366", "#666666", "#FF6600", "Calibri")
@@ -158,15 +145,13 @@ async def secure_enterprise_demo():
         print("Sessions will auto-cleanup after configured expiry time")
         print("For immediate cleanup, use: cleanup_session(session_id)")
 
-        return {
-            "sessions_created": 2,
-            "presentations_created": 2,
-            "download_links": 2
-        }
+        return {"sessions_created": 2, "presentations_created": 2, "download_links": 2}
 
     except Exception as e:
         print(f"\n❌ Demo failed: {e}")
+        # Standard
         import traceback
+
         traceback.print_exc()
         return None
 

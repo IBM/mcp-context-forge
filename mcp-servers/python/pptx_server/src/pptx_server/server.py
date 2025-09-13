@@ -10,19 +10,15 @@ import json
 import logging
 import os
 import sys
-import tempfile
-import uuid
 from typing import Any, Dict, List, Optional
+import uuid
 
 # Third-Party
-import aiofiles
 from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 from pathvalidate import is_valid_filename, sanitize_filename
-from pydantic import Field
-from pydantic_settings import BaseSettings
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
@@ -30,6 +26,8 @@ from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 # Load environment variables
 load_dotenv()
@@ -89,15 +87,7 @@ class PPTXServerConfig(BaseSettings):
 
     def ensure_directories(self) -> None:
         """Ensure all required directories exist with secure permissions."""
-        dirs = [
-            self.work_dir,
-            self.temp_dir,
-            self.templates_dir,
-            self.output_dir,
-            self.uploads_dir,
-            os.path.join(self.work_dir, "logs"),
-            os.path.join(self.work_dir, "sessions")
-        ]
+        dirs = [self.work_dir, self.temp_dir, self.templates_dir, self.output_dir, self.uploads_dir, os.path.join(self.work_dir, "logs"), os.path.join(self.work_dir, "sessions")]
         for dir_path in dirs:
             os.makedirs(dir_path, exist_ok=True)
             # Set secure permissions (owner only)
@@ -133,27 +123,17 @@ def _generate_download_token(file_path: str, session_id: str) -> str:
     token = str(uuid.uuid4())
     expires = datetime.now() + timedelta(hours=config.download_token_expiry_hours)
 
-    token_info = {
-        "file_path": file_path,
-        "expires": expires.isoformat(),
-        "session_id": session_id,
-        "created": datetime.now().isoformat()
-    }
+    token_info = {"file_path": file_path, "expires": expires.isoformat(), "session_id": session_id, "created": datetime.now().isoformat()}
 
     # Store in memory
-    _download_tokens[token] = {
-        "file_path": file_path,
-        "expires": expires,
-        "session_id": session_id,
-        "created": datetime.now()
-    }
+    _download_tokens[token] = {"file_path": file_path, "expires": expires, "session_id": session_id, "created": datetime.now()}
 
     # Also store in file for HTTP server access
     tokens_dir = os.path.join(config.work_dir, "tokens")
     os.makedirs(tokens_dir, exist_ok=True)
     token_file = os.path.join(tokens_dir, f"{token}.json")
 
-    with open(token_file, 'w') as f:
+    with open(token_file, "w") as f:
         json.dump(token_info, f, indent=2)
 
     return token
@@ -205,8 +185,10 @@ def _get_secure_path(file_path: str, directory_type: str = "output") -> str:
 def _generate_agent_id() -> str:
     """Generate a stable agent identifier for the current execution context."""
     # Use process ID + start time for stable agent ID within same execution
+    # Standard
     import time
-    start_time = getattr(_generate_agent_id, '_start_time', None)
+
+    start_time = getattr(_generate_agent_id, "_start_time", None)
     if start_time is None:
         start_time = int(time.time() * 1000)
         _generate_agent_id._start_time = start_time
@@ -250,12 +232,12 @@ def _get_or_create_agent_session(agent_id: Optional[str] = None) -> str:
         "created": datetime.now().isoformat(),
         "workspace_dir": session_dir,
         "expires": (datetime.now() + timedelta(hours=config.auto_cleanup_hours)).isoformat(),
-        "auto_generated": True
+        "auto_generated": True,
     }
 
     # Save session metadata
     session_file = os.path.join(session_dir, "session.json")
-    with open(session_file, 'w') as f:
+    with open(session_file, "w") as f:
         json.dump(session_info, f, indent=2)
 
     log.info(f"Auto-created session for agent {agent_id[:16]}: {session_id[:8]}...")
@@ -879,17 +861,11 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path", "slide_index", "output_path"],
             },
         ),
-
         # Security and File Management Tools
         Tool(
             name="create_secure_session",
             description="Create a secure session for file operations with UUID workspace",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "session_name": {"type": "string", "description": "Optional session name for identification"}
-                }
-            }
+            inputSchema={"type": "object", "properties": {"session_name": {"type": "string", "description": "Optional session name for identification"}}},
         ),
         Tool(
             name="upload_file",
@@ -899,33 +875,24 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "file_data": {"type": "string", "description": "Base64 encoded file data"},
                     "filename": {"type": "string", "description": "Original filename"},
-                    "session_id": {"type": "string", "description": "Session ID for workspace isolation"}
+                    "session_id": {"type": "string", "description": "Session ID for workspace isolation"},
                 },
-                "required": ["file_data", "filename"]
-            }
+                "required": ["file_data", "filename"],
+            },
         ),
         Tool(
             name="create_download_link",
             description="Create a secure download link for a presentation with expiration",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the presentation file"},
-                    "session_id": {"type": "string", "description": "Session ID for access control"}
-                },
-                "required": ["file_path"]
-            }
+                "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}, "session_id": {"type": "string", "description": "Session ID for access control"}},
+                "required": ["file_path"],
+            },
         ),
         Tool(
             name="list_session_files",
             description="List all files in the current session",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "session_id": {"type": "string", "description": "Session ID to list files for"}
-                },
-                "required": ["session_id"]
-            }
+            inputSchema={"type": "object", "properties": {"session_id": {"type": "string", "description": "Session ID to list files for"}}, "required": ["session_id"]},
         ),
         Tool(
             name="cleanup_session",
@@ -934,32 +901,21 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string", "description": "Session ID to clean up"},
-                    "force": {"type": "boolean", "description": "Force cleanup even if session is active", "default": False}
+                    "force": {"type": "boolean", "description": "Force cleanup even if session is active", "default": False},
                 },
-                "required": ["session_id"]
-            }
+                "required": ["session_id"],
+            },
         ),
-        Tool(
-            name="get_server_status",
-            description="Get server configuration and status information",
-            inputSchema={
-                "type": "object",
-                "properties": {}
-            }
-        ),
+        Tool(name="get_server_status", description="Get server configuration and status information", inputSchema={"type": "object", "properties": {}}),
         Tool(
             name="get_file_content",
             description="Get the raw file content for download (base64 encoded)",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the presentation file"},
-                    "session_id": {"type": "string", "description": "Session ID for access control"}
-                },
-                "required": ["file_path"]
-            }
+                "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}, "session_id": {"type": "string", "description": "Session ID for access control"}},
+                "required": ["file_path"],
+            },
         ),
-
         # Composite Workflow Tools
         Tool(
             name="create_title_slide",
@@ -1218,7 +1174,7 @@ async def create_presentation(file_path: str, title: Optional[str] = None, sessi
         slide.shapes.title.text = title
 
     # Ensure proper directory structure
-    organized_path = _ensure_output_directory(file_path)
+    _ensure_output_directory(file_path)
 
     # SECURITY FIX: Auto-generate isolated session per agent
     if session_id is None:
@@ -1235,13 +1191,7 @@ async def create_presentation(file_path: str, title: Optional[str] = None, sessi
     # Save immediately with session context
     _save_presentation(secure_path, session_id)
 
-    return {
-        "message": f"Created presentation: {secure_path}",
-        "slide_count": len(prs.slides),
-        "format": "16:9 widescreen",
-        "session_id": session_id,
-        "secure_path": secure_path
-    }
+    return {"message": f"Created presentation: {secure_path}", "slide_count": len(prs.slides), "format": "16:9 widescreen", "session_id": session_id, "secure_path": secure_path}
 
 
 async def open_presentation(file_path: str) -> Dict[str, Any]:
@@ -2070,12 +2020,14 @@ async def get_file_content(file_path: str, session_id: Optional[str] = None) -> 
 
     # Read file content
     try:
-        with open(abs_path, 'rb') as f:
+        with open(abs_path, "rb") as f:
             file_content = f.read()
 
         # Encode as base64
+        # Standard
         import base64
-        file_data = base64.b64encode(file_content).decode('utf-8')
+
+        file_data = base64.b64encode(file_content).decode("utf-8")
 
         # Get file info
         filename = os.path.basename(file_path)
@@ -2088,7 +2040,7 @@ async def get_file_content(file_path: str, session_id: Optional[str] = None) -> 
             "file_size": file_size,
             "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             "encoding": "base64",
-            "session_id": session_id or "unknown"
+            "session_id": session_id or "unknown",
         }
 
     except Exception as e:
@@ -2116,12 +2068,12 @@ async def create_secure_session(session_name: Optional[str] = None) -> Dict[str,
         "workspace_dir": session_dir,
         "expires": (datetime.now() + timedelta(hours=config.auto_cleanup_hours)).isoformat(),
         "max_files": config.max_files_per_session,
-        "current_files": 0
+        "current_files": 0,
     }
 
     # Save session metadata
     session_file = os.path.join(session_dir, "session.json")
-    with open(session_file, 'w') as f:
+    with open(session_file, "w") as f:
         json.dump(session_info, f, indent=2)
 
     log.info(f"Created secure session: {session_id}")
@@ -2132,7 +2084,7 @@ async def create_secure_session(session_name: Optional[str] = None) -> Dict[str,
         "session_name": session_info["session_name"],
         "workspace_dir": session_dir,
         "expires": session_info["expires"],
-        "max_files": config.max_files_per_session
+        "max_files": config.max_files_per_session,
     }
 
 
@@ -2145,7 +2097,7 @@ async def upload_file(file_data: str, filename: str, session_id: Optional[str] =
     safe_filename = _validate_filename(filename)
 
     # Check file extension
-    file_ext = os.path.splitext(safe_filename)[1].lower().lstrip('.')
+    file_ext = os.path.splitext(safe_filename)[1].lower().lstrip(".")
     if file_ext not in config.allowed_extensions:
         raise ValueError(f"File type .{file_ext} not allowed. Allowed: {config.allowed_extensions}")
 
@@ -2177,7 +2129,7 @@ async def upload_file(file_data: str, filename: str, session_id: Optional[str] =
     upload_path = os.path.join(upload_dir, unique_filename)
 
     # Save file
-    with open(upload_path, 'wb') as f:
+    with open(upload_path, "wb") as f:
         f.write(file_bytes)
 
     # Set secure permissions
@@ -2196,7 +2148,7 @@ async def upload_file(file_data: str, filename: str, session_id: Optional[str] =
         "file_path": upload_path,
         "size_mb": round(file_size_mb, 2),
         "session_id": session_id,
-        "file_type": file_ext
+        "file_type": file_ext,
     }
 
 
@@ -2239,10 +2191,7 @@ async def create_download_link(file_path: str, session_id: Optional[str] = None)
         "download_url": download_url,
         "expires": _download_tokens[token]["expires"].isoformat(),
         "session_id": download_session,
-        "instructions": {
-            "method_1_http": f"Start HTTP server (make serve-http-only) then access: {download_url}",
-            "method_2_direct": f"Use get_file_content tool with file_path: {abs_path}"
-        }
+        "instructions": {"method_1_http": f"Start HTTP server (make serve-http-only) then access: {download_url}", "method_2_direct": f"Use get_file_content tool with file_path: {abs_path}"},
     }
 
 
@@ -2256,7 +2205,7 @@ async def list_session_files(session_id: str) -> Dict[str, Any]:
     session_file = os.path.join(session_dir, "session.json")
     session_info = {}
     if os.path.exists(session_file):
-        with open(session_file, 'r') as f:
+        with open(session_file, "r") as f:
             session_info = json.load(f)
 
     # Scan for files
@@ -2270,15 +2219,17 @@ async def list_session_files(session_id: str) -> Dict[str, Any]:
             file_stat = os.stat(file_path)
             relative_path = os.path.relpath(file_path, session_dir)
 
-            files.append({
-                "filename": filename,
-                "relative_path": relative_path,
-                "full_path": file_path,
-                "size_bytes": file_stat.st_size,
-                "size_mb": round(file_stat.st_size / (1024 * 1024), 2),
-                "modified": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
-                "type": os.path.splitext(filename)[1].lower().lstrip('.')
-            })
+            files.append(
+                {
+                    "filename": filename,
+                    "relative_path": relative_path,
+                    "full_path": file_path,
+                    "size_bytes": file_stat.st_size,
+                    "size_mb": round(file_stat.st_size / (1024 * 1024), 2),
+                    "modified": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+                    "type": os.path.splitext(filename)[1].lower().lstrip("."),
+                }
+            )
 
     return {
         "session_id": session_id,
@@ -2286,7 +2237,7 @@ async def list_session_files(session_id: str) -> Dict[str, Any]:
         "files": files,
         "file_count": len(files),
         "total_size_mb": round(sum(f["size_bytes"] for f in files) / (1024 * 1024), 2),
-        "workspace_dir": session_dir
+        "workspace_dir": session_dir,
     }
 
 
@@ -2300,7 +2251,9 @@ async def cleanup_session(session_id: str, force: bool = False) -> Dict[str, Any
     session_info = await list_session_files(session_id)
 
     # Remove files
+    # Standard
     import shutil
+
     try:
         shutil.rmtree(session_dir)
         log.info(f"Cleaned up session: {session_id}")
@@ -2313,10 +2266,7 @@ async def cleanup_session(session_id: str, force: bool = False) -> Dict[str, Any
         del _session_files[session_id]
 
     # Clean up download tokens for this session
-    tokens_to_remove = [
-        token for token, info in _download_tokens.items()
-        if info["session_id"] == session_id
-    ]
+    tokens_to_remove = [token for token, info in _download_tokens.items() if info["session_id"] == session_id]
     for token in tokens_to_remove:
         del _download_tokens[token]
 
@@ -2325,7 +2275,7 @@ async def cleanup_session(session_id: str, force: bool = False) -> Dict[str, Any
         "session_id": session_id,
         "files_removed": session_info["file_count"],
         "space_freed_mb": session_info["total_size_mb"],
-        "tokens_removed": len(tokens_to_remove)
+        "tokens_removed": len(tokens_to_remove),
     }
 
 
@@ -2340,7 +2290,7 @@ async def get_server_status() -> Dict[str, Any]:
     total_size = 0
     for root, dirs, files in os.walk(config.work_dir):
         for file in files:
-            if file.endswith('.pptx'):
+            if file.endswith(".pptx"):
                 file_path = os.path.join(root, file)
                 total_files += 1
                 total_size += os.path.getsize(file_path)
@@ -2358,21 +2308,21 @@ async def get_server_status() -> Dict[str, Any]:
             "max_file_size_mb": config.max_file_size_mb,
             "auto_cleanup_hours": config.auto_cleanup_hours,
             "file_uploads_enabled": config.enable_file_uploads,
-            "downloads_enabled": config.enable_downloads
+            "downloads_enabled": config.enable_downloads,
         },
         "statistics": {
             "active_sessions": active_sessions,
             "active_download_tokens": len(_download_tokens),
             "cached_presentations": len(_presentations),
             "total_pptx_files": total_files,
-            "total_storage_mb": round(total_size / (1024 * 1024), 2)
+            "total_storage_mb": round(total_size / (1024 * 1024), 2),
         },
         "security": {
             "allowed_extensions": config.allowed_extensions,
             "max_presentation_size_mb": config.max_presentation_size_mb,
             "authentication_required": config.require_auth,
-            "secure_directories": True
-        }
+            "secure_directories": True,
+        },
     }
 
 
