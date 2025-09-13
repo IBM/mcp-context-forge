@@ -1,10 +1,11 @@
+# -*- coding: utf-8 -*-
 """
 Pytest configuration and shared fixtures for tests.
 """
 
 # Standard
-import tempfile
 from pathlib import Path
+import tempfile
 
 # Third-Party
 import numpy as np

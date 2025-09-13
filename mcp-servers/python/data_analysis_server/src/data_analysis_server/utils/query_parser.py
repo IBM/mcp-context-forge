@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 SQL-like query parsing and execution for pandas DataFrames.
 """
@@ -25,9 +26,7 @@ class DataQueryParser:
         """
         self.max_result_size = max_result_size
 
-    def execute_query(
-        self, df: pd.DataFrame, query: str, limit: int | None = None, offset: int = 0
-    ) -> dict[str, Any]:
+    def execute_query(self, df: pd.DataFrame, query: str, limit: int | None = None, offset: int = 0) -> dict[str, Any]:
         """
         Execute a SQL-like query on a pandas DataFrame.
 
@@ -102,18 +101,14 @@ class DataQueryParser:
 
         # Apply GROUP BY or handle aggregates without grouping
         if query_parts.get("group_by"):
-            result_df = self._apply_group_by(
-                result_df, query_parts["group_by"], query_parts.get("aggregates")
-            )
+            result_df = self._apply_group_by(result_df, query_parts["group_by"], query_parts.get("aggregates"))
 
             # Apply HAVING clause after GROUP BY
             if query_parts.get("having"):
                 result_df = self._apply_having_clause(result_df, query_parts["having"])
         elif query_parts.get("aggregates"):
             # Handle aggregates without GROUP BY (e.g., SELECT COUNT(*), SUM(revenue) FROM table)
-            result_df = self._apply_global_aggregates(
-                result_df, query_parts["aggregates"]
-            )
+            result_df = self._apply_global_aggregates(result_df, query_parts["aggregates"])
 
         # Apply ORDER BY
         if query_parts.get("order_by"):
@@ -165,17 +160,13 @@ class DataQueryParser:
 
                         # Handle alias
                         alias_match = re.search(r"as\s+(\w+)", col_expr, re.IGNORECASE)
-                        alias = (
-                            alias_match.group(1) if alias_match else f"{func}_{column}"
-                        )
+                        alias = alias_match.group(1) if alias_match else f"{func}_{column}"
 
                         aggregates[alias] = (func, column)
                         columns.append(alias)
                     else:
                         # Regular column (remove alias if present)
-                        col_name = re.sub(
-                            r"\s+as\s+\w+", "", col_expr, flags=re.IGNORECASE
-                        ).strip()
+                        col_name = re.sub(r"\s+as\s+\w+", "", col_expr, flags=re.IGNORECASE).strip()
                         columns.append(col_name)
 
                 query_parts["columns"] = columns
@@ -202,24 +193,18 @@ class DataQueryParser:
             query_parts["group_by"] = group_cols
 
         # Extract HAVING clause
-        having_match = re.search(
-            r"having\s+(.*?)(?:\s+order\s+by|\s+limit|$)", query, re.IGNORECASE
-        )
+        having_match = re.search(r"having\s+(.*?)(?:\s+order\s+by|\s+limit|$)", query, re.IGNORECASE)
         if having_match:
             query_parts["having"] = having_match.group(1).strip()
 
         # Extract ORDER BY
-        order_match = re.search(
-            r"order\s+by\s+(.*?)(?:\s+limit|$)", query, re.IGNORECASE
-        )
+        order_match = re.search(r"order\s+by\s+(.*?)(?:\s+limit|$)", query, re.IGNORECASE)
         if order_match:
             order_expr = order_match.group(1).strip()
             query_parts["order_by"] = self._parse_order_by(order_expr)
 
         # Extract LIMIT clause
-        limit_match = re.search(
-            r"limit\s+(\d+)(?:\s+offset\s+(\d+))?$", query, re.IGNORECASE
-        )
+        limit_match = re.search(r"limit\s+(\d+)(?:\s+offset\s+(\d+))?$", query, re.IGNORECASE)
         if limit_match:
             query_parts["limit"] = int(limit_match.group(1))
             if limit_match.group(2):
@@ -240,12 +225,8 @@ class DataQueryParser:
             condition = re.sub(r"\bAND\b", "and", condition, flags=re.IGNORECASE)
             condition = re.sub(r"\bOR\b", "or", condition, flags=re.IGNORECASE)
             condition = re.sub(r"\bNOT\b", "not", condition, flags=re.IGNORECASE)
-            condition = re.sub(
-                r"\bIS NULL\b", ".isna()", condition, flags=re.IGNORECASE
-            )
-            condition = re.sub(
-                r"\bIS NOT NULL\b", ".notna()", condition, flags=re.IGNORECASE
-            )
+            condition = re.sub(r"\bIS NULL\b", ".isna()", condition, flags=re.IGNORECASE)
+            condition = re.sub(r"\bIS NOT NULL\b", ".notna()", condition, flags=re.IGNORECASE)
 
             # Handle LIKE operator
             condition = self._handle_like_operator(condition)
@@ -289,15 +270,11 @@ class DataQueryParser:
         # Convert SQL LIKE to pandas str.contains
         # Pattern: column LIKE 'value' -> column.str.contains("value")
         pattern = r"(\w+)\s+LIKE\s+'([^']*)'"
-        condition = re.sub(
-            pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE
-        )
+        condition = re.sub(pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE)
 
         # Handle LIKE with double quotes
         pattern = r"(\w+)\s+LIKE\s+\"([^\"]*)\""
-        condition = re.sub(
-            pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE
-        )
+        condition = re.sub(pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE)
 
         return condition
 
@@ -326,9 +303,7 @@ class DataQueryParser:
             cleaned_group_cols = []
             for col in group_cols:
                 # Remove anything after HAVING
-                clean_col = re.sub(
-                    r"\s+having\s+.*", "", col, flags=re.IGNORECASE
-                ).strip()
+                clean_col = re.sub(r"\s+having\s+.*", "", col, flags=re.IGNORECASE).strip()
                 if clean_col:
                     cleaned_group_cols.append(clean_col)
 
@@ -395,9 +370,7 @@ class DataQueryParser:
             logger.warning(f"Failed to apply GROUP BY: {e}")
             return df
 
-    def _apply_global_aggregates(
-        self, df: pd.DataFrame, aggregates: dict[str, tuple]
-    ) -> pd.DataFrame:
+    def _apply_global_aggregates(self, df: pd.DataFrame, aggregates: dict[str, tuple]) -> pd.DataFrame:
         """Apply aggregate functions without GROUP BY (global aggregates)."""
         try:
             result_data = {}
@@ -410,9 +383,7 @@ class DataQueryParser:
                     actual_column = df.columns[0] if column == "*" else column
 
                     if func == "count":
-                        result_data[alias] = (
-                            len(df) if column == "*" else df[actual_column].count()
-                        )
+                        result_data[alias] = len(df) if column == "*" else df[actual_column].count()
                     elif func == "sum":
                         result_data[alias] = df[actual_column].sum()
                     elif func == "avg":
@@ -433,9 +404,7 @@ class DataQueryParser:
             logger.warning(f"Failed to apply global aggregates: {e}")
             return df
 
-    def _apply_having_clause(
-        self, df: pd.DataFrame, having_clause: str
-    ) -> pd.DataFrame:
+    def _apply_having_clause(self, df: pd.DataFrame, having_clause: str) -> pd.DataFrame:
         """Apply HAVING clause filtering after GROUP BY."""
         try:
             # HAVING works like WHERE but on aggregated results
@@ -444,20 +413,12 @@ class DataQueryParser:
             # Handle COUNT(*) references - replace with appropriate column name
             if "COUNT(*)" in condition.upper():
                 # Find a column that was likely created by COUNT aggregation
-                count_columns = [
-                    col
-                    for col in df.columns
-                    if "count" in col.lower() or col.endswith("_count")
-                ]
+                count_columns = [col for col in df.columns if "count" in col.lower() or col.endswith("_count")]
                 if count_columns:
-                    condition = re.sub(
-                        r"COUNT\(\*\)", count_columns[0], condition, flags=re.IGNORECASE
-                    )
+                    condition = re.sub(r"COUNT\(\*\)", count_columns[0], condition, flags=re.IGNORECASE)
                 else:
                     # Fallback - use the last column (often the count column)
-                    condition = re.sub(
-                        r"COUNT\(\*\)", df.columns[-1], condition, flags=re.IGNORECASE
-                    )
+                    condition = re.sub(r"COUNT\(\*\)", df.columns[-1], condition, flags=re.IGNORECASE)
 
             # Fix quote handling: Convert single quotes to double quotes
             condition = self._fix_quotes_in_condition(condition)
@@ -478,9 +439,7 @@ class DataQueryParser:
             logger.warning(f"Failed to apply HAVING clause '{having_clause}': {e}")
             return df
 
-    def _apply_order_by(
-        self, df: pd.DataFrame, order_specs: list[tuple]
-    ) -> pd.DataFrame:
+    def _apply_order_by(self, df: pd.DataFrame, order_specs: list[tuple]) -> pd.DataFrame:
         """Apply ORDER BY clause."""
         try:
             columns = []
@@ -515,9 +474,7 @@ class DataQueryParser:
 
         return order_specs
 
-    def _apply_column_selection(
-        self, df: pd.DataFrame, columns: list[str]
-    ) -> pd.DataFrame:
+    def _apply_column_selection(self, df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
         """Apply column selection."""
         try:
             # Filter to columns that exist in the DataFrame
@@ -560,9 +517,7 @@ class DataQueryParser:
 
                 # Basic syntax validation
                 if "from" not in query_lower:
-                    validation_result["warnings"].append(
-                        "Query appears to be missing FROM clause"
-                    )
+                    validation_result["warnings"].append("Query appears to be missing FROM clause")
 
                 # Check for potentially dangerous operations
                 dangerous_keywords = [
@@ -575,9 +530,7 @@ class DataQueryParser:
                 ]
                 for keyword in dangerous_keywords:
                     if keyword in query_lower:
-                        validation_result["errors"].append(
-                            f"Dangerous keyword '{keyword}' found in query"
-                        )
+                        validation_result["errors"].append(f"Dangerous keyword '{keyword}' found in query")
                         validation_result["valid"] = False
 
             else:
@@ -599,9 +552,7 @@ class DataQueryParser:
             "pandas_methods": [".str.contains()", ".isna()", ".notna()", ".isin()"],
         }
 
-    def format_result(
-        self, result: dict[str, Any], format_type: str = "json"
-    ) -> str | dict[str, Any]:
+    def format_result(self, result: dict[str, Any], format_type: str = "json") -> str | dict[str, Any]:
         """
         Format query results in different formats.
 
