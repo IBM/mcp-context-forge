@@ -33,7 +33,7 @@ make build && make run
 
 ---
 
-## 🚀 Coming Soon
+## 🚀 Planned Samples
 
 ### 🐍 Python Samples
 - **Fast Calculator Server** - Mathematical operations and conversions
@@ -158,10 +158,10 @@ mcp-servers/
 | Server | Language | Response Time | Memory | Binary Size | Cold Start |
 |--------|----------|---------------|---------|-------------|------------|
 | fast-time-server | Go | **0.5ms** | 8MB | 12MB | 100ms |
-| *coming soon* | Python | ~2ms | 25MB | N/A | 300ms |
-| *coming soon* | TypeScript | ~3ms | 35MB | N/A | 400ms |
-| *coming soon* | Rust | **0.3ms** | 4MB | 8MB | 50ms |
-| *coming soon* | Java | ~5ms | 45MB | 25MB | 800ms |
+| (planned) | Python | ~2ms | 25MB | N/A | 300ms |
+| (planned) | TypeScript | ~3ms | 35MB | N/A | 400ms |
+| (planned) | Rust | **0.3ms** | 4MB | 8MB | 50ms |
+| (planned) | Java | ~5ms | 45MB | 25MB | 800ms |
 
 *Benchmarks measured on standard GitHub Actions runners*
 

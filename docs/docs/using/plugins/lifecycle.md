@@ -129,6 +129,40 @@ You can run `mcp inspector` to check your new server (note, it requires `npm`):
 
 ```bash
 npx @modelcontextprotocol/inspector
+
+## Plugin Templates
+
+The gateway ships with ready‑to‑use plugin templates under `plugin_templates/` that the bootstrap tool uses. You can also copy them manually if you prefer.
+
+Location and contents:
+
+- `plugin_templates/native`
+  - `plugin.py.jinja`: Plugin class skeleton extending `Plugin`
+  - `plugin-manifest.yaml.jinja`: Manifest metadata (description, author, version, available_hooks)
+  - `config.yaml.jinja`: Example entry to add in `plugins/config.yaml`
+  - `__init__.py.jinja`, `README.md.jinja`
+
+- `plugin_templates/external`
+  - `{{ plugin_name }}/plugin.py.jinja`: External plugin implementation skeleton
+  - `resources/plugins/config.yaml.jinja`: Plugin loader config for server
+  - `resources/runtime/config.yaml.jinja`: External server runtime config
+  - `pyproject.toml.jinja`, `MANIFEST.in.jinja`, `.ruff.toml`, `.dockerignore`, `Containerfile`
+  - `Makefile.jinja`, `run-server.sh`: Build and serve helpers
+  - `tests/`: Example tests and pytest config
+
+Placeholders in filenames and files (e.g., `{{ plugin_name.lower()... }}`) are filled by the bootstrap tool. If copying manually, replace them with your plugin's name and details.
+
+Using the templates via the CLI (recommended):
+
+```bash
+# Creates a new plugin from templates, asks interactive prompts
+mcpplugins bootstrap --destination your/plugin/dir
+
+# Pass --type to select template directly
+mcpplugins bootstrap --destination your/plugin/dir --type native   # or external
+```
+
+After bootstrapping, follow the steps above to install deps, run tests, build, and serve.
 ```
 
 ## Gateway Integration
@@ -177,6 +211,18 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://localhost:8000/mcp
+```
+
+To use STDIO instead of HTTP:
+
+```yaml
+plugins:
+  - name: "MyFilter"
+    kind: "external"
+    priority: 10
+    mcp:
+      proto: STDIO
+      script: path/to/your/plugin_server.py  # must be a .py file
 ```
 
 Then, start the gateway:

@@ -47,7 +47,7 @@ repo-root/
 ## ✏️ Editing tips
 
 1. Write in **standard Markdown**; we also support admonitions, call-outs, and Mermaid diagrams.
-2. Use relative links between pages: `[Gateway API](../api/index.md)`.
+2. Use relative links between pages: `[Configuration](../manage/configuration.md)`.
 3. For local images place them under `docs/docs/images/` and reference with `![](../images/example.png)`.
 4. Never edit `mkdocs.yml` - all nav structure is defined in `.pages` files (one per directory).
 

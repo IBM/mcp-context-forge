@@ -6,6 +6,15 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 
 ---
 
+!!! tip "What's new in 0.7.0 (preview)"
+    The upcoming v0.7.0 introduces multi‑tenancy: email authentication, teams, RBAC, and resource visibility (private/team/public).
+
+    - See the [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md)
+    - Quick enablement (excerpt): `EMAIL_AUTH_ENABLED=true`, `PLATFORM_ADMIN_EMAIL=...`, `AUTO_CREATE_PERSONAL_TEAMS=true`
+    - Learn more: [Team Management](teams.md), [RBAC](rbac.md)
+
+---
+
 ## 🧭 What's Covered
 
 | Page | Description |

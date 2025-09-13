@@ -1,5 +1,11 @@
 # Single Sign-On (SSO) Authentication
 
+!!! note "Multi‑Tenancy in v0.7.0"
+    v0.7.0 brings multi‑tenancy with email authentication, teams, RBAC, and resource visibility. If you're upgrading from 0.6.0, review the
+    [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
+
+    For SSO deployments, configure group‑to‑team mappings to auto‑assign users on first login. See [Team Management](teams.md) and the provider tutorials for examples.
+
 MCP Gateway supports enterprise Single Sign-On authentication through OAuth2 and OpenID Connect (OIDC) providers. This enables seamless integration with existing identity providers while maintaining backward compatibility with local authentication.
 
 ## Overview
@@ -658,5 +664,5 @@ class SSOAuthenticator:
 - [Authentication Overview](../manage/securing.md)
 - [Team Management](../manage/teams.md)
 - [RBAC Configuration](../manage/rbac.md)
-- [Environment Variables](../deployment/index.md#environment-variables)
+- [Environment Variables](../deployment/index.md#runtime-configuration)
 - [Security Best Practices](../architecture/security-features.md)

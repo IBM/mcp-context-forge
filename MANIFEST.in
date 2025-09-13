@@ -92,10 +92,11 @@ prune .devcontainer
 exclude CLAUDE.*
 exclude llms-full.txt
 
-# Exclude deployment, mcp-servers and agent_runtimes
+# Exclude deployment, mcp-servers, agent_runtimes and llms
 prune deployment
 prune mcp-servers
 prune agent_runtimes
+prune llms
 
 # Exclude opa
 exclude  plugins/external/opa/.dockerignore
