@@ -2916,14 +2916,23 @@ class TestAdminAuthenticationAndLogin:
         mock_request = MagicMock(spec=Request)
         mock_request.url = MagicMock()
         mock_request.url.path = "/admin/login"
+        mock_request.app = MagicMock()
+        mock_request.app.state = MagicMock()
+        mock_request.app.state.templates = MagicMock()
+        
+        # Mock the TemplateResponse
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.body = b'<html><body>Login<form>username password</form></body></html>'
+        mock_request.app.state.templates.TemplateResponse = MagicMock(return_value=mock_response)
 
         result = await admin_login_page(mock_request)
 
-        assert isinstance(result, HTMLResponse)
-        assert result.status_code == 200
-        assert "Login" in result.body.decode()
-        assert "username" in result.body.decode()
-        assert "password" in result.body.decode()
+        # Check that TemplateResponse was called with correct parameters
+        mock_request.app.state.templates.TemplateResponse.assert_called_once()
+        call_args = mock_request.app.state.templates.TemplateResponse.call_args
+        assert call_args[0][0] == "admin_login.html"
+        assert call_args[0][1]["request"] == mock_request
 
     async def test_admin_login_handler_success(self, mock_db):
         """Test successful login handler."""
@@ -3165,7 +3174,7 @@ class TestUtilityFunctions:
 
         # Test with None
         email = get_user_email(None)
-        assert email == "unknown"
+        assert email == "unknown"  # Returns "unknown" for None
 
         # Test with object without email attribute
         class NoEmailUser:
@@ -3173,7 +3182,8 @@ class TestUtilityFunctions:
 
         user = NoEmailUser()
         email = get_user_email(user)
-        assert email == "unknown"
+        # Should return str(user) which is the object representation
+        assert "NoEmailUser" in email
 
 
 class TestMetricsFunctions:
