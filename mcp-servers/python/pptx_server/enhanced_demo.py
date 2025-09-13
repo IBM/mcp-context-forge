@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Enhanced PowerPoint MCP Server Demo Script
 
@@ -6,27 +7,27 @@ This script demonstrates all the enhanced capabilities including templates,
 composite workflows, batch operations, and professional slide creation.
 """
 
+# Standard
 import asyncio
 import os
-import sys
 from pathlib import Path
+import sys
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+# Third-Party
 from pptx_server.server import (
+    apply_brand_theme,
+    batch_replace_text,
+    create_agenda_slide,
+    create_comparison_slide,
+    create_data_slide,
     create_presentation,
     create_presentation_from_template,
-    clone_presentation,
-    create_title_slide,
-    create_agenda_slide,
-    create_data_slide,
-    create_comparison_slide,
     create_section_break,
-    batch_replace_text,
-    apply_brand_theme,
+    create_title_slide,
     get_presentation_info,
-    list_slides,
     save_presentation,
 )
 
@@ -47,18 +48,9 @@ async def create_enhanced_demo():
         await create_presentation(template_file, "{{COMPANY}} {{REPORT_TYPE}}")
 
         # Add template slides with placeholders
-        await create_title_slide(
-            template_file,
-            "{{COMPANY}} {{REPORT_TYPE}}",
-            "{{SUBTITLE}}",
-            "{{DEPARTMENT}}",
-            "{{DATE}}"
-        )
+        await create_title_slide(template_file, "{{COMPANY}} {{REPORT_TYPE}}", "{{SUBTITLE}}", "{{DEPARTMENT}}", "{{DATE}}")
 
-        await create_agenda_slide(
-            template_file,
-            ["{{TOPIC_1}}", "{{TOPIC_2}}", "{{TOPIC_3}}", "{{TOPIC_4}}"]
-        )
+        await create_agenda_slide(template_file, ["{{TOPIC_1}}", "{{TOPIC_2}}", "{{TOPIC_3}}", "{{TOPIC_4}}"])
 
         await save_presentation(template_file)
         print("✅ Created corporate template with placeholders")
@@ -76,8 +68,8 @@ async def create_enhanced_demo():
                     "{{TOPIC_1}}": "Revenue Growth Analysis",
                     "{{TOPIC_2}}": "Cost Optimization Results",
                     "{{TOPIC_3}}": "Market Share Performance",
-                    "{{TOPIC_4}}": "2025 Strategic Priorities"
-                }
+                    "{{TOPIC_4}}": "2025 Strategic Priorities",
+                },
             },
             {
                 "name": "examples/generated/hr_quarterly_update.pptx",
@@ -90,17 +82,13 @@ async def create_enhanced_demo():
                     "{{TOPIC_1}}": "Team Growth & Hiring",
                     "{{TOPIC_2}}": "Employee Satisfaction",
                     "{{TOPIC_3}}": "Training & Development",
-                    "{{TOPIC_4}}": "Benefits & Compensation"
-                }
-            }
+                    "{{TOPIC_4}}": "Benefits & Compensation",
+                },
+            },
         ]
 
         for pres in presentations:
-            await create_presentation_from_template(
-                template_file,
-                pres["name"],
-                replace_placeholders=pres["replacements"]
-            )
+            await create_presentation_from_template(template_file, pres["name"], replace_placeholders=pres["replacements"])
             print(f"✅ Generated: {pres['name']}")
 
         # 2. Professional Workflow Demo
@@ -112,13 +100,7 @@ async def create_enhanced_demo():
         await create_presentation(showcase_file)
 
         # Professional title slide
-        await create_title_slide(
-            showcase_file,
-            "Enterprise Solutions Portfolio",
-            "Innovative Technology for Business Growth",
-            "Solutions Architecture Team",
-            "December 2024"
-        )
+        await create_title_slide(showcase_file, "Enterprise Solutions Portfolio", "Innovative Technology for Business Growth", "Solutions Architecture Team", "December 2024")
         print("✅ Created professional title slide")
 
         # Agenda with strategic topics
@@ -130,7 +112,7 @@ async def create_enhanced_demo():
             "Investment & ROI Analysis",
             "Partnership Strategy",
             "Risk Assessment & Mitigation",
-            "Success Metrics & KPIs"
+            "Success Metrics & KPIs",
         ]
         await create_agenda_slide(showcase_file, strategic_agenda, "Strategic Overview")
         print("✅ Created comprehensive agenda")
@@ -140,7 +122,7 @@ async def create_enhanced_demo():
             ("MARKET ANALYSIS", "Understanding Our Competitive Landscape", "#1f4e79"),
             ("SOLUTION PORTFOLIO", "Innovative Products & Services", "#0066cc"),
             ("IMPLEMENTATION", "Roadmap to Success", "#2e8b57"),
-            ("FINANCIAL OUTLOOK", "Investment & Returns", "#8b0000")
+            ("FINANCIAL OUTLOOK", "Investment & Returns", "#8b0000"),
         ]
 
         for section_title, subtitle, color in sections:
@@ -156,36 +138,18 @@ async def create_enhanced_demo():
             ["Enterprise", "$12.5M", "$16.2M", "+29.6%"],
             ["SMB", "$8.3M", "$11.7M", "+41.0%"],
             ["Government", "$5.1M", "$6.9M", "+35.3%"],
-            ["Healthcare", "$3.2M", "$4.8M", "+50.0%"]
+            ["Healthcare", "$3.2M", "$4.8M", "+50.0%"],
         ]
-        await create_data_slide(
-            showcase_file,
-            "Market Segment Performance",
-            market_data,
-            include_chart=True,
-            chart_type="column"
-        )
+        await create_data_slide(showcase_file, "Market Segment Performance", market_data, include_chart=True, chart_type="column")
 
         # Solution comparison
         await create_comparison_slide(
             showcase_file,
             "Current vs Future State",
             "Current Challenges",
-            [
-                "Legacy system limitations",
-                "Manual process inefficiencies",
-                "Scattered data sources",
-                "Limited scalability",
-                "High operational costs"
-            ],
+            ["Legacy system limitations", "Manual process inefficiencies", "Scattered data sources", "Limited scalability", "High operational costs"],
             "Future Benefits",
-            [
-                "Modern, integrated platform",
-                "Automated workflows",
-                "Unified data ecosystem",
-                "Cloud-native scalability",
-                "Optimized cost structure"
-            ]
+            ["Modern, integrated platform", "Automated workflows", "Unified data ecosystem", "Cloud-native scalability", "Optimized cost structure"],
         )
         print("✅ Added comparison analysis")
 
@@ -194,24 +158,14 @@ async def create_enhanced_demo():
         print("-" * 40)
 
         # Apply consistent terminology
-        terminology_updates = {
-            "2024": "FY2024",
-            "Revenue": "Net Revenue",
-            "Growth": "YoY Growth",
-            "Enterprise Solutions": "Enterprise Cloud Solutions",
-            "Implementation": "Deployment"
-        }
+        terminology_updates = {"2024": "FY2024", "Revenue": "Net Revenue", "Growth": "YoY Growth", "Enterprise Solutions": "Enterprise Cloud Solutions", "Implementation": "Deployment"}
 
         result = await batch_replace_text(showcase_file, terminology_updates)
         print(f"✅ Updated terminology: {result['total_replacements']} changes across {result['slides_processed']} slides")
 
         # Apply corporate branding
         brand_result = await apply_brand_theme(
-            showcase_file,
-            primary_color="#1f4e79",    # Corporate blue
-            secondary_color="#666666",   # Professional gray
-            accent_color="#ff6600",      # Action orange
-            font_family="Calibri"
+            showcase_file, primary_color="#1f4e79", secondary_color="#666666", accent_color="#ff6600", font_family="Calibri"  # Corporate blue  # Professional gray  # Action orange
         )
         print(f"✅ Applied brand theme: {brand_result['title_updates']} titles, {brand_result['shape_updates']} shapes")
 
@@ -220,12 +174,7 @@ async def create_enhanced_demo():
         print("-" * 40)
 
         # Save all presentations
-        presentations_to_save = [
-            template_file,
-            "examples/generated/q4_financial_report.pptx",
-            "examples/generated/hr_quarterly_update.pptx",
-            showcase_file
-        ]
+        presentations_to_save = [template_file, "examples/generated/q4_financial_report.pptx", "examples/generated/hr_quarterly_update.pptx", showcase_file]
 
         results = {}
         for pres_file in presentations_to_save:
@@ -233,10 +182,7 @@ async def create_enhanced_demo():
             if os.path.exists(pres_file):
                 info = await get_presentation_info(pres_file)
                 size = os.path.getsize(pres_file)
-                results[pres_file] = {
-                    "slides": info["slide_count"],
-                    "size_bytes": size
-                }
+                results[pres_file] = {"slides": info["slide_count"], "size_bytes": size}
 
         # Summary report
         print("\n🎉 ENHANCED DEMO COMPLETE!")
@@ -269,7 +215,9 @@ async def create_enhanced_demo():
         print(f"\n🔍 Verification:")
         for filename in results.keys():
             try:
+                # Third-Party
                 from pptx import Presentation
+
                 prs = Presentation(filename)
                 print(f"   ✅ {filename}: Valid ({len(prs.slides)} slides)")
             except Exception as e:
@@ -279,7 +227,9 @@ async def create_enhanced_demo():
 
     except Exception as e:
         print(f"\n❌ Demo failed with error: {e}")
+        # Standard
         import traceback
+
         traceback.print_exc()
         return False
 

@@ -1,18 +1,16 @@
+# -*- coding: utf-8 -*-
 """Tests for the PowerPoint MCP Server."""
 
+# Standard
 import asyncio
 import json
 import os
 import tempfile
-from pathlib import Path
-from unittest.mock import patch
 
-import pytest
+# Third-Party
 from pptx import Presentation
-
 from pptx_server.server import (
     add_chart,
-    add_image,
     add_shape,
     add_slide,
     add_table,
@@ -26,6 +24,7 @@ from pptx_server.server import (
     set_slide_title,
     set_table_cell,
 )
+import pytest
 
 
 class TestPresentationBasics:
@@ -232,9 +231,7 @@ class TestTableOperations:
 
     async def test_set_table_cell(self, presentation_with_table):
         """Test setting table cell content."""
-        result = await set_table_cell(
-            presentation_with_table, slide_index=0, table_index=0, row=0, col=0, text="Header 1"
-        )
+        result = await set_table_cell(presentation_with_table, slide_index=0, table_index=0, row=0, col=0, text="Header 1")
 
         assert "Set cell [0,0] text: Header 1" in result["message"]
 
@@ -300,9 +297,7 @@ class TestChartOperations:
 
         chart_types = ["column", "bar", "line", "pie"]
         for chart_type in chart_types:
-            result = await add_chart(
-                test_pptx_path, slide_index=0, data=sample_chart_data, chart_type=chart_type
-            )
+            result = await add_chart(test_pptx_path, slide_index=0, data=sample_chart_data, chart_type=chart_type)
             assert f"Added {chart_type} chart" in result["message"]
 
     async def test_invalid_chart_type(self, test_pptx_path, sample_chart_data):
@@ -442,9 +437,7 @@ class TestFileHandling:
         await create_presentation(pptx_path)
         await add_slide(pptx_path, 1)
 
-        result = await call_tool(
-            "add_image", {"file_path": pptx_path, "slide_index": 0, "image_path": "/nonexistent/image.png"}
-        )
+        result = await call_tool("add_image", {"file_path": pptx_path, "slide_index": 0, "image_path": "/nonexistent/image.png"})
 
         response = json.loads(result[0].text)
         assert response["ok"] is False

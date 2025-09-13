@@ -1,6 +1,6 @@
 # PowerPoint MCP Server
 
-A **comprehensive and enhanced** Model Context Protocol (MCP) server for creating and editing PowerPoint (.pptx) files using the python-pptx-fix library. This server provides complete PowerPoint automation capabilities with **professional workflow tools**, **template support**, and **batch operations** for enterprise-grade presentation automation.
+A **comprehensive and enhanced** Model Context Protocol (MCP) server for creating and editing PowerPoint (.pptx) files using the python-pptx-fix library. This server provides complete PowerPoint automation capabilities with **professional workflow tools**, **template support**, **batch operations**, and **modern 16:9 widescreen format by default** for enterprise-grade presentation automation.
 
 ## Features
 
@@ -16,11 +16,13 @@ A **comprehensive and enhanced** Model Context Protocol (MCP) server for creatin
 - **Utility Functions**: List shapes, get layouts, set presentation properties
 
 ### 🚀 Enhanced Professional Features
+- **Modern 16:9 Format**: All presentations default to widescreen format (13.33" x 7.5")
 - **Template System**: Create presentations from templates with placeholder replacement
 - **Composite Workflows**: Professional slide types (title, agenda, comparison, data, section breaks)
 - **Batch Operations**: Multi-slide text replacement and bulk formatting
 - **Brand Theme Application**: Consistent styling across presentations
 - **Auto-generated Summaries**: Intelligent content extraction for summary slides
+- **Format Control**: Switch between 16:9, 4:3, or custom slide dimensions
 
 ### 📊 Supported Content Types
 - **Text**: Titles, body text, text boxes, bullet points
@@ -143,6 +145,8 @@ Add to your Claude Desktop MCP configuration:
 - `list_shapes` - Get information about all shapes on a slide
 - `get_slide_layouts` - List available slide layouts
 - `set_presentation_properties` - Set document metadata
+- `set_slide_size` - Configure slide dimensions (16:9, 4:3, custom)
+- `get_slide_size` - Get current slide dimensions and aspect ratio
 - `export_slide_as_image` - Export slide as image (requires additional setup)
 
 ### 🚀 Professional Workflow Tools
@@ -219,6 +223,22 @@ await create_presentation_from_template(
         "{{DATE}}": "Q4 2024"
     }
 )
+```
+
+### Modern 16:9 Widescreen Format
+```python
+# All presentations default to 16:9 widescreen (13.33" x 7.5")
+await create_presentation("modern_presentation.pptx", "Widescreen Demo")
+
+# Check current format
+size_info = await get_slide_size("modern_presentation.pptx")
+# Returns: {"format": "16:9 widescreen", "aspect_ratio": "1.78:1", "is_widescreen": True}
+
+# Switch to 4:3 if needed for legacy compatibility
+await set_slide_size("modern_presentation.pptx", "4:3")
+
+# Or use custom dimensions
+await set_slide_size("modern_presentation.pptx", "custom", width_inches=12.0, height_inches=9.0)
 ```
 
 ### Batch Operations

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 PowerPoint MCP Server Demo Script
 
@@ -6,28 +7,30 @@ This script demonstrates all the capabilities of the PowerPoint MCP Server
 by creating a comprehensive presentation with all supported features.
 """
 
+# Standard
 import asyncio
 import os
-import sys
 from pathlib import Path
+import sys
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+# Third-Party
 from pptx_server.server import (
-    create_presentation,
-    add_slide,
-    set_slide_title,
-    set_slide_content,
-    add_text_box,
-    add_shape,
-    add_table,
-    set_table_cell,
     add_chart,
+    add_shape,
+    add_slide,
+    add_table,
+    add_text_box,
+    create_presentation,
     get_presentation_info,
-    list_slides,
     list_shapes,
+    list_slides,
     save_presentation,
+    set_slide_content,
+    set_slide_title,
+    set_table_cell,
 )
 
 
@@ -176,7 +179,9 @@ async def create_demo_presentation():
 
     except Exception as e:
         print(f"❌ Error creating demo: {e}")
+        # Standard
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -190,7 +195,9 @@ async def main():
 
         # Verify with python-pptx
         try:
+            # Third-Party
             from pptx import Presentation
+
             prs = Presentation(demo_file)
 
             print(f"\n🔍 Verification:")

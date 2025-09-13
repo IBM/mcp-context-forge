@@ -1,15 +1,17 @@
+# -*- coding: utf-8 -*-
 """Comprehensive PowerPoint MCP Server with full PPTX editing capabilities."""
 
+# Standard
 import asyncio
 import base64
+from io import BytesIO
 import json
 import logging
 import os
 import sys
-from io import BytesIO
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
+# Third-Party
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
@@ -17,11 +19,8 @@ from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE
-from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
-from pptx.parts.image import Image
-from pptx.slide import Slide
+from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
 logging.basicConfig(
@@ -84,7 +83,10 @@ def _get_presentation(file_path: str) -> Presentation:
             _presentations[abs_path] = Presentation(abs_path)
         else:
             log.info(f"Creating new presentation: {abs_path}")
-            _presentations[abs_path] = Presentation()
+            prs = Presentation()
+            # Set all new presentations to 16:9 widescreen by default
+            _set_slide_size_16_9(prs)
+            _presentations[abs_path] = prs
 
     return _presentations[abs_path]
 
@@ -106,6 +108,20 @@ def _parse_color(color_str: str) -> RGBColor:
     return RGBColor(int(color_str[:2], 16), int(color_str[2:4], 16), int(color_str[4:6], 16))
 
 
+def _set_slide_size_16_9(presentation: Presentation) -> None:
+    """Set presentation to 16:9 widescreen format (modern standard)."""
+    # 16:9 widescreen dimensions
+    presentation.slide_width = Inches(13.33)  # 16:9 widescreen width
+    presentation.slide_height = Inches(7.5)  # 16:9 widescreen height
+
+
+def _set_slide_size_4_3(presentation: Presentation) -> None:
+    """Set presentation to 4:3 standard format (legacy)."""
+    # 4:3 standard dimensions
+    presentation.slide_width = Inches(10.0)  # 4:3 standard width
+    presentation.slide_height = Inches(7.5)  # 4:3 standard height
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """List all available PowerPoint editing tools."""
@@ -118,10 +134,10 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": "Path where to save the presentation"},
-                    "title": {"type": "string", "description": "Optional title for the presentation"}
+                    "title": {"type": "string", "description": "Optional title for the presentation"},
                 },
-                "required": ["file_path"]
-            }
+                "required": ["file_path"],
+            },
         ),
         Tool(
             name="create_presentation_from_template",
@@ -132,10 +148,10 @@ async def list_tools() -> list[Tool]:
                     "template_path": {"type": "string", "description": "Path to the template presentation file"},
                     "output_path": {"type": "string", "description": "Path where to save the new presentation"},
                     "title": {"type": "string", "description": "Optional new title for the presentation"},
-                    "replace_placeholders": {"type": "object", "description": "Key-value pairs to replace text placeholders", "additionalProperties": {"type": "string"}}
+                    "replace_placeholders": {"type": "object", "description": "Key-value pairs to replace text placeholders", "additionalProperties": {"type": "string"}},
                 },
-                "required": ["template_path", "output_path"]
-            }
+                "required": ["template_path", "output_path"],
+            },
         ),
         Tool(
             name="clone_presentation",
@@ -145,45 +161,26 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "source_path": {"type": "string", "description": "Path to the source presentation"},
                     "target_path": {"type": "string", "description": "Path for the cloned presentation"},
-                    "new_title": {"type": "string", "description": "Optional new title for the cloned presentation"}
+                    "new_title": {"type": "string", "description": "Optional new title for the cloned presentation"},
                 },
-                "required": ["source_path", "target_path"]
-            }
+                "required": ["source_path", "target_path"],
+            },
         ),
         Tool(
             name="open_presentation",
             description="Open an existing PowerPoint presentation",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the presentation file"}
-                },
-                "required": ["file_path"]
-            }
+            inputSchema={"type": "object", "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}}, "required": ["file_path"]},
         ),
         Tool(
             name="save_presentation",
             description="Save the current presentation to file",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path where to save the presentation"}
-                },
-                "required": ["file_path"]
-            }
+            inputSchema={"type": "object", "properties": {"file_path": {"type": "string", "description": "Path where to save the presentation"}}, "required": ["file_path"]},
         ),
         Tool(
             name="get_presentation_info",
             description="Get information about the presentation (slide count, properties, etc.)",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the presentation file"}
-                },
-                "required": ["file_path"]
-            }
+            inputSchema={"type": "object", "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}}, "required": ["file_path"]},
         ),
-
         # Slide Management
         Tool(
             name="add_slide",
@@ -193,10 +190,10 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "layout_index": {"type": "integer", "description": "Slide layout index (0-based)", "default": 0},
-                    "position": {"type": "integer", "description": "Position to insert slide (0-based, -1 for end)", "default": -1}
+                    "position": {"type": "integer", "description": "Position to insert slide (0-based, -1 for end)", "default": -1},
                 },
-                "required": ["file_path"]
-            }
+                "required": ["file_path"],
+            },
         ),
         Tool(
             name="delete_slide",
@@ -205,10 +202,10 @@ async def list_tools() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
-                    "slide_index": {"type": "integer", "description": "Index of slide to delete (0-based)"}
+                    "slide_index": {"type": "integer", "description": "Index of slide to delete (0-based)"},
                 },
-                "required": ["file_path", "slide_index"]
-            }
+                "required": ["file_path", "slide_index"],
+            },
         ),
         Tool(
             name="move_slide",
@@ -218,10 +215,10 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "from_index": {"type": "integer", "description": "Current index of slide (0-based)"},
-                    "to_index": {"type": "integer", "description": "New index for slide (0-based)"}
+                    "to_index": {"type": "integer", "description": "New index for slide (0-based)"},
                 },
-                "required": ["file_path", "from_index", "to_index"]
-            }
+                "required": ["file_path", "from_index", "to_index"],
+            },
         ),
         Tool(
             name="duplicate_slide",
@@ -231,23 +228,16 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide to duplicate (0-based)"},
-                    "position": {"type": "integer", "description": "Position for duplicated slide (-1 for end)", "default": -1}
+                    "position": {"type": "integer", "description": "Position for duplicated slide (-1 for end)", "default": -1},
                 },
-                "required": ["file_path", "slide_index"]
-            }
+                "required": ["file_path", "slide_index"],
+            },
         ),
         Tool(
             name="list_slides",
             description="List all slides in the presentation with their basic information",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the presentation file"}
-                },
-                "required": ["file_path"]
-            }
+            inputSchema={"type": "object", "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}}, "required": ["file_path"]},
         ),
-
         # Text and Content Management
         Tool(
             name="set_slide_title",
@@ -257,10 +247,10 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
-                    "title": {"type": "string", "description": "Title text"}
+                    "title": {"type": "string", "description": "Title text"},
                 },
-                "required": ["file_path", "slide_index", "title"]
-            }
+                "required": ["file_path", "slide_index", "title"],
+            },
         ),
         Tool(
             name="set_slide_content",
@@ -270,10 +260,10 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
-                    "content": {"type": "string", "description": "Content text (can include bullet points with \\n)"}
+                    "content": {"type": "string", "description": "Content text (can include bullet points with \\n)"},
                 },
-                "required": ["file_path", "slide_index", "content"]
-            }
+                "required": ["file_path", "slide_index", "content"],
+            },
         ),
         Tool(
             name="add_text_box",
@@ -291,10 +281,10 @@ async def list_tools() -> list[Tool]:
                     "font_size": {"type": "integer", "description": "Font size in points", "default": 18},
                     "font_color": {"type": "string", "description": "Font color in hex (#RRGGBB)", "default": "#000000"},
                     "bold": {"type": "boolean", "description": "Make text bold", "default": False},
-                    "italic": {"type": "boolean", "description": "Make text italic", "default": False}
+                    "italic": {"type": "boolean", "description": "Make text italic", "default": False},
                 },
-                "required": ["file_path", "slide_index", "text"]
-            }
+                "required": ["file_path", "slide_index", "text"],
+            },
         ),
         Tool(
             name="format_text",
@@ -311,12 +301,11 @@ async def list_tools() -> list[Tool]:
                     "bold": {"type": "boolean", "description": "Make text bold"},
                     "italic": {"type": "boolean", "description": "Make text italic"},
                     "underline": {"type": "boolean", "description": "Underline text"},
-                    "alignment": {"type": "string", "description": "Text alignment (left, center, right, justify)", "default": "left"}
+                    "alignment": {"type": "string", "description": "Text alignment (left, center, right, justify)", "default": "left"},
                 },
-                "required": ["file_path", "slide_index", "shape_index"]
-            }
+                "required": ["file_path", "slide_index", "shape_index"],
+            },
         ),
-
         # Image Management
         Tool(
             name="add_image",
@@ -330,10 +319,10 @@ async def list_tools() -> list[Tool]:
                     "left": {"type": "number", "description": "Left position in inches", "default": 1.0},
                     "top": {"type": "number", "description": "Top position in inches", "default": 1.0},
                     "width": {"type": "number", "description": "Width in inches (optional, maintains aspect ratio)"},
-                    "height": {"type": "number", "description": "Height in inches (optional, maintains aspect ratio)"}
+                    "height": {"type": "number", "description": "Height in inches (optional, maintains aspect ratio)"},
                 },
-                "required": ["file_path", "slide_index", "image_path"]
-            }
+                "required": ["file_path", "slide_index", "image_path"],
+            },
         ),
         Tool(
             name="add_image_from_base64",
@@ -348,10 +337,10 @@ async def list_tools() -> list[Tool]:
                     "left": {"type": "number", "description": "Left position in inches", "default": 1.0},
                     "top": {"type": "number", "description": "Top position in inches", "default": 1.0},
                     "width": {"type": "number", "description": "Width in inches (optional)"},
-                    "height": {"type": "number", "description": "Height in inches (optional)"}
+                    "height": {"type": "number", "description": "Height in inches (optional)"},
                 },
-                "required": ["file_path", "slide_index", "image_data"]
-            }
+                "required": ["file_path", "slide_index", "image_data"],
+            },
         ),
         Tool(
             name="replace_image",
@@ -362,12 +351,11 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
                     "shape_index": {"type": "integer", "description": "Index of image shape (0-based)"},
-                    "new_image_path": {"type": "string", "description": "Path to the new image file"}
+                    "new_image_path": {"type": "string", "description": "Path to the new image file"},
                 },
-                "required": ["file_path", "slide_index", "shape_index", "new_image_path"]
-            }
+                "required": ["file_path", "slide_index", "shape_index", "new_image_path"],
+            },
         ),
-
         # Shape Management
         Tool(
             name="add_shape",
@@ -384,10 +372,10 @@ async def list_tools() -> list[Tool]:
                     "height": {"type": "number", "description": "Height in inches", "default": 1.0},
                     "fill_color": {"type": "string", "description": "Fill color in hex (#RRGGBB)"},
                     "line_color": {"type": "string", "description": "Line color in hex (#RRGGBB)"},
-                    "line_width": {"type": "number", "description": "Line width in points", "default": 1.0}
+                    "line_width": {"type": "number", "description": "Line width in points", "default": 1.0},
                 },
-                "required": ["file_path", "slide_index", "shape_type"]
-            }
+                "required": ["file_path", "slide_index", "shape_type"],
+            },
         ),
         Tool(
             name="modify_shape",
@@ -404,10 +392,10 @@ async def list_tools() -> list[Tool]:
                     "height": {"type": "number", "description": "Height in inches"},
                     "fill_color": {"type": "string", "description": "Fill color in hex (#RRGGBB)"},
                     "line_color": {"type": "string", "description": "Line color in hex (#RRGGBB)"},
-                    "line_width": {"type": "number", "description": "Line width in points"}
+                    "line_width": {"type": "number", "description": "Line width in points"},
                 },
-                "required": ["file_path", "slide_index", "shape_index"]
-            }
+                "required": ["file_path", "slide_index", "shape_index"],
+            },
         ),
         Tool(
             name="delete_shape",
@@ -417,12 +405,11 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
-                    "shape_index": {"type": "integer", "description": "Index of shape to delete (0-based)"}
+                    "shape_index": {"type": "integer", "description": "Index of shape to delete (0-based)"},
                 },
-                "required": ["file_path", "slide_index", "shape_index"]
-            }
+                "required": ["file_path", "slide_index", "shape_index"],
+            },
         ),
-
         # Table Operations
         Tool(
             name="add_table",
@@ -437,10 +424,10 @@ async def list_tools() -> list[Tool]:
                     "left": {"type": "number", "description": "Left position in inches", "default": 1.0},
                     "top": {"type": "number", "description": "Top position in inches", "default": 1.0},
                     "width": {"type": "number", "description": "Table width in inches", "default": 6.0},
-                    "height": {"type": "number", "description": "Table height in inches", "default": 3.0}
+                    "height": {"type": "number", "description": "Table height in inches", "default": 3.0},
                 },
-                "required": ["file_path", "slide_index", "rows", "cols"]
-            }
+                "required": ["file_path", "slide_index", "rows", "cols"],
+            },
         ),
         Tool(
             name="set_table_cell",
@@ -453,10 +440,10 @@ async def list_tools() -> list[Tool]:
                     "table_index": {"type": "integer", "description": "Index of table shape (0-based)"},
                     "row": {"type": "integer", "description": "Row index (0-based)"},
                     "col": {"type": "integer", "description": "Column index (0-based)"},
-                    "text": {"type": "string", "description": "Cell text content"}
+                    "text": {"type": "string", "description": "Cell text content"},
                 },
-                "required": ["file_path", "slide_index", "table_index", "row", "col", "text"]
-            }
+                "required": ["file_path", "slide_index", "table_index", "row", "col", "text"],
+            },
         ),
         Tool(
             name="format_table_cell",
@@ -473,10 +460,10 @@ async def list_tools() -> list[Tool]:
                     "font_color": {"type": "string", "description": "Font color in hex (#RRGGBB)"},
                     "fill_color": {"type": "string", "description": "Cell background color in hex (#RRGGBB)"},
                     "bold": {"type": "boolean", "description": "Make text bold"},
-                    "alignment": {"type": "string", "description": "Text alignment (left, center, right)"}
+                    "alignment": {"type": "string", "description": "Text alignment (left, center, right)"},
                 },
-                "required": ["file_path", "slide_index", "table_index", "row", "col"]
-            }
+                "required": ["file_path", "slide_index", "table_index", "row", "col"],
+            },
         ),
         Tool(
             name="populate_table",
@@ -488,12 +475,11 @@ async def list_tools() -> list[Tool]:
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
                     "table_index": {"type": "integer", "description": "Index of table shape (0-based)"},
                     "data": {"type": "array", "description": "2D array of cell values", "items": {"type": "array", "items": {"type": "string"}}},
-                    "header_row": {"type": "boolean", "description": "Format first row as header", "default": False}
+                    "header_row": {"type": "boolean", "description": "Format first row as header", "default": False},
                 },
-                "required": ["file_path", "slide_index", "table_index", "data"]
-            }
+                "required": ["file_path", "slide_index", "table_index", "data"],
+            },
         ),
-
         # Chart Operations
         Tool(
             name="add_chart",
@@ -504,21 +490,22 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
                     "chart_type": {"type": "string", "description": "Chart type (column, bar, line, pie)", "default": "column"},
-                    "data": {"type": "object", "description": "Chart data with categories and series", "properties": {
-                        "categories": {"type": "array", "items": {"type": "string"}},
-                        "series": {"type": "array", "items": {"type": "object", "properties": {
-                            "name": {"type": "string"},
-                            "values": {"type": "array", "items": {"type": "number"}}
-                        }}}
-                    }},
+                    "data": {
+                        "type": "object",
+                        "description": "Chart data with categories and series",
+                        "properties": {
+                            "categories": {"type": "array", "items": {"type": "string"}},
+                            "series": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "values": {"type": "array", "items": {"type": "number"}}}}},
+                        },
+                    },
                     "left": {"type": "number", "description": "Left position in inches", "default": 1.0},
                     "top": {"type": "number", "description": "Top position in inches", "default": 1.0},
                     "width": {"type": "number", "description": "Chart width in inches", "default": 6.0},
                     "height": {"type": "number", "description": "Chart height in inches", "default": 4.0},
-                    "title": {"type": "string", "description": "Chart title"}
+                    "title": {"type": "string", "description": "Chart title"},
                 },
-                "required": ["file_path", "slide_index", "data"]
-            }
+                "required": ["file_path", "slide_index", "data"],
+            },
         ),
         Tool(
             name="update_chart_data",
@@ -529,41 +516,32 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
                     "chart_index": {"type": "integer", "description": "Index of chart shape (0-based)"},
-                    "data": {"type": "object", "description": "New chart data", "properties": {
-                        "categories": {"type": "array", "items": {"type": "string"}},
-                        "series": {"type": "array", "items": {"type": "object", "properties": {
-                            "name": {"type": "string"},
-                            "values": {"type": "array", "items": {"type": "number"}}
-                        }}}
-                    }}
+                    "data": {
+                        "type": "object",
+                        "description": "New chart data",
+                        "properties": {
+                            "categories": {"type": "array", "items": {"type": "string"}},
+                            "series": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "values": {"type": "array", "items": {"type": "number"}}}}},
+                        },
+                    },
                 },
-                "required": ["file_path", "slide_index", "chart_index", "data"]
-            }
+                "required": ["file_path", "slide_index", "chart_index", "data"],
+            },
         ),
-
         # Utility and Information Tools
         Tool(
             name="list_shapes",
             description="List all shapes on a slide with their types and properties",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the presentation file"},
-                    "slide_index": {"type": "integer", "description": "Index of slide (0-based)"}
-                },
-                "required": ["file_path", "slide_index"]
-            }
+                "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}, "slide_index": {"type": "integer", "description": "Index of slide (0-based)"}},
+                "required": ["file_path", "slide_index"],
+            },
         ),
         Tool(
             name="get_slide_layouts",
             description="Get available slide layouts in the presentation",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {"type": "string", "description": "Path to the presentation file"}
-                },
-                "required": ["file_path"]
-            }
+            inputSchema={"type": "object", "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}}, "required": ["file_path"]},
         ),
         Tool(
             name="set_presentation_properties",
@@ -575,10 +553,29 @@ async def list_tools() -> list[Tool]:
                     "title": {"type": "string", "description": "Presentation title"},
                     "author": {"type": "string", "description": "Author name"},
                     "subject": {"type": "string", "description": "Subject"},
-                    "comments": {"type": "string", "description": "Comments"}
+                    "comments": {"type": "string", "description": "Comments"},
                 },
-                "required": ["file_path"]
-            }
+                "required": ["file_path"],
+            },
+        ),
+        Tool(
+            name="set_slide_size",
+            description="Set the slide size/aspect ratio of the presentation",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the presentation file"},
+                    "format": {"type": "string", "description": "Slide format", "enum": ["16:9", "4:3", "custom"], "default": "16:9"},
+                    "width_inches": {"type": "number", "description": "Custom width in inches (if format is custom)"},
+                    "height_inches": {"type": "number", "description": "Custom height in inches (if format is custom)"},
+                },
+                "required": ["file_path"],
+            },
+        ),
+        Tool(
+            name="get_slide_size",
+            description="Get the current slide size and aspect ratio of the presentation",
+            inputSchema={"type": "object", "properties": {"file_path": {"type": "string", "description": "Path to the presentation file"}}, "required": ["file_path"]},
         ),
         Tool(
             name="export_slide_as_image",
@@ -589,12 +586,11 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "slide_index": {"type": "integer", "description": "Index of slide (0-based)"},
                     "output_path": {"type": "string", "description": "Output image file path"},
-                    "format": {"type": "string", "description": "Image format (png, jpg)", "default": "png"}
+                    "format": {"type": "string", "description": "Image format (png, jpg)", "default": "png"},
                 },
-                "required": ["file_path", "slide_index", "output_path"]
-            }
+                "required": ["file_path", "slide_index", "output_path"],
+            },
         ),
-
         # Composite Workflow Tools
         Tool(
             name="create_title_slide",
@@ -607,10 +603,10 @@ async def list_tools() -> list[Tool]:
                     "subtitle": {"type": "string", "description": "Subtitle or description"},
                     "author": {"type": "string", "description": "Author or company name"},
                     "date": {"type": "string", "description": "Date or additional info"},
-                    "slide_index": {"type": "integer", "description": "Index where to create slide (0-based)", "default": 0}
+                    "slide_index": {"type": "integer", "description": "Index where to create slide (0-based)", "default": 0},
                 },
-                "required": ["file_path", "title"]
-            }
+                "required": ["file_path", "title"],
+            },
         ),
         Tool(
             name="create_data_slide",
@@ -623,10 +619,10 @@ async def list_tools() -> list[Tool]:
                     "data": {"type": "array", "description": "2D array of data for table", "items": {"type": "array", "items": {"type": "string"}}},
                     "include_chart": {"type": "boolean", "description": "Whether to create a chart from the data", "default": False},
                     "chart_type": {"type": "string", "description": "Chart type if creating chart", "default": "column"},
-                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1}
+                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1},
                 },
-                "required": ["file_path", "title", "data"]
-            }
+                "required": ["file_path", "title", "data"],
+            },
         ),
         Tool(
             name="create_comparison_slide",
@@ -640,10 +636,10 @@ async def list_tools() -> list[Tool]:
                     "left_content": {"type": "array", "description": "Left column bullet points", "items": {"type": "string"}},
                     "right_title": {"type": "string", "description": "Right column title"},
                     "right_content": {"type": "array", "description": "Right column bullet points", "items": {"type": "string"}},
-                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1}
+                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1},
                 },
-                "required": ["file_path", "title", "left_title", "left_content", "right_title", "right_content"]
-            }
+                "required": ["file_path", "title", "left_title", "left_content", "right_title", "right_content"],
+            },
         ),
         Tool(
             name="create_agenda_slide",
@@ -655,10 +651,10 @@ async def list_tools() -> list[Tool]:
                     "title": {"type": "string", "description": "Slide title", "default": "Agenda"},
                     "agenda_items": {"type": "array", "description": "List of agenda items", "items": {"type": "string"}},
                     "numbered": {"type": "boolean", "description": "Use numbers instead of bullets", "default": True},
-                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": 1}
+                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": 1},
                 },
-                "required": ["file_path", "agenda_items"]
-            }
+                "required": ["file_path", "agenda_items"],
+            },
         ),
         Tool(
             name="batch_replace_text",
@@ -669,10 +665,10 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "replacements": {"type": "object", "description": "Key-value pairs of text to replace", "additionalProperties": {"type": "string"}},
                     "slide_range": {"type": "array", "description": "Range of slide indices to process (all if not specified)", "items": {"type": "integer"}},
-                    "case_sensitive": {"type": "boolean", "description": "Whether replacement should be case sensitive", "default": False}
+                    "case_sensitive": {"type": "boolean", "description": "Whether replacement should be case sensitive", "default": False},
                 },
-                "required": ["file_path", "replacements"]
-            }
+                "required": ["file_path", "replacements"],
+            },
         ),
         Tool(
             name="apply_brand_theme",
@@ -686,10 +682,10 @@ async def list_tools() -> list[Tool]:
                     "accent_color": {"type": "string", "description": "Accent brand color (hex)", "default": "#FF6600"},
                     "font_family": {"type": "string", "description": "Primary font family", "default": "Arial"},
                     "apply_to_titles": {"type": "boolean", "description": "Apply colors to slide titles", "default": True},
-                    "apply_to_shapes": {"type": "boolean", "description": "Apply colors to shapes", "default": True}
+                    "apply_to_shapes": {"type": "boolean", "description": "Apply colors to shapes", "default": True},
                 },
-                "required": ["file_path"]
-            }
+                "required": ["file_path"],
+            },
         ),
         Tool(
             name="create_section_break",
@@ -702,10 +698,10 @@ async def list_tools() -> list[Tool]:
                     "subtitle": {"type": "string", "description": "Optional subtitle"},
                     "background_color": {"type": "string", "description": "Background color (hex)", "default": "#0066CC"},
                     "text_color": {"type": "string", "description": "Text color (hex)", "default": "#FFFFFF"},
-                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1}
+                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1},
                 },
-                "required": ["file_path", "section_title"]
-            }
+                "required": ["file_path", "section_title"],
+            },
         ),
         Tool(
             name="generate_summary_slide",
@@ -716,11 +712,11 @@ async def list_tools() -> list[Tool]:
                     "file_path": {"type": "string", "description": "Path to the presentation file"},
                     "title": {"type": "string", "description": "Summary slide title", "default": "Summary"},
                     "max_points": {"type": "integer", "description": "Maximum number of summary points", "default": 5},
-                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1}
+                    "position": {"type": "integer", "description": "Position to insert slide (-1 for end)", "default": -1},
                 },
-                "required": ["file_path"]
-            }
-        )
+                "required": ["file_path"],
+            },
+        ),
     ]
 
 
@@ -790,6 +786,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await get_slide_layouts(**arguments)
         elif name == "set_presentation_properties":
             result = await set_presentation_properties(**arguments)
+        elif name == "set_slide_size":
+            result = await set_slide_size(**arguments)
+        elif name == "get_slide_size":
+            result = await get_slide_size(**arguments)
         elif name == "export_slide_as_image":
             result = await export_slide_as_image(**arguments)
         # Composite workflow tools
@@ -824,6 +824,9 @@ async def create_presentation(file_path: str, title: Optional[str] = None) -> Di
     """Create a new PowerPoint presentation."""
     prs = Presentation()
 
+    # Set to modern 16:9 widescreen format by default
+    _set_slide_size_16_9(prs)
+
     if title:
         # Add title slide
         title_slide_layout = prs.slide_layouts[0]  # Title slide layout
@@ -840,7 +843,7 @@ async def create_presentation(file_path: str, title: Optional[str] = None) -> Di
     # Save immediately
     _save_presentation(organized_path)
 
-    return {"message": f"Created presentation: {organized_path}", "slide_count": len(prs.slides)}
+    return {"message": f"Created presentation: {organized_path}", "slide_count": len(prs.slides), "format": "16:9 widescreen"}
 
 
 async def open_presentation(file_path: str) -> Dict[str, Any]:
@@ -849,11 +852,7 @@ async def open_presentation(file_path: str) -> Dict[str, Any]:
         raise FileNotFoundError(f"Presentation file not found: {file_path}")
 
     prs = _get_presentation(file_path)
-    return {
-        "message": f"Opened presentation: {file_path}",
-        "slide_count": len(prs.slides),
-        "layouts_count": len(prs.slide_layouts)
-    }
+    return {"message": f"Opened presentation: {file_path}", "slide_count": len(prs.slides), "layouts_count": len(prs.slide_layouts)}
 
 
 async def save_presentation(file_path: str) -> Dict[str, Any]:
@@ -891,21 +890,17 @@ async def add_slide(file_path: str, layout_index: int = 0, position: int = -1) -
     slide_layout = prs.slide_layouts[layout_index]
 
     if position == -1:
-        slide = prs.slides.add_slide(slide_layout)
+        prs.slides.add_slide(slide_layout)
         slide_idx = len(prs.slides) - 1
     else:
         # python-pptx doesn't have direct insert at position, so we'll add at end and move
-        slide = prs.slides.add_slide(slide_layout)
+        prs.slides.add_slide(slide_layout)
         slide_idx = len(prs.slides) - 1
         if position < slide_idx:
             # Move slide to desired position (this is a workaround)
             pass  # Note: Moving requires more complex XML manipulation
 
-    return {
-        "message": f"Added slide at position {slide_idx}",
-        "slide_index": slide_idx,
-        "layout_name": slide_layout.name if hasattr(slide_layout, 'name') else f"Layout {layout_index}"
-    }
+    return {"message": f"Added slide at position {slide_idx}", "slide_index": slide_idx, "layout_name": slide_layout.name if hasattr(slide_layout, "name") else f"Layout {layout_index}"}
 
 
 async def delete_slide(file_path: str, slide_index: int) -> Dict[str, Any]:
@@ -916,7 +911,7 @@ async def delete_slide(file_path: str, slide_index: int) -> Dict[str, Any]:
         raise ValueError(f"Slide index {slide_index} out of range. Available slides: 0-{len(prs.slides)-1}")
 
     # Get slide reference
-    slide_id = prs.slides[slide_index].slide_id
+    prs.slides[slide_index].slide_id
 
     # Remove from slides collection
     del prs.slides._sldIdLst[slide_index]
@@ -969,12 +964,7 @@ async def list_slides(file_path: str) -> Dict[str, Any]:
 
     slides_info = []
     for i, slide in enumerate(prs.slides):
-        slide_info = {
-            "index": i,
-            "layout_name": slide.slide_layout.name if hasattr(slide.slide_layout, 'name') else f"Layout {i}",
-            "shape_count": len(slide.shapes),
-            "title": ""
-        }
+        slide_info = {"index": i, "layout_name": slide.slide_layout.name if hasattr(slide.slide_layout, "name") else f"Layout {i}", "shape_count": len(slide.shapes), "title": ""}
 
         # Try to get slide title
         try:
@@ -1024,7 +1014,7 @@ async def set_slide_content(file_path: str, slide_index: int, content: str) -> D
     if not content_placeholder:
         # If no content placeholder, try to find text frame
         for shape in slide.shapes:
-            if hasattr(shape, 'text_frame') and shape != slide.shapes.title:
+            if hasattr(shape, "text_frame") and shape != slide.shapes.title:
                 content_placeholder = shape
                 break
 
@@ -1032,7 +1022,7 @@ async def set_slide_content(file_path: str, slide_index: int, content: str) -> D
         raise ValueError("No content area found on this slide")
 
     # Split content by newlines and create bullet points
-    lines = content.split('\\n')
+    lines = content.split("\\n")
     content_placeholder.text = lines[0]  # First line
 
     if len(lines) > 1:
@@ -1045,9 +1035,19 @@ async def set_slide_content(file_path: str, slide_index: int, content: str) -> D
     return {"message": f"Set content for slide {slide_index}"}
 
 
-async def add_text_box(file_path: str, slide_index: int, text: str, left: float = 1.0, top: float = 1.0,
-                      width: float = 6.0, height: float = 1.0, font_size: int = 18,
-                      font_color: str = "#000000", bold: bool = False, italic: bool = False) -> Dict[str, Any]:
+async def add_text_box(
+    file_path: str,
+    slide_index: int,
+    text: str,
+    left: float = 1.0,
+    top: float = 1.0,
+    width: float = 6.0,
+    height: float = 1.0,
+    font_size: int = 18,
+    font_color: str = "#000000",
+    bold: bool = False,
+    italic: bool = False,
+) -> Dict[str, Any]:
     """Add a text box to a slide."""
     prs = _get_presentation(file_path)
 
@@ -1071,11 +1071,7 @@ async def add_text_box(file_path: str, slide_index: int, text: str, left: float 
     font.bold = bold
     font.italic = italic
 
-    return {
-        "message": f"Added text box to slide {slide_index}",
-        "shape_index": len(slide.shapes) - 1,
-        "text": text
-    }
+    return {"message": f"Added text box to slide {slide_index}", "shape_index": len(slide.shapes) - 1, "text": text}
 
 
 async def format_text(file_path: str, slide_index: int, shape_index: int, **kwargs) -> Dict[str, Any]:
@@ -1092,41 +1088,35 @@ async def format_text(file_path: str, slide_index: int, shape_index: int, **kwar
 
     shape = slide.shapes[shape_index]
 
-    if not hasattr(shape, 'text_frame'):
+    if not hasattr(shape, "text_frame"):
         raise ValueError("Selected shape does not contain text")
 
     # Apply formatting to all paragraphs and runs
     for paragraph in shape.text_frame.paragraphs:
-        if kwargs.get('alignment'):
-            alignment_map = {
-                'left': PP_ALIGN.LEFT,
-                'center': PP_ALIGN.CENTER,
-                'right': PP_ALIGN.RIGHT,
-                'justify': PP_ALIGN.JUSTIFY
-            }
-            paragraph.alignment = alignment_map.get(kwargs['alignment'], PP_ALIGN.LEFT)
+        if kwargs.get("alignment"):
+            alignment_map = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT, "justify": PP_ALIGN.JUSTIFY}
+            paragraph.alignment = alignment_map.get(kwargs["alignment"], PP_ALIGN.LEFT)
 
         for run in paragraph.runs:
             font = run.font
 
-            if kwargs.get('font_name'):
-                font.name = kwargs['font_name']
-            if kwargs.get('font_size'):
-                font.size = Pt(kwargs['font_size'])
-            if kwargs.get('font_color'):
-                font.color.rgb = _parse_color(kwargs['font_color'])
-            if kwargs.get('bold') is not None:
-                font.bold = kwargs['bold']
-            if kwargs.get('italic') is not None:
-                font.italic = kwargs['italic']
-            if kwargs.get('underline') is not None:
-                font.underline = kwargs['underline']
+            if kwargs.get("font_name"):
+                font.name = kwargs["font_name"]
+            if kwargs.get("font_size"):
+                font.size = Pt(kwargs["font_size"])
+            if kwargs.get("font_color"):
+                font.color.rgb = _parse_color(kwargs["font_color"])
+            if kwargs.get("bold") is not None:
+                font.bold = kwargs["bold"]
+            if kwargs.get("italic") is not None:
+                font.italic = kwargs["italic"]
+            if kwargs.get("underline") is not None:
+                font.underline = kwargs["underline"]
 
     return {"message": f"Formatted text in shape {shape_index} on slide {slide_index}"}
 
 
-async def add_image(file_path: str, slide_index: int, image_path: str, left: float = 1.0, top: float = 1.0,
-                   width: Optional[float] = None, height: Optional[float] = None) -> Dict[str, Any]:
+async def add_image(file_path: str, slide_index: int, image_path: str, left: float = 1.0, top: float = 1.0, width: Optional[float] = None, height: Optional[float] = None) -> Dict[str, Any]:
     """Add an image to a slide."""
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image file not found: {image_path}")
@@ -1146,18 +1136,14 @@ async def add_image(file_path: str, slide_index: int, image_path: str, left: flo
     elif height:
         pic = slide.shapes.add_picture(image_path, Inches(left), Inches(top), height=Inches(height))
     else:
-        pic = slide.shapes.add_picture(image_path, Inches(left), Inches(top))
+        slide.shapes.add_picture(image_path, Inches(left), Inches(top))
 
-    return {
-        "message": f"Added image to slide {slide_index}",
-        "shape_index": len(slide.shapes) - 1,
-        "image_path": image_path
-    }
+    return {"message": f"Added image to slide {slide_index}", "shape_index": len(slide.shapes) - 1, "image_path": image_path}
 
 
-async def add_image_from_base64(file_path: str, slide_index: int, image_data: str,
-                               image_format: str = "png", left: float = 1.0, top: float = 1.0,
-                               width: Optional[float] = None, height: Optional[float] = None) -> Dict[str, Any]:
+async def add_image_from_base64(
+    file_path: str, slide_index: int, image_data: str, image_format: str = "png", left: float = 1.0, top: float = 1.0, width: Optional[float] = None, height: Optional[float] = None
+) -> Dict[str, Any]:
     """Add an image from base64 data to a slide."""
     prs = _get_presentation(file_path)
 
@@ -1181,13 +1167,9 @@ async def add_image_from_base64(file_path: str, slide_index: int, image_data: st
     elif height:
         pic = slide.shapes.add_picture(image_stream, Inches(left), Inches(top), height=Inches(height))
     else:
-        pic = slide.shapes.add_picture(image_stream, Inches(left), Inches(top))
+        slide.shapes.add_picture(image_stream, Inches(left), Inches(top))
 
-    return {
-        "message": f"Added image from base64 to slide {slide_index}",
-        "shape_index": len(slide.shapes) - 1,
-        "format": image_format
-    }
+    return {"message": f"Added image from base64 to slide {slide_index}", "shape_index": len(slide.shapes) - 1, "format": image_format}
 
 
 async def replace_image(file_path: str, slide_index: int, shape_index: int, new_image_path: str) -> Dict[str, Any]:
@@ -1205,19 +1187,25 @@ async def replace_image(file_path: str, slide_index: int, shape_index: int, new_
     if shape_index < 0 or shape_index >= len(slide.shapes):
         raise ValueError(f"Shape index {shape_index} out of range")
 
-    shape = slide.shapes[shape_index]
+    slide.shapes[shape_index]
 
     # This is complex in python-pptx - would need to remove old image and add new one
     # For now, provide guidance
-    return {
-        "message": "Image replacement requires removing old image and adding new one",
-        "note": "Use delete_shape and add_image for full replacement functionality"
-    }
+    return {"message": "Image replacement requires removing old image and adding new one", "note": "Use delete_shape and add_image for full replacement functionality"}
 
 
-async def add_shape(file_path: str, slide_index: int, shape_type: str, left: float = 1.0, top: float = 1.0,
-                   width: float = 2.0, height: float = 1.0, fill_color: Optional[str] = None,
-                   line_color: Optional[str] = None, line_width: float = 1.0) -> Dict[str, Any]:
+async def add_shape(
+    file_path: str,
+    slide_index: int,
+    shape_type: str,
+    left: float = 1.0,
+    top: float = 1.0,
+    width: float = 2.0,
+    height: float = 1.0,
+    fill_color: Optional[str] = None,
+    line_color: Optional[str] = None,
+    line_width: float = 1.0,
+) -> Dict[str, Any]:
     """Add a shape to a slide."""
     prs = _get_presentation(file_path)
 
@@ -1228,28 +1216,25 @@ async def add_shape(file_path: str, slide_index: int, shape_type: str, left: flo
 
     # Map shape types to MSO_SHAPE constants
     shape_map = {
-        'rectangle': MSO_SHAPE.RECTANGLE,
-        'oval': MSO_SHAPE.OVAL,
-        'triangle': MSO_SHAPE.ISOSCELES_TRIANGLE,
-        'arrow': MSO_SHAPE.BLOCK_ARC,
-        'diamond': MSO_SHAPE.DIAMOND,
-        'pentagon': MSO_SHAPE.REGULAR_PENTAGON,
-        'hexagon': MSO_SHAPE.HEXAGON,
-        'octagon': MSO_SHAPE.OCTAGON,
-        'star': MSO_SHAPE.STAR_5_POINT,
-        'heart': MSO_SHAPE.HEART,
-        'smiley': MSO_SHAPE.SMILEY_FACE,
+        "rectangle": MSO_SHAPE.RECTANGLE,
+        "oval": MSO_SHAPE.OVAL,
+        "triangle": MSO_SHAPE.ISOSCELES_TRIANGLE,
+        "arrow": MSO_SHAPE.BLOCK_ARC,
+        "diamond": MSO_SHAPE.DIAMOND,
+        "pentagon": MSO_SHAPE.REGULAR_PENTAGON,
+        "hexagon": MSO_SHAPE.HEXAGON,
+        "octagon": MSO_SHAPE.OCTAGON,
+        "star": MSO_SHAPE.STAR_5_POINT,
+        "heart": MSO_SHAPE.HEART,
+        "smiley": MSO_SHAPE.SMILEY_FACE,
     }
 
     if shape_type.lower() not in shape_map:
-        available_shapes = ', '.join(shape_map.keys())
+        available_shapes = ", ".join(shape_map.keys())
         raise ValueError(f"Unknown shape type: {shape_type}. Available: {available_shapes}")
 
     # Add shape
-    shape = slide.shapes.add_shape(
-        shape_map[shape_type.lower()],
-        Inches(left), Inches(top), Inches(width), Inches(height)
-    )
+    shape = slide.shapes.add_shape(shape_map[shape_type.lower()], Inches(left), Inches(top), Inches(width), Inches(height))
 
     # Apply formatting
     if fill_color:
@@ -1261,10 +1246,7 @@ async def add_shape(file_path: str, slide_index: int, shape_type: str, left: flo
 
     shape.line.width = Pt(line_width)
 
-    return {
-        "message": f"Added {shape_type} shape to slide {slide_index}",
-        "shape_index": len(slide.shapes) - 1
-    }
+    return {"message": f"Added {shape_type} shape to slide {slide_index}", "shape_index": len(slide.shapes) - 1}
 
 
 async def modify_shape(file_path: str, slide_index: int, shape_index: int, **kwargs) -> Dict[str, Any]:
@@ -1282,25 +1264,25 @@ async def modify_shape(file_path: str, slide_index: int, shape_index: int, **kwa
     shape = slide.shapes[shape_index]
 
     # Modify position and size
-    if kwargs.get('left') is not None:
-        shape.left = Inches(kwargs['left'])
-    if kwargs.get('top') is not None:
-        shape.top = Inches(kwargs['top'])
-    if kwargs.get('width') is not None:
-        shape.width = Inches(kwargs['width'])
-    if kwargs.get('height') is not None:
-        shape.height = Inches(kwargs['height'])
+    if kwargs.get("left") is not None:
+        shape.left = Inches(kwargs["left"])
+    if kwargs.get("top") is not None:
+        shape.top = Inches(kwargs["top"])
+    if kwargs.get("width") is not None:
+        shape.width = Inches(kwargs["width"])
+    if kwargs.get("height") is not None:
+        shape.height = Inches(kwargs["height"])
 
     # Modify formatting
-    if kwargs.get('fill_color'):
+    if kwargs.get("fill_color"):
         shape.fill.solid()
-        shape.fill.fore_color.rgb = _parse_color(kwargs['fill_color'])
+        shape.fill.fore_color.rgb = _parse_color(kwargs["fill_color"])
 
-    if kwargs.get('line_color'):
-        shape.line.color.rgb = _parse_color(kwargs['line_color'])
+    if kwargs.get("line_color"):
+        shape.line.color.rgb = _parse_color(kwargs["line_color"])
 
-    if kwargs.get('line_width') is not None:
-        shape.line.width = Pt(kwargs['line_width'])
+    if kwargs.get("line_width") is not None:
+        shape.line.width = Pt(kwargs["line_width"])
 
     return {"message": f"Modified shape {shape_index} on slide {slide_index}"}
 
@@ -1324,8 +1306,7 @@ async def delete_shape(file_path: str, slide_index: int, shape_index: int) -> Di
     return {"message": f"Deleted shape {shape_index} from slide {slide_index}"}
 
 
-async def add_table(file_path: str, slide_index: int, rows: int, cols: int, left: float = 1.0,
-                   top: float = 1.0, width: float = 6.0, height: float = 3.0) -> Dict[str, Any]:
+async def add_table(file_path: str, slide_index: int, rows: int, cols: int, left: float = 1.0, top: float = 1.0, width: float = 6.0, height: float = 3.0) -> Dict[str, Any]:
     """Add a table to a slide."""
     prs = _get_presentation(file_path)
 
@@ -1335,7 +1316,7 @@ async def add_table(file_path: str, slide_index: int, rows: int, cols: int, left
     slide = prs.slides[slide_index]
 
     # Add table
-    table_shape = slide.shapes.add_table(rows, cols, Inches(left), Inches(top), Inches(width), Inches(height))
+    slide.shapes.add_table(rows, cols, Inches(left), Inches(top), Inches(width), Inches(height))
     table_index = len(slide.shapes) - 1
 
     return {
@@ -1343,7 +1324,7 @@ async def add_table(file_path: str, slide_index: int, rows: int, cols: int, left
         "shape_index": table_index,
         "table_shape_index": table_index,  # Explicit table index for reference
         "rows": rows,
-        "cols": cols
+        "cols": cols,
     }
 
 
@@ -1402,35 +1383,30 @@ async def format_table_cell(file_path: str, slide_index: int, table_index: int, 
     cell = table.cell(row, col)
 
     # Format cell background
-    if kwargs.get('fill_color'):
+    if kwargs.get("fill_color"):
         cell.fill.solid()
-        cell.fill.fore_color.rgb = _parse_color(kwargs['fill_color'])
+        cell.fill.fore_color.rgb = _parse_color(kwargs["fill_color"])
 
     # Format text
     for paragraph in cell.text_frame.paragraphs:
-        if kwargs.get('alignment'):
-            alignment_map = {
-                'left': PP_ALIGN.LEFT,
-                'center': PP_ALIGN.CENTER,
-                'right': PP_ALIGN.RIGHT
-            }
-            paragraph.alignment = alignment_map.get(kwargs['alignment'], PP_ALIGN.LEFT)
+        if kwargs.get("alignment"):
+            alignment_map = {"left": PP_ALIGN.LEFT, "center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}
+            paragraph.alignment = alignment_map.get(kwargs["alignment"], PP_ALIGN.LEFT)
 
         for run in paragraph.runs:
             font = run.font
 
-            if kwargs.get('font_size'):
-                font.size = Pt(kwargs['font_size'])
-            if kwargs.get('font_color'):
-                font.color.rgb = _parse_color(kwargs['font_color'])
-            if kwargs.get('bold') is not None:
-                font.bold = kwargs['bold']
+            if kwargs.get("font_size"):
+                font.size = Pt(kwargs["font_size"])
+            if kwargs.get("font_color"):
+                font.color.rgb = _parse_color(kwargs["font_color"])
+            if kwargs.get("bold") is not None:
+                font.bold = kwargs["bold"]
 
     return {"message": f"Formatted cell [{row},{col}]"}
 
 
-async def populate_table(file_path: str, slide_index: int, table_index: int, data: List[List[str]],
-                        header_row: bool = False) -> Dict[str, Any]:
+async def populate_table(file_path: str, slide_index: int, table_index: int, data: List[List[str]], header_row: bool = False) -> Dict[str, Any]:
     """Populate entire table with data from a 2D array."""
     prs = _get_presentation(file_path)
 
@@ -1471,9 +1447,9 @@ async def populate_table(file_path: str, slide_index: int, table_index: int, dat
     return {"message": f"Populated table with {len(data)} rows of data"}
 
 
-async def add_chart(file_path: str, slide_index: int, data: Dict[str, Any], chart_type: str = "column",
-                   left: float = 1.0, top: float = 1.0, width: float = 6.0, height: float = 4.0,
-                   title: Optional[str] = None) -> Dict[str, Any]:
+async def add_chart(
+    file_path: str, slide_index: int, data: Dict[str, Any], chart_type: str = "column", left: float = 1.0, top: float = 1.0, width: float = 6.0, height: float = 4.0, title: Optional[str] = None
+) -> Dict[str, Any]:
     """Add a chart to a slide."""
     prs = _get_presentation(file_path)
 
@@ -1483,40 +1459,27 @@ async def add_chart(file_path: str, slide_index: int, data: Dict[str, Any], char
     slide = prs.slides[slide_index]
 
     # Map chart types
-    chart_type_map = {
-        'column': XL_CHART_TYPE.COLUMN_CLUSTERED,
-        'bar': XL_CHART_TYPE.BAR_CLUSTERED,
-        'line': XL_CHART_TYPE.LINE,
-        'pie': XL_CHART_TYPE.PIE
-    }
+    chart_type_map = {"column": XL_CHART_TYPE.COLUMN_CLUSTERED, "bar": XL_CHART_TYPE.BAR_CLUSTERED, "line": XL_CHART_TYPE.LINE, "pie": XL_CHART_TYPE.PIE}
 
     if chart_type not in chart_type_map:
-        available_types = ', '.join(chart_type_map.keys())
+        available_types = ", ".join(chart_type_map.keys())
         raise ValueError(f"Unknown chart type: {chart_type}. Available: {available_types}")
 
     # Prepare chart data
     chart_data = CategoryChartData()
-    chart_data.categories = data.get('categories', [])
+    chart_data.categories = data.get("categories", [])
 
-    for series_info in data.get('series', []):
-        chart_data.add_series(series_info.get('name', 'Series'), series_info.get('values', []))
+    for series_info in data.get("series", []):
+        chart_data.add_series(series_info.get("name", "Series"), series_info.get("values", []))
 
     # Add chart
-    chart_shape = slide.shapes.add_chart(
-        chart_type_map[chart_type],
-        Inches(left), Inches(top), Inches(width), Inches(height),
-        chart_data
-    )
+    chart_shape = slide.shapes.add_chart(chart_type_map[chart_type], Inches(left), Inches(top), Inches(width), Inches(height), chart_data)
 
     # Set title if provided
     if title:
         chart_shape.chart.chart_title.text_frame.text = title
 
-    return {
-        "message": f"Added {chart_type} chart to slide {slide_index}",
-        "shape_index": len(slide.shapes) - 1,
-        "title": title or "Untitled Chart"
-    }
+    return {"message": f"Added {chart_type} chart to slide {slide_index}", "shape_index": len(slide.shapes) - 1, "title": title or "Untitled Chart"}
 
 
 async def update_chart_data(file_path: str, slide_index: int, chart_index: int, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1533,15 +1496,12 @@ async def update_chart_data(file_path: str, slide_index: int, chart_index: int, 
 
     shape = slide.shapes[chart_index]
 
-    if not hasattr(shape, 'chart'):
+    if not hasattr(shape, "chart"):
         raise ValueError("Selected shape is not a chart")
 
     # Note: Updating chart data in python-pptx is complex and may require
     # recreating the chart or manipulating the underlying XML
-    return {
-        "message": "Chart data update is complex in python-pptx",
-        "note": "Consider recreating the chart with new data for full functionality"
-    }
+    return {"message": "Chart data update is complex in python-pptx", "note": "Consider recreating the chart with new data for full functionality"}
 
 
 async def list_shapes(file_path: str, slide_index: int) -> Dict[str, Any]:
@@ -1562,12 +1522,12 @@ async def list_shapes(file_path: str, slide_index: int) -> Dict[str, Any]:
             "top": float(shape.top.inches),
             "width": float(shape.width.inches),
             "height": float(shape.height.inches),
-            "has_text": hasattr(shape, 'text_frame'),
-            "text": ""
+            "has_text": hasattr(shape, "text_frame"),
+            "text": "",
         }
 
         # Get text if available
-        if hasattr(shape, 'text_frame') and shape.text_frame:
+        if hasattr(shape, "text_frame") and shape.text_frame:
             try:
                 shape_info["text"] = shape.text_frame.text[:100]  # First 100 chars
             except:
@@ -1600,11 +1560,7 @@ async def get_slide_layouts(file_path: str) -> Dict[str, Any]:
 
     layouts_info = []
     for i, layout in enumerate(prs.slide_layouts):
-        layout_info = {
-            "index": i,
-            "name": layout.name if hasattr(layout, 'name') else f"Layout {i}",
-            "placeholder_count": len(layout.placeholders)
-        }
+        layout_info = {"index": i, "name": layout.name if hasattr(layout, "name") else f"Layout {i}", "placeholder_count": len(layout.placeholders)}
         layouts_info.append(layout_info)
 
     return {"layouts": layouts_info, "total_count": len(layouts_info)}
@@ -1615,16 +1571,60 @@ async def set_presentation_properties(file_path: str, **kwargs) -> Dict[str, Any
     prs = _get_presentation(file_path)
     props = prs.core_properties
 
-    if kwargs.get('title'):
-        props.title = kwargs['title']
-    if kwargs.get('author'):
-        props.author = kwargs['author']
-    if kwargs.get('subject'):
-        props.subject = kwargs['subject']
-    if kwargs.get('comments'):
-        props.comments = kwargs['comments']
+    if kwargs.get("title"):
+        props.title = kwargs["title"]
+    if kwargs.get("author"):
+        props.author = kwargs["author"]
+    if kwargs.get("subject"):
+        props.subject = kwargs["subject"]
+    if kwargs.get("comments"):
+        props.comments = kwargs["comments"]
 
     return {"message": "Updated presentation properties"}
+
+
+async def set_slide_size(file_path: str, format: str = "16:9", width_inches: Optional[float] = None, height_inches: Optional[float] = None) -> Dict[str, Any]:
+    """Set the slide size/aspect ratio of the presentation."""
+    prs = _get_presentation(file_path)
+
+    if format == "16:9":
+        _set_slide_size_16_9(prs)
+        width = 13.33
+        height = 7.5
+    elif format == "4:3":
+        _set_slide_size_4_3(prs)
+        width = 10.0
+        height = 7.5
+    elif format == "custom":
+        if width_inches is None or height_inches is None:
+            raise ValueError("Custom format requires both width_inches and height_inches")
+        prs.slide_width = Inches(width_inches)
+        prs.slide_height = Inches(height_inches)
+        width = width_inches
+        height = height_inches
+    else:
+        raise ValueError(f"Unsupported format: {format}. Use '16:9', '4:3', or 'custom'")
+
+    return {"message": f"Set slide size to {format}", "format": format, "width_inches": width, "height_inches": height, "aspect_ratio": f"{width/height:.2f}:1"}
+
+
+async def get_slide_size(file_path: str) -> Dict[str, Any]:
+    """Get the current slide size and aspect ratio of the presentation."""
+    prs = _get_presentation(file_path)
+
+    width_inches = prs.slide_width.inches
+    height_inches = prs.slide_height.inches
+    aspect_ratio = width_inches / height_inches
+
+    # Determine format
+    if abs(aspect_ratio - 16 / 9) < 0.01:
+        format_name = "16:9 widescreen"
+    elif abs(aspect_ratio - 4 / 3) < 0.01:
+        format_name = "4:3 standard"
+    else:
+        format_name = "custom"
+
+    return {"width_inches": round(width_inches, 2), "height_inches": round(height_inches, 2), "aspect_ratio": f"{aspect_ratio:.2f}:1", "format": format_name, "is_widescreen": aspect_ratio > 1.5}
 
 
 async def export_slide_as_image(file_path: str, slide_index: int, output_path: str, format: str = "png") -> Dict[str, Any]:
@@ -1635,13 +1635,12 @@ async def export_slide_as_image(file_path: str, slide_index: int, output_path: s
         "message": "Slide image export requires additional libraries",
         "note": "Consider using python-pptx-interface or COM automation for image export functionality",
         "requested_output": output_path,
-        "format": format
+        "format": format,
     }
 
 
 # Template and Enhanced Workflow Functions
-async def create_presentation_from_template(template_path: str, output_path: str, title: Optional[str] = None,
-                                          replace_placeholders: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+async def create_presentation_from_template(template_path: str, output_path: str, title: Optional[str] = None, replace_placeholders: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Create a new presentation from an existing template."""
     # Resolve template path (check templates directory)
     resolved_template = _resolve_template_path(template_path)
@@ -1650,6 +1649,9 @@ async def create_presentation_from_template(template_path: str, output_path: str
 
     # Load template
     template_prs = Presentation(resolved_template)
+
+    # Ensure 16:9 format for new presentations from template
+    _set_slide_size_16_9(template_prs)
 
     # Ensure proper output directory
     organized_output = _ensure_output_directory(output_path)
@@ -1669,7 +1671,7 @@ async def create_presentation_from_template(template_path: str, output_path: str
     if replace_placeholders:
         for slide in template_prs.slides:
             for shape in slide.shapes:
-                if hasattr(shape, 'text_frame') and shape.text_frame:
+                if hasattr(shape, "text_frame") and shape.text_frame:
                     for paragraph in shape.text_frame.paragraphs:
                         for run in paragraph.runs:
                             for placeholder, replacement in replace_placeholders.items():
@@ -1680,12 +1682,7 @@ async def create_presentation_from_template(template_path: str, output_path: str
     # Save the new presentation
     _save_presentation(organized_output)
 
-    return {
-        "message": f"Created presentation from template: {resolved_template}",
-        "output_path": organized_output,
-        "slide_count": len(template_prs.slides),
-        "replacements_made": replacements_made
-    }
+    return {"message": f"Created presentation from template: {resolved_template}", "output_path": organized_output, "slide_count": len(template_prs.slides), "replacements_made": replacements_made}
 
 
 async def clone_presentation(source_path: str, target_path: str, new_title: Optional[str] = None) -> Dict[str, Any]:
@@ -1697,6 +1694,9 @@ async def clone_presentation(source_path: str, target_path: str, new_title: Opti
 
     # Load source presentation
     source_prs = Presentation(resolved_source)
+
+    # Ensure 16:9 format for cloned presentations
+    _set_slide_size_16_9(source_prs)
 
     # Ensure proper output directory
     organized_target = _ensure_output_directory(target_path)
@@ -1714,17 +1714,11 @@ async def clone_presentation(source_path: str, target_path: str, new_title: Opti
     # Save the cloned presentation
     _save_presentation(organized_target)
 
-    return {
-        "message": f"Cloned presentation from {resolved_source} to {organized_target}",
-        "slide_count": len(source_prs.slides),
-        "new_title": new_title or "No title change"
-    }
+    return {"message": f"Cloned presentation from {resolved_source} to {organized_target}", "slide_count": len(source_prs.slides), "new_title": new_title or "No title change"}
 
 
 # Composite Workflow Tools
-async def create_title_slide(file_path: str, title: str, subtitle: Optional[str] = None,
-                           author: Optional[str] = None, date: Optional[str] = None,
-                           slide_index: int = 0) -> Dict[str, Any]:
+async def create_title_slide(file_path: str, title: str, subtitle: Optional[str] = None, author: Optional[str] = None, date: Optional[str] = None, slide_index: int = 0) -> Dict[str, Any]:
     """Create a complete title slide with all elements."""
     prs = _get_presentation(file_path)
 
@@ -1764,21 +1758,12 @@ async def create_title_slide(file_path: str, title: str, subtitle: Optional[str]
     if date:
         await add_text_box(file_path, actual_index, date, 5.0, 5.5, 4.0, 0.8, 16, "#888888", False, False)
 
-    return {
-        "message": f"Created title slide at index {actual_index}",
-        "slide_index": actual_index,
-        "title": title,
-        "subtitle": subtitle or "None",
-        "author": author or "None",
-        "date": date or "None"
-    }
+    return {"message": f"Created title slide at index {actual_index}", "slide_index": actual_index, "title": title, "subtitle": subtitle or "None", "author": author or "None", "date": date or "None"}
 
 
-async def create_data_slide(file_path: str, title: str, data: List[List[str]],
-                          include_chart: bool = False, chart_type: str = "column",
-                          position: int = -1) -> Dict[str, Any]:
+async def create_data_slide(file_path: str, title: str, data: List[List[str]], include_chart: bool = False, chart_type: str = "column", position: int = -1) -> Dict[str, Any]:
     """Create a complete data slide with table and optional chart."""
-    prs = _get_presentation(file_path)
+    _get_presentation(file_path)
 
     # Add slide
     slide_result = await add_slide(file_path, 1, position)  # Content layout
@@ -1819,7 +1804,7 @@ async def create_data_slide(file_path: str, title: str, data: List[List[str]],
                     for row_idx in range(1, len(data)):  # Skip header row
                         try:
                             # Try to convert to number
-                            value_str = data[row_idx][col_idx].replace('$', '').replace(',', '').replace('%', '')
+                            value_str = data[row_idx][col_idx].replace("$", "").replace(",", "").replace("%", "")
                             values.append(float(value_str))
                         except (ValueError, IndexError):
                             values.append(0)
@@ -1833,17 +1818,10 @@ async def create_data_slide(file_path: str, title: str, data: List[List[str]],
         except Exception as e:
             log.warning(f"Could not create chart from data: {e}")
 
-    return {
-        "message": f"Created data slide '{title}' at index {slide_idx}",
-        "slide_index": slide_idx,
-        "table_rows": rows,
-        "table_cols": cols,
-        "chart_created": chart_created
-    }
+    return {"message": f"Created data slide '{title}' at index {slide_idx}", "slide_index": slide_idx, "table_rows": rows, "table_cols": cols, "chart_created": chart_created}
 
 
-async def create_comparison_slide(file_path: str, title: str, left_title: str, left_content: List[str],
-                                right_title: str, right_content: List[str], position: int = -1) -> Dict[str, Any]:
+async def create_comparison_slide(file_path: str, title: str, left_title: str, left_content: List[str], right_title: str, right_content: List[str], position: int = -1) -> Dict[str, Any]:
     """Create a comparison slide with two columns."""
     # Add slide
     slide_result = await add_slide(file_path, 1, position)  # Content layout
@@ -1852,29 +1830,23 @@ async def create_comparison_slide(file_path: str, title: str, left_title: str, l
     # Set main title
     await set_slide_title(file_path, slide_idx, title)
 
-    # Create left column
-    await add_text_box(file_path, slide_idx, left_title, 0.5, 2.0, 4.0, 0.8, 20, "#0066CC", True, False)
+    # Create left column (optimized for 16:9 widescreen)
+    await add_text_box(file_path, slide_idx, left_title, 0.5, 2.0, 5.5, 0.8, 20, "#0066CC", True, False)
     left_content_text = "\\n".join([f"• {item}" for item in left_content])
-    await add_text_box(file_path, slide_idx, left_content_text, 0.5, 3.0, 4.0, 3.0, 16, "#000000", False, False)
+    await add_text_box(file_path, slide_idx, left_content_text, 0.5, 3.0, 5.5, 3.0, 16, "#000000", False, False)
 
-    # Create right column
-    await add_text_box(file_path, slide_idx, right_title, 5.5, 2.0, 4.0, 0.8, 20, "#0066CC", True, False)
+    # Create right column (optimized for 16:9 widescreen)
+    await add_text_box(file_path, slide_idx, right_title, 7.0, 2.0, 5.5, 0.8, 20, "#0066CC", True, False)
     right_content_text = "\\n".join([f"• {item}" for item in right_content])
-    await add_text_box(file_path, slide_idx, right_content_text, 5.5, 3.0, 4.0, 3.0, 16, "#000000", False, False)
+    await add_text_box(file_path, slide_idx, right_content_text, 7.0, 3.0, 5.5, 3.0, 16, "#000000", False, False)
 
-    # Add dividing line
-    await add_shape(file_path, slide_idx, "rectangle", 4.8, 2.0, 0.1, 4.0, "#CCCCCC", "#CCCCCC", 1.0)
+    # Add dividing line (centered for 16:9)
+    await add_shape(file_path, slide_idx, "rectangle", 6.6, 2.0, 0.1, 4.0, "#CCCCCC", "#CCCCCC", 1.0)
 
-    return {
-        "message": f"Created comparison slide '{title}' at index {slide_idx}",
-        "slide_index": slide_idx,
-        "left_items": len(left_content),
-        "right_items": len(right_content)
-    }
+    return {"message": f"Created comparison slide '{title}' at index {slide_idx}", "slide_index": slide_idx, "left_items": len(left_content), "right_items": len(right_content)}
 
 
-async def create_agenda_slide(file_path: str, agenda_items: List[str], title: str = "Agenda",
-                            numbered: bool = True, position: int = 1) -> Dict[str, Any]:
+async def create_agenda_slide(file_path: str, agenda_items: List[str], title: str = "Agenda", numbered: bool = True, position: int = 1) -> Dict[str, Any]:
     """Create an agenda slide with numbered or bulleted items."""
     # Add slide
     slide_result = await add_slide(file_path, 1, position)  # Content layout
@@ -1889,18 +1861,12 @@ async def create_agenda_slide(file_path: str, agenda_items: List[str], title: st
     else:
         agenda_text = "\\n".join([f"• {item}" for item in agenda_items])
 
-    await add_text_box(file_path, slide_idx, agenda_text, 1.5, 2.5, 7.0, 4.0, 18, "#000000", False, False)
+    await add_text_box(file_path, slide_idx, agenda_text, 1.5, 2.5, 10.0, 4.0, 18, "#000000", False, False)
 
-    return {
-        "message": f"Created agenda slide '{title}' at index {slide_idx}",
-        "slide_index": slide_idx,
-        "item_count": len(agenda_items),
-        "numbered": numbered
-    }
+    return {"message": f"Created agenda slide '{title}' at index {slide_idx}", "slide_index": slide_idx, "item_count": len(agenda_items), "numbered": numbered}
 
 
-async def batch_replace_text(file_path: str, replacements: Dict[str, str],
-                           slide_range: Optional[List[int]] = None, case_sensitive: bool = False) -> Dict[str, Any]:
+async def batch_replace_text(file_path: str, replacements: Dict[str, str], slide_range: Optional[List[int]] = None, case_sensitive: bool = False) -> Dict[str, Any]:
     """Replace text across multiple slides in the presentation."""
     prs = _get_presentation(file_path)
 
@@ -1915,7 +1881,7 @@ async def batch_replace_text(file_path: str, replacements: Dict[str, str],
         slide = prs.slides[slide_idx]
 
         for shape in slide.shapes:
-            if hasattr(shape, 'text_frame') and shape.text_frame:
+            if hasattr(shape, "text_frame") and shape.text_frame:
                 for paragraph in shape.text_frame.paragraphs:
                     for run in paragraph.runs:
                         original_text = run.text
@@ -1928,7 +1894,9 @@ async def batch_replace_text(file_path: str, replacements: Dict[str, str],
                                     total_replacements += 1
                             else:
                                 # Case-insensitive replacement
+                                # Standard
                                 import re
+
                                 pattern = re.compile(re.escape(old_text), re.IGNORECASE)
                                 if pattern.search(modified_text):
                                     modified_text = pattern.sub(new_text, modified_text)
@@ -1941,13 +1909,19 @@ async def batch_replace_text(file_path: str, replacements: Dict[str, str],
         "message": f"Completed batch text replacement across {len(slides_to_process)} slides",
         "slides_processed": len(slides_to_process),
         "total_replacements": total_replacements,
-        "replacement_pairs": len(replacements)
+        "replacement_pairs": len(replacements),
     }
 
 
-async def apply_brand_theme(file_path: str, primary_color: str = "#0066CC", secondary_color: str = "#999999",
-                          accent_color: str = "#FF6600", font_family: str = "Arial",
-                          apply_to_titles: bool = True, apply_to_shapes: bool = True) -> Dict[str, Any]:
+async def apply_brand_theme(
+    file_path: str,
+    primary_color: str = "#0066CC",
+    secondary_color: str = "#999999",
+    accent_color: str = "#FF6600",
+    font_family: str = "Arial",
+    apply_to_titles: bool = True,
+    apply_to_shapes: bool = True,
+) -> Dict[str, Any]:
     """Apply consistent branding theme across presentation."""
     prs = _get_presentation(file_path)
 
@@ -1957,7 +1931,7 @@ async def apply_brand_theme(file_path: str, primary_color: str = "#0066CC", seco
     for slide in prs.slides:
         for shape in slide.shapes:
             # Apply to titles
-            if apply_to_titles and hasattr(shape, 'text_frame') and shape.text_frame:
+            if apply_to_titles and hasattr(shape, "text_frame") and shape.text_frame:
                 if shape == slide.shapes.title:  # This is a title
                     for paragraph in shape.text_frame.paragraphs:
                         for run in paragraph.runs:
@@ -1966,7 +1940,7 @@ async def apply_brand_theme(file_path: str, primary_color: str = "#0066CC", seco
                     title_updates += 1
 
             # Apply to shapes
-            if apply_to_shapes and hasattr(shape, 'fill'):
+            if apply_to_shapes and hasattr(shape, "fill"):
                 try:
                     # Apply primary color to rectangle shapes
                     if shape.shape_type == 1:  # Rectangle
@@ -1988,23 +1962,23 @@ async def apply_brand_theme(file_path: str, primary_color: str = "#0066CC", seco
         "accent_color": accent_color,
         "font_family": font_family,
         "title_updates": title_updates,
-        "shape_updates": shape_updates
+        "shape_updates": shape_updates,
     }
 
 
-async def create_section_break(file_path: str, section_title: str, subtitle: Optional[str] = None,
-                             background_color: str = "#0066CC", text_color: str = "#FFFFFF",
-                             position: int = -1) -> Dict[str, Any]:
+async def create_section_break(
+    file_path: str, section_title: str, subtitle: Optional[str] = None, background_color: str = "#0066CC", text_color: str = "#FFFFFF", position: int = -1
+) -> Dict[str, Any]:
     """Create a section break slide with large title and background color."""
     # Add slide
     slide_result = await add_slide(file_path, 6, position)  # Blank layout
     slide_idx = slide_result["slide_index"]
 
     prs = _get_presentation(file_path)
-    slide = prs.slides[slide_idx]
+    prs.slides[slide_idx]
 
-    # Set background color by adding a full-slide rectangle
-    await add_shape(file_path, slide_idx, "rectangle", 0, 0, 10, 7.5, background_color, background_color, 0)
+    # Set background color by adding a full-slide rectangle (16:9 dimensions)
+    await add_shape(file_path, slide_idx, "rectangle", 0, 0, 13.33, 7.5, background_color, background_color, 0)
 
     # Add large section title
     await add_text_box(file_path, slide_idx, section_title, 1.0, 2.5, 8.0, 1.5, 48, text_color, True, False)
@@ -2018,12 +1992,11 @@ async def create_section_break(file_path: str, section_title: str, subtitle: Opt
         "slide_index": slide_idx,
         "section_title": section_title,
         "subtitle": subtitle or "None",
-        "background_color": background_color
+        "background_color": background_color,
     }
 
 
-async def generate_summary_slide(file_path: str, title: str = "Summary",
-                               max_points: int = 5, position: int = -1) -> Dict[str, Any]:
+async def generate_summary_slide(file_path: str, title: str = "Summary", max_points: int = 5, position: int = -1) -> Dict[str, Any]:
     """Generate a summary slide based on presentation content."""
     prs = _get_presentation(file_path)
 
@@ -2050,11 +2023,11 @@ async def generate_summary_slide(file_path: str, title: str = "Summary",
 
             slide = prs.slides[slide_idx]
             for shape in slide.shapes:
-                if hasattr(shape, 'text_frame') and shape.text_frame:
+                if hasattr(shape, "text_frame") and shape.text_frame:
                     text = shape.text_frame.text.strip()
                     if text and shape != slide.shapes.title:
                         # Take first sentence or line
-                        first_line = text.split('\\n')[0].split('.')[0]
+                        first_line = text.split("\\n")[0].split(".")[0]
                         if len(first_line) < 80 and first_line not in summary_points:
                             summary_points.append(first_line)
                             if len(summary_points) >= max_points:
@@ -2070,20 +2043,15 @@ async def generate_summary_slide(file_path: str, title: str = "Summary",
         summary_text = "\\n".join([f"• {point}" for point in summary_points])
         await add_text_box(file_path, slide_idx, summary_text, 1.0, 2.5, 8.0, 4.0, 18, "#000000", False, False)
     else:
-        await add_text_box(file_path, slide_idx, "• No key points extracted from presentation content",
-                          1.0, 2.5, 8.0, 1.0, 18, "#666666", False, True)
+        await add_text_box(file_path, slide_idx, "• No key points extracted from presentation content", 1.0, 2.5, 8.0, 1.0, 18, "#666666", False, True)
 
-    return {
-        "message": f"Generated summary slide '{title}' at index {slide_idx}",
-        "slide_index": slide_idx,
-        "points_extracted": len(summary_points),
-        "max_points": max_points
-    }
+    return {"message": f"Generated summary slide '{title}' at index {slide_idx}", "slide_index": slide_idx, "points_extracted": len(summary_points), "max_points": max_points}
 
 
 async def main() -> None:
     """Main entry point for the PPTX MCP server."""
     log.info("Starting PowerPoint MCP server (stdio)...")
+    # Third-Party
     from mcp.server.stdio import stdio_server
 
     async with stdio_server() as (read_stream, write_stream):
