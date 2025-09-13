@@ -1,11 +1,12 @@
+# -*- coding: utf-8 -*-
 """
 Statistical hypothesis testing functionality.
 """
 
 # Standard
 import logging
-import warnings
 from typing import Any
+import warnings
 
 # Third-Party
 import numpy as np
@@ -62,9 +63,7 @@ class HypothesisTests:
         if test_type not in test_methods:
             raise ValueError(f"Unsupported test type: {test_type}")
 
-        return test_methods[test_type](
-            df, columns, groupby_column, hypothesis, alpha, alternative
-        )
+        return test_methods[test_type](df, columns, groupby_column, hypothesis, alpha, alternative)
 
     def _perform_t_test(
         self,
@@ -94,15 +93,10 @@ class HypothesisTests:
             group2 = groups.iloc[1]
 
             # Perform independent t-test
-            statistic, p_value = stats.ttest_ind(
-                group1, group2, alternative=alternative
-            )
+            statistic, p_value = stats.ttest_ind(group1, group2, alternative=alternative)
 
             # Effect size (Cohen's d)
-            pooled_std = np.sqrt(
-                ((len(group1) - 1) * group1.var() + (len(group2) - 1) * group2.var())
-                / (len(group1) + len(group2) - 2)
-            )
+            pooled_std = np.sqrt(((len(group1) - 1) * group1.var() + (len(group2) - 1) * group2.var()) / (len(group1) + len(group2) - 2))
             cohens_d = (group1.mean() - group2.mean()) / pooled_std
 
             result = {
@@ -147,11 +141,7 @@ class HypothesisTests:
                 "alpha": alpha,
                 "alternative": alternative,
                 "significant": p_value < alpha,
-                "conclusion": (
-                    "Reject null hypothesis"
-                    if p_value < alpha
-                    else "Fail to reject null hypothesis"
-                ),
+                "conclusion": ("Reject null hypothesis" if p_value < alpha else "Fail to reject null hypothesis"),
                 "interpretation": self._interpret_p_value(p_value, alpha),
             }
         )
@@ -198,11 +188,7 @@ class HypothesisTests:
             ).to_dict(),
             "alpha": alpha,
             "significant": p_value < alpha,
-            "conclusion": (
-                "Variables are dependent"
-                if p_value < alpha
-                else "Variables are independent"
-            ),
+            "conclusion": ("Variables are dependent" if p_value < alpha else "Variables are independent"),
             "interpretation": self._interpret_p_value(p_value, alpha),
         }
 
@@ -248,9 +234,7 @@ class HypothesisTests:
 
         # Effect size (eta-squared)
         overall_mean = df[column].mean()
-        ss_between = sum(
-            [len(group) * (group.mean() - overall_mean) ** 2 for group in groups]
-        )
+        ss_between = sum([len(group) * (group.mean() - overall_mean) ** 2 for group in groups])
         ss_total = sum([(x - overall_mean) ** 2 for group in groups for x in group])
         eta_squared = ss_between / ss_total if ss_total > 0 else 0
 
@@ -267,11 +251,7 @@ class HypothesisTests:
             "group_stats": group_stats,
             "alpha": alpha,
             "significant": p_value < alpha,
-            "conclusion": (
-                "At least one group mean differs"
-                if p_value < alpha
-                else "No significant difference between groups"
-            ),
+            "conclusion": ("At least one group mean differs" if p_value < alpha else "No significant difference between groups"),
             "interpretation": self._interpret_p_value(p_value, alpha),
         }
 
@@ -316,9 +296,7 @@ class HypothesisTests:
 
         # F-statistic for overall model
         np.mean(residuals**2)
-        f_stat = (
-            r_squared * (n - 2) / (1 - r_squared) if r_squared < 1 else float("inf")
-        )
+        f_stat = r_squared * (n - 2) / (1 - r_squared) if r_squared < 1 else float("inf")
 
         result = {
             "test_type": "Simple Linear Regression",
@@ -339,11 +317,7 @@ class HypothesisTests:
             },
             "alpha": alpha,
             "significant": p_value < alpha,
-            "conclusion": (
-                f"Significant relationship between {x_col} and {y_col}"
-                if p_value < alpha
-                else "No significant relationship"
-            ),
+            "conclusion": (f"Significant relationship between {x_col} and {y_col}" if p_value < alpha else "No significant relationship"),
             "interpretation": self._interpret_p_value(p_value, alpha),
         }
 
@@ -384,30 +358,18 @@ class HypothesisTests:
                 "name": str(groups.index[0]),
                 "n": len(group1),
                 "median": float(group1.median()),
-                "mean_rank": float(
-                    stats.rankdata(np.concatenate([group1, group2]))[
-                        : len(group1)
-                    ].mean()
-                ),
+                "mean_rank": float(stats.rankdata(np.concatenate([group1, group2]))[: len(group1)].mean()),
             },
             "group2_stats": {
                 "name": str(groups.index[1]),
                 "n": len(group2),
                 "median": float(group2.median()),
-                "mean_rank": float(
-                    stats.rankdata(np.concatenate([group1, group2]))[
-                        len(group1) :
-                    ].mean()
-                ),
+                "mean_rank": float(stats.rankdata(np.concatenate([group1, group2]))[len(group1) :].mean()),
             },
             "alpha": alpha,
             "alternative": alternative,
             "significant": p_value < alpha,
-            "conclusion": (
-                "Groups have different distributions"
-                if p_value < alpha
-                else "Groups have similar distributions"
-            ),
+            "conclusion": ("Groups have different distributions" if p_value < alpha else "Groups have similar distributions"),
             "interpretation": self._interpret_p_value(p_value, alpha),
         }
 
@@ -446,11 +408,7 @@ class HypothesisTests:
             "alpha": alpha,
             "alternative": alternative,
             "significant": p_value < alpha,
-            "conclusion": (
-                "Significant difference between paired samples"
-                if p_value < alpha
-                else "No significant difference"
-            ),
+            "conclusion": ("Significant difference between paired samples" if p_value < alpha else "No significant difference"),
             "interpretation": self._interpret_p_value(p_value, alpha),
         }
 
@@ -487,11 +445,7 @@ class HypothesisTests:
             "degrees_of_freedom": len(groups) - 1,
             "alpha": alpha,
             "significant": p_value < alpha,
-            "conclusion": (
-                "At least one group differs"
-                if p_value < alpha
-                else "No significant difference between groups"
-            ),
+            "conclusion": ("At least one group differs" if p_value < alpha else "No significant difference between groups"),
             "interpretation": self._interpret_p_value(p_value, alpha),
         }
 

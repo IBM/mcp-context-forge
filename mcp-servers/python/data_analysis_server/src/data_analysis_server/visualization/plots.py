@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data visualization functionality using matplotlib, seaborn, and plotly.
 """
@@ -187,18 +188,14 @@ class DataVisualizer:
             raise ValueError(f"Plot method not implemented: {plot_type}")
 
         # Create the plot
-        fig, ax, plot_info = plot_methods[plot_type](
-            df, x_column, y_column, color_column, facet_column, title, **kwargs
-        )
+        fig, ax, plot_info = plot_methods[plot_type](df, x_column, y_column, color_column, facet_column, title, **kwargs)
 
         # Save the plot
         filename = self._generate_filename(plot_type, save_format)
         file_path = self.output_dir / filename
 
         try:
-            fig.savefig(
-                file_path, format=save_format, dpi=self.default_dpi, bbox_inches="tight"
-            )
+            fig.savefig(file_path, format=save_format, dpi=self.default_dpi, bbox_inches="tight")
             plt.close(fig)
 
             result = {
@@ -258,9 +255,7 @@ class DataVisualizer:
             )
 
         try:
-            fig, plot_info = interactive_methods[plot_type](
-                df, x_column, y_column, color_column, facet_column, title, **kwargs
-            )
+            fig, plot_info = interactive_methods[plot_type](df, x_column, y_column, color_column, facet_column, title, **kwargs)
 
             # Save the interactive plot
             filename = self._generate_filename(plot_type, "html")
@@ -282,9 +277,7 @@ class DataVisualizer:
         except Exception as e:
             return {"plot_type": plot_type, "success": False, "error": str(e)}
 
-    def _plot_histogram(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_histogram(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create histogram plot."""
         figsize = kwargs.get("figsize", self.default_figsize)
         bins = kwargs.get("bins", 30)
@@ -297,9 +290,7 @@ class DataVisualizer:
             cols = min(3, n_facets)
             rows = (n_facets + cols - 1) // cols
 
-            fig, axes = plt.subplots(
-                rows, cols, figsize=(figsize[0] * cols, figsize[1] * rows)
-            )
+            fig, axes = plt.subplots(rows, cols, figsize=(figsize[0] * cols, figsize[1] * rows))
             axes = axes.flatten() if n_facets > 1 else [axes]
 
             for i, facet in enumerate(unique_facets):
@@ -329,9 +320,7 @@ class DataVisualizer:
                     )
                 ax.legend()
             else:
-                ax.hist(
-                    df[x_column].dropna(), bins=bins, alpha=alpha, edgecolor="black"
-                )
+                ax.hist(df[x_column].dropna(), bins=bins, alpha=alpha, edgecolor="black")
 
             ax.set_xlabel(x_column)
             ax.set_ylabel("Frequency")
@@ -352,9 +341,7 @@ class DataVisualizer:
 
         return fig, axes, plot_info
 
-    def _plot_scatter(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_scatter(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create scatter plot."""
         if not y_column:
             raise ValueError("Scatter plot requires y_column")
@@ -426,9 +413,7 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_box(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_box(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create box plot."""
         figsize = kwargs.get("figsize", self.default_figsize)
 
@@ -462,9 +447,7 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_heatmap(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_heatmap(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create heatmap (correlation matrix)."""
         figsize = kwargs.get("figsize", (8, 8))
 
@@ -502,9 +485,7 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_line(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_line(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create line plot."""
         if not y_column:
             raise ValueError("Line plot requires y_column")
@@ -545,9 +526,7 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_bar(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_bar(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create bar plot."""
         figsize = kwargs.get("figsize", self.default_figsize)
 
@@ -585,9 +564,7 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_violin(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_violin(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create violin plot."""
         figsize = kwargs.get("figsize", self.default_figsize)
 
@@ -616,13 +593,9 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_pairplot(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_pairplot(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create pair plot."""
-        numeric_cols = df.select_dtypes(include=[np.number]).columns[
-            :5
-        ]  # Limit to 5 columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns[:5]  # Limit to 5 columns
 
         if len(numeric_cols) < 2:
             raise ValueError("Need at least 2 numeric columns for pair plot")
@@ -641,9 +614,7 @@ class DataVisualizer:
 
         return g.fig, g.axes, plot_info
 
-    def _plot_time_series(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_time_series(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create time series plot."""
         if not y_column:
             raise ValueError("Time series plot requires y_column")
@@ -695,9 +666,7 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_distribution(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_distribution(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create distribution plot."""
         figsize = kwargs.get("figsize", self.default_figsize)
 
@@ -722,13 +691,9 @@ class DataVisualizer:
 
         return fig, ax, plot_info
 
-    def _plot_correlation(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ) -> tuple[plt.Figure, plt.Axes, dict]:
+    def _plot_correlation(self, df, x_column, y_column, color_column, facet_column, title, **kwargs) -> tuple[plt.Figure, plt.Axes, dict]:
         """Create correlation plot (same as heatmap)."""
-        return self._plot_heatmap(
-            df, x_column, y_column, color_column, facet_column, title, **kwargs
-        )
+        return self._plot_heatmap(df, x_column, y_column, color_column, facet_column, title, **kwargs)
 
     def _generate_filename(self, plot_type: str, format: str) -> str:
         """Generate a unique filename for the plot."""
@@ -739,9 +704,7 @@ class DataVisualizer:
         return f"{plot_type}_{timestamp}.{format}"
 
     # Plotly interactive plot methods (simplified)
-    def _plotly_histogram(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ):
+    def _plotly_histogram(self, df, x_column, y_column, color_column, facet_column, title, **kwargs):
         """Create interactive histogram with plotly."""
         fig = px.histogram(
             df,
@@ -753,9 +716,7 @@ class DataVisualizer:
         plot_info = {"x_column": x_column, "interactive": True}
         return fig, plot_info
 
-    def _plotly_scatter(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ):
+    def _plotly_scatter(self, df, x_column, y_column, color_column, facet_column, title, **kwargs):
         """Create interactive scatter plot with plotly."""
         fig = px.scatter(
             df,
@@ -768,9 +729,7 @@ class DataVisualizer:
         plot_info = {"x_column": x_column, "y_column": y_column, "interactive": True}
         return fig, plot_info
 
-    def _plotly_box(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ):
+    def _plotly_box(self, df, x_column, y_column, color_column, facet_column, title, **kwargs):
         """Create interactive box plot with plotly."""
         fig = px.box(
             df,
@@ -782,9 +741,7 @@ class DataVisualizer:
         plot_info = {"x_column": x_column, "y_column": y_column, "interactive": True}
         return fig, plot_info
 
-    def _plotly_line(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ):
+    def _plotly_line(self, df, x_column, y_column, color_column, facet_column, title, **kwargs):
         """Create interactive line plot with plotly."""
         fig = px.line(
             df,
@@ -796,9 +753,7 @@ class DataVisualizer:
         plot_info = {"x_column": x_column, "y_column": y_column, "interactive": True}
         return fig, plot_info
 
-    def _plotly_bar(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ):
+    def _plotly_bar(self, df, x_column, y_column, color_column, facet_column, title, **kwargs):
         """Create interactive bar plot with plotly."""
         fig = px.bar(
             df,
@@ -810,9 +765,7 @@ class DataVisualizer:
         plot_info = {"x_column": x_column, "y_column": y_column, "interactive": True}
         return fig, plot_info
 
-    def _plotly_heatmap(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ):
+    def _plotly_heatmap(self, df, x_column, y_column, color_column, facet_column, title, **kwargs):
         """Create interactive heatmap with plotly."""
         numeric_df = df.select_dtypes(include=[np.number])
         correlation_matrix = numeric_df.corr()
@@ -825,9 +778,7 @@ class DataVisualizer:
         plot_info = {"variables": list(numeric_df.columns), "interactive": True}
         return fig, plot_info
 
-    def _plotly_time_series(
-        self, df, x_column, y_column, color_column, facet_column, title, **kwargs
-    ):
+    def _plotly_time_series(self, df, x_column, y_column, color_column, facet_column, title, **kwargs):
         """Create interactive time series plot with plotly."""
         df_copy = df.copy()
         df_copy[x_column] = pd.to_datetime(df_copy[x_column])

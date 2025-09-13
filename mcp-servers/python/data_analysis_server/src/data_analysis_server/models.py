@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data models for MCP data analysis server requests and responses.
 """
@@ -24,13 +25,9 @@ class DataAnalysisRequest(BaseModel):
     """Request model for dataset analysis."""
 
     dataset_id: str = Field(..., description="Dataset identifier")
-    analysis_type: str = Field(
-        ..., description="Analysis type: descriptive, exploratory, correlation"
-    )
+    analysis_type: str = Field(..., description="Analysis type: descriptive, exploratory, correlation")
     columns: list[str] | None = Field(None, description="Specific columns to analyze")
-    include_distributions: bool = Field(
-        True, description="Include distribution analysis"
-    )
+    include_distributions: bool = Field(True, description="Include distribution analysis")
     include_correlations: bool = Field(True, description="Include correlation analysis")
     include_outliers: bool = Field(True, description="Include outlier detection")
     confidence_level: float = Field(0.95, description="Confidence level for statistics")
@@ -40,9 +37,7 @@ class StatTestRequest(BaseModel):
     """Request model for statistical hypothesis testing."""
 
     dataset_id: str = Field(..., description="Dataset identifier")
-    test_type: str = Field(
-        ..., description="Test type: t_test, chi_square, anova, regression"
-    )
+    test_type: str = Field(..., description="Test type: t_test, chi_square, anova, regression")
     columns: list[str] = Field(..., description="Columns to test")
     groupby_column: str | None = Field(None, description="Column for grouping")
     hypothesis: str | None = Field(None, description="Hypothesis statement")
@@ -54,12 +49,8 @@ class VisualizationRequest(BaseModel):
     """Request model for creating visualizations."""
 
     dataset_id: str = Field(..., description="Dataset identifier")
-    plot_type: str = Field(
-        ..., description="Plot type: histogram, scatter, box, heatmap, time_series"
-    )
-    x_column: str | None = Field(
-        None, description="X-axis column (not required for heatmap)"
-    )
+    plot_type: str = Field(..., description="Plot type: histogram, scatter, box, heatmap, time_series")
+    x_column: str | None = Field(None, description="X-axis column (not required for heatmap)")
     y_column: str | None = Field(None, description="Y-axis column")
     color_column: str | None = Field(None, description="Color grouping column")
     facet_column: str | None = Field(None, description="Faceting column")
@@ -72,12 +63,8 @@ class TransformRequest(BaseModel):
     """Request model for data transformations."""
 
     dataset_id: str = Field(..., description="Dataset identifier")
-    operations: list[dict[str, Any]] = Field(
-        ..., description="List of transformation operations"
-    )
-    create_new_dataset: bool = Field(
-        False, description="Create new dataset or modify existing"
-    )
+    operations: list[dict[str, Any]] = Field(..., description="List of transformation operations")
+    create_new_dataset: bool = Field(False, description="Create new dataset or modify existing")
     new_dataset_id: str | None = Field(None, description="New dataset identifier")
 
 
@@ -88,9 +75,7 @@ class TimeSeriesRequest(BaseModel):
     time_column: str = Field(..., description="Time/date column")
     value_columns: list[str] = Field(..., description="Value columns to analyze")
     frequency: str | None = Field(None, description="Time frequency: D, W, M, Q, Y")
-    operations: list[str] | None = Field(
-        None, description="Operations: trend, seasonal, forecast"
-    )
+    operations: list[str] | None = Field(None, description="Operations: trend, seasonal, forecast")
     forecast_periods: int = Field(12, description="Number of periods to forecast")
     confidence_intervals: bool = Field(True, description="Include confidence intervals")
 

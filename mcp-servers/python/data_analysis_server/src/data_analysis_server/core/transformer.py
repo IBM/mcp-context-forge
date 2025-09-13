@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data transformation and cleaning functionality.
 """
@@ -26,9 +27,7 @@ class DataTransformer:
         self.scalers = {}
         self.encoders = {}
 
-    def transform_data(
-        self, df: pd.DataFrame, operations: list[dict[str, Any]], inplace: bool = False
-    ) -> tuple[pd.DataFrame, dict[str, Any]]:
+    def transform_data(self, df: pd.DataFrame, operations: list[dict[str, Any]], inplace: bool = False) -> tuple[pd.DataFrame, dict[str, Any]]:
         """
         Apply a series of transformations to the DataFrame.
 
@@ -63,9 +62,7 @@ class DataTransformer:
                     }
                 )
 
-                logger.info(
-                    f"Applied {operation_type} operation: {operation_result.get('message', 'Success')}"
-                )
+                logger.info(f"Applied {operation_type} operation: {operation_result.get('message', 'Success')}")
 
             except Exception as e:
                 error_msg = f"Error in operation {i} ({operation_type}): {str(e)}"
@@ -83,20 +80,14 @@ class DataTransformer:
         summary = {
             "original_shape": original_shape,
             "final_shape": df.shape,
-            "operations_applied": len(
-                [op for op in transformation_log if "error" not in op]
-            ),
-            "operations_failed": len(
-                [op for op in transformation_log if "error" in op]
-            ),
+            "operations_applied": len([op for op in transformation_log if "error" not in op]),
+            "operations_failed": len([op for op in transformation_log if "error" in op]),
             "transformation_log": transformation_log,
         }
 
         return df, summary
 
-    def _apply_single_operation(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _apply_single_operation(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Apply a single transformation operation."""
         operation_type = operation.get("type") or operation.get("operation")
 
@@ -180,9 +171,7 @@ class DataTransformer:
             else:
                 # Default to mode for categorical, mean for numeric
                 if df[col].dtype == "object":
-                    mode_val = (
-                        df[col].mode()[0] if not df[col].mode().empty else "Unknown"
-                    )
+                    mode_val = df[col].mode()[0] if not df[col].mode().empty else "Unknown"
                     df[col].fillna(mode_val, inplace=True)
                 else:
                     df[col].fillna(df[col].mean(), inplace=True)
@@ -194,9 +183,7 @@ class DataTransformer:
             "columns_processed": filled_columns,
         }
 
-    def _drop_duplicates(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _drop_duplicates(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Drop duplicate rows."""
         columns = operation.get("columns")
         keep = operation.get("keep", "first")
@@ -209,9 +196,7 @@ class DataTransformer:
             "duplicates_removed": original_count - len(df),
         }
 
-    def _drop_columns(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _drop_columns(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Drop specified columns."""
         columns = operation.get("columns", [])
 
@@ -220,9 +205,7 @@ class DataTransformer:
 
         return {"message": "Dropped columns", "columns_dropped": existing_columns}
 
-    def _rename_columns(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _rename_columns(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Rename columns."""
         mapping = operation.get("mapping", {})
 
@@ -230,9 +213,7 @@ class DataTransformer:
 
         return {"message": "Renamed columns", "mappings": mapping}
 
-    def _filter_rows(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _filter_rows(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Filter rows based on conditions."""
         condition = operation.get("condition")
         column = operation.get("column")
@@ -274,18 +255,12 @@ class DataTransformer:
             "rows_remaining": len(df),
         }
 
-    def _scale_features(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _scale_features(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Scale numeric features."""
         columns = operation.get("columns", [])
         method = operation.get("method", "standard")
 
-        numeric_columns = [
-            col
-            for col in columns
-            if col in df.columns and df[col].dtype in ["float64", "int64"]
-        ]
+        numeric_columns = [col for col in columns if col in df.columns and df[col].dtype in ["float64", "int64"]]
 
         if not numeric_columns:
             return {"message": "No numeric columns found for scaling"}
@@ -313,17 +288,11 @@ class DataTransformer:
             "scaler_id": scaler_id,
         }
 
-    def _normalize_features(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _normalize_features(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Normalize numeric features to [0, 1] range."""
         columns = operation.get("columns", [])
 
-        numeric_columns = [
-            col
-            for col in columns
-            if col in df.columns and df[col].dtype in ["float64", "int64"]
-        ]
+        numeric_columns = [col for col in columns if col in df.columns and df[col].dtype in ["float64", "int64"]]
 
         for col in numeric_columns:
             min_val = df[col].min()
@@ -336,9 +305,7 @@ class DataTransformer:
             "columns_normalized": numeric_columns,
         }
 
-    def _encode_categorical(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _encode_categorical(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Encode categorical variables."""
         columns = operation.get("columns", [])
         method = operation.get("method", "label")
@@ -385,9 +352,7 @@ class DataTransformer:
             "encoded_columns": encoded_info,
         }
 
-    def _create_dummy_variables(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _create_dummy_variables(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Create dummy variables for categorical columns."""
         columns = operation.get("columns", [])
         prefix = operation.get("prefix")
@@ -398,21 +363,15 @@ class DataTransformer:
         for col in columns:
             if col in df.columns:
                 col_prefix = prefix or col
-                dummies = pd.get_dummies(
-                    df[col], prefix=col_prefix, drop_first=drop_first
-                )
+                dummies = pd.get_dummies(df[col], prefix=col_prefix, drop_first=drop_first)
                 df = pd.concat([df, dummies], axis=1)
                 df.drop(columns=[col], inplace=True)
 
-                dummy_info.append(
-                    {"original_column": col, "dummy_columns": list(dummies.columns)}
-                )
+                dummy_info.append({"original_column": col, "dummy_columns": list(dummies.columns)})
 
         return {"message": "Created dummy variables", "dummy_info": dummy_info}
 
-    def _bin_numeric_variable(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _bin_numeric_variable(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Bin a numeric variable into categories."""
         column = operation.get("column")
         bins = operation.get("bins", 5)
@@ -430,16 +389,10 @@ class DataTransformer:
         return {
             "message": f"Binned numeric variable {column}",
             "new_column": new_column,
-            "bin_count": (
-                len(df[new_column].cat.categories)
-                if hasattr(df[new_column], "cat")
-                else bins
-            ),
+            "bin_count": (len(df[new_column].cat.categories) if hasattr(df[new_column], "cat") else bins),
         }
 
-    def _transform_datetime(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _transform_datetime(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Transform datetime columns to extract features."""
         column = operation.get("column")
         features = operation.get("features", ["year", "month", "day"])
@@ -473,9 +426,7 @@ class DataTransformer:
             "new_columns": new_columns,
         }
 
-    def _remove_outliers(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _remove_outliers(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Remove outliers using specified method."""
         columns = operation.get("columns", [])
         method = operation.get("method", "iqr")
@@ -514,9 +465,7 @@ class DataTransformer:
             "rows_remaining": len(df),
         }
 
-    def _feature_engineering(
-        self, df: pd.DataFrame, operation: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _feature_engineering(self, df: pd.DataFrame, operation: dict[str, Any]) -> dict[str, Any]:
         """Create new features through engineering."""
         feature_type = operation.get("feature_type", "interaction")
         columns = operation.get("columns", [])
@@ -528,9 +477,7 @@ class DataTransformer:
                 for j in range(i + 1, len(columns)):
                     col1, col2 = columns[i], columns[j]
                     if col1 in df.columns and col2 in df.columns:
-                        if df[col1].dtype in ["float64", "int64"] and df[
-                            col2
-                        ].dtype in ["float64", "int64"]:
+                        if df[col1].dtype in ["float64", "int64"] and df[col2].dtype in ["float64", "int64"]:
                             new_col = f"{col1}_x_{col2}"
                             df[new_col] = df[col1] * df[col2]
                             new_columns.append(new_col)
@@ -576,9 +523,7 @@ class DataTransformer:
                         "new_columns": [new_column],
                     }
                 else:
-                    raise ValueError(
-                        "Ratio feature engineering requires numeric columns"
-                    )
+                    raise ValueError("Ratio feature engineering requires numeric columns")
             else:
                 missing = [col for col in columns[:2] if col not in df.columns]
                 raise ValueError(f"Columns not found: {missing}")
@@ -586,9 +531,7 @@ class DataTransformer:
         else:
             raise ValueError(f"Unsupported feature engineering type: {feature_type}")
 
-    def get_transformation_info(
-        self, scaler_id: str | None = None, encoder_id: str | None = None
-    ) -> dict[str, Any]:
+    def get_transformation_info(self, scaler_id: str | None = None, encoder_id: str | None = None) -> dict[str, Any]:
         """Get information about stored transformations."""
         info = {}
 

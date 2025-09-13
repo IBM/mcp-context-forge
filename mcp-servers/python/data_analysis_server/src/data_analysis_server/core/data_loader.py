@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data loading functionality for multiple formats and sources.
 """
@@ -5,9 +6,9 @@ Data loading functionality for multiple formats and sources.
 # Standard
 import io
 import logging
-import urllib.parse
 from pathlib import Path
 from typing import Any
+import urllib.parse
 
 # Third-Party
 import pandas as pd
@@ -138,9 +139,7 @@ class DataLoader:
 
         return self._apply_sampling(df, sample_size)
 
-    def _load_from_url(
-        self, url: str, format: str, options: dict[str, Any], sample_size: int | None
-    ) -> pd.DataFrame:
+    def _load_from_url(self, url: str, format: str, options: dict[str, Any], sample_size: int | None) -> pd.DataFrame:
         """Load data from a URL."""
         logger.info(f"Loading {format} data from {url}")
 
@@ -188,9 +187,7 @@ class DataLoader:
         query = options.get("query", "SELECT * FROM table_name")
 
         engine = create_engine(connection_string)
-        df = pd.read_sql(
-            query, engine, **{k: v for k, v in options.items() if k != "query"}
-        )
+        df = pd.read_sql(query, engine, **{k: v for k, v in options.items() if k != "query"})
 
         return self._apply_sampling(df, sample_size)
 
@@ -200,10 +197,7 @@ class DataLoader:
 
         for col in df.columns:
             # Check column name patterns
-            if any(
-                keyword in col.lower()
-                for keyword in ["date", "time", "timestamp", "created", "updated"]
-            ):
+            if any(keyword in col.lower() for keyword in ["date", "time", "timestamp", "created", "updated"]):
                 date_columns.append(col)
                 continue
 
@@ -251,16 +245,10 @@ class DataLoader:
                         converted = False
                         for date_format in date_formats:
                             try:
-                                pd.to_datetime(
-                                    sample, format=date_format, errors="raise"
-                                )
+                                pd.to_datetime(sample, format=date_format, errors="raise")
                                 # If successful, convert the entire column with this format
-                                df[col] = pd.to_datetime(
-                                    df[col], format=date_format, errors="coerce"
-                                )
-                                logger.info(
-                                    f"Converted column '{col}' to datetime using format {date_format}"
-                                )
+                                df[col] = pd.to_datetime(df[col], format=date_format, errors="coerce")
+                                logger.info(f"Converted column '{col}' to datetime using format {date_format}")
                                 converted = True
                                 break
                             except (ValueError, TypeError):
@@ -278,9 +266,7 @@ class DataLoader:
                                     pd.to_datetime(sample, errors="raise")
                                     # If successful, convert the entire column
                                     df[col] = pd.to_datetime(df[col], errors="coerce")
-                                    logger.info(
-                                        f"Converted column '{col}' to datetime using inferred format"
-                                    )
+                                    logger.info(f"Converted column '{col}' to datetime using inferred format")
                             except (ValueError, TypeError):
                                 # Not a date column, keep as is
                                 pass
@@ -329,9 +315,7 @@ class DataLoader:
         """Load Excel file."""
         return pd.read_excel(path, **options)
 
-    def _apply_sampling(
-        self, df: pd.DataFrame, sample_size: int | None
-    ) -> pd.DataFrame:
+    def _apply_sampling(self, df: pd.DataFrame, sample_size: int | None) -> pd.DataFrame:
         """Apply sampling to the DataFrame if specified."""
         if sample_size is not None and len(df) > sample_size:
             logger.info(f"Sampling {sample_size} rows from {len(df)} total rows")

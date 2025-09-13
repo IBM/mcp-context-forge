@@ -1,18 +1,18 @@
+# -*- coding: utf-8 -*-
 """
 Unit tests for DataLoader module.
 """
 
 # Standard
 import json
-import tempfile
 from pathlib import Path
+import tempfile
 from unittest.mock import patch
-
-import pandas as pd
-import pytest
 
 # Third-Party
 from data_analysis_server.core.data_loader import DataLoader
+import pandas as pd
+import pytest
 
 
 class TestDataLoader:
@@ -30,9 +30,7 @@ class TestDataLoader:
 
     def test_custom_initialization(self):
         """Test DataLoader with custom parameters."""
-        loader = DataLoader(
-            max_download_size_mb=100, timeout_seconds=10, allowed_protocols={"https"}
-        )
+        loader = DataLoader(max_download_size_mb=100, timeout_seconds=10, allowed_protocols={"https"})
         assert loader.max_download_size == 100 * 1024 * 1024
         assert loader.timeout == 10
         assert loader.allowed_protocols == {"https"}
@@ -173,9 +171,7 @@ Carol,35,Paris"""
         mock_response.iter_content.return_value = [b"name,age\nAlice,25\nBob,30"]
 
         with patch("pandas.read_csv") as mock_read_csv:
-            mock_read_csv.return_value = pd.DataFrame(
-                {"name": ["Alice", "Bob"], "age": [25, 30]}
-            )
+            mock_read_csv.return_value = pd.DataFrame({"name": ["Alice", "Bob"], "age": [25, 30]})
 
             df = self.loader.load_data("https://example.com/data.csv", "csv")
 
