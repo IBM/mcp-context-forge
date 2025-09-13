@@ -127,11 +127,12 @@ class GatewayNameConflictError(GatewayError):
         name: The conflicting gateway name
         enabled: Whether the existing gateway is enabled
         gateway_id: ID of the existing gateway if available
+        visibility: The visibility of the gateway ("public" or "team").
 
     Examples:
-        >>> error = GatewayNameConflictError("test_gateway")
-        >>> str(error)
-        'Gateway already exists with name: test_gateway'
+    >>> error = GatewayNameConflictError("test_gateway")
+    >>> str(error)
+    'Public Gateway already exists with name: test_gateway'
         >>> error.name
         'test_gateway'
         >>> error.enabled
@@ -139,27 +140,83 @@ class GatewayNameConflictError(GatewayError):
         >>> error.gateway_id is None
         True
 
-        >>> error_inactive = GatewayNameConflictError("inactive_gw", enabled=False, gateway_id=123)
-        >>> str(error_inactive)
-        'Gateway already exists with name: inactive_gw (currently inactive, ID: 123)'
+    >>> error_inactive = GatewayNameConflictError("inactive_gw", enabled=False, gateway_id=123)
+    >>> str(error_inactive)
+    'Public Gateway already exists with name: inactive_gw (currently inactive, ID: 123)'
         >>> error_inactive.enabled
         False
         >>> error_inactive.gateway_id
         123
     """
 
-    def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[int] = None):
+    def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[int] = None, visibility: Optional[str] = "public"):
         """Initialize the error with gateway information.
 
         Args:
             name: The conflicting gateway name
             enabled: Whether the existing gateway is enabled
             gateway_id: ID of the existing gateway if available
+            visibility: The visibility of the gateway ("public" or "team").
         """
         self.name = name
         self.enabled = enabled
         self.gateway_id = gateway_id
-        message = f"Gateway already exists with name: {name}"
+        if visibility == "team":
+            vis_label = "Team-level"
+        else:
+            vis_label = "Public"
+        message = f"{vis_label} Gateway already exists with name: {name}"
+        if not enabled:
+            message += f" (currently inactive, ID: {gateway_id})"
+        super().__init__(message)
+
+
+class GatewayUrlConflictError(GatewayError):
+    """Raised when a gateway URL conflicts with existing (active or inactive) gateway.
+
+    Args:
+        url: The conflicting gateway URL
+        enabled: Whether the existing gateway is enabled
+        gateway_id: ID of the existing gateway if available
+        visibility: The visibility of the gateway ("public" or "team").
+
+    Examples:
+    >>> error = GatewayUrlConflictError("http://example.com/gateway")
+    >>> str(error)
+    'Public Gateway already exists with URL: http://example.com/gateway'
+        >>> error.url
+        'http://example.com/gateway'
+        >>> error.enabled
+        True
+        >>> error.gateway_id is None
+        True
+
+    >>> error_inactive = GatewayUrlConflictError("http://inactive.com/gw", enabled=False, gateway_id=123)
+    >>> str(error_inactive)
+    'Public Gateway already exists with URL: http://inactive.com/gw (currently inactive, ID: 123)'
+        >>> error_inactive.enabled
+        False
+        >>> error_inactive.gateway_id
+        123
+    """
+
+    def __init__(self, url: str, enabled: bool = True, gateway_id: Optional[int] = None, visibility: Optional[str] = "public"):
+        """Initialize the error with gateway information.
+
+        Args:
+            url: The conflicting gateway URL
+            enabled: Whether the existing gateway is enabled
+            gateway_id: ID of the existing gateway if available
+            visibility: The visibility of the gateway ("public" or "team").
+        """
+        self.url = url
+        self.enabled = enabled
+        self.gateway_id = gateway_id
+        if visibility == "team":
+            vis_label = "Team-level"
+        else:
+            vis_label = "Public"
+        message = f"{vis_label} Gateway already exists with URL: {url}"
         if not enabled:
             message += f" (currently inactive, ID: {gateway_id})"
         super().__init__(message)
@@ -449,18 +506,41 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
-            # Check for name conflicts (both active and inactive)
-            existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway.name)).scalar_one_or_none()
+            # # Check for name conflicts (both active and inactive)
+            # existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway.name)).scalar_one_or_none()
 
-            if existing_gateway:
-                raise GatewayNameConflictError(
-                    gateway.name,
-                    enabled=existing_gateway.enabled,
-                    gateway_id=existing_gateway.id,
-                )
+            # if existing_gateway:
+            #     raise GatewayNameConflictError(
+            #         gateway.name,
+            #         enabled=existing_gateway.enabled,
+            #         gateway_id=existing_gateway.id,
+            #     )
+            # Check for existing gateway with the same slug and visibility
+            slug_name = slugify(gateway.name)
+            if visibility.lower() == "public":
+                # Check for existing public gateway with the same slug
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "public")).scalar_one_or_none()
+                if existing_gateway:
+                    raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team gateway with the same slug
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id)).scalar_one_or_none()
+                if existing_gateway:
+                    raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
             # Normalize the gateway URL
             normalized_url = self.normalize_url(gateway.url)
+            # Check for existing gateway with the same URL and visibility
+            if visibility.lower() == "public":
+                # Check for existing public gateway with the same URL
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.url == normalized_url, DbGateway.visibility == "public")).scalar_one_or_none()
+                if existing_gateway:
+                    raise GatewayUrlConflictError(existing_gateway.url, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team gateway with the same URL
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.url == normalized_url, DbGateway.visibility == "team", DbGateway.team_id == team_id)).scalar_one_or_none()
+                if existing_gateway:
+                    raise GatewayUrlConflictError(existing_gateway.url, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
             auth_type = getattr(gateway, "auth_type", None)
             # Support multiple custom headers
@@ -552,7 +632,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Create DB model
             db_gateway = DbGateway(
                 name=gateway.name,
-                slug=slugify(gateway.name),
+                slug=slug_name,
                 url=normalized_url,
                 description=gateway.description,
                 tags=gateway.tags,
@@ -600,6 +680,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 gnce: ExceptionGroup[GatewayNameConflictError]
             logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
             raise gnce.exceptions[0]
+        except* GatewayUrlConflictError as guce:  # pragma: no mutate
+            if TYPE_CHECKING:
+                guce: ExceptionGroup[GatewayUrlConflictError]
+            logger.error(f"GatewayUrlConflictError in group: {guce.exceptions}")
+            raise guce.exceptions[0]
         except* ValueError as ve:  # pragma: no mutate
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]
@@ -885,14 +970,67 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if gateway.enabled or include_inactive:
                 # Check for name conflicts if name is being changed
                 if gateway_update.name is not None and gateway_update.name != gateway.name:
-                    existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
+                    # existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway_update.name).where(DbGateway.id != gateway_id)).scalar_one_or_none()
 
-                    if existing_gateway:
-                        raise GatewayNameConflictError(
-                            gateway_update.name,
-                            enabled=existing_gateway.enabled,
-                            gateway_id=existing_gateway.id,
-                        )
+                    # if existing_gateway:
+                    #     raise GatewayNameConflictError(
+                    #         gateway_update.name,
+                    #         enabled=existing_gateway.enabled,
+                    #         gateway_id=existing_gateway.id,
+                    #     )
+                    # Check for existing gateway with the same slug and visibility
+                    new_slug = slugify(gateway_update.name)
+                    if gateway_update.visibility is not None:
+                        vis = gateway_update.visibility
+                    else:
+                        vis = gateway.visibility
+                    if vis == "public":
+                        existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "public", DbGateway.id != gateway_id)).scalar_one_or_none()
+                        if existing_gateway:
+                            raise GatewayNameConflictError(
+                                new_slug,
+                                enabled=existing_gateway.enabled,
+                                gateway_id=existing_gateway.id,
+                                visibility=existing_gateway.visibility,
+                            )
+                    elif vis == "team" and gateway.team_id:
+                        existing_gateway = db.execute(
+                            select(DbGateway).where(DbGateway.slug == new_slug, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id)
+                        ).scalar_one_or_none()
+                        if existing_gateway:
+                            raise GatewayNameConflictError(
+                                new_slug,
+                                enabled=existing_gateway.enabled,
+                                gateway_id=existing_gateway.id,
+                                visibility=existing_gateway.visibility,
+                            )
+                # Check for existing gateway with the same URL and visibility
+                if gateway_update.url is not None:
+                    normalized_url = self.normalize_url(gateway_update.url)
+                    if gateway_update.visibility is not None:
+                        vis = gateway_update.visibility
+                    else:
+                        vis = gateway.visibility
+                    if vis == "public":
+                        existing_gateway = db.execute(select(DbGateway).where(DbGateway.url == normalized_url, DbGateway.visibility == "public", DbGateway.id != gateway_id)).scalar_one_or_none()
+                        if existing_gateway:
+                            raise GatewayUrlConflictError(
+                                normalized_url,
+                                enabled=existing_gateway.enabled,
+                                gateway_id=existing_gateway.id,
+                                visibility=existing_gateway.visibility,
+                            )
+                    elif vis == "team" and gateway.team_id:
+                        existing_gateway = db.execute(
+                            select(DbGateway).where(DbGateway.url == normalized_url, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id)
+                        ).scalar_one_or_none()
+                        if existing_gateway:
+                            raise GatewayUrlConflictError(
+                                normalized_url,
+                                enabled=existing_gateway.enabled,
+                                gateway_id=existing_gateway.id,
+                                visibility=existing_gateway.visibility,
+                            )
 
                 # Update fields if provided
                 if gateway_update.name is not None:

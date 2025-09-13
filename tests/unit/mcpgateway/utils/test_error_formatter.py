@@ -164,7 +164,7 @@ def make_mock_integrity_error(msg):
     "msg,expected",
     [
         ("UNIQUE constraint failed: gateways.url", "A gateway with this URL already exists"),
-        ("UNIQUE constraint failed: gateways.name", "A gateway with this name already exists"),
+        ("UNIQUE constraint failed: gateways.slug", "A gateway with this name already exists"),
         ("UNIQUE constraint failed: tools.name", "A tool with this name already exists"),
         ("UNIQUE constraint failed: resources.uri", "A resource with this URI already exists"),
         ("UNIQUE constraint failed: servers.name", "A server with this name already exists"),

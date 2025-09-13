@@ -232,8 +232,8 @@ class ErrorFormatter:
             >>> result['success']
             False
 
-            >>> # Test UNIQUE constraint on gateway name
-            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: gateways.name"
+            >>> # Test UNIQUE constraint on gateway slug
+            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: gateways.slug"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'A gateway with this name already exists'
@@ -299,7 +299,7 @@ class ErrorFormatter:
             if "UNIQUE constraint failed" in error_str:
                 if "gateways.url" in error_str:
                     return {"message": "A gateway with this URL already exists", "success": False}
-                elif "gateways.name" in error_str:
+                elif "gateways.slug" in error_str:
                     return {"message": "A gateway with this name already exists", "success": False}
                 elif "tools.name" in error_str:
                     return {"message": "A tool with this name already exists", "success": False}

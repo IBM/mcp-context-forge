@@ -75,7 +75,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -86,7 +86,7 @@ from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -4796,7 +4796,6 @@ async def admin_add_tool(
     LOGGER.debug(f"User {get_user_email(user)} is adding a new tool")
     form = await request.form()
     LOGGER.debug(f"Received form data: {dict(form)}")
-
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
     visibility = str(form.get("visibility", "private"))
@@ -4814,11 +4813,9 @@ async def admin_add_tool(
     team_id = form.get("team_id", None)
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
-
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
@@ -4865,8 +4862,11 @@ async def admin_add_tool(
         )
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
-        LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
+        LOGGER.error(f"IntegrityError in admin_add_tool: {error_message}")
         return JSONResponse(status_code=409, content=error_message)
+    except ToolNameConflictError as ex:
+        LOGGER.error(f"ToolNameConflictError in admin_add_tool: {str(ex)}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
@@ -5122,6 +5122,9 @@ async def admin_edit_tool(
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_tool_resource: {error_message}")
         return JSONResponse(status_code=409, content=error_message)
+    except ToolNameConflictError as ex:
+        LOGGER.error(f"ToolNameConflictError in admin_edit_tool: {str(ex)}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
         LOGGER.error(f"ToolError in admin_edit_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -5635,6 +5638,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
     except GatewayConnectionError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
+    except GatewayUrlConflictError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except GatewayNameConflictError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ValueError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
