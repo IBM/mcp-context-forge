@@ -1,7 +1,7 @@
 # 🚀 Deploying the MCP Gateway Stack to IBM Cloud Kubernetes Service with Argo CD
 
-!!! warning "Work in progress"
-    This document is a WORK IN PROGRESS and is not yet ready for consumption.
+!!! warning "Preview"
+    This guide is in preview and will continue to evolve. Content is accurate but may receive refinements as the Helm chart and GitOps flows mature.
 
 !!! abstract "What you'll achieve"
     * Build or pull the OCI image(s) for MCP Gateway
@@ -804,7 +804,14 @@ ibmcloud logs tail -r eu-de
 
 ## 11.5 Grafana Dashboards
 
-> TODO
+If you collect Prometheus metrics from the gateway and backing services, import standard HTTP and container dashboards or create a custom dashboard for:
+
+- Request rate, error rate, and latency for `/health`, `/version`, and `/rpc`
+- Pod CPU/memory and restarts per deployment
+- Database connection count, latency, and saturation
+- Redis hit ratio and command latency
+
+Store dashboards as code in your Git repo and have Argo CD apply them via ConfigMaps or Grafana's provisioning.
 
 ---
 
