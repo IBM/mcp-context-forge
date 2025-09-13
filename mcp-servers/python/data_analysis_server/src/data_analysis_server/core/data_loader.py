@@ -2,12 +2,14 @@
 Data loading functionality for multiple formats and sources.
 """
 
+# Standard
 import io
 import logging
 import urllib.parse
 from pathlib import Path
 from typing import Any
 
+# Third-Party
 import pandas as pd
 import requests
 from sqlalchemy import create_engine
@@ -209,6 +211,7 @@ class DataLoader:
             sample_values = df[col].dropna().astype(str).head()
             if len(sample_values) > 0:
                 # Look for date patterns like YYYY-MM-DD, MM/DD/YYYY, etc.
+                # Standard
                 import re
 
                 date_patterns = [
@@ -267,6 +270,7 @@ class DataLoader:
                         if not converted:
                             try:
                                 # Test if pandas can parse it without specifying format
+                                # Standard
                                 import warnings
 
                                 with warnings.catch_warnings():

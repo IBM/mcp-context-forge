@@ -2,9 +2,11 @@
 Data transformation and cleaning functionality.
 """
 
+# Standard
 import logging
 from typing import Any
 
+# Third-Party
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import (
@@ -479,7 +481,7 @@ class DataTransformer:
         method = operation.get("method", "iqr")
         threshold = operation.get("threshold", 1.5)
 
-        original_count = len(df)
+        len(df)
         outliers_removed = 0
 
         for col in columns:
@@ -560,10 +562,13 @@ class DataTransformer:
             new_column = operation.get("new_column")
             if not new_column:
                 new_column = f"{columns[0]}_per_{columns[1]}"
-            
+
             col1, col2 = columns[0], columns[1]
             if col1 in df.columns and col2 in df.columns:
-                if df[col1].dtype in ["float64", "int64"] and df[col2].dtype in ["float64", "int64"]:
+                if df[col1].dtype in ["float64", "int64"] and df[col2].dtype in [
+                    "float64",
+                    "int64",
+                ]:
                     # Avoid division by zero
                     df[new_column] = df[col1] / df[col2].replace(0, pd.NA)
                     return {
@@ -571,7 +576,9 @@ class DataTransformer:
                         "new_columns": [new_column],
                     }
                 else:
-                    raise ValueError("Ratio feature engineering requires numeric columns")
+                    raise ValueError(
+                        "Ratio feature engineering requires numeric columns"
+                    )
             else:
                 missing = [col for col in columns[:2] if col not in df.columns]
                 raise ValueError(f"Columns not found: {missing}")

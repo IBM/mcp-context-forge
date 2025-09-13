@@ -5,9 +5,11 @@ This module provides comprehensive descriptive statistics calculations
 including measures of central tendency, dispersion, shape, and data quality.
 """
 
+# Standard
 import logging
 from typing import Any
 
+# Third-Party
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -20,7 +22,6 @@ class DescriptiveStatistics:
 
     def __init__(self):
         """Initialize the descriptive statistics analyzer."""
-        pass
 
     def get_basic_info(self, df: pd.DataFrame) -> dict[str, Any]:
         """
@@ -139,7 +140,7 @@ class DescriptiveStatistics:
 
         # Confidence intervals for mean
         if confidence_level and len(series) > 1:
-            alpha = 1 - confidence_level
+            1 - confidence_level
             ci = stats.t.interval(
                 confidence_level,
                 len(series) - 1,

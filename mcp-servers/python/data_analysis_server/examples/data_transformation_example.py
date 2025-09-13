@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data Transformation Example for MCP Data Analysis Server
 
@@ -9,6 +10,7 @@ This example demonstrates comprehensive data transformation capabilities includi
 - Advanced transformations (binning, aggregation)
 """
 
+# Standard
 import asyncio
 import json
 from pathlib import Path
@@ -22,6 +24,7 @@ class MockMCPClient:
 
     async def call_tool(self, tool_name: str, arguments: dict):
         """Simulate calling an MCP tool."""
+        # Third-Party
         from data_analysis_server.server import handle_call_tool
 
         # This simulates the MCP tool call
@@ -31,6 +34,7 @@ class MockMCPClient:
 
 async def main():
     """Demonstrate data transformation capabilities."""
+    # Third-Party
     from data_analysis_server.server import analysis_server
 
     client = MockMCPClient(analysis_server)
@@ -41,9 +45,7 @@ async def main():
     # Step 1: Load raw employee data
     print("\n📊 Step 1: Loading raw employee data...")
 
-    employee_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "employee_data.csv"
-    )
+    employee_data_path = Path(__file__).parent.parent / "sample_data" / "employee_data.csv"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -274,10 +276,7 @@ async def main():
             desc_stats = analysis["descriptive_stats"]
             if "numeric_columns" in desc_stats and "salary_x_age" in desc_stats["numeric_columns"]:
                 salary_x_age = desc_stats["numeric_columns"]["salary_x_age"]
-                print(
-                    f"   • Salary*Age interaction - Mean: {salary_x_age.get('mean', 0):.2f}, "
-                    f"Std: {salary_x_age.get('std', 0):.2f}"
-                )
+                print(f"   • Salary*Age interaction - Mean: {salary_x_age.get('mean', 0):.2f}, " f"Std: {salary_x_age.get('std', 0):.2f}")
 
     # Step 8: Transformation pipeline summary
     print("\n📋 Step 8: Querying transformation results...")
@@ -287,11 +286,11 @@ async def main():
         {
             "dataset_id": final_id,
             "query": """
-            SELECT 
+            SELECT
                 department,
                 annual_salary,
                 salary_x_age
-            FROM table 
+            FROM table
             LIMIT 10
             """,
             "return_format": "json",
@@ -303,11 +302,7 @@ async def main():
         if "data" in query_data:
             print("✅ Sample of transformation results:")
             for i, row in enumerate(query_data["data"][:5]):
-                print(
-                    f"   • Row {i+1}: {row['department']}, "
-                    f"Salary=${row['annual_salary']:.2f}, "
-                    f"Salary*Age={row['salary_x_age']:.2f}"
-                )
+                print(f"   • Row {i+1}: {row['department']}, " f"Salary=${row['annual_salary']:.2f}, " f"Salary*Age={row['salary_x_age']:.2f}")
 
     # Step 9: Create visualization of transformed data
     print("\n📈 Step 9: Visualizing transformation results...")

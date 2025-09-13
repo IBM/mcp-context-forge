@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Query Operations Example for MCP Data Analysis Server
 
@@ -10,6 +11,7 @@ This example demonstrates comprehensive SQL-like query capabilities including:
 - Query result formatting (JSON, CSV, HTML)
 """
 
+# Standard
 import asyncio
 import json
 from pathlib import Path
@@ -23,6 +25,7 @@ class MockMCPClient:
 
     async def call_tool(self, tool_name: str, arguments: dict):
         """Simulate calling an MCP tool."""
+        # Third-Party
         from data_analysis_server.server import handle_call_tool
 
         # This simulates the MCP tool call
@@ -32,6 +35,7 @@ class MockMCPClient:
 
 async def main():
     """Demonstrate comprehensive query operations."""
+    # Third-Party
     from data_analysis_server.server import analysis_server
 
     client = MockMCPClient(analysis_server)
@@ -42,9 +46,7 @@ async def main():
     # Step 1: Load retail transaction data
     print("\n📊 Step 1: Loading retail transaction data...")
 
-    retail_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "retail_transactions.csv"
-    )
+    retail_data_path = Path(__file__).parent.parent / "sample_data" / "retail_transactions.csv"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -82,12 +84,7 @@ async def main():
         print("✅ Basic SELECT query (first 10 rows):")
         if "data" in query_data:
             for i, row in enumerate(query_data["data"][:3]):  # Show first 3
-                print(
-                    f"   {i+1}. Customer: {row.get('customer_id', 'N/A')}, "
-                    f"Product: {row.get('product_name', 'N/A')}, "
-                    f"Qty: {row.get('quantity', 0)}, "
-                    f"Price: ${row.get('price', 0):.2f}"
-                )
+                print(f"   {i+1}. Customer: {row.get('customer_id', 'N/A')}, " f"Product: {row.get('product_name', 'N/A')}, " f"Qty: {row.get('quantity', 0)}, " f"Price: ${row.get('price', 0):.2f}")
     else:
         print(f"❌ Basic query failed: {basic_query.get('error')}")
 
@@ -123,9 +120,7 @@ async def main():
         print("✅ Mid-range products ($100-$500):")
         if "data" in query_data:
             for row in query_data["data"][:3]:
-                print(
-                    f"   • {row.get('product_name', 'N/A')}: ${row.get('price', 0):.2f}"
-                )
+                print(f"   • {row.get('product_name', 'N/A')}: ${row.get('price', 0):.2f}")
 
     # Query with IN condition
     where_query3 = await client.call_tool(
@@ -153,7 +148,7 @@ async def main():
         {
             "dataset_id": dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 category,
                 COUNT(*) as transaction_count,
                 SUM(quantity) as total_quantity,
@@ -161,8 +156,8 @@ async def main():
                 MIN(price) as min_price,
                 MAX(price) as max_price,
                 SUM(quantity * price) as total_revenue
-            FROM table 
-            GROUP BY category 
+            FROM table
+            GROUP BY category
             ORDER BY total_revenue DESC
             """,
             "return_format": "json",
@@ -210,9 +205,9 @@ async def main():
             "dataset_id": dataset_id,
             "query": """
             SELECT customer_id, product_name, quantity, price
-            FROM table 
+            FROM table
             WHERE (price > 200 AND quantity > 2) OR (category = 'Electronics' AND price < 50)
-            ORDER BY price DESC 
+            ORDER BY price DESC
             LIMIT 10
             """,
             "return_format": "json",
@@ -232,16 +227,16 @@ async def main():
         {
             "dataset_id": dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 customer_id,
                 COUNT(*) as purchase_count,
                 SUM(quantity) as total_items,
                 SUM(quantity * price) as total_spent,
                 AVG(price) as avg_item_price
-            FROM table 
-            GROUP BY customer_id 
+            FROM table
+            GROUP BY customer_id
             HAVING COUNT(*) > 3
-            ORDER BY total_spent DESC 
+            ORDER BY total_spent DESC
             LIMIT 10
             """,
             "return_format": "json",
@@ -253,12 +248,7 @@ async def main():
         print("✅ Top customers by spending (>3 purchases):")
         if "data" in query_data:
             for i, row in enumerate(query_data["data"][:5], 1):
-                print(
-                    f"   {i}. Customer {row.get('customer_id', 'N/A')}: "
-                    f"${row.get('total_spent', 0):,.0f} "
-                    f"({row.get('purchase_count', 0)} purchases, "
-                    f"{row.get('total_items', 0)} items)"
-                )
+                print(f"   {i}. Customer {row.get('customer_id', 'N/A')}: " f"${row.get('total_spent', 0):,.0f} " f"({row.get('purchase_count', 0)} purchases, " f"{row.get('total_items', 0)} items)")
 
     # Step 7: Time-based queries (if date columns exist)
     print("\n📅 Step 7: Product popularity queries...")
@@ -269,16 +259,16 @@ async def main():
         {
             "dataset_id": dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 product_name,
                 category,
                 COUNT(*) as purchase_frequency,
                 SUM(quantity) as total_sold,
                 AVG(price) as avg_price,
                 SUM(quantity * price) as total_revenue
-            FROM table 
+            FROM table
             GROUP BY product_name, category
-            ORDER BY purchase_frequency DESC, total_sold DESC 
+            ORDER BY purchase_frequency DESC, total_sold DESC
             LIMIT 15
             """,
             "return_format": "json",
@@ -314,7 +304,7 @@ async def main():
         csv_data = csv_query["query_result"]
         print("✅ CSV format output (first few lines):")
         if isinstance(csv_data, str):
-            lines = csv_data.strip().split('\n')[:3]  # Show first 3 lines
+            lines = csv_data.strip().split("\n")[:3]  # Show first 3 lines
             for line in lines:
                 print(f"   {line}")
 
@@ -364,9 +354,9 @@ async def main():
         {
             "dataset_id": dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 category,
-                CASE 
+                CASE
                     WHEN price < 50 THEN 'Budget'
                     WHEN price < 200 THEN 'Mid-range'
                     ELSE 'Premium'
@@ -377,8 +367,8 @@ async def main():
                 AVG(price) as avg_price
             FROM table
             WHERE quantity > 0
-            GROUP BY category, 
-                CASE 
+            GROUP BY category,
+                CASE
                     WHEN price < 50 THEN 'Budget'
                     WHEN price < 200 THEN 'Mid-range'
                     ELSE 'Premium'
@@ -395,11 +385,11 @@ async def main():
         if "data" in query_data:
             current_category = None
             for row in query_data["data"][:8]:  # Show first 8 results
-                category = row.get('category', 'N/A')
+                category = row.get("category", "N/A")
                 if category != current_category:
                     print(f"\n   {category}:")
                     current_category = category
-                
+
                 print(
                     f"     • {row.get('price_tier', 'N/A')}: "
                     f"{row.get('transaction_count', 0)} transactions, "

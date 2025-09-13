@@ -2,10 +2,12 @@
 Time series analysis functionality.
 """
 
+# Standard
 import logging
 import warnings
 from typing import Any
 
+# Third-Party
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -19,7 +21,6 @@ class TimeSeriesAnalyzer:
 
     def __init__(self):
         """Initialize the time series analyzer."""
-        pass
 
     def analyze_time_series(
         self,

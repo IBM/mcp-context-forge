@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Visualization Showcase Example for MCP Data Analysis Server
 
@@ -8,6 +9,7 @@ This example demonstrates comprehensive visualization capabilities including:
 - Advanced plotting features (faceting, color mapping, styling)
 """
 
+# Standard
 import asyncio
 import json
 from pathlib import Path
@@ -21,6 +23,7 @@ class MockMCPClient:
 
     async def call_tool(self, tool_name: str, arguments: dict):
         """Simulate calling an MCP tool."""
+        # Third-Party
         from data_analysis_server.server import handle_call_tool
 
         # This simulates the MCP tool call
@@ -30,6 +33,7 @@ class MockMCPClient:
 
 async def main():
     """Demonstrate comprehensive visualization capabilities."""
+    # Third-Party
     from data_analysis_server.server import analysis_server
 
     client = MockMCPClient(analysis_server)
@@ -40,9 +44,7 @@ async def main():
     # Step 1: Load marketing campaign data
     print("\n📊 Step 1: Loading marketing campaign data...")
 
-    campaign_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "marketing_data.csv"
-    )
+    campaign_data_path = Path(__file__).parent.parent / "sample_data" / "marketing_data.csv"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -279,7 +281,7 @@ async def main():
         {
             "dataset_id": dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 campaign_type,
                 target_audience,
                 COUNT(*) as campaign_count,
@@ -287,8 +289,8 @@ async def main():
                 AVG(engagement_rate) as avg_engagement,
                 SUM(revenue) as total_revenue,
                 AVG(cost_per_click) as avg_cpc
-            FROM table 
-            GROUP BY campaign_type, target_audience 
+            FROM table
+            GROUP BY campaign_type, target_audience
             ORDER BY avg_roi DESC
             """,
             "limit": 20,
@@ -302,10 +304,7 @@ async def main():
             print("✅ Campaign performance summary:")
             for i, row in enumerate(query_data["data"][:5]):  # Show top 5
                 print(
-                    f"   {i+1}. {row['campaign_type']} → {row['target_audience']}: "
-                    f"ROI={row['avg_roi']:.2f}, "
-                    f"Engagement={row['avg_engagement']:.1%}, "
-                    f"Revenue=${row['total_revenue']:,.0f}"
+                    f"   {i+1}. {row['campaign_type']} → {row['target_audience']}: " f"ROI={row['avg_roi']:.2f}, " f"Engagement={row['avg_engagement']:.1%}, " f"Revenue=${row['total_revenue']:,.0f}"
                 )
 
     # Step 12: Create final dashboard-style visualization

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Sales Analysis Example
 
@@ -6,6 +7,7 @@ This example demonstrates how to use the MCP Data Analysis Server
 to analyze sales data with various statistical and visualization techniques.
 """
 
+# Standard
 import asyncio
 import json
 from pathlib import Path
@@ -20,6 +22,7 @@ class MockMCPClient:
 
     async def call_tool(self, tool_name: str, arguments: dict):
         """Simulate calling an MCP tool."""
+        # Third-Party
         from data_analysis_server.server import handle_call_tool
 
         # This simulates the MCP tool call
@@ -30,6 +33,7 @@ class MockMCPClient:
 async def main():
     """Main sales analysis workflow."""
     # Initialize mock client (in real usage, this would be your MCP client)
+    # Third-Party
     from data_analysis_server.server import analysis_server
 
     client = MockMCPClient(analysis_server)
@@ -80,9 +84,7 @@ async def main():
         # Show basic info
         basic_info = analysis["basic_info"]
         print(f"   • Dataset shape: {basic_info['shape']}")
-        print(
-            f"   • Missing values: {sum(basic_info['missing_values'].values())} total"
-        )
+        print(f"   • Missing values: {sum(basic_info['missing_values'].values())} total")
         print(f"   • Duplicate rows: {basic_info['duplicate_rows']}")
 
         # Show numeric column statistics

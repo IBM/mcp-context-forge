@@ -2,8 +2,10 @@
 Data models for MCP data analysis server requests and responses.
 """
 
+# Standard
 from typing import Any
 
+# Third-Party
 from pydantic import BaseModel, Field
 
 
@@ -12,9 +14,7 @@ class DataLoadRequest(BaseModel):
 
     source: str = Field(..., description="File path, URL, or SQL connection string")
     format: str = Field(..., description="Data format: csv, json, parquet, sql, excel")
-    options: dict[str, Any] | None = Field(
-        None, description="Format-specific options"
-    )
+    options: dict[str, Any] | None = Field(None, description="Format-specific options")
     sample_size: int | None = Field(None, description="Number of rows to sample")
     cache_data: bool = Field(True, description="Whether to cache the dataset")
     dataset_id: str | None = Field(None, description="Custom dataset identifier")
@@ -27,9 +27,7 @@ class DataAnalysisRequest(BaseModel):
     analysis_type: str = Field(
         ..., description="Analysis type: descriptive, exploratory, correlation"
     )
-    columns: list[str] | None = Field(
-        None, description="Specific columns to analyze"
-    )
+    columns: list[str] | None = Field(None, description="Specific columns to analyze")
     include_distributions: bool = Field(
         True, description="Include distribution analysis"
     )
@@ -59,7 +57,9 @@ class VisualizationRequest(BaseModel):
     plot_type: str = Field(
         ..., description="Plot type: histogram, scatter, box, heatmap, time_series"
     )
-    x_column: str | None = Field(None, description="X-axis column (not required for heatmap)")
+    x_column: str | None = Field(
+        None, description="X-axis column (not required for heatmap)"
+    )
     y_column: str | None = Field(None, description="Y-axis column")
     color_column: str | None = Field(None, description="Color grouping column")
     facet_column: str | None = Field(None, description="Faceting column")

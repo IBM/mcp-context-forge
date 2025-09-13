@@ -2,13 +2,16 @@
 Data analysis and profiling functionality.
 """
 
+# Standard
 import logging
 from typing import Any
 
+# Third-Party
 import numpy as np
 import pandas as pd
 from scipy import stats
 
+# Local
 from ..statistics.descriptive import DescriptiveStatistics
 
 logger = logging.getLogger(__name__)
@@ -240,6 +243,7 @@ class DataAnalyzer:
     def _detect_isolation_forest_outliers(self, series: pd.Series) -> dict[str, Any]:
         """Detect outliers using Isolation Forest."""
         try:
+            # Third-Party
             from sklearn.ensemble import IsolationForest
 
             X = series.values.reshape(-1, 1)

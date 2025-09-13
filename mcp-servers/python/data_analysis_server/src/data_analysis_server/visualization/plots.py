@@ -2,10 +2,12 @@
 Data visualization functionality using matplotlib, seaborn, and plotly.
 """
 
+# Standard
 import logging
 from pathlib import Path
 from typing import Any
 
+# Third-Party
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -13,9 +15,8 @@ import seaborn as sns
 
 # Optional plotly import
 try:
+    # Third-Party
     import plotly.express as px
-    import plotly.graph_objects as go
-    import plotly.io as pio
 
     PLOTLY_AVAILABLE = True
 except ImportError:
@@ -731,6 +732,7 @@ class DataVisualizer:
 
     def _generate_filename(self, plot_type: str, format: str) -> str:
         """Generate a unique filename for the plot."""
+        # Standard
         import time
 
         timestamp = int(time.time())

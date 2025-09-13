@@ -30,7 +30,7 @@ python examples/comprehensive_workflow_example.py
 
 ## 📊 Available Examples
 
-### 1. **Sales Analysis** (`sales_analysis.py`) 
+### 1. **Sales Analysis** (`sales_analysis.py`)
 *Basic introduction to MCP capabilities*
 
 - **Focus**: Core MCP tool demonstration
@@ -70,7 +70,7 @@ python examples/comprehensive_workflow_example.py
 - **Dataset**: Customer behavior data
 - **Capabilities Shown**:
   - T-tests (one-sample, two-sample)
-  - ANOVA (one-way, two-way)  
+  - ANOVA (one-way, two-way)
   - Chi-square tests for independence
   - Correlation analysis
   - Distribution testing
@@ -143,7 +143,7 @@ python examples/comprehensive_workflow_example.py
 - **Dataset**: Business sales data
 - **Capabilities Shown**:
   - **Phase 1**: Data loading and exploration
-  - **Phase 2**: Data cleaning and preprocessing  
+  - **Phase 2**: Data cleaning and preprocessing
   - **Phase 3**: Statistical analysis and hypothesis testing
   - **Phase 4**: Time series analysis (when applicable)
   - **Phase 5**: Advanced querying and business intelligence
@@ -171,7 +171,7 @@ python examples/comprehensive_workflow_example.py
 ### Required Data Files
 The examples expect sample data files in the `../sample_data/` directory:
 - `sales_data.csv` - Sales transactions
-- `customer_data.json` - Customer information  
+- `customer_data.json` - Customer information
 - `employee_data.csv` - Employee records
 - `marketing_data.csv` - Marketing campaigns
 - `retail_transactions.csv` - Retail data
@@ -218,7 +218,7 @@ The query examples demonstrate:
 Statistical examples include:
 - **T-tests**: One-sample, two-sample, paired
 - **ANOVA**: One-way, two-way analysis of variance
-- **Chi-square**: Independence and goodness-of-fit tests  
+- **Chi-square**: Independence and goodness-of-fit tests
 - **Correlation**: Pearson, Spearman correlation analysis
 - **Distribution**: Normality tests, distribution fitting
 
@@ -234,7 +234,7 @@ Transformation examples show:
 
 These examples demonstrate solutions for:
 - **Sales Analytics**: Revenue analysis, customer segmentation
-- **Marketing**: Campaign performance, ROI analysis  
+- **Marketing**: Campaign performance, ROI analysis
 - **HR Analytics**: Employee performance, compensation analysis
 - **Financial**: Time series forecasting, risk analysis
 - **Retail**: Inventory analysis, customer behavior

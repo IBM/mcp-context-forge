@@ -2,10 +2,12 @@
 SQL-like query parsing and execution for pandas DataFrames.
 """
 
+# Standard
 import logging
 import re
 from typing import Any
 
+# Third-Party
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -103,13 +105,15 @@ class DataQueryParser:
             result_df = self._apply_group_by(
                 result_df, query_parts["group_by"], query_parts.get("aggregates")
             )
-            
+
             # Apply HAVING clause after GROUP BY
             if query_parts.get("having"):
                 result_df = self._apply_having_clause(result_df, query_parts["having"])
         elif query_parts.get("aggregates"):
             # Handle aggregates without GROUP BY (e.g., SELECT COUNT(*), SUM(revenue) FROM table)
-            result_df = self._apply_global_aggregates(result_df, query_parts["aggregates"])
+            result_df = self._apply_global_aggregates(
+                result_df, query_parts["aggregates"]
+            )
 
         # Apply ORDER BY
         if query_parts.get("order_by"):
@@ -118,7 +122,7 @@ class DataQueryParser:
         # Apply column selection
         if query_parts.get("columns") and query_parts["columns"] != ["*"]:
             result_df = self._apply_column_selection(result_df, query_parts["columns"])
-            
+
         # Apply LIMIT and OFFSET from query
         if query_parts.get("limit"):
             offset = query_parts.get("offset", 0)
@@ -180,14 +184,18 @@ class DataQueryParser:
 
         # Extract WHERE clause - improved to handle LIMIT in WHERE
         where_match = re.search(
-            r"where\s+(.*?)(?:\s+group\s+by|\s+having|\s+order\s+by|\s+limit|$)", query, re.IGNORECASE
+            r"where\s+(.*?)(?:\s+group\s+by|\s+having|\s+order\s+by|\s+limit|$)",
+            query,
+            re.IGNORECASE,
         )
         if where_match:
             query_parts["where"] = where_match.group(1).strip()
 
         # Extract GROUP BY - improved to handle HAVING
         group_match = re.search(
-            r"group\s+by\s+(.*?)(?:\s+having|\s+order\s+by|\s+limit|$)", query, re.IGNORECASE
+            r"group\s+by\s+(.*?)(?:\s+having|\s+order\s+by|\s+limit|$)",
+            query,
+            re.IGNORECASE,
         )
         if group_match:
             group_cols = [col.strip() for col in group_match.group(1).split(",")]
@@ -201,13 +209,17 @@ class DataQueryParser:
             query_parts["having"] = having_match.group(1).strip()
 
         # Extract ORDER BY
-        order_match = re.search(r"order\s+by\s+(.*?)(?:\s+limit|$)", query, re.IGNORECASE)
+        order_match = re.search(
+            r"order\s+by\s+(.*?)(?:\s+limit|$)", query, re.IGNORECASE
+        )
         if order_match:
             order_expr = order_match.group(1).strip()
             query_parts["order_by"] = self._parse_order_by(order_expr)
 
         # Extract LIMIT clause
-        limit_match = re.search(r"limit\s+(\d+)(?:\s+offset\s+(\d+))?$", query, re.IGNORECASE)
+        limit_match = re.search(
+            r"limit\s+(\d+)(?:\s+offset\s+(\d+))?$", query, re.IGNORECASE
+        )
         if limit_match:
             query_parts["limit"] = int(limit_match.group(1))
             if limit_match.group(2):
@@ -271,20 +283,24 @@ class DataQueryParser:
             condition = re.sub(r"'([^']*)'", r'"\1"', condition)
 
         return condition
-    
+
     def _handle_like_operator(self, condition: str) -> str:
         """Handle LIKE operator conversion."""
         # Convert SQL LIKE to pandas str.contains
         # Pattern: column LIKE 'value' -> column.str.contains("value")
-        pattern = r"(\w+)\s+LIKE\s+'([^']*)'"  
-        condition = re.sub(pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE)
-        
+        pattern = r"(\w+)\s+LIKE\s+'([^']*)'"
+        condition = re.sub(
+            pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE
+        )
+
         # Handle LIKE with double quotes
         pattern = r"(\w+)\s+LIKE\s+\"([^\"]*)\""
-        condition = re.sub(pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE)
-        
+        condition = re.sub(
+            pattern, r'\1.str.contains("\2")', condition, flags=re.IGNORECASE
+        )
+
         return condition
-    
+
     def _handle_in_operator(self, condition: str) -> str:
         """Handle IN operator conversion."""
         # Pattern: column IN ('val1', 'val2') -> column.isin(["val1", "val2"])
@@ -310,10 +326,12 @@ class DataQueryParser:
             cleaned_group_cols = []
             for col in group_cols:
                 # Remove anything after HAVING
-                clean_col = re.sub(r'\s+having\s+.*', '', col, flags=re.IGNORECASE).strip()
+                clean_col = re.sub(
+                    r"\s+having\s+.*", "", col, flags=re.IGNORECASE
+                ).strip()
                 if clean_col:
                     cleaned_group_cols.append(clean_col)
-            
+
             # Validate group columns exist
             valid_group_cols = [col for col in cleaned_group_cols if col in df.columns]
 
@@ -327,16 +345,16 @@ class DataQueryParser:
                 # Apply specified aggregations
                 agg_dict = {}
                 rename_map = {}
-                
+
                 for alias, (func, column) in aggregates.items():
                     # Handle special cases
-                    if column == '*' and func == 'count':
+                    if column == "*" and func == "count":
                         # COUNT(*) - count rows
-                        agg_dict[df.columns[0]] = 'count'
+                        agg_dict[df.columns[0]] = "count"
                         rename_map[df.columns[0]] = alias
-                    elif column in df.columns or column == '*':
-                        actual_column = df.columns[0] if column == '*' else column
-                        
+                    elif column in df.columns or column == "*":
+                        actual_column = df.columns[0] if column == "*" else column
+
                         if func == "count":
                             agg_dict[actual_column] = "count"
                         elif func == "sum":
@@ -353,18 +371,18 @@ class DataQueryParser:
                             agg_dict[actual_column] = "var"
                         elif func == "stddev":
                             agg_dict[actual_column] = "std"
-                        
+
                         if actual_column not in rename_map:
                             rename_map[actual_column] = alias
 
                 if agg_dict:
                     result = grouped.agg(agg_dict).reset_index()
-                    
+
                     # Rename columns according to aliases
                     for old_col, new_col in rename_map.items():
                         if old_col in result.columns:
                             result = result.rename(columns={old_col: new_col})
-                    
+
                     return result
                 else:
                     # Default aggregation (count)
@@ -377,20 +395,24 @@ class DataQueryParser:
             logger.warning(f"Failed to apply GROUP BY: {e}")
             return df
 
-    def _apply_global_aggregates(self, df: pd.DataFrame, aggregates: dict[str, tuple]) -> pd.DataFrame:
+    def _apply_global_aggregates(
+        self, df: pd.DataFrame, aggregates: dict[str, tuple]
+    ) -> pd.DataFrame:
         """Apply aggregate functions without GROUP BY (global aggregates)."""
         try:
             result_data = {}
-            
+
             for alias, (func, column) in aggregates.items():
                 # Handle special cases
-                if column == '*' and func == 'count':
+                if column == "*" and func == "count":
                     result_data[alias] = len(df)
-                elif column in df.columns or column == '*':
-                    actual_column = df.columns[0] if column == '*' else column
-                    
+                elif column in df.columns or column == "*":
+                    actual_column = df.columns[0] if column == "*" else column
+
                     if func == "count":
-                        result_data[alias] = len(df) if column == '*' else df[actual_column].count()
+                        result_data[alias] = (
+                            len(df) if column == "*" else df[actual_column].count()
+                        )
                     elif func == "sum":
                         result_data[alias] = df[actual_column].sum()
                     elif func == "avg":
@@ -403,15 +425,17 @@ class DataQueryParser:
                         result_data[alias] = df[actual_column].std()
                     elif func == "var":
                         result_data[alias] = df[actual_column].var()
-            
+
             # Create a DataFrame with a single row containing the aggregate results
             return pd.DataFrame([result_data])
-            
+
         except Exception as e:
             logger.warning(f"Failed to apply global aggregates: {e}")
             return df
 
-    def _apply_having_clause(self, df: pd.DataFrame, having_clause: str) -> pd.DataFrame:
+    def _apply_having_clause(
+        self, df: pd.DataFrame, having_clause: str
+    ) -> pd.DataFrame:
         """Apply HAVING clause filtering after GROUP BY."""
         try:
             # HAVING works like WHERE but on aggregated results
@@ -420,12 +444,20 @@ class DataQueryParser:
             # Handle COUNT(*) references - replace with appropriate column name
             if "COUNT(*)" in condition.upper():
                 # Find a column that was likely created by COUNT aggregation
-                count_columns = [col for col in df.columns if 'count' in col.lower() or col.endswith('_count')]
+                count_columns = [
+                    col
+                    for col in df.columns
+                    if "count" in col.lower() or col.endswith("_count")
+                ]
                 if count_columns:
-                    condition = re.sub(r"COUNT\(\*\)", count_columns[0], condition, flags=re.IGNORECASE)
+                    condition = re.sub(
+                        r"COUNT\(\*\)", count_columns[0], condition, flags=re.IGNORECASE
+                    )
                 else:
                     # Fallback - use the last column (often the count column)
-                    condition = re.sub(r"COUNT\(\*\)", df.columns[-1], condition, flags=re.IGNORECASE)
+                    condition = re.sub(
+                        r"COUNT\(\*\)", df.columns[-1], condition, flags=re.IGNORECASE
+                    )
 
             # Fix quote handling: Convert single quotes to double quotes
             condition = self._fix_quotes_in_condition(condition)

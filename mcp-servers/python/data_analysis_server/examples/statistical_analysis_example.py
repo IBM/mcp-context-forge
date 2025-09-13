@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Statistical Analysis Example for MCP Data Analysis Server
 
@@ -9,6 +10,7 @@ This example demonstrates comprehensive statistical testing capabilities includi
 - Distribution testing
 """
 
+# Standard
 import asyncio
 import json
 from pathlib import Path
@@ -22,6 +24,7 @@ class MockMCPClient:
 
     async def call_tool(self, tool_name: str, arguments: dict):
         """Simulate calling an MCP tool."""
+        # Third-Party
         from data_analysis_server.server import handle_call_tool
 
         # This simulates the MCP tool call
@@ -31,6 +34,7 @@ class MockMCPClient:
 
 async def main():
     """Demonstrate statistical analysis capabilities."""
+    # Third-Party
     from data_analysis_server.server import analysis_server
 
     client = MockMCPClient(analysis_server)
@@ -41,9 +45,7 @@ async def main():
     # Step 1: Load customer data
     print("\n📈 Step 1: Loading customer behavior data...")
 
-    customer_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "customer_data.json"
-    )
+    customer_data_path = Path(__file__).parent.parent / "sample_data" / "customer_data.json"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -88,10 +90,7 @@ async def main():
             print(f"\n🔍 Key Correlations:")
             if "strong_correlations" in correlations:
                 for corr in correlations["strong_correlations"][:3]:
-                    print(
-                        f"   • {corr['feature_1']} ↔ {corr['feature_2']}: "
-                        f"{corr['correlation']:.3f} (p={corr.get('p_value', 'N/A')})"
-                    )
+                    print(f"   • {corr['feature_1']} ↔ {corr['feature_2']}: " f"{corr['correlation']:.3f} (p={corr.get('p_value', 'N/A')})")
 
         # Show outliers
         if "outliers" in analysis:
@@ -99,11 +98,9 @@ async def main():
             print(f"\n⚠️  Outlier Detection:")
             for column, outlier_info in list(outliers.items())[:2]:
                 if isinstance(outlier_info, dict) and "count" in outlier_info:
-                    print(
-                        f"   • {column}: {outlier_info['count']} outliers detected"
-                    )
+                    print(f"   • {column}: {outlier_info['count']} outliers detected")
 
-    # Step 3: T-test analysis 
+    # Step 3: T-test analysis
     print("\n📊 Step 3: Performing t-test analysis...")
     print("   Note: T-test requires exactly 2 groups, but dataset has 3 segments (Basic, Premium, Standard)")
 
@@ -113,7 +110,7 @@ async def main():
             "dataset_id": dataset_id,
             "test_type": "t_test",
             "columns": ["purchase_amount"],
-            "groupby_column": "customer_segment", 
+            "groupby_column": "customer_segment",
             "hypothesis": "two_sided",
             "alpha": 0.05,
             "alternative": "two-sided",
@@ -153,10 +150,7 @@ async def main():
         if "degrees_of_freedom" in test_result:
             dof = test_result["degrees_of_freedom"]
             if isinstance(dof, dict):
-                print(
-                    f"   • Degrees of freedom: Between={dof.get('between', 'N/A')}, "
-                    f"Within={dof.get('within', 'N/A')}"
-                )
+                print(f"   • Degrees of freedom: Between={dof.get('between', 'N/A')}, " f"Within={dof.get('within', 'N/A')}")
             else:
                 print(f"   • Degrees of freedom: {dof}")
         print(f"   • Interpretation: {test_result.get('interpretation', 'N/A')}")
@@ -239,14 +233,14 @@ async def main():
         {
             "dataset_id": dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 customer_segment,
                 COUNT(*) as count,
                 AVG(purchase_amount) as avg_purchase,
                 MIN(age) as min_age,
                 MAX(age) as max_age
-            FROM table 
-            GROUP BY customer_segment 
+            FROM table
+            GROUP BY customer_segment
             ORDER BY avg_purchase DESC
             """,
             "return_format": "json",

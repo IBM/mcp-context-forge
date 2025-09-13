@@ -1,9 +1,10 @@
+# -*- coding: utf-8 -*-
 """
 Comprehensive Workflow Example for MCP Data Analysis Server
 
 This example demonstrates an end-to-end data analysis workflow combining ALL capabilities:
 1. Data loading and validation
-2. Exploratory data analysis 
+2. Exploratory data analysis
 3. Data cleaning and transformation
 4. Statistical testing and hypothesis validation
 5. Time series analysis (if applicable)
@@ -14,6 +15,7 @@ This example demonstrates an end-to-end data analysis workflow combining ALL cap
 This showcases how all MCP tools work together in a real-world scenario.
 """
 
+# Standard
 import asyncio
 import json
 from pathlib import Path
@@ -27,6 +29,7 @@ class MockMCPClient:
 
     async def call_tool(self, tool_name: str, arguments: dict):
         """Simulate calling an MCP tool."""
+        # Third-Party
         from data_analysis_server.server import handle_call_tool
 
         # This simulates the MCP tool call
@@ -36,6 +39,7 @@ class MockMCPClient:
 
 async def main():
     """Demonstrate comprehensive end-to-end workflow."""
+    # Third-Party
     from data_analysis_server.server import analysis_server
 
     client = MockMCPClient(analysis_server)
@@ -52,9 +56,7 @@ async def main():
     # Load primary dataset
     print("\n🔍 Step 1.1: Loading primary business dataset...")
 
-    sales_data_path = (
-        Path(__file__).parent.parent / "sample_data" / "sales_data.csv"
-    )
+    sales_data_path = Path(__file__).parent.parent / "sample_data" / "sales_data.csv"
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -96,9 +98,9 @@ async def main():
         print(f"   • Dataset shape: {basic_info['shape']}")
         print(f"   • Missing values: {sum(basic_info['missing_values'].values())}")
         print(f"   • Data quality: {analysis.get('data_quality_score', 'N/A')}/100")
-        
+
         # Report data quality issues
-        missing_columns = [k for k, v in basic_info['missing_values'].items() if v > 0]
+        missing_columns = [k for k, v in basic_info["missing_values"].items() if v > 0]
         if missing_columns:
             print(f"   • Columns with missing data: {missing_columns[:3]}...")
 
@@ -133,7 +135,7 @@ async def main():
         print(f"✅ Data cleaning completed:")
         print(f"   • Cleaned dataset ID: {cleaned_dataset_id}")
         print(f"   • Operations applied: {len(cleaning_summary.get('transformation_log', []))}")
-        
+
         if "shape_changes" in cleaning_summary:
             shapes = cleaning_summary["shape_changes"]
             print(f"   • Shape: {shapes.get('before')} → {shapes.get('after')}")
@@ -146,8 +148,7 @@ async def main():
     # Advanced feature engineering
     feature_operations = [
         {"operation": "feature_engineering", "feature_type": "ratio", "columns": ["revenue", "quantity_sold"], "new_column": "revenue_per_unit"},
-        {"operation": "bin_numeric", "column": "revenue", "bins": [0, 1000, 5000, 10000, float('inf')], 
-         "labels": ["Low", "Medium", "High", "Premium"], "new_column": "revenue_tier"},
+        {"operation": "bin_numeric", "column": "revenue", "bins": [0, 1000, 5000, 10000, float("inf")], "labels": ["Low", "Medium", "High", "Premium"], "new_column": "revenue_tier"},
         {"operation": "encode_categorical", "columns": ["product_category"], "method": "onehot"},
         {"operation": "scale", "columns": ["revenue", "quantity_sold"], "method": "standard"},
         {"operation": "create_dummy", "columns": ["customer_segment"]},
@@ -168,7 +169,7 @@ async def main():
         feature_summary = feature_result["transformation_summary"]
         print(f"✅ Feature engineering completed:")
         print(f"   • Enhanced dataset ID: {featured_dataset_id}")
-        
+
         if "new_columns" in feature_summary:
             new_features = feature_summary["new_columns"][:5]
             print(f"   • New features created: {new_features}...")
@@ -197,7 +198,7 @@ async def main():
     if stat_analysis["success"]:
         analysis = stat_analysis["analysis"]
         print(f"✅ Statistical analysis completed:")
-        
+
         # Report key statistical insights
         if "correlations" in analysis and "strong_correlations" in analysis["correlations"]:
             strong_corrs = analysis["correlations"]["strong_correlations"][:3]
@@ -271,12 +272,12 @@ async def main():
     if ts_analysis["success"]:
         ts_result = ts_analysis["time_series_analysis"]
         print(f"✅ Time series analysis completed:")
-        
+
         if "trend_analysis" in ts_result:
             trend = ts_result["trend_analysis"]
             if "direction" in trend:
                 print(f"   • Trend: {trend.get('direction', 'N/A')} ({trend.get('strength', 'N/A')} strength)")
-        
+
         if "forecast" in ts_result:
             forecast = ts_result["forecast"]
             print(f"   • Forecast generated: {len(forecast.get('forecast', []))} periods")
@@ -295,7 +296,7 @@ async def main():
         {
             "dataset_id": featured_dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 product_category,
                 revenue_tier,
                 COUNT(*) as transaction_count,
@@ -320,11 +321,7 @@ async def main():
         if "data" in query_data:
             print("   Top performing category-tier combinations:")
             for i, row in enumerate(query_data["data"][:5], 1):
-                print(
-                    f"   {i}. {row.get('product_category', 'N/A')} - {row.get('revenue_tier', 'N/A')}: "
-                    f"${row.get('total_revenue', 0):,.0f} "
-                    f"({row.get('transaction_count', 0)} transactions)"
-                )
+                print(f"   {i}. {row.get('product_category', 'N/A')} - {row.get('revenue_tier', 'N/A')}: " f"${row.get('total_revenue', 0):,.0f} " f"({row.get('transaction_count', 0)} transactions)")
 
     print("\n🎯 Step 5.2: Customer behavior analysis...")
 
@@ -333,7 +330,7 @@ async def main():
         {
             "dataset_id": featured_dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 customer_segment,
                 COUNT(*) as total_transactions,
                 AVG(revenue) as avg_transaction_value,
@@ -391,7 +388,7 @@ async def main():
             "dataset_id": featured_dataset_id,
             "plot_type": "heatmap",
             "x_column": "revenue",
-            "y_column": "quantity_sold", 
+            "y_column": "quantity_sold",
             "title": "Feature Correlation Heatmap",
             "save_format": "png",
             "interactive": False,
@@ -453,7 +450,7 @@ async def main():
         {
             "dataset_id": featured_dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 product_category,
                 COUNT(*) as total_transactions,
                 AVG(revenue) as avg_revenue,
@@ -478,7 +475,7 @@ async def main():
         {
             "dataset_id": featured_dataset_id,
             "query": """
-            SELECT 
+            SELECT
                 COUNT(*) as total_records,
                 COUNT(DISTINCT customer_segment) as customer_segments,
                 COUNT(DISTINCT product_category) as product_categories,
@@ -500,14 +497,14 @@ async def main():
     if summary_stats["success"]:
         stats = summary_stats["query_result"]["data"][0]
         print(f"Dataset Overview:")
-        total_records = stats.get('total_records', 0)
-        customer_segments = stats.get('customer_segments', 0)
+        total_records = stats.get("total_records", 0)
+        customer_segments = stats.get("customer_segments", 0)
         print(f"  • Total Records: {total_records:,}" if isinstance(total_records, (int, float)) else f"  • Total Records: {total_records}")
         print(f"  • Customer Segments: {customer_segments:,}" if isinstance(customer_segments, (int, float)) else f"  • Customer Segments: {customer_segments}")
         print(f"  • Product Categories: {stats.get('product_categories', 'N/A')}")
-        total_revenue = stats.get('total_revenue', 0)
-        avg_revenue = stats.get('avg_revenue_per_transaction', 0)
-        total_items = stats.get('total_items_sold', 0)
+        total_revenue = stats.get("total_revenue", 0)
+        avg_revenue = stats.get("avg_revenue_per_transaction", 0)
+        total_items = stats.get("total_items_sold", 0)
         print(f"  • Total Revenue: ${total_revenue:,.2f}" if isinstance(total_revenue, (int, float)) else f"  • Total Revenue: ${total_revenue}")
         print(f"  • Average Transaction: ${avg_revenue:.2f}" if isinstance(avg_revenue, (int, float)) else f"  • Average Transaction: ${avg_revenue}")
         print(f"  • Total Items Sold: {total_items:,}" if isinstance(total_items, (int, float)) else f"  • Total Items Sold: {total_items}")

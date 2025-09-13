@@ -5,6 +5,7 @@ A comprehensive MCP server providing data analysis, statistical testing,
 visualization, and transformation capabilities.
 """
 
+# Standard
 import asyncio
 import json
 import logging
@@ -15,10 +16,13 @@ from typing import Any
 
 import numpy as np
 import yaml
+
+# Third-Party
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.types import EmbeddedResource, ImageContent, TextContent, Tool
 
+# Local
 from .core.analyzer import DataAnalyzer
 
 # Import our modules
@@ -500,7 +504,9 @@ async def handle_call_tool(
             analysis_request = DataAnalysisRequest(**arguments)
 
             # Get dataset
-            df = analysis_server.dataset_manager.get_dataset(analysis_request.dataset_id)
+            df = analysis_server.dataset_manager.get_dataset(
+                analysis_request.dataset_id
+            )
 
             # Perform analysis
             analysis_result = analysis_server.analyzer.analyze_dataset(
@@ -621,7 +627,9 @@ async def handle_call_tool(
             transform_request = TransformRequest(**arguments)
 
             # Get dataset
-            df = analysis_server.dataset_manager.get_dataset(transform_request.dataset_id)
+            df = analysis_server.dataset_manager.get_dataset(
+                transform_request.dataset_id
+            )
 
             # Apply transformations
             transformed_df, summary = analysis_server.transformer.transform_data(
@@ -632,7 +640,10 @@ async def handle_call_tool(
 
             if transform_request.create_new_dataset:
                 # Store as new dataset
-                new_id = transform_request.new_dataset_id or f"{transform_request.dataset_id}_transformed"
+                new_id = (
+                    transform_request.new_dataset_id
+                    or f"{transform_request.dataset_id}_transformed"
+                )
                 new_dataset_id = analysis_server.dataset_manager.store_dataset(
                     dataset=transformed_df, dataset_id=new_id
                 )
@@ -724,7 +735,10 @@ async def handle_call_tool(
 
             # Execute query
             query_result = analysis_server.query_parser.execute_query(
-                df=df, query=query_request.query, limit=query_request.limit, offset=query_request.offset
+                df=df,
+                query=query_request.query,
+                limit=query_request.limit,
+                offset=query_request.offset,
             )
 
             # Format result
@@ -759,6 +773,7 @@ async def main():
     logger.info("Starting MCP Data Analysis Server...")
 
     # Initialize the server
+    # Third-Party
     from mcp.server.stdio import stdio_server
 
     logger.info("Waiting for MCP client connection...")

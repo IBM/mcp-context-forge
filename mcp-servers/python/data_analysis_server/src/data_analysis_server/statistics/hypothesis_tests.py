@@ -2,10 +2,12 @@
 Statistical hypothesis testing functionality.
 """
 
+# Standard
 import logging
 import warnings
 from typing import Any
 
+# Third-Party
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -19,7 +21,6 @@ class HypothesisTests:
 
     def __init__(self):
         """Initialize the hypothesis testing module."""
-        pass
 
     def perform_test(
         self,
@@ -314,7 +315,7 @@ class HypothesisTests:
         adj_r_squared = 1 - (1 - r_squared) * (n - 1) / (n - 2)
 
         # F-statistic for overall model
-        mse = np.mean(residuals**2)
+        np.mean(residuals**2)
         f_stat = (
             r_squared * (n - 2) / (1 - r_squared) if r_squared < 1 else float("inf")
         )
