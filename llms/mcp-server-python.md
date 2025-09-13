@@ -164,42 +164,42 @@ HTTP_PORT ?= 9000
 HTTP_HOST ?= localhost
 
 help: ## Show help
-	@awk 'BEGIN {FS=":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+    @awk 'BEGIN {FS=":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install in editable mode
-	$(PYTHON) -m pip install -e .
+    $(PYTHON) -m pip install -e .
 
 dev-install: ## Install with dev extras
-	$(PYTHON) -m pip install -e ".[dev]"
+    $(PYTHON) -m pip install -e ".[dev]"
 
 format: ## Format (black + ruff --fix)
-	black . && ruff --fix .
+    black . && ruff --fix .
 
 lint: ## Lint (ruff, mypy)
-	ruff check . && mypy src/awesome_server
+    ruff check . && mypy src/awesome_server
 
 test: ## Run tests
-	pytest -v --cov=awesome_server --cov-report=term-missing
+    pytest -v --cov=awesome_server --cov-report=term-missing
 
 dev: ## Run stdio MCP server
-	@echo "Starting Awesome MCP server (stdio)..."
-	$(PYTHON) -m awesome_server.server
+    @echo "Starting Awesome MCP server (stdio)..."
+    $(PYTHON) -m awesome_server.server
 
 mcp-info: ## Show stdio client config snippet
-	@echo '{"command": "python", "args": ["-m", "awesome_server.server"], "cwd": "'$(PWD)'"}'
+    @echo '{"command": "python", "args": ["-m", "awesome_server.server"], "cwd": "'$(PWD)'"}'
 
 serve-http: ## Expose stdio server over HTTP (JSON-RPC + SSE)
-	@echo "HTTP: http://$(HTTP_HOST):$(HTTP_PORT)"
-	$(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m awesome_server.server" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
+    @echo "HTTP: http://$(HTTP_HOST):$(HTTP_PORT)"
+    $(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m awesome_server.server" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
 
 test-http: ## Basic HTTP checks
-	curl -s http://$(HTTP_HOST):$(HTTP_PORT)/ | head -20 || true
-	curl -s -X POST -H 'Content-Type: application/json' \
-	  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
-	  http://$(HTTP_HOST):$(HTTP_PORT)/ | head -40 || true
+    curl -s http://$(HTTP_HOST):$(HTTP_PORT)/ | head -20 || true
+    curl -s -X POST -H 'Content-Type: application/json' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+      http://$(HTTP_HOST):$(HTTP_PORT)/ | head -40 || true
 
 clean: ## Remove caches
-	rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__
+    rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__
 ```
 
 Notes:
@@ -252,7 +252,7 @@ Notes:
 - Stdio mode (for Claude Desktop, IDEs, or direct JSON‑RPC piping):
   - `make dev`
   - Test tools via JSON‑RPC: `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | python -m awesome_server.server`
-- HTTP bridge (wrap stdio through the gateway’s translate module):
+- HTTP bridge (wrap stdio through the gateway's translate module):
   - `make serve-http`
   - `make test-http`
 
