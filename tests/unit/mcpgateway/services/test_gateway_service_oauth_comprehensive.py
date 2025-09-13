@@ -134,7 +134,7 @@ class TestGatewayServiceOAuthComprehensive:
         """Test OAuth client credentials header generation logic."""
         # Mock OAuth manager to return access token
         gateway_service.oauth_manager.get_access_token.return_value = "test_access_token"
-        
+
         # Test the OAuth header generation logic used in multiple places
         headers = {}
         if getattr(mock_oauth_gateway, "auth_type", None) == "oauth" and mock_oauth_gateway.oauth_config:
@@ -142,10 +142,10 @@ class TestGatewayServiceOAuthComprehensive:
             if grant_type == "client_credentials":
                 access_token = await gateway_service.oauth_manager.get_access_token(mock_oauth_gateway.oauth_config)
                 headers = {"Authorization": f"Bearer {access_token}"}
-        
+
         # Verify OAuth manager was called
         gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-        
+
         # Verify headers were set correctly
         assert headers == {"Authorization": "Bearer test_access_token"}
 
@@ -157,7 +157,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_valid_access_token = AsyncMock(return_value="auth_code_token")
-            
+
             # Test the OAuth authorization code header generation logic
             headers = {}
             if getattr(mock_oauth_auth_code_gateway, "auth_type", None) == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
@@ -166,10 +166,10 @@ class TestGatewayServiceOAuthComprehensive:
                     access_token = await mock_token_service.get_valid_access_token(test_db, mock_oauth_auth_code_gateway.id)
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
-            
+
             # Verify token service was called
             mock_token_service.get_valid_access_token.assert_called_once_with(test_db, mock_oauth_auth_code_gateway.id)
-            
+
             # Verify headers were set correctly
             assert headers == {"Authorization": "Bearer auth_code_token"}
 
@@ -178,11 +178,11 @@ class TestGatewayServiceOAuthComprehensive:
         """Test OAuth error handling in header generation."""
         # Mock OAuth manager to raise an error
         gateway_service.oauth_manager.get_access_token.side_effect = Exception("OAuth service unavailable")
-        
+
         # Test OAuth error handling logic
         headers = {}
         error_raised = False
-        
+
         try:
             if getattr(mock_oauth_gateway, "auth_type", None) == "oauth" and mock_oauth_gateway.oauth_config:
                 grant_type = mock_oauth_gateway.oauth_config.get("grant_type", "client_credentials")
@@ -192,10 +192,10 @@ class TestGatewayServiceOAuthComprehensive:
         except Exception as e:
             error_raised = True
             assert "OAuth service unavailable" in str(e)
-        
+
         # Verify OAuth manager was called and raised error
         gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-        
+
         # Verify error was raised
         assert error_raised is True
         assert headers == {}
@@ -209,10 +209,10 @@ class TestGatewayServiceOAuthComprehensive:
         """Test health check with OAuth client credentials succeeds."""
         # We need to test the OAuth logic in the check_health_of_gateways method
         # The actual implementation fetches tokens inline during health checks
-        
+
         # Mock OAuth manager to return access token
         gateway_service.oauth_manager.get_access_token.return_value = "health_check_token"
-        
+
         # Mock the method entirely since it's complex
         async def mock_check_health(gateways):
             for gateway in gateways:
@@ -223,13 +223,13 @@ class TestGatewayServiceOAuthComprehensive:
                         access_token = await gateway_service.oauth_manager.get_access_token(gateway.oauth_config)
                         assert access_token == "health_check_token"
             return True
-        
+
         # Execute the mocked health check
         result = await mock_check_health([mock_oauth_gateway])
-        
+
         # Verify OAuth manager was called
         gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-        
+
         # Verify result
         assert result is True
 
@@ -241,7 +241,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_valid_access_token = AsyncMock(return_value="stored_auth_code_token")
-            
+
             # Test the OAuth authorization code logic
             headers = {}
             if getattr(mock_oauth_auth_code_gateway, "auth_type", None) == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
@@ -251,10 +251,10 @@ class TestGatewayServiceOAuthComprehensive:
                     access_token = await mock_token_service.get_valid_access_token(test_db, mock_oauth_auth_code_gateway.id)
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
-            
+
             # Verify token service was called
             mock_token_service.get_valid_access_token.assert_called_once_with(test_db, mock_oauth_auth_code_gateway.id)
-            
+
             # Verify headers were set correctly
             assert headers == {"Authorization": "Bearer stored_auth_code_token"}
 
@@ -266,11 +266,11 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_valid_access_token = AsyncMock(return_value=None)
-            
+
             # Test the OAuth authorization code logic when no token is available
             headers = {}
             logged_warning = False
-            
+
             if getattr(mock_oauth_auth_code_gateway, "auth_type", None) == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
                 grant_type = mock_oauth_auth_code_gateway.oauth_config.get("grant_type", "client_credentials")
                 if grant_type == "authorization_code":
@@ -282,10 +282,10 @@ class TestGatewayServiceOAuthComprehensive:
                         # Simulate logging warning
                         logged_warning = True
                         headers = {}
-            
+
             # Verify token service was called
             mock_token_service.get_valid_access_token.assert_called_once_with(test_db, mock_oauth_auth_code_gateway.id)
-            
+
             # Verify warning would be logged and headers are empty
             assert logged_warning is True
             assert headers == {}
@@ -295,11 +295,11 @@ class TestGatewayServiceOAuthComprehensive:
         """Test health check handles OAuth errors gracefully."""
         # Mock OAuth manager to raise an error
         gateway_service.oauth_manager.get_access_token.side_effect = Exception("Token endpoint unreachable")
-        
+
         # Test OAuth error handling logic
         headers = {}
         error_logged = False
-        
+
         if getattr(mock_oauth_gateway, "auth_type", None) == "oauth" and mock_oauth_gateway.oauth_config:
             try:
                 grant_type = mock_oauth_gateway.oauth_config.get("grant_type", "client_credentials")
@@ -311,10 +311,10 @@ class TestGatewayServiceOAuthComprehensive:
                 # Simulate logging the error
                 error_logged = True
                 headers = {}
-        
+
         # Verify OAuth manager was called and raised error
         gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-        
+
         # Verify error was handled
         assert error_logged is True
         assert headers == {}
@@ -328,7 +328,7 @@ class TestGatewayServiceOAuthComprehensive:
         """Test request forwarding with OAuth client credentials succeeds."""
         # Mock OAuth manager to return access token
         gateway_service.oauth_manager.get_access_token.return_value = "forward_request_token"
-        
+
         # Test the OAuth logic that would be in _forward_request_to_gateway
         headers = {}
         if getattr(mock_oauth_gateway, "auth_type", None) == "oauth" and mock_oauth_gateway.oauth_config:
@@ -337,10 +337,10 @@ class TestGatewayServiceOAuthComprehensive:
                 # Use OAuth manager to get access token
                 access_token = await gateway_service.oauth_manager.get_access_token(mock_oauth_gateway.oauth_config)
                 headers = {"Authorization": f"Bearer {access_token}"}
-        
+
         # Verify OAuth manager was called
         gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-        
+
         # Verify headers were set correctly
         assert headers == {"Authorization": "Bearer forward_request_token"}
 
@@ -352,7 +352,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_valid_access_token = AsyncMock(return_value="stored_forward_token")
-            
+
             # Test the OAuth authorization code logic
             headers = {}
             if getattr(mock_oauth_auth_code_gateway, "auth_type", None) == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
@@ -362,10 +362,10 @@ class TestGatewayServiceOAuthComprehensive:
                     access_token = await mock_token_service.get_valid_access_token(test_db, mock_oauth_auth_code_gateway.id)
                     if access_token:
                         headers = {"Authorization": f"Bearer {access_token}"}
-            
+
             # Verify token service was called
             mock_token_service.get_valid_access_token.assert_called_once_with(test_db, mock_oauth_auth_code_gateway.id)
-            
+
             # Verify headers were set correctly
             assert headers == {"Authorization": "Bearer stored_forward_token"}
 
@@ -377,7 +377,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_valid_access_token = AsyncMock(return_value=None)
-            
+
             # Test the OAuth authorization code logic when no token is available
             with pytest.raises(GatewayConnectionError) as exc_info:
                 if mock_oauth_auth_code_gateway.auth_type == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
@@ -390,7 +390,7 @@ class TestGatewayServiceOAuthComprehensive:
                             raise GatewayConnectionError(
                                 f"No valid OAuth token found for authorization_code gateway {mock_oauth_auth_code_gateway.name}"
                             )
-            
+
             assert "No valid OAuth token found" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -398,7 +398,7 @@ class TestGatewayServiceOAuthComprehensive:
         """Test request forwarding handles OAuth errors properly."""
         # Mock OAuth manager to raise an error
         gateway_service.oauth_manager.get_access_token.side_effect = Exception("OAuth service unavailable")
-        
+
         # This should raise a GatewayConnectionError
         with pytest.raises(GatewayConnectionError) as exc_info:
             # Simulate the actual OAuth error handling in _forward_request_to_gateway
@@ -406,7 +406,7 @@ class TestGatewayServiceOAuthComprehensive:
                 access_token = await gateway_service.oauth_manager.get_access_token(mock_oauth_gateway.oauth_config)
             except Exception as oauth_error:
                 raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {mock_oauth_gateway.name}: {oauth_error}")
-        
+
         assert "Failed to obtain OAuth token" in str(exc_info.value)
         assert "OAuth service unavailable" in str(exc_info.value)
 
@@ -426,13 +426,13 @@ class TestGatewayServiceOAuthComprehensive:
         non_oauth_gateway.auth_type = "basic"
         non_oauth_gateway.auth_value = {"Authorization": "Basic dGVzdDp0ZXN0"}
         non_oauth_gateway.oauth_config = None
-        
+
         # Mock OAuth manager for OAuth gateway
         gateway_service.oauth_manager.get_access_token.return_value = "all_gateways_token"
-        
+
         # Test mixed OAuth/non-OAuth header generation
         headers_list = []
-        
+
         for gateway in [mock_oauth_gateway, non_oauth_gateway]:
             headers = {}
             if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
@@ -444,10 +444,10 @@ class TestGatewayServiceOAuthComprehensive:
                 # Non-OAuth gateway uses auth_value directly
                 headers = gateway.auth_value or {}
             headers_list.append(headers)
-        
+
         # Verify OAuth manager was called for OAuth gateway
         gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-        
+
         # Verify correct headers for each gateway
         assert headers_list[0] == {"Authorization": "Bearer all_gateways_token"}  # OAuth gateway
         assert headers_list[1] == {"Authorization": "Basic dGVzdDp0ZXN0"}  # Non-OAuth gateway
@@ -460,11 +460,11 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_valid_access_token = AsyncMock(return_value=None)
-            
+
             # Test logic for skipping auth code gateways without tokens
             skip_gateway = False
             warning_logged = False
-            
+
             if getattr(mock_oauth_auth_code_gateway, "auth_type", None) == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
                 grant_type = mock_oauth_auth_code_gateway.oauth_config.get("grant_type", "client_credentials")
                 if grant_type == "authorization_code":
@@ -473,10 +473,10 @@ class TestGatewayServiceOAuthComprehensive:
                         # Simulate logging warning and skipping
                         warning_logged = True
                         skip_gateway = True
-            
+
             # Verify token service was called
             mock_token_service.get_valid_access_token.assert_called_once_with(test_db, mock_oauth_auth_code_gateway.id)
-            
+
             # Verify gateway would be skipped
             assert skip_gateway is True
             assert warning_logged is True
@@ -486,11 +486,11 @@ class TestGatewayServiceOAuthComprehensive:
         """Test forward to all collects OAuth errors properly."""
         # Mock OAuth manager to raise an error
         gateway_service.oauth_manager.get_access_token.side_effect = Exception("OAuth endpoint down")
-        
+
         # Test error collection logic
         errors = []
         warning_logged = False
-        
+
         try:
             if getattr(mock_oauth_gateway, "auth_type", None) == "oauth" and mock_oauth_gateway.oauth_config:
                 grant_type = mock_oauth_gateway.oauth_config.get("grant_type", "client_credentials")
@@ -500,10 +500,10 @@ class TestGatewayServiceOAuthComprehensive:
             # Simulate logging and error collection
             warning_logged = True
             errors.append(f"Gateway {mock_oauth_gateway.name}: OAuth error - {str(oauth_error)}")
-        
+
         # Verify OAuth manager was called and raised error
         gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-        
+
         # Verify error was collected
         assert warning_logged is True
         assert len(errors) == 1
@@ -521,13 +521,13 @@ class TestGatewayServiceOAuthComprehensive:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
         test_db.execute.return_value = mock_result
-        
+
         # Mock TokenStorageService
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_any_valid_token = AsyncMock(return_value="oauth_callback_token")
-            
+
             # Mock the connection methods
             gateway_service.connect_to_sse_server = AsyncMock(return_value=(
                 {"protocolVersion": "0.1.0"},  # capabilities
@@ -535,19 +535,19 @@ class TestGatewayServiceOAuthComprehensive:
                 [],  # resources
                 []  # prompts
             ))
-            
+
             # Execute
             result = await gateway_service.fetch_tools_after_oauth(test_db, "2")
-            
+
             # Verify token service was called
             mock_token_service.get_any_valid_token.assert_called_once_with(mock_oauth_auth_code_gateway.id)
-            
+
             # Verify connection was made with token
             gateway_service.connect_to_sse_server.assert_called_once_with(
                 mock_oauth_auth_code_gateway.url,
                 {"Authorization": "Bearer oauth_callback_token"}
             )
-            
+
             # Verify result structure
             assert "capabilities" in result
             assert "tools" in result
@@ -557,11 +557,11 @@ class TestGatewayServiceOAuthComprehensive:
         """Test fetch tools after OAuth when gateway doesn't exist."""
         # Mock database query to return None
         test_db.query.return_value.filter.return_value.first.return_value = None
-        
+
         # Execute and expect error
         with pytest.raises(GatewayConnectionError) as exc_info:
             await gateway_service.fetch_tools_after_oauth(test_db, "999")
-        
+
         assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -572,13 +572,13 @@ class TestGatewayServiceOAuthComprehensive:
         gateway.id = 1
         gateway.name = "non_oauth_gateway"
         gateway.oauth_config = None
-        
+
         test_db.query.return_value.filter.return_value.first.return_value = gateway
-        
+
         # Execute and expect error
         with pytest.raises(GatewayConnectionError) as exc_info:
             await gateway_service.fetch_tools_after_oauth(test_db, "1")
-        
+
         assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -586,11 +586,11 @@ class TestGatewayServiceOAuthComprehensive:
         """Test fetch tools after OAuth with wrong grant type."""
         # Mock database query
         test_db.query.return_value.filter.return_value.first.return_value = mock_oauth_gateway
-        
+
         # Execute and expect error (mock_oauth_gateway uses client_credentials)
         with pytest.raises(GatewayConnectionError) as exc_info:
             await gateway_service.fetch_tools_after_oauth(test_db, "1")
-        
+
         assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -600,17 +600,17 @@ class TestGatewayServiceOAuthComprehensive:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
         test_db.execute.return_value = mock_result
-        
+
         # Mock TokenStorageService to return None
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_any_valid_token = AsyncMock(return_value=None)
-            
+
             # Execute and expect error
             with pytest.raises(GatewayConnectionError) as exc_info:
                 await gateway_service.fetch_tools_after_oauth(test_db, "2")
-            
+
             assert "No valid OAuth tokens found" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -620,20 +620,20 @@ class TestGatewayServiceOAuthComprehensive:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
         test_db.execute.return_value = mock_result
-        
+
         # Mock TokenStorageService
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_any_valid_token = AsyncMock(return_value="valid_token")
-            
+
             # Mock connection to fail
             gateway_service.connect_to_sse_server = AsyncMock(side_effect=GatewayConnectionError("Connection refused"))
-            
+
             # Execute and expect error
             with pytest.raises(GatewayConnectionError) as exc_info:
                 await gateway_service.fetch_tools_after_oauth(test_db, "2")
-            
+
             assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 
     # ────────────────────────────────────────────────────────────────────
@@ -650,14 +650,14 @@ class TestGatewayServiceOAuthComprehensive:
             "token_url": "https://oauth.example.com/token",
             "scopes": []  # Empty scopes
         }
-        
+
         # Mock OAuth manager to return token
         gateway_service.oauth_manager.get_access_token.return_value = "token_without_scopes"
-        
+
         # This should still work
         with patch("mcpgateway.services.gateway_service.sse_client"), \
              patch("mcpgateway.services.gateway_service.ClientSession"):
-            
+
             # Should not raise an error
             try:
                 await gateway_service._initialize_gateway(
@@ -680,13 +680,13 @@ class TestGatewayServiceOAuthComprehensive:
             "token_url": "https://custom-oauth.example.com/oauth2/token",
             "scopes": ["custom:read", "custom:write"]
         }
-        
+
         # Mock OAuth manager
         gateway_service.oauth_manager.get_access_token.return_value = "custom_token"
-        
+
         with patch("mcpgateway.services.gateway_service.sse_client"), \
              patch("mcpgateway.services.gateway_service.ClientSession"):
-            
+
             try:
                 await gateway_service._initialize_gateway(
                     "http://test.example.com",
@@ -695,7 +695,7 @@ class TestGatewayServiceOAuthComprehensive:
                     "oauth",
                     oauth_config
                 )
-                
+
                 # Verify OAuth manager was called with custom config
                 gateway_service.oauth_manager.get_access_token.assert_called_once_with(oauth_config)
             except GatewayConnectionError:
@@ -706,17 +706,17 @@ class TestGatewayServiceOAuthComprehensive:
         """Test OAuth token refresh happens during health checks."""
         # First call returns token1, second call returns token2 (simulating refresh)
         gateway_service.oauth_manager.get_access_token.side_effect = ["token1", "token2"]
-        
+
         # Mock HTTP client
         gateway_service._http_client.get = AsyncMock(return_value=MagicMock(status=200))
-        
+
         # Run health check twice
         await gateway_service.check_health_of_gateways([mock_oauth_gateway])
         await gateway_service.check_health_of_gateways([mock_oauth_gateway])
-        
+
         # Verify OAuth manager was called twice (token refresh)
         assert gateway_service.oauth_manager.get_access_token.call_count == 2
-        
+
         # Verify different tokens were used
         calls = gateway_service._http_client.get.call_args_list
         if len(calls) >= 2:

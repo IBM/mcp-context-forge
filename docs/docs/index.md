@@ -16,6 +16,8 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 **⚠️ Caution**: The current release (0.6.0) is considered alpha / early beta. It is not production-ready and should only be used for local development, testing, or experimentation. Features, APIs, and behaviors are subject to change without notice. **Do not** deploy in production environments without thorough security review, validation and additional security mechanisms.  Many of the features required for secure, large-scale, or multi-tenant production deployments are still on the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) - which is itself evolving.
 
+> Note on Multi‑Tenancy (v0.7.0): A comprehensive multi‑tenant architecture with email authentication, teams, RBAC, and resource visibility is landing in v0.7.0. See the [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md) for details.
+
 It currently supports:
 
 * Federation across multiple MCP and REST services
@@ -410,7 +412,7 @@ podman run -d --name mcpgateway \
 ---
 
 ??? info "✏️ Docker/Podman tips"
-    * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
+    * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
     * **Pinned tags** - Use an explicit version (e.g. `v0.6.0`) instead of `latest` for reproducible builds.
     * **JWT tokens** - Generate one in the running container:
 
@@ -794,7 +796,7 @@ A `make compose-up` target is provided along with a [docker-compose.yml](https:/
 
 > ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
-You can get started by copying the provided [.env.example](.env.example) to `.env` and making the necessary edits to fit your environment.
+You can get started by copying the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and making the necessary edits to fit your environment.
 
 <details>
 <summary><strong>🔧 Environment Configuration Variables</strong></summary>

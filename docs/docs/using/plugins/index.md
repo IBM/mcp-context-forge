@@ -13,7 +13,7 @@ The MCP Context Forge Plugin Framework provides a comprehensive, production-grad
 - **Content Security** - PII detection and masking, input validation, output sanitization
 - **Policy Enforcement** - Business rules, compliance checking, audit trails
 - **Performance Protection** - Timeout handling, resource limits, graceful degradation
-- **Operational Excellence** - Hot configuration reload, health monitoring, detailed metrics
+- **Operational Excellence** - Health‑oriented design, clear errors, sensible defaults
 - **Enterprise Features** - Multi-tenant isolation, conditional execution, sophisticated context management
 
 ## Architecture
@@ -28,12 +28,11 @@ The plugin framework implements a **hybrid architecture** supporting both self-c
 - **Examples:** `PIIFilterPlugin`, `SearchReplacePlugin`, `DenyListPlugin`
 
 ### External Service Plugins
-- **Microservice Integration:** Call external AI safety services via HTTP/gRPC/MCP
+- **MCP Integration:** External plugins communicate via MCP using STDIO or Streamable HTTP
 - **Enterprise AI Support:** LlamaGuard, OpenAI Moderation, custom ML models
-- **Authentication Support:** Bearer tokens, API keys, mutual TLS, custom headers
-- **Scalable Architecture:** Services can be deployed independently, auto-scaled
-- **Use Cases:** Advanced AI safety, complex ML inference, enterprise policy engines
-- **Examples:** LlamaGuard integration, OpenAI Moderation, HashiCorp Vault, OPA
+- **Independent Scaling:** Services run outside the gateway and can scale separately
+- **Use Cases:** Advanced AI safety, complex ML inference, policy engines (e.g., OPA)
+- **Examples:** OPA external plugin server, LlamaGuard integration, OpenAI Moderation
 
 ### Unified Plugin Interface
 
@@ -59,6 +58,52 @@ PLUGINS_ENABLED=true
 # Optional: Custom plugin config path
 PLUGIN_CONFIG_FILE=plugins/config.yaml
 ```
+
+## Build Your Own Plugin (Quickstart)
+
+Decide between a native (in‑process) or external (MCP) plugin:
+
+- Native: simplest path; write Python class extending `Plugin`, configure via `plugins/config.yaml` using fully‑qualified class path.
+- External: runs as a separate MCP server (STDIO or Streamable HTTP); great for independent scaling and isolation.
+
+Quick native skeleton:
+
+```python
+from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PromptPrehookPayload, PromptPrehookResult
+
+class MyPlugin(Plugin):
+    def __init__(self, config: PluginConfig):
+        super().__init__(config)
+
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        # modify or block
+        return PromptPrehookResult(modified_payload=payload)
+```
+
+Register it in `plugins/config.yaml`:
+
+```yaml
+plugins:
+  - name: "MyPlugin"
+    kind: "plugins.my_plugin.plugin.MyPlugin"
+    hooks: ["prompt_pre_fetch"]
+    mode: "permissive"
+    priority: 120
+```
+
+External plugin quickstart: see the Lifecycle guide for `mcpplugins bootstrap`, building, and serving. Then point the gateway at your server:
+
+```yaml
+plugins:
+  - name: "MyExternal"
+    kind: "external"
+    priority: 10
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://localhost:8000/mcp
+```
+
+For detailed steps (bootstrap, build, serve, test), see the Lifecycle page.
 
 ### 2. Plugin Configuration
 
@@ -98,6 +143,70 @@ plugin_settings:
   plugin_health_check_interval: 60
 ```
 
+## Getting Started (Built‑in Plugins)
+
+Use the built‑in plugins out of the box:
+
+1) Copy and adapt the example config (enable any subset):
+
+```yaml
+# plugins/config.yaml
+plugins:
+  - name: "PIIFilterPlugin"
+    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    mode: "permissive"
+    priority: 50
+    config:
+      detect_ssn: true
+      detect_email: true
+      detect_credit_card: true
+      default_mask_strategy: "partial"
+
+  - name: "ReplaceBadWordsPlugin"
+    kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    mode: "enforce"
+    priority: 150
+    config:
+      words:
+        - { search: "crap", replace: "crud" }
+        - { search: "crud", replace: "yikes" }
+
+  - name: "DenyListPlugin"
+    kind: "plugins.deny_filter.deny.DenyListPlugin"
+    hooks: ["prompt_pre_fetch"]
+    mode: "enforce"
+    priority: 100
+    config:
+      words: ["innovative", "groundbreaking", "revolutionary"]
+
+  - name: "ResourceFilterExample"
+    kind: "plugins.resource_filter.resource_filter.ResourceFilterPlugin"
+    hooks: ["resource_pre_fetch", "resource_post_fetch"]
+    mode: "enforce"
+    priority: 75
+    config:
+      max_content_size: 1048576
+      allowed_protocols: ["http", "https"]
+      blocked_domains: ["malicious.example.com"]
+      content_filters:
+        - { pattern: "password\\s*[:=]\\s*\\S+", replacement: "password: [REDACTED]" }
+
+plugin_settings:
+  parallel_execution_within_band: false
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60
+```
+
+2) Ensure `.env` contains: `PLUGINS_ENABLED=true` and `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
+
+3) Start the gateway: `make dev` (or `make serve`).
+
+That's it — the gateway now runs the enabled plugins at the selected hook points.
+
 The `plugins` section lists the set of configured plugins that will be loaded
 by the Context Forge at startup.  Each plugin contains a set of standard configurations,
 and then a `config` section designed for plugin specific configurations. The attributes
@@ -110,7 +219,7 @@ are defined as follows:
 | **description** | The description of the plugin configuration. | A plugin for replacing bad words. |
 | **version** | The version of the plugin configuration. | 0.1 |
 | **author** | The team that wrote the plugin. | MCP Context Forge |
-| **hooks** | A list of hooks for which the plugin will be executed. Supported hooks: "prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"  | ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"] |
+| **hooks** | Hook points where the plugin runs. Supported hooks: "prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch" | ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"] |
 | **tags** | Descriptive keywords that make the configuration searchable. | ["security", "filter"] |
 | **mode** | Mode of operation of the plugin. - enforce (stops during a violation), permissive (audits a violation but doesn't stop), disabled (disabled) | permissive |
 | **priority** | The priority in which the plugin will run - 0 is higher priority | 100 |
@@ -121,20 +230,20 @@ The `plugin_settings` are as follows:
 
 | Attribute | Description | Example Value |
 |-----------|-------------|---------------|
-| **parallel_execution_within_band** | Plugins in the same band are run in parallel (currently not implemented). | true or false |
-| **plugin_timeout** | The time in seconds before stopping plugin execution (not implemented). | 30 |
+| **parallel_execution_within_band** | Reserved for future: execute same‑priority plugins in parallel (not implemented). | true or false |
+| **plugin_timeout** | Per‑plugin call timeout in seconds. | 30 |
 | **fail_on_plugin_error** | Cause the execution of the task to fail if the plugin errors. | true or false |
-| **plugin_health_check_interval** | Health check interval in seconds (not implemented). | 60 |
+| **plugin_health_check_interval** | Reserved for future health checks (not implemented). | 60 |
 
 
 ### 3. Execution Modes
 
-Each plugin can operate in one of three modes:
+Each plugin can operate in one of four modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | **enforce** | Blocks requests on policy violations and plugin errors | Production guardrails |
-| **enforce_ignore_errors** | Blocks requests on policy violations but only logs errors | Production guardrails |
+| **enforce_ignore_errors** | Blocks requests on policy violations; logs errors and continues | Guardrails with fault tolerance |
 | **permissive** | Logs violations but allows requests | Testing and monitoring |
 | **disabled** | Plugin loaded but not executed | Temporary deactivation |
 
@@ -281,9 +390,9 @@ class MyPlugin(Plugin):
             return PromptPrehookResult(
                 continue_processing=False,
                 violation=PluginViolation(
-                    plugin_name=self.name,
+                    reason="Forbidden content",
                     description="Forbidden content detected",
-                    violation_code="FORBIDDEN_CONTENT",
+                    code="FORBIDDEN_CONTENT",
                     details={"found_in": "arguments"}
                 )
             )
@@ -337,9 +446,9 @@ class MyPlugin(Plugin):
             return ToolPreInvokeResult(
                 continue_processing=False,
                 violation=PluginViolation(
-                    plugin_name=self.name,
+                    reason="Dangerous operation blocked",
                     description="Dangerous operation blocked",
-                    violation_code="DANGEROUS_OP",
+                    code="DANGEROUS_OP",
                     details={"tool": tool_name}
                 )
             )
@@ -392,15 +501,15 @@ class MyPlugin(Plugin):
         from urllib.parse import urlparse
         parsed = urlparse(uri)
         if parsed.scheme not in ["http", "https", "file"]:
-            return ResourcePreFetchResult(
-                continue_processing=False,
-                violation=PluginViolation(
-                    plugin_name=self.name,
-                    description=f"Protocol {parsed.scheme} not allowed",
-                    violation_code="PROTOCOL_BLOCKED",
-                    details={"uri": uri, "protocol": parsed.scheme}
-                )
+        return ResourcePreFetchResult(
+            continue_processing=False,
+            violation=PluginViolation(
+                reason="Protocol not allowed",
+                description=f"Protocol {parsed.scheme} not allowed",
+                code="PROTOCOL_BLOCKED",
+                details={"uri": uri, "protocol": parsed.scheme}
             )
+        )
 
         # Example: Add metadata
         metadata["validated_by"] = self.name
@@ -536,9 +645,9 @@ class LLMGuardPlugin(Plugin):
                     return PromptPrehookResult(
                         continue_processing=False,
                         violation=PluginViolation(
-                            plugin_name=self.name,
+                            reason="External service blocked",
                             description=result.get("reason", "Content blocked"),
-                            violation_code="LLMGUARD_BLOCKED",
+                            code="LLMGUARD_BLOCKED",
                             details=result
                         )
                     )
@@ -549,9 +658,9 @@ class LLMGuardPlugin(Plugin):
                     return PromptPrehookResult(
                         continue_processing=False,
                         violation=PluginViolation(
-                            plugin_name=self.name,
+                            reason="Service error",
                             description=f"Service error: {str(e)}",
-                            violation_code="SERVICE_ERROR",
+                            code="SERVICE_ERROR",
                             details={"error": str(e)}
                         )
                     )
@@ -692,42 +801,14 @@ Use appropriate log levels:
 
 ```python
 logger.debug(f"Plugin {self.name} processing prompt: {payload.name}")
-logger.info(f"Plugin {self.name} blocked request: {violation_code}")
+logger.info(f"Plugin {self.name} blocked request: {violation.code}")
 logger.warning(f"Plugin {self.name} timeout approaching")
 logger.error(f"Plugin {self.name} failed: {error}")
 ```
 
 ## API Reference
 
-### Plugin Management Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/plugins` | GET | List all loaded plugins |
-| `/plugins/stats` | GET | Get plugin execution statistics |
-| `/plugins/reload/{name}` | POST | Reload a specific plugin |
-| `/plugins/stats/reset` | POST | Reset plugin statistics |
-
-### Example API Usage
-
-```bash
-# List plugins
-curl http://localhost:8000/plugins
-
-# Response
-[
-  {
-    "name": "ContentFilter",
-    "priority": 100,
-    "mode": "enforce",
-    "hooks": ["prompt_pre_fetch", "prompt_post_fetch"],
-    "tags": ["security", "filter"],
-    "conditions": {
-      "prompts": ["customer_chat"]
-    }
-  }
-]
-```
+Plugin management endpoints are not exposed in the gateway at this time.
 
 ## Troubleshooting
 
@@ -906,78 +987,31 @@ plugins:
 
 ## Monitoring and Observability
 
-### Plugin Metrics
-
-The framework exposes comprehensive metrics for monitoring:
-
-```bash
-# Plugin execution metrics
-mcpgateway_plugin_executions_total{plugin="PIIFilter",hook="prompt_pre_fetch",status="success"}
-mcpgateway_plugin_duration_seconds{plugin="PIIFilter",hook="prompt_pre_fetch"}
-mcpgateway_plugin_violations_total{plugin="PIIFilter",violation_code="PII_DETECTED"}
-mcpgateway_plugin_errors_total{plugin="LlamaGuard",error_type="timeout"}
-
-# Context and memory metrics
-mcpgateway_plugin_contexts_active
-mcpgateway_plugin_contexts_cleaned_total
-mcpgateway_plugin_memory_usage_bytes
-```
-
-### Health Check Integration
-
-```yaml
-plugins:
-  - name: "ExternalAIService"
-    kind: "external"
-    mcp:
-      proto: STREAMABLEHTTP
-      url: "https://ai-service.corp/api/v1"
-      health_check_endpoint: "/health"
-      health_check_interval: 30
-    config:
-      circuit_breaker_enabled: true
-      circuit_breaker_failure_threshold: 5
-      circuit_breaker_timeout: 60
-```
+General observability guidance:
+- Emit structured logs at appropriate levels (debug/info/warn/error)
+- Track plugin execution time in logs where useful
+- Use external APM/logging stacks for end‑to‑end tracing if needed
 
 ## Security Considerations
 
 ### Plugin Isolation and Security
 
-- **Input Validation:** All plugin configurations validated against JSON schemas
+- **Input Validation:** Plugin configurations validated with Pydantic models
 - **Timeout Protection:** Configurable timeouts prevent plugin hangs
-- **Resource Limits:** Memory and payload size limits prevent resource exhaustion
+- **Payload Limits:** Payload size guards (~1MB) prevent resource exhaustion
 - **Error Isolation:** Plugin failures don't affect gateway stability
-- **Audit Logging:** Complete audit trail of plugin executions and violations
+- **Audit Logging:** Log plugin executions and violations
 
-### External Service Security
+### External Plugin Security
 
-```yaml
-# Secure external service configuration
-plugins:
-  - name: "SecureExternalService"
-    kind: "external"
-    mcp:
-      proto: STREAMABLEHTTP
-      url: "https://secure-ai-service.corp/api/v1"
-      tls_verify: true
-      tls_client_cert: "/etc/ssl/certs/client.crt"
-      tls_client_key: "/etc/ssl/private/client.key"
-      auth:
-        type: "bearer"
-        token: "${AI_SERVICE_TOKEN}"  # Environment variable
-    config:
-      allowed_response_codes: [200, 201]
-      max_response_size_mb: 10
-      connection_pool_size: 20
-```
+Secure external plugin servers as you would any service (authentication, TLS). The gateway's external plugin client communicates over MCP (STDIO or Streamable HTTP).
 
 ## Future Roadmap
 
-### Near-term Enhancements (v0.7.0)
+### Near‑term Enhancements
 
-- **Server Attestation Hooks:** `server_pre_register` with TPM/TEE support
-- **Authentication Hooks:** `auth_pre_check`/`auth_post_check` for custom auth
+- **Server Attestation Hooks:** `server_pre_register` (TPM/TEE)
+- **Authentication Hooks:** `auth_pre_check`/`auth_post_check`
 - **Admin UI:** Visual plugin management and monitoring dashboard
 - **Hot Configuration Reload:** Update plugin configs without restart
 - **Advanced Caching:** Redis-backed caching for external service calls
