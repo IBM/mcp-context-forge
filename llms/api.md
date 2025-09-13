@@ -143,4 +143,3 @@ PY
 - Prefer Authorization header (bearer token) over `jwt_token` cookie.
 - For dev: `make dev` runs the app on `:8000` with hot reload; production `make serve` runs Gunicorn on `:4444`.
 - If resources or prompts contain reserved characters, URL‑encode path params.
-
