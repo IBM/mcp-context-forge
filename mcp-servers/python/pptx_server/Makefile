@@ -47,39 +47,7 @@ clean: ## Remove caches
 # PowerPoint-specific targets
 demo: ## Create a sample PowerPoint presentation
 	@echo "Creating sample PowerPoint presentation..."
-	@$(PYTHON) -c "
-import json
-from src.pptx_server.server import create_presentation, add_slide, set_slide_title, set_slide_content, add_image, add_table, add_chart, save_presentation
-import asyncio
-
-async def create_demo():
-    # Create presentation
-    await create_presentation('demo.pptx', 'PowerPoint MCP Server Demo')
-
-    # Add content slide
-    await add_slide('demo.pptx', 1)  # Content layout
-    await set_slide_title('demo.pptx', 1, 'Features Overview')
-    await set_slide_content('demo.pptx', 1, 'Text editing\\nImage insertion\\nTable creation\\nChart generation\\nShape management')
-
-    # Add table slide
-    await add_slide('demo.pptx', 1)
-    await set_slide_title('demo.pptx', 2, 'Sample Data Table')
-    await add_table('demo.pptx', 2, 3, 4, 1.0, 2.0, 8.0, 3.0)
-
-    # Add chart slide
-    await add_slide('demo.pptx', 1)
-    await set_slide_title('demo.pptx', 3, 'Sample Chart')
-    chart_data = {
-        'categories': ['Q1', 'Q2', 'Q3', 'Q4'],
-        'series': [{'name': 'Sales', 'values': [100, 150, 120, 200]}]
-    }
-    await add_chart('demo.pptx', 3, chart_data, 'column', 1.0, 2.0, 8.0, 4.0, 'Quarterly Sales')
-
-    await save_presentation('demo.pptx')
-    print('Demo presentation created: demo.pptx')
-
-asyncio.run(create_demo())
-"
+	@$(PYTHON) demo.py
 
 test-tools: ## Test individual PowerPoint tools
 	@echo "Testing PowerPoint MCP tools..."
@@ -87,12 +55,8 @@ test-tools: ## Test individual PowerPoint tools
 
 validate: ## Validate PowerPoint files can be opened
 	@echo "Validating generated PowerPoint files..."
-	@$(PYTHON) -c "
-from pptx import Presentation
-import os
-if os.path.exists('demo.pptx'):
-    prs = Presentation('demo.pptx')
-    print(f'Successfully opened demo.pptx with {len(prs.slides)} slides')
-else:
-    print('No demo.pptx found. Run make demo first.')
-"
+	@$(PYTHON) -c "from pptx import Presentation; import os; files = [f for f in os.listdir('examples/demos/') if f.endswith('.pptx')]; [print(f'Valid: {f} ({len(Presentation(f\"examples/demos/{f}\").slides)} slides)') for f in files[:3]]"
+
+enhanced-demo: ## Run comprehensive enhanced demo
+	@echo "Running enhanced PowerPoint MCP demo..."
+	@$(PYTHON) enhanced_demo.py
