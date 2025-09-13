@@ -49,10 +49,10 @@ Plugins: How They Work in MCP Context Forge
 
 **Execution Model**
 - Ordering: Deterministic, by ascending `priority`. Lower runs first.
-- Conditions: A plugin’s `conditions` must match for the current context to execute it. Fields include `server_ids`, `tenant_ids`, `tools`, `prompts`, `resources`, `user_patterns`, `content_types`. Matching helpers in `utils.py`.
+- Conditions: A plugin's `conditions` must match for the current context to execute it. Fields include `server_ids`, `tenant_ids`, `tools`, `prompts`, `resources`, `user_patterns`, `content_types`. Matching helpers in `utils.py`.
 - Modes and blocking:
   - `enforce`: If a result sets `continue_processing=False`, manager immediately returns a block with the violation.
-  - `enforce_ignore_error`: Enforce violations; errors don’t block (manager may continue based on global settings).
+  - `enforce_ignore_error`: Enforce violations; errors don't block (manager may continue based on global settings).
   - `permissive`: Log/report violations; continue.
   - `disabled`: Loaded but not executed.
 - Timeouts and errors:
@@ -97,7 +97,7 @@ Plugins: How They Work in MCP Context Forge
     - `{ "result": <PluginResult serialized> }`
     - `{ "context": <PluginContext serialized> }` (to update context)
     - `{ "error": <PluginErrorModel> }` to signal errors
-- `get_plugin_config` must return a `PluginConfig`-compatible JSON; the gateway merges remote+local with local taking precedence for gateway-owned fields. For external plugins, gateway-side `config` is disallowed (plugin’s own server owns it).
+- `get_plugin_config` must return a `PluginConfig`-compatible JSON; the gateway merges remote+local with local taking precedence for gateway-owned fields. For external plugins, gateway-side `config` is disallowed (plugin's own server owns it).
 - Transports: `STDIO` (spawn python script) or `STREAMABLEHTTP` (connect to `url`).
 - Validation: `script` must exist and be `.py`; `url` must pass security validation.
 
@@ -111,7 +111,7 @@ Plugins: How They Work in MCP Context Forge
   3) `make test`
   4) `make build` (containerized MCP server)
   5) `make start` (default Streamable HTTP at `http://localhost:8000/mcp`)
-  6) Integrate with gateway by adding to gateway’s `plugins/config.yaml`:
+  6) Integrate with gateway by adding to gateway's `plugins/config.yaml`:
      ```yaml
      - name: "MyFilter"
        kind: "external"
@@ -219,7 +219,7 @@ async function toolPreInvoke({ payload, context }: any) {
 **Security and Limits**
 - Timeouts: Default 30s per hook; tune via `plugin_settings.plugin_timeout`.
 - Size limits: ~1MB for prompt args and rendered results; large payloads raise `PayloadSizeError`.
-- Error isolation: Set `fail_on_plugin_error` for strict behavior; otherwise errors in permissive plugins don’t block.
+- Error isolation: Set `fail_on_plugin_error` for strict behavior; otherwise errors in permissive plugins don't block.
 - External validation: `script` must exist and end with `.py`; `url` is validated; avoid injecting secrets in YAML—use env vars and Jinja.
 
 **Roadmap Hooks (Not Yet Implemented)**
