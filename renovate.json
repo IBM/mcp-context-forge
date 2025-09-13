@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base",
+    "schedule:daily"
+  ],
+  "prHourlyLimit": 1,
+  "prConcurrentLimit": 1,
+  "dependencyDashboard": true,
+  "prCreation": "not-pending",
+  "rebaseWhen": "behind-base-branch",
+  "packageRules": [
+    {
+      "description": "🚫 Block Python updates beyond 3.12",
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "<=3.12"
+    },
+    {
+      "description": "🚫 Stay on CodeMirror 5.x",
+      "matchPackageNames": [
+        "codemirror"
+      ],
+      "allowedVersions": "<6.0.0"
+    },
+    {
+      "description": "🚫 Stay on Tailwind CSS 2.x",
+      "matchPackageNames": [
+        "tailwindcss"
+      ],
+      "allowedVersions": "<3.0.0"
+    }
+  ]
+}
