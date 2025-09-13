@@ -326,7 +326,7 @@ class LoggingService:
                     if "ClosedResourceError" in msg:
                         return False
                 except Exception:
-                    pass
+                    pass  # nosec B110 - Intentional to prevent logging recursion
                 return True
 
         target_logger = logging.getLogger("mcp.server.streamable_http")

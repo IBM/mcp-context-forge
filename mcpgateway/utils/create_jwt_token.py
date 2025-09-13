@@ -76,7 +76,7 @@ DEFAULT_USERNAME: str = settings.basic_auth_user
 def _create_jwt_token(
     data: Dict[str, Any],
     expires_in_minutes: int = DEFAULT_EXP_MINUTES,
-    secret: str = "",
+    secret: str = "",  # nosec B107 - Legacy parameter, not used for authentication
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
     """Create a signed JWT token with automatic key selection and validation.

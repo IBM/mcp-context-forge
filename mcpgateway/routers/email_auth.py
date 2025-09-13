@@ -229,7 +229,9 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         access_token, expires_in = await create_access_token(user)
 
         # Return authentication response
-        return AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))
+        return AuthenticationResponse(
+            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+        )  # nosec B106 - OAuth2 token type, not a password
 
     except Exception as e:
         logger.error(f"Login error for {login_request.email}: {e}")
@@ -278,7 +280,9 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
 
         logger.info(f"New user registered: {user.email}")
 
-        return AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))
+        return AuthenticationResponse(
+            access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
+        )  # nosec B106 - OAuth2 token type, not a password
 
     except EmailValidationError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

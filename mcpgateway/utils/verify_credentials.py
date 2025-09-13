@@ -774,7 +774,7 @@ async def require_admin_auth(
             # If JWT auth fails, fall back to basic auth for backward compatibility
         except Exception:
             # If there's any other error with email auth, fall back to basic auth
-            pass
+            pass  # nosec B110 - Intentional fallback to basic auth on any email auth error
 
     # Fall back to basic authentication
     try:
