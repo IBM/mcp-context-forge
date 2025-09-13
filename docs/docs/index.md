@@ -2,117 +2,10 @@
 
 > Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.
 
-![](docs/docs/images/contextforge-banner.png)
-
-<!-- === CI / Security / Build Badges === -->
-[![Build Python Package](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/python-package.yml)&nbsp;
-[![CodeQL](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/codeql.yml)&nbsp;
-[![Bandit Security](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/bandit.yml)&nbsp;
-[![Dependency Review](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/dependency-review.yml)&nbsp;
-[![Tests & Coverage](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/pytest.yml)&nbsp;
-[![Lint & Static Analysis](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/lint.yml)
-
-<!-- === Container Build & Deploy === -->
-[![Secure Docker Build](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/docker-image.yml)&nbsp;
-[![Deploy to IBM Code Engine](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml/badge.svg)](https://github.com/IBM/mcp-context-forge/actions/workflows/ibm-cloud-code-engine.yml)
-
-<!-- === Package / Container === -->
-[![Async](https://img.shields.io/badge/async-await-green.svg)](https://docs.python.org/3/library/asyncio.html)
-[![License](https://img.shields.io/github/license/ibm/mcp-context-forge)](LICENSE)&nbsp;
-[![PyPI](https://img.shields.io/pypi/v/mcp-contextforge-gateway)](https://pypi.org/project/mcp-contextforge-gateway/)&nbsp;
-[![Docker Image](https://img.shields.io/badge/docker-ghcr.io%2Fibm%2Fmcp--context--forge-blue)](https://github.com/ibm/mcp-context-forge/pkgs/container/mcp-context-forge)&nbsp;
-
-
 ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that federates MCP and REST services - unifying discovery, auth, rate-limiting, observability, virtual servers, multi-transport protocols, and an optional Admin UI into one clean endpoint for your AI clients. It runs as a fully compliant MCP server, deployable via PyPI or Docker, and scales to multi-cluster environments on Kubernetes with Redis-backed federation and caching.
 
 ![MCP Gateway](https://ibm.github.io/mcp-context-forge/images/mcpgateway.gif)
 ---
-
-<!-- vscode-markdown-toc -->
-## Table of Contents
-
-* 1. [Table of Contents](#table-of-contents)
-* 2. [🚀 Overview & Goals](#-overview--goals)
-* 3. [Quick Start - PyPI](#quick-start---pypi)
-    * 3.1. [1 - Install & run (copy-paste friendly)](#1---install--run-copy-paste-friendly)
-* 4. [Quick Start - Containers](#quick-start---containers)
-    * 4.1. [🐳 Docker](#-docker)
-        * 4.1.1. [1 - Minimum viable run](#1---minimum-viable-run)
-        * 4.1.2. [2 - Persist the SQLite database](#2---persist-the-sqlite-database)
-        * 4.1.3. [3 - Local tool discovery (host network)](#3---local-tool-discovery-host-network)
-    * 4.2. [🦭 Podman (rootless-friendly)](#-podman-rootless-friendly)
-        * 4.2.1. [1 - Basic run](#1---basic-run)
-        * 4.2.2. [2 - Persist SQLite](#2---persist-sqlite)
-        * 4.2.3. [3 - Host networking (rootless)](#3---host-networking-rootless)
-* 5. [Testing `mcpgateway.wrapper` by hand](#testing-mcpgatewaywrapper-by-hand)
-    * 5.1. [🧩 Running from an MCP Client (`mcpgateway.wrapper`)](#-running-from-an-mcp-client-mcpgatewaywrapper)
-        * 5.1.1. [1 - Install `uv` (`uvx` is an alias it provides)](#1---install-uv-uvx-is-an-alias-it-provides)
-        * 5.1.2. [2 - Create an on-the-spot venv & run the wrapper](#2---create-an-on-the-spot-venv--run-the-wrapper)
-        * 5.1.3. [Claude Desktop JSON (runs through **uvx**)](#claude-desktop-json-runs-through-uvx)
-    * 5.2. [🚀 Using with Claude Desktop (or any GUI MCP client)](#-using-with-claude-desktop-or-any-gui-mcp-client)
-* 6. [🚀 Quick Start: VS Code Dev Container](#-quick-start-vs-code-dev-container)
-    * 6.1. [1 - Clone & Open](#1---clone--open)
-    * 6.2. [2 - First-Time Build (Automatic)](#2---first-time-build-automatic)
-* 7. [Quick Start (manual install)](#quick-start-manual-install)
-    * 7.1. [Prerequisites](#prerequisites)
-    * 7.2. [One-liner (dev)](#one-liner-dev)
-    * 7.3. [Containerized (self-signed TLS)](#containerized-self-signed-tls)
-    * 7.4. [Smoke-test the API](#smoke-test-the-api)
-* 8. [Installation](#installation)
-    * 8.1. [Via Make](#via-make)
-    * 8.2. [UV (alternative)](#uv-alternative)
-    * 8.3. [pip (alternative)](#pip-alternative)
-    * 8.4. [Optional (PostgreSQL adapter)](#optional-postgresql-adapter)
-        * 8.4.1. [Quick Postgres container](#quick-postgres-container)
-* 9. [🔄 Upgrading to v0.7.0](#-upgrading-to-v070)
-* 10. [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
-    * 10.1. [Basic](#basic)
-    * 10.2. [Authentication](#authentication)
-    * 10.3. [UI Features](#ui-features)
-    * 10.4. [Security](#security)
-    * 10.5. [Logging](#logging)
-    * 10.6. [Transport](#transport)
-    * 10.7. [Federation](#federation)
-    * 10.8. [Resources](#resources)
-    * 10.9. [Tools](#tools)
-    * 10.10. [Prompts](#prompts)
-    * 10.11. [Health Checks](#health-checks)
-    * 10.12. [Database](#database)
-    * 10.13. [Cache Backend](#cache-backend)
-    * 10.14. [Development](#development)
-* 11. [Running](#running)
-    * 11.1. [Makefile](#makefile)
-    * 11.2. [Script helper](#script-helper)
-    * 11.3. [Manual (Uvicorn)](#manual-uvicorn)
-* 12. [Authentication examples](#authentication-examples)
-* 13. [☁️ AWS / Azure / OpenShift](#️-aws--azure--openshift)
-* 14. [☁️ IBM Cloud Code Engine Deployment](#️-ibm-cloud-code-engine-deployment)
-    * 14.1. [🔧 Prerequisites](#-prerequisites-1)
-    * 14.2. [📦 Environment Variables](#-environment-variables)
-    * 14.3. [🚀 Make Targets](#-make-targets)
-    * 14.4. [📝 Example Workflow](#-example-workflow)
-* 15. [API Endpoints](#api-endpoints)
-* 16. [Testing](#testing)
-* 17. [Project Structure](#project-structure)
-* 18. [API Documentation](#api-documentation)
-* 19. [Makefile targets](#makefile-targets)
-* 20. [🔍 Troubleshooting](#-troubleshooting)
-    * 20.1. [Diagnose the listener](#diagnose-the-listener)
-    * 20.2. [Why localhost fails on Windows](#why-localhost-fails-on-windows)
-        * 20.2.1. [Fix (Podman rootless)](#fix-podman-rootless)
-        * 20.2.2. [Fix (Docker Desktop > 4.19)](#fix-docker-desktop--419)
-* 21. [Contributing](#contributing)
-* 22. [Changelog](#changelog)
-* 23. [License](#license)
-* 24. [Core Authors and Maintainers](#core-authors-and-maintainers)
-* 25. [Star History and Project Activity](#star-history-and-project-activity)
-
-<!-- vscode-markdown-toc-config
-    numbering=true
-    autoSave=true
-    /vscode-markdown-toc-config -->
-<!-- /vscode-markdown-toc -->
-
 
 
 ## 🚀 Overview & Goals
@@ -138,7 +31,7 @@ For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap
 
 > Note on Multi‑Tenancy (v0.7.0): A comprehensive multi‑tenant architecture with email authentication, teams, RBAC, and resource visibility is landing in v0.7.0. See the [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md) for details.
 
-**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](./SECURITY.md) for more details.
+**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) for more details.
 
 ---
 
@@ -989,7 +882,7 @@ docker run --name mcp-postgres \
   -p 5432:5432 -d postgres
 ```
 
-A `make compose-up` target is provided along with a [docker-compose.yml](docker-compose.yml) file to make this process simpler.
+A `make compose-up` target is provided along with a [docker-compose.yml](https://github.com/IBM/mcp-context-forge/blob/main/docker-compose.yml) file to make this process simpler.
 
 ---
 
@@ -1026,7 +919,7 @@ If the database migration fails or you encounter issues:
 
 ### Complete Migration Guide
 For detailed upgrade instructions, troubleshooting, and rollback procedures, see:
-- **📖 [MIGRATION-0.7.0.md](MIGRATION-0.7.0.md)** - Complete step-by-step upgrade guide
+- **📖 [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md)** - Complete step-by-step upgrade guide
 - **🏗️ [Multi-tenancy Architecture](https://ibm.github.io/mcp-context-forge/architecture/multitenancy/)** - Understanding the new system
 
 ---
@@ -2542,7 +2435,7 @@ If the error persists, update SQLite and ensure Python links against it:
 - `brew install sqlite3 && brew link --force sqlite3`
 - `brew install python3 && /opt/homebrew/bin/python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`
 
-See the full migration guide's "SQLite Troubleshooting Guide" for deeper steps (WAL cleanup, integrity check, recovery): `MIGRATION-0.7.0.md`.
+See the full migration guide's "SQLite Troubleshooting Guide" for deeper steps (WAL cleanup, integrity check, recovery): [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
 
 </details>
 
@@ -2609,16 +2502,16 @@ Missing or empty required vars cause a fast-fail at startup.
 3. Keep `make test` green and 100% coverage.
 4. Open a PR - describe your changes clearly.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
+See [CONTRIBUTING.md](https://github.com/IBM/mcp-context-forge/blob/main/CONTRIBUTING.md) for more details.
 ---
 
 ## Changelog
 
-A complete changelog can be found here: [CHANGELOG.md](./CHANGELOG.md)
+A complete changelog can be found here: [CHANGELOG.md](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md)
 
 ## License
 
-Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
+Licensed under the **Apache License 2.0** - see [LICENSE](https://github.com/IBM/mcp-context-forge/blob/main/LICENSE)
 
 
 ## Core Authors and Maintainers
