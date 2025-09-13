@@ -568,7 +568,7 @@ images:
 # help: vulture              - Dead code detection
 
 # Allow specific file/directory targeting
-DEFAULT_TARGETS := mcpgateway mcp-servers/python
+DEFAULT_TARGETS := mcpgateway
 TARGET ?= $(DEFAULT_TARGETS)
 
 # Add dummy targets for file arguments passed to lint commands only
