@@ -123,4 +123,3 @@ ENTRYPOINT ["/fast-time-lite"]
 - Log to stderr to avoid protocol noise on stdio.
 - Keep business logic in separate functions; keep MCP wiring minimal in `main.go`.
 - Start with stdio; add HTTP/SSE later following `go/fast-time-server` if needed.
-
