@@ -1503,7 +1503,7 @@ class Tool(Base):
     # def gateway_slug(self) -> str:
     #     return self.gateway.slug
 
-    _computed_name = Column("name", String(255), unique=True)  # Stored column
+    _computed_name = Column("name", String(255), nullable=False)  # Stored column
 
     @hybrid_property
     def name(self):
@@ -1547,7 +1547,7 @@ class Tool(Base):
         """
         return cls._computed_name
 
-    __table_args__ = (UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"),)
+    __table_args__ = (UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name"), UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_email_name_tool"))
 
     @hybrid_property
     def gateway_slug(self):
@@ -2308,8 +2308,8 @@ class Gateway(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    url: Mapped[str] = mapped_column(String(767), unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(String(767), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     transport: Mapped[str] = mapped_column(String(20), default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
@@ -2370,6 +2370,11 @@ class Gateway(Base):
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
+        UniqueConstraint("team_id", "owner_email", "url", name="uq_team_owner_url_gateway"),
+    )
 
 
 @event.listens_for(Gateway, "after_update")

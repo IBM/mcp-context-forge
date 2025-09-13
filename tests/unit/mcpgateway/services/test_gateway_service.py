@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, mock_open, patch
 # Third-Party
 import httpx
 import pytest
+from mcpgateway.services.gateway_service import GatewayUrlConflictError
 
 # First-Party
 # ---------------------------------------------------------------------------
@@ -223,20 +224,24 @@ class TestGatewayService:
     async def test_register_gateway_name_conflict(self, gateway_service, mock_gateway, test_db):
         """Trying to register a gateway whose *name* already exists raises a conflict error."""
         # DB returns an existing gateway with the same name
+        mock_gateway.name = "test_gateway"
+        mock_gateway.slug = "test-gateway"
         test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
 
         gateway_create = GatewayCreate(
             name="test_gateway",  # same as mock_gateway
+            slug="test-gateway",
             url="http://example.com/other",
             description="Another gateway",
+            visibility="public"
         )
 
         with pytest.raises(GatewayNameConflictError) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         err = exc_info.value
-        assert "Gateway already exists with name" in str(err)
-        assert err.name == "test_gateway"
+        assert "Public Gateway already exists with name" in str(err)
+        assert err.name == "test-gateway"
         assert err.gateway_id == mock_gateway.id
 
     @pytest.mark.asyncio
@@ -375,22 +380,25 @@ class TestGatewayService:
         inactive_gateway = MagicMock(spec=DbGateway)
         inactive_gateway.id = 2
         inactive_gateway.name = "test_gateway"
+        inactive_gateway.slug = "test-gateway"
         inactive_gateway.enabled = False
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=inactive_gateway))
 
         gateway_create = GatewayCreate(
             name="test_gateway",
+            slug="test-gateway",
             url="http://example.com/gateway",
             description="New gateway",
+            visibility="public"
         )
 
         with pytest.raises(GatewayNameConflictError) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         err = exc_info.value
-        assert "Gateway already exists with name" in str(err)
-        assert err.name == "test_gateway"
+        assert "Public Gateway already exists with name" in str(err)
+        assert err.name == "test-gateway"
         assert err.enabled is False
         assert err.gateway_id == 2
 
@@ -539,6 +547,9 @@ class TestGatewayService:
         existing_tool = MagicMock()
         existing_tool.original_name = "existing_tool"
         existing_tool.id = 123
+        existing_tool.url = "http://example.com/gateway"
+        existing_tool.enabled = True
+        existing_tool.visibility = "public"
 
         test_db.execute = Mock(
             side_effect=[
@@ -574,14 +585,13 @@ class TestGatewayService:
             description="Gateway with existing tools",
         )
 
-        await gateway_service.register_gateway(test_db, gateway_create)
+        with pytest.raises(GatewayUrlConflictError) as exc_info:
+            await gateway_service.register_gateway(test_db, gateway_create)
 
-        test_db.add.assert_called_once()
-        # Verify that a tool was created for the gateway (the service creates new tools, not reuse existing ones)
-        db_gateway_call = test_db.add.call_args[0][0]
-        assert len(db_gateway_call.tools) == 1
-        # The service creates a new Tool object with the same original_name
-        assert db_gateway_call.tools[0].original_name == "existing_tool"
+        err = exc_info.value
+        assert "Public Gateway already exists with URL" in str(err)
+        assert err.gateway_id == existing_tool.id
+        assert err.enabled is True
 
     # ────────────────────────────────────────────────────────────────────
     # Validate Gateway URL Timeout
@@ -907,18 +917,21 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway_name_conflict(self, gateway_service, mock_gateway, test_db):
         """Changing the name to one that already exists raises GatewayError."""
+        mock_gateway.name = "original_name"
+        mock_gateway.slug = "original-name"
+        mock_gateway.visibility = "public"
         test_db.get = Mock(return_value=mock_gateway)
-        conflicting = MagicMock(spec=DbGateway, id=2, name="existing_gateway", is_active=True)
+        conflicting = MagicMock(spec=DbGateway, id=2, name="existing_gateway", slug="existing-gateway", visibility="public", is_active=True)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=conflicting))
         test_db.rollback = Mock()
 
         # gateway_update = MagicMock(spec=GatewayUpdate, name="existing_gateway")
-        gateway_update = GatewayUpdate(name="existing_gateway")
+        gateway_update = GatewayUpdate(name="existing_gateway", slug="existing-gateway")
 
         with pytest.raises(GatewayError) as exc_info:
             await gateway_service.update_gateway(test_db, 1, gateway_update)
 
-        assert "Gateway already exists with name" in str(exc_info.value)
+        assert "Public Gateway already exists with name" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_update_gateway_with_auth_update(self, gateway_service, mock_gateway, test_db):

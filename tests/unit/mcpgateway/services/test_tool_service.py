@@ -125,6 +125,8 @@ def mock_tool():
     return tool
 
 
+from mcpgateway.services.tool_service import ToolNameConflictError
+
 class TestToolService:
     """Tests for the ToolService class."""
 
@@ -313,54 +315,95 @@ class TestToolService:
 
     @pytest.mark.asyncio
     async def test_register_tool_name_conflict(self, tool_service, mock_tool, test_db):
-        """Test tool registration with name conflict."""
-        # Mock DB to return existing tool
+        """Test tool registration with name conflict for private, team, and public visibility."""
+        # --- Private visibility: conflict if name and owner_email match ---
+        mock_tool.name = "private_tool"
+        mock_tool.visibility = "private"
+        mock_tool.owner_email = "user@example.com"
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
         test_db.execute = Mock(return_value=mock_scalar)
-
-        # Create tool request with conflicting name
-        tool_create = ToolCreate(
-            name="test_tool",  # Same name as mock_tool
+        tool_create_private = ToolCreate(
+            name="private_tool",
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="REST",
             request_type="POST",
+            visibility="private",
+            owner_email="user@example.com",
         )
+        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name, owner_email", None, None))
+        with pytest.raises(IntegrityError) as exc_info:
+            await tool_service.register_tool(test_db, tool_create_private)
+        assert "UNIQUE constraint failed: tools.name, owner_email" in str(exc_info.value)
 
-        # Should raise ToolError due to UNIQUE constraint failure (wrapped IntegrityError)
-        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
-        with pytest.raises(ToolError) as exc_info:
-            await tool_service.register_tool(test_db, tool_create)
+        # --- Team visibility: conflict if name and team_id match ---
+        mock_tool.name = "team_tool"
+        mock_tool.visibility = "team"
+        mock_tool.team_id = "team123"
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+        tool_create_team = ToolCreate(
+            name="team_tool",
+            url="http://example.com/tools/new",
+            description="A new tool",
+            integration_type="REST",
+            request_type="POST",
+            visibility="team",
+            team_id="team123",
+            owner_email="user@example.com"
+        )
+        test_db.commit = Mock()
+        with pytest.raises(ToolNameConflictError) as exc_info:
+            await tool_service.register_tool(test_db, tool_create_team)
+        assert "Team-level Tool already exists with name: team_tool" in str(exc_info.value)
 
-        # Check the error message for tool name conflict
-        assert "Tool already exists: test_tool" in str(exc_info.value)
+        # --- Public visibility: conflict if name and visibility match ---
+        mock_tool.name = "public_tool"
+        mock_tool.visibility = "public"
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+        tool_create_public = ToolCreate(
+            name="public_tool",
+            url="http://example.com/tools/new",
+            description="A new tool",
+            integration_type="REST",
+            request_type="POST",
+            visibility="public",
+            owner_email="user@example.com",
+        )
+        test_db.commit = Mock()
+        # Ensure mock_tool.name matches the expected error message
+        mock_tool.name = "public_tool"
+        with pytest.raises(ToolNameConflictError) as exc_info:
+            await tool_service.register_tool(test_db, tool_create_public)
+        assert "Public Tool already exists with name: public_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_inactive_tool_name_conflict(self, tool_service, mock_tool, test_db):
-        """Test tool registration with name conflict."""
-        # Mock DB to return existing tool
-        mock_scalar = Mock()
+        """Test tool registration with name conflict for inactive tool."""
+        # --- Inactive tool: conflict if name matches and enabled is False ---
+        mock_tool.name = "inactive_tool"
+        mock_tool.visibility = "public"
         mock_tool.enabled = False
+        mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
         test_db.execute = Mock(return_value=mock_scalar)
-
-        # Create tool request with conflicting name
-        tool_create = ToolCreate(
-            name="test_tool",  # Same name as mock_tool
+        tool_create_inactive = ToolCreate(
+            name="inactive_tool",
             url="http://example.com/tools/new",
             description="A new tool",
             integration_type="REST",
             request_type="POST",
+            visibility="public",
+            owner_email="user@example.com",
         )
-
-        # Should raise ToolError due to UNIQUE constraint failure (wrapped IntegrityError)
-        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name", None, None))
-        with pytest.raises(ToolError) as exc_info:
-            await tool_service.register_tool(test_db, tool_create)
-
-        # Check the error message for tool name conflict
-        assert "Tool already exists: test_tool" in str(exc_info.value)
+        test_db.commit = Mock()
+        with pytest.raises(ToolNameConflictError) as exc_info:
+            await tool_service.register_tool(test_db, tool_create_inactive)
+        assert "Public Tool already exists with name: inactive_tool" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_tool_db_integrity_error(self, tool_service, test_db):
@@ -370,7 +413,9 @@ class TestToolService:
         mock_scalar.scalar_one_or_none.return_value = None
         test_db.execute = Mock(return_value=mock_scalar)
         test_db.add = Mock()
-        test_db.commit = Mock(side_effect=IntegrityError("statement", "params", "orig"))
+        #test_db.commit = Mock(side_effect=IntegrityError("statement", "params", "orig"))
+        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name, owner_email", None, None))
+        
         test_db.rollback = Mock()
 
         # Create tool request
@@ -380,15 +425,17 @@ class TestToolService:
             description="A test tool",
             integration_type="REST",
             request_type="POST",
+            visibility="private",
+            owner_email="user@example.com",
         )
 
         # Should raise ToolError (wrapped IntegrityError)
-        with pytest.raises(ToolError) as exc_info:
+        with pytest.raises(IntegrityError) as exc_info:
             await tool_service.register_tool(test_db, tool_create)
 
         # Verify rollback was called
         test_db.rollback.assert_called_once()
-        assert "Tool already exists: test_tool" in str(exc_info.value)
+        assert "UNIQUE constraint failed: tools.name, owner_email" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_list_tools(self, tool_service, mock_tool, test_db):
