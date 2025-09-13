@@ -312,7 +312,7 @@ curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
 <details>
 <summary><strong>More configuration</strong></summary>
 
-Copy [.env.example](.env.example) to `.env` and tweak any of the settings (or use them as env variables).
+Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and tweak any of the settings (or use them as env variables).
 
 </details>
 
@@ -565,7 +565,7 @@ podman run -d --name mcpgateway \
 <details>
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
-* **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](.env.example) for reference.
+* **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
 * **Pinned tags** - Use an explicit version (e.g. `v0.6.0`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
@@ -1033,7 +1033,7 @@ For detailed upgrade instructions, troubleshooting, and rollback procedures, see
 
 > ⚠️ If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
 
-You can get started by copying the provided [.env.example](.env.example) to `.env` and making the necessary edits to fit your environment.
+You can get started by copying the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and making the necessary edits to fit your environment.
 
 <details>
 <summary><strong>🔧 Environment Configuration Variables</strong></summary>

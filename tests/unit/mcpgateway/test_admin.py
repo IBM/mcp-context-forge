@@ -2904,3 +2904,550 @@ class TestEdgeCasesAndErrorHandling:
                 # Generic exceptions return redirect
                 # assert isinstance(result, RedirectResponse)
                 assert isinstance(result, JSONResponse)
+
+
+class TestAdminAuthenticationAndLogin:
+    """Test cases for admin authentication and login functionality."""
+
+    async def test_admin_login_page_renders(self):
+        """Test that the login page renders correctly."""
+        from mcpgateway.admin import admin_login_page
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.url = MagicMock()
+        mock_request.url.path = "/admin/login"
+
+        result = await admin_login_page(mock_request)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 200
+        assert "Login" in result.body.decode()
+        assert "username" in result.body.decode()
+        assert "password" in result.body.decode()
+
+    async def test_admin_login_handler_success(self, mock_db):
+        """Test successful login handler."""
+        from mcpgateway.admin import admin_login_handler
+        from mcpgateway.db import EmailUser
+
+        mock_request = MagicMock(spec=Request)
+        form_data = {
+            "username": "admin@example.com",
+            "password": "correct_password",
+        }
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock user lookup
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "admin@example.com"
+        mock_user.is_active = True
+        mock_user.verify_password = MagicMock(return_value=True)
+
+        with patch("mcpgateway.admin.EmailUser") as mock_email_user_class:
+            mock_db.execute = MagicMock()
+            mock_db.execute.return_value.scalar_one_or_none = MagicMock(return_value=mock_user)
+
+            result = await admin_login_handler(mock_request, mock_db)
+
+            assert isinstance(result, RedirectResponse)
+            assert result.status_code == 303
+            assert result.headers["location"] == "/admin"
+
+    async def test_admin_login_handler_invalid_credentials(self, mock_db):
+        """Test login handler with invalid credentials."""
+        from mcpgateway.admin import admin_login_handler
+
+        mock_request = MagicMock(spec=Request)
+        form_data = {
+            "username": "admin@example.com",
+            "password": "wrong_password",
+        }
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock user lookup - user not found
+        mock_db.execute = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none = MagicMock(return_value=None)
+
+        result = await admin_login_handler(mock_request, mock_db)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 401
+        assert "Invalid credentials" in result.body.decode()
+
+    async def test_admin_login_handler_inactive_user(self, mock_db):
+        """Test login handler with inactive user."""
+        from mcpgateway.admin import admin_login_handler
+        from mcpgateway.db import EmailUser
+
+        mock_request = MagicMock(spec=Request)
+        form_data = {
+            "username": "inactive@example.com",
+            "password": "password",
+        }
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        # Mock inactive user
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "inactive@example.com"
+        mock_user.is_active = False
+        mock_user.verify_password = MagicMock(return_value=True)
+
+        mock_db.execute = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none = MagicMock(return_value=mock_user)
+
+        result = await admin_login_handler(mock_request, mock_db)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 401
+        assert "Account is disabled" in result.body.decode() or "Invalid credentials" in result.body.decode()
+
+    async def test_admin_logout(self):
+        """Test admin logout functionality."""
+        from mcpgateway.admin import admin_logout
+
+        mock_request = MagicMock(spec=Request)
+
+        result = await admin_logout(mock_request)
+
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        assert result.headers["location"] == "/admin/login"
+        # Check that the auth cookie is deleted
+        assert "Set-Cookie" in result.headers
+        cookie_header = result.headers["Set-Cookie"]
+        assert "mcpgateway_auth=" in cookie_header
+        assert "Max-Age=0" in cookie_header or "expires" in cookie_header
+
+
+class TestGlobalPassthroughHeaders:
+    """Test cases for global passthrough headers functionality."""
+
+    async def test_get_global_passthrough_headers_success(self, mock_db):
+        """Test successfully getting global passthrough headers."""
+        from mcpgateway.admin import get_global_passthrough_headers
+        from mcpgateway.db import GlobalConfig
+
+        # Mock global config
+        mock_config = MagicMock(spec=GlobalConfig)
+        mock_config.passthrough_headers = ["X-Custom-Header", "X-Request-ID"]
+
+        mock_db.query = MagicMock()
+        mock_db.query.return_value.filter_by = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first = MagicMock(return_value=mock_config)
+
+        result = await get_global_passthrough_headers(mock_db, "test-user")
+
+        assert isinstance(result, GlobalConfigRead)
+        assert result.passthrough_headers == ["X-Custom-Header", "X-Request-ID"]
+
+    async def test_get_global_passthrough_headers_not_found(self, mock_db):
+        """Test getting passthrough headers when config doesn't exist."""
+        from mcpgateway.admin import get_global_passthrough_headers
+
+        mock_db.query = MagicMock()
+        mock_db.query.return_value.filter_by = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first = MagicMock(return_value=None)
+
+        result = await get_global_passthrough_headers(mock_db, "test-user")
+
+        assert isinstance(result, GlobalConfigRead)
+        assert result.passthrough_headers == []
+
+    async def test_update_global_passthrough_headers_create_new(self, mock_db):
+        """Test creating new global passthrough headers config."""
+        from mcpgateway.admin import update_global_passthrough_headers
+        from mcpgateway.schemas import GlobalConfigUpdate
+
+        config_update = GlobalConfigUpdate(passthrough_headers=["X-New-Header"])
+
+        # Mock no existing config
+        mock_db.query = MagicMock()
+        mock_db.query.return_value.filter_by = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first = MagicMock(return_value=None)
+        mock_db.add = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        result = await update_global_passthrough_headers(config_update, mock_db, "test-user")
+
+        assert isinstance(result, GlobalConfigRead)
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called_once()
+
+    async def test_update_global_passthrough_headers_update_existing(self, mock_db):
+        """Test updating existing global passthrough headers config."""
+        from mcpgateway.admin import update_global_passthrough_headers
+        from mcpgateway.schemas import GlobalConfigUpdate
+        from mcpgateway.db import GlobalConfig
+
+        config_update = GlobalConfigUpdate(passthrough_headers=["X-Updated-Header"])
+
+        # Mock existing config
+        mock_config = MagicMock(spec=GlobalConfig)
+        mock_config.passthrough_headers = ["X-Old-Header"]
+
+        mock_db.query = MagicMock()
+        mock_db.query.return_value.filter_by = MagicMock()
+        mock_db.query.return_value.filter_by.return_value.first = MagicMock(return_value=mock_config)
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        result = await update_global_passthrough_headers(config_update, mock_db, "test-user")
+
+        assert isinstance(result, GlobalConfigRead)
+        assert mock_config.passthrough_headers == ["X-Updated-Header"]
+        mock_db.commit.assert_called_once()
+
+    async def test_update_global_passthrough_headers_validation_error(self, mock_db):
+        """Test updating with invalid header format."""
+        from mcpgateway.admin import update_global_passthrough_headers
+        from mcpgateway.schemas import GlobalConfigUpdate
+
+        # Test with invalid headers
+        with pytest.raises(ValidationError):
+            config_update = GlobalConfigUpdate(passthrough_headers=["Invalid Header With Spaces"])
+            await update_global_passthrough_headers(config_update, mock_db, "test-user")
+
+
+class TestUtilityFunctions:
+    """Test cases for utility functions in admin module."""
+
+    def test_serialize_datetime(self):
+        """Test datetime serialization function."""
+        from mcpgateway.admin import serialize_datetime
+
+        # Test with datetime object
+        dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+        result = serialize_datetime(dt)
+        assert result == "2024-01-15T10:30:45+00:00"
+
+        # Test with None
+        result = serialize_datetime(None)
+        assert result is None
+
+        # Test with string (should return as-is)
+        result = serialize_datetime("2024-01-15")
+        assert result == "2024-01-15"
+
+        # Test with number
+        result = serialize_datetime(12345)
+        assert result == 12345
+
+    def test_get_user_email_with_string(self):
+        """Test get_user_email with string input."""
+        from mcpgateway.admin import get_user_email
+
+        email = get_user_email("user@example.com")
+        assert email == "user@example.com"
+
+    def test_get_user_email_with_dict(self):
+        """Test get_user_email with dict input."""
+        from mcpgateway.admin import get_user_email
+
+        user_dict = {"email": "user@example.com", "name": "Test User"}
+        email = get_user_email(user_dict)
+        assert email == "user@example.com"
+
+    def test_get_user_email_with_object(self):
+        """Test get_user_email with object input."""
+        from mcpgateway.admin import get_user_email
+
+        class MockUser:
+            email = "user@example.com"
+
+        user = MockUser()
+        email = get_user_email(user)
+        assert email == "user@example.com"
+
+    def test_get_user_email_fallback(self):
+        """Test get_user_email fallback behavior."""
+        from mcpgateway.admin import get_user_email
+
+        # Test with None
+        email = get_user_email(None)
+        assert email == "unknown"
+
+        # Test with object without email attribute
+        class NoEmailUser:
+            name = "Test User"
+
+        user = NoEmailUser()
+        email = get_user_email(user)
+        assert email == "unknown"
+
+
+class TestMetricsFunctions:
+    """Test cases for metrics-related functions."""
+
+    async def test_get_aggregated_metrics_success(self, mock_db):
+        """Test getting aggregated metrics."""
+        from mcpgateway.admin import get_aggregated_metrics
+
+        # Mock server metrics
+        mock_server_metrics = [
+            ServerMetrics(server_id="srv1", total_requests=100, success_count=90, error_count=10),
+            ServerMetrics(server_id="srv2", total_requests=50, success_count=45, error_count=5),
+        ]
+
+        # Mock tool metrics
+        mock_tool_metrics = [
+            ToolMetrics(tool_id="tool1", total_requests=75, success_count=70, error_count=5),
+        ]
+
+        with patch("mcpgateway.admin.server_service") as mock_server_service:
+            with patch("mcpgateway.admin.tool_service") as mock_tool_service:
+                with patch("mcpgateway.admin.resource_service") as mock_resource_service:
+                    with patch("mcpgateway.admin.prompt_service") as mock_prompt_service:
+                        mock_server_service.get_all_metrics = AsyncMock(return_value=mock_server_metrics)
+                        mock_tool_service.get_all_metrics = AsyncMock(return_value=mock_tool_metrics)
+                        mock_resource_service.get_all_metrics = AsyncMock(return_value=[])
+                        mock_prompt_service.get_all_metrics = AsyncMock(return_value=[])
+
+                        result = await get_aggregated_metrics(mock_db, "test-user")
+
+                        assert result["total_requests"] == 225  # 100 + 50 + 75
+                        assert result["success_count"] == 205  # 90 + 45 + 70
+                        assert result["error_count"] == 20  # 10 + 5 + 5
+                        assert "servers" in result
+                        assert "tools" in result
+                        assert len(result["servers"]) == 2
+                        assert len(result["tools"]) == 1
+
+    async def test_get_aggregated_metrics_empty(self, mock_db):
+        """Test getting aggregated metrics with no data."""
+        from mcpgateway.admin import get_aggregated_metrics
+
+        with patch("mcpgateway.admin.server_service") as mock_server_service:
+            with patch("mcpgateway.admin.tool_service") as mock_tool_service:
+                with patch("mcpgateway.admin.resource_service") as mock_resource_service:
+                    with patch("mcpgateway.admin.prompt_service") as mock_prompt_service:
+                        mock_server_service.get_all_metrics = AsyncMock(return_value=[])
+                        mock_tool_service.get_all_metrics = AsyncMock(return_value=[])
+                        mock_resource_service.get_all_metrics = AsyncMock(return_value=[])
+                        mock_prompt_service.get_all_metrics = AsyncMock(return_value=[])
+
+                        result = await get_aggregated_metrics(mock_db, "test-user")
+
+                        assert result["total_requests"] == 0
+                        assert result["success_count"] == 0
+                        assert result["error_count"] == 0
+                        assert result["servers"] == []
+                        assert result["tools"] == []
+
+    async def test_admin_reset_metrics_success(self, mock_db):
+        """Test resetting admin metrics."""
+        from mcpgateway.admin import admin_reset_metrics
+
+        with patch("mcpgateway.admin.server_service") as mock_server_service:
+            with patch("mcpgateway.admin.tool_service") as mock_tool_service:
+                with patch("mcpgateway.admin.resource_service") as mock_resource_service:
+                    with patch("mcpgateway.admin.prompt_service") as mock_prompt_service:
+                        mock_server_service.reset_all_metrics = AsyncMock()
+                        mock_tool_service.reset_all_metrics = AsyncMock()
+                        mock_resource_service.reset_all_metrics = AsyncMock()
+                        mock_prompt_service.reset_all_metrics = AsyncMock()
+
+                        result = await admin_reset_metrics(mock_db, "test-user")
+
+                        assert result["message"] == "All metrics have been reset"
+                        assert result["status"] == "success"
+                        mock_server_service.reset_all_metrics.assert_called_once()
+                        mock_tool_service.reset_all_metrics.assert_called_once()
+                        mock_resource_service.reset_all_metrics.assert_called_once()
+                        mock_prompt_service.reset_all_metrics.assert_called_once()
+
+    async def test_admin_reset_metrics_partial_failure(self, mock_db):
+        """Test resetting metrics with partial failure."""
+        from mcpgateway.admin import admin_reset_metrics
+
+        with patch("mcpgateway.admin.server_service") as mock_server_service:
+            with patch("mcpgateway.admin.tool_service") as mock_tool_service:
+                with patch("mcpgateway.admin.resource_service") as mock_resource_service:
+                    with patch("mcpgateway.admin.prompt_service") as mock_prompt_service:
+                        mock_server_service.reset_all_metrics = AsyncMock()
+                        mock_tool_service.reset_all_metrics = AsyncMock(side_effect=Exception("Reset failed"))
+                        mock_resource_service.reset_all_metrics = AsyncMock()
+                        mock_prompt_service.reset_all_metrics = AsyncMock()
+
+                        # Should handle exception gracefully
+                        result = await admin_reset_metrics(mock_db, "test-user")
+
+                        # May still return success if partial reset works
+                        assert "message" in result or "error" in result
+
+
+class TestTeamManagementFunctions:
+    """Test cases for team management functions."""
+
+    async def test_admin_list_teams_success(self, mock_db):
+        """Test listing teams successfully."""
+        from mcpgateway.admin import admin_list_teams
+        from mcpgateway.services.team_management_service import TeamRead
+
+        mock_teams = [
+            TeamRead(id="team1", name="Team One", description="First team", created_at=datetime.now(timezone.utc)),
+            TeamRead(id="team2", name="Team Two", description="Second team", created_at=datetime.now(timezone.utc)),
+        ]
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.list_teams = AsyncMock(return_value=mock_teams)
+
+            result = await admin_list_teams(mock_db, "test-user")
+
+            assert isinstance(result, list)
+            assert len(result) == 2
+            assert result[0].name == "Team One"
+            assert result[1].name == "Team Two"
+
+    async def test_admin_list_teams_empty(self, mock_db):
+        """Test listing teams when no teams exist."""
+        from mcpgateway.admin import admin_list_teams
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.list_teams = AsyncMock(return_value=[])
+
+            result = await admin_list_teams(mock_db, "test-user")
+
+            assert isinstance(result, list)
+            assert len(result) == 0
+
+    async def test_admin_create_team_success(self, mock_request, mock_db):
+        """Test creating a team successfully."""
+        from mcpgateway.admin import admin_create_team
+        from mcpgateway.services.team_management_service import TeamRead
+
+        form_data = {
+            "name": "New Team",
+            "description": "A new team",
+        }
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_team = TeamRead(
+            id="new-team-id",
+            name="New Team",
+            description="A new team",
+            created_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.create_team = AsyncMock(return_value=mock_team)
+
+            result = await admin_create_team(mock_request, mock_db, "test-user")
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+            response_data = json.loads(result.body)
+            assert response_data["id"] == "new-team-id"
+            assert response_data["name"] == "New Team"
+
+    async def test_admin_create_team_duplicate_name(self, mock_request, mock_db):
+        """Test creating a team with duplicate name."""
+        from mcpgateway.admin import admin_create_team
+
+        form_data = {
+            "name": "Existing Team",
+            "description": "Duplicate team",
+        }
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.create_team = AsyncMock(side_effect=IntegrityError("Duplicate team name", {}, Exception()))
+
+            result = await admin_create_team(mock_request, mock_db, "test-user")
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 409
+            response_data = json.loads(result.body)
+            assert "error" in response_data
+
+    async def test_admin_update_team_success(self, mock_request, mock_db):
+        """Test updating a team successfully."""
+        from mcpgateway.admin import admin_update_team
+        from mcpgateway.services.team_management_service import TeamRead
+
+        form_data = {
+            "name": "Updated Team",
+            "description": "Updated description",
+        }
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        mock_team = TeamRead(
+            id="team-id",
+            name="Updated Team",
+            description="Updated description",
+            created_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.update_team = AsyncMock(return_value=mock_team)
+
+            result = await admin_update_team("team-id", mock_request, mock_db, "test-user")
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 200
+            response_data = json.loads(result.body)
+            assert response_data["name"] == "Updated Team"
+            assert response_data["description"] == "Updated description"
+
+    async def test_admin_update_team_not_found(self, mock_request, mock_db):
+        """Test updating a non-existent team."""
+        from mcpgateway.admin import admin_update_team
+
+        form_data = {
+            "name": "Updated Team",
+            "description": "Updated description",
+        }
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.update_team = AsyncMock(side_effect=ValueError("Team not found"))
+
+            result = await admin_update_team("non-existent-id", mock_request, mock_db, "test-user")
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 404
+            response_data = json.loads(result.body)
+            assert "error" in response_data
+
+    async def test_admin_delete_team_success(self, mock_request, mock_db):
+        """Test deleting a team successfully."""
+        from mcpgateway.admin import admin_delete_team
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.delete_team = AsyncMock(return_value=True)
+
+            result = await admin_delete_team("team-id", mock_request, mock_db, "test-user")
+
+            assert isinstance(result, RedirectResponse)
+            assert result.status_code == 303
+            assert result.headers["location"] == "/admin"
+
+    async def test_admin_delete_team_not_found(self, mock_request, mock_db):
+        """Test deleting a non-existent team."""
+        from mcpgateway.admin import admin_delete_team
+
+        with patch("mcpgateway.admin.TeamManagementService") as mock_team_service_class:
+            mock_team_service = MagicMock()
+            mock_team_service_class.return_value = mock_team_service
+            mock_team_service.delete_team = AsyncMock(side_effect=ValueError("Team not found"))
+
+            result = await admin_delete_team("non-existent-id", mock_request, mock_db, "test-user")
+
+            assert isinstance(result, JSONResponse)
+            assert result.status_code == 404
+            response_data = json.loads(result.body)
+            assert "error" in response_data

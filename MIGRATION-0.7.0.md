@@ -615,7 +615,7 @@ If you encounter issues during migration:
 
 1. **Check the logs**: Set `LOG_LEVEL=DEBUG` for verbose output
 2. **Review troubleshooting section** above for common issues
-3. **File an issue**: https://github.com/anthropics/claude-code/issues
+3. **File an issue**: https://github.com/IBM/mcp-context-forge/issues
 4. **Include information**: Database type, error messages, relevant logs
 
 ## Next Steps
