@@ -2004,7 +2004,7 @@ async def admin_ui(
                 ]
             )
         except Exception:
-            pass
+            pass  # nosec B110 - Intentionally ignore errors when extracting team IDs from objects
         try:
             # If it's a dict-like model_dump output (we'll check keys later after model_dump)
             if isinstance(item, dict):
@@ -2018,7 +2018,7 @@ async def admin_ui(
                     ]
                 )
         except Exception:
-            pass
+            pass  # nosec B110 - Intentionally ignore errors when extracting team IDs from dict objects
 
         for c in candidates:
             if c is None:

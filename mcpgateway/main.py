@@ -266,6 +266,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         None
 
     Raises:
+        SystemExit: When a critical startup error occurs that prevents
+            the application from starting successfully.
         Exception: Any unhandled error that occurs during service
             initialisation or shutdown is re-raised to the caller.
     """
@@ -328,7 +330,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if "Plugin initialization failed" in str(e):
             # Suppress uvicorn error logging for clean exit
             # Standard
-            import logging
+            import logging  # pylint: disable=import-outside-toplevel
 
             logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
             raise SystemExit(1)
@@ -2298,7 +2300,7 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
         if isinstance(content, TextContent):
             return {"type": "resource", "uri": uri, "text": content.text}
     except Exception:
-        pass
+        pass  # nosec B110 - Intentionally continue with fallback resource content handling
 
     if isinstance(content, bytes):
         return {"type": "resource", "uri": uri, "blob": content.decode("utf-8", errors="ignore")}

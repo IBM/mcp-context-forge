@@ -122,7 +122,7 @@ import logging
 import shlex
 import signal
 import sys
-from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
+from typing import Any, AsyncIterator, cast, Dict, List, Optional, Sequence, Tuple
 import uuid
 
 # Third-Party
@@ -601,7 +601,7 @@ def _build_fastapi(
     # Add CORS middleware if origins specified
     if cors_origins:
         app.add_middleware(
-            CORSMiddleware,
+            cast("type", CORSMiddleware),
             allow_origins=cors_origins,
             allow_credentials=True,
             allow_methods=["*"],
@@ -680,7 +680,8 @@ def _build_fastapi(
                                 "retry": keep_alive * 1000,
                             }
             finally:
-                pubsub.unsubscribe(queue)
+                if pubsub:
+                    pubsub.unsubscribe(queue)
 
         return EventSourceResponse(
             event_gen(),
@@ -978,12 +979,23 @@ async def _run_stdio_to_sse(
         shutting_down.set()
         LOGGER.info("Shutting down ...")
         await stdio.stop()
-        await server.shutdown()
+        # Graceful shutdown by setting the shutdown event
+        # Use getattr to safely access should_exit attribute
+        setattr(server, "should_exit", getattr(server, "should_exit", False) or True)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
+
+            def shutdown_handler(*args):  # pylint: disable=unused-argument
+                """Handle shutdown signal by creating shutdown task.
+
+                Args:
+                    *args: Signal handler arguments (unused).
+                """
+                asyncio.create_task(_shutdown())
+
+            loop.add_signal_handler(sig, shutdown_handler)
 
     LOGGER.info(f"Bridge ready → http://{host}:{port}{sse_path}")
     await server.serve()
@@ -1072,6 +1084,8 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
             raise RuntimeError("Process stdout not available")
 
         while True:
+            if not process.stdout:
+                raise RuntimeError("Process stdout not available")
             line = await process.stdout.readline()
             if not line:
                 break
@@ -1133,7 +1147,9 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
                 async with client.stream("GET", url) as response:
                     # Check status code if available (real httpx response)
                     if hasattr(response, "status_code") and response.status_code != 200:
-                        raise httpx.HTTPStatusError(f"SSE endpoint returned {response.status_code}", request=response.request, response=response)
+                        if httpx:
+                            raise httpx.HTTPStatusError(f"SSE endpoint returned {response.status_code}", request=response.request, response=response)
+                        raise Exception(f"SSE endpoint returned {response.status_code}")
 
                     # Reset retry counter on successful connection
                     retry_count = 0
@@ -1155,7 +1171,7 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
                             elif current_event.event == "message":
                                 # Forward JSON-RPC responses to stdio
                                 if process.stdin:
-                                    await process.stdin.write((current_event.data + "\n").encode())
+                                    process.stdin.write((current_event.data + "\n").encode())
                                     await process.stdin.drain()
                                     LOGGER.debug(f"→ stdio: {current_event.data}")
 
@@ -1297,7 +1313,7 @@ async def _run_stdio_to_streamable_http(
         from starlette.middleware.cors import CORSMiddleware as StarletteCORS  # pylint: disable=import-outside-toplevel
 
         app.add_middleware(
-            StarletteCORS,
+            cast("type", StarletteCORS),
             allow_origins=cors,
             allow_credentials=True,
             allow_methods=["*"],
@@ -1326,12 +1342,23 @@ async def _run_stdio_to_streamable_http(
             process.terminate()
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(process.wait(), 5)
-        await server.shutdown()
+        # Graceful shutdown by setting the shutdown event
+        # Use getattr to safely access should_exit attribute
+        setattr(server, "should_exit", getattr(server, "should_exit", False) or True)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
+
+            def shutdown_handler(*args):  # pylint: disable=unused-argument
+                """Handle shutdown signal by creating shutdown task.
+
+                Args:
+                    *args: Signal handler arguments (unused).
+                """
+                asyncio.create_task(_shutdown())
+
+            loop.add_signal_handler(sig, shutdown_handler)
 
     # Pump messages between stdio and HTTP
     async def pump_stdio_to_http() -> None:
@@ -1347,6 +1374,8 @@ async def _run_stdio_to_streamable_http(
         """
         while True:
             try:
+                if not process.stdout:
+                    raise RuntimeError("Process stdout not available")
                 line = await process.stdout.readline()
                 if not line:
                     break
@@ -1373,6 +1402,8 @@ async def _run_stdio_to_streamable_http(
             >>> asyncio.run(test_pump())
             True
         """
+        if not process.stdin:
+            raise RuntimeError("Process stdin not available")
         process.stdin.write(data.encode() + b"\n")
         await process.stdin.drain()
 
@@ -1459,6 +1490,8 @@ async def _run_streamable_http_to_stdio(
             raise RuntimeError("Process stdout not available")
 
         while True:
+            if not process.stdout:
+                raise RuntimeError("Process stdout not available")
             line = await process.stdout.readline()
             if not line:
                 break
@@ -1476,7 +1509,7 @@ async def _run_streamable_http_to_stdio(
                     # Handle JSON response
                     response_data = response.text
                     if response_data and process.stdin:
-                        await process.stdin.write((response_data + "\n").encode())
+                        process.stdin.write((response_data + "\n").encode())
                         await process.stdin.drain()
                         LOGGER.debug(f"→ stdio: {response_data}")
                 else:
@@ -1505,7 +1538,9 @@ async def _run_streamable_http_to_stdio(
                 # Try SSE first (for stateful sessions or when SSE is preferred)
                 async with client.stream("GET", url, headers={"Accept": "text/event-stream"}) as response:
                     if response.status_code != 200:
-                        raise httpx.HTTPStatusError(f"Streamable HTTP endpoint returned {response.status_code}", request=response.request, response=response)
+                        if httpx:
+                            raise httpx.HTTPStatusError(f"Streamable HTTP endpoint returned {response.status_code}", request=response.request, response=response)
+                        raise Exception(f"Streamable HTTP endpoint returned {response.status_code}")
 
                     # Reset retry counter on successful connection
                     retry_count = 0
@@ -1515,7 +1550,7 @@ async def _run_streamable_http_to_stdio(
                         if line.startswith("data: "):
                             data = line[6:]  # Remove "data: " prefix
                             if data and process.stdin:
-                                await process.stdin.write((data + "\n").encode())
+                                process.stdin.write((data + "\n").encode())
                                 await process.stdin.drain()
                                 LOGGER.debug(f"→ stdio: {data}")
 
@@ -1548,7 +1583,7 @@ async def _run_streamable_http_to_stdio(
                     await asyncio.wait_for(process.wait(), timeout=5)
 
 
-async def _simple_streamable_http_pump(client: httpx.AsyncClient, url: str, max_retries: int, initial_retry_delay: float) -> None:
+async def _simple_streamable_http_pump(client: "Any", url: str, max_retries: int, initial_retry_delay: float) -> None:
     """Simple streamable HTTP pump that just prints messages to stdout.
 
     Used when no stdio command is provided to bridge streamable HTTP to stdout directly.
@@ -1573,7 +1608,9 @@ async def _simple_streamable_http_pump(client: httpx.AsyncClient, url: str, max_
             # Try to get SSE stream
             async with client.stream("GET", url, headers={"Accept": "text/event-stream"}) as response:
                 if response.status_code != 200:
-                    raise httpx.HTTPStatusError(f"Streamable HTTP endpoint returned {response.status_code}", request=response.request, response=response)
+                    if httpx:
+                        raise httpx.HTTPStatusError(f"Streamable HTTP endpoint returned {response.status_code}", request=response.request, response=response)
+                    raise Exception(f"Streamable HTTP endpoint returned {response.status_code}")
 
                 # Reset retry counter on successful connection
                 retry_count = 0
@@ -1638,7 +1675,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     pubsub = _PubSub() if (expose_sse or expose_streamable_http) else None
 
     # Create the stdio endpoint
-    stdio = StdIOEndpoint(cmd, pubsub) if (expose_sse or expose_streamable_http) else None
+    stdio = StdIOEndpoint(cmd, pubsub) if (expose_sse or expose_streamable_http) and pubsub else None
 
     # Create fastapi app and middleware
     app = FastAPI()
@@ -1646,7 +1683,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     # Add CORS middleware if specified
     if cors:
         app.add_middleware(
-            CORSMiddleware,
+            cast("type", CORSMiddleware),
             allow_origins=cors,
             allow_credentials=True,
             allow_methods=["*"],
@@ -1670,6 +1707,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             Returns:
                 EventSourceResponse: Server-sent events stream.
             """
+            if not pubsub:
+                raise RuntimeError("PubSub not available")
             queue = pubsub.subscribe()
             session_id = uuid.uuid4().hex
 
@@ -1706,7 +1745,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                                     "retry": keep_alive * 1000,
                                 }
                 finally:
-                    pubsub.unsubscribe(queue)
+                    if pubsub:
+                        pubsub.unsubscribe(queue)
 
             return EventSourceResponse(
                 event_gen(),
@@ -1737,6 +1777,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                     f"Invalid JSON payload: {exc}",
                     status_code=status.HTTP_400_BAD_REQUEST,
                 )
+            if not stdio:
+                raise RuntimeError("Stdio endpoint not available")
             await stdio.send(payload.decode().rstrip() + "\n")
             return PlainTextResponse("forwarded", status_code=status.HTTP_202_ACCEPTED)
 
@@ -1807,6 +1849,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 return PlainTextResponse(f"Invalid JSON payload: {exc}", status_code=status.HTTP_400_BAD_REQUEST)
 
             # Forward raw newline-delimited JSON to stdio
+            if not stdio:
+                raise RuntimeError("Stdio endpoint not available")
             await stdio.send(body.decode().rstrip() + "\n")
 
             # If it's a request (has an id) -> attempt to correlate response from stdio
@@ -1843,7 +1887,8 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                     # timeout -> accept and return 202
                     return PlainTextResponse("accepted (no response yet)", status_code=status.HTTP_202_ACCEPTED)
                 finally:
-                    pubsub.unsubscribe(queue)
+                    if pubsub:
+                        pubsub.unsubscribe(queue)
 
             # Notification -> return 202
             return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
@@ -1894,12 +1939,23 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         if stdio:
             await stdio.stop()
         # Streamable HTTP cleanup handled by server shutdown
-        await server.shutdown()
+        # Graceful shutdown by setting the shutdown event
+        # Use getattr to safely access should_exit attribute
+        setattr(server, "should_exit", getattr(server, "should_exit", False) or True)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(_shutdown()))
+
+            def shutdown_handler(*args):  # pylint: disable=unused-argument
+                """Handle shutdown signal by creating shutdown task.
+
+                Args:
+                    *args: Signal handler arguments (unused).
+                """
+                asyncio.create_task(_shutdown())
+
+            loop.add_signal_handler(sig, shutdown_handler)
 
     # If we have a streamable manager, start its context so it can accept ASGI /mcp
     if streamable_manager:
@@ -1924,7 +1980,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
 
 
-async def _simple_sse_pump(client: httpx.AsyncClient, url: str, max_retries: int, initial_retry_delay: float) -> None:
+async def _simple_sse_pump(client: "Any", url: str, max_retries: int, initial_retry_delay: float) -> None:
     """Simple SSE pump that just prints messages to stdout.
 
     Used when no stdio command is provided to bridge SSE to stdout directly.
@@ -1949,7 +2005,9 @@ async def _simple_sse_pump(client: httpx.AsyncClient, url: str, max_retries: int
             async with client.stream("GET", url) as response:
                 # Check status code if available (real httpx response)
                 if hasattr(response, "status_code") and response.status_code != 200:
-                    raise httpx.HTTPStatusError(f"SSE endpoint returned {response.status_code}", request=response.request, response=response)
+                    if httpx:
+                        raise httpx.HTTPStatusError(f"SSE endpoint returned {response.status_code}", request=response.request, response=response)
+                    raise Exception(f"SSE endpoint returned {response.status_code}")
 
                 # Reset retry counter on successful connection
                 retry_count = 0
@@ -2016,21 +2074,21 @@ def start_streamable_http_stdio(
     return asyncio.run(_run_stdio_to_streamable_http(cmd, port, log_level, cors, host, stateless, json_response))
 
 
-def start_streamable_http_client(url: str, bearer: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
+def start_streamable_http_client(url: str, bearer_token: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
     """Start streamable HTTP to stdio bridge.
 
     Entry point for starting a streamable HTTP to stdio bridge client.
 
     Args:
         url: The streamable HTTP endpoint URL to connect to.
-        bearer: Optional OAuth2 bearer token for authentication. Defaults to None.
+        bearer_token: Optional OAuth2 bearer token for authentication. Defaults to None.
         timeout: HTTP client timeout in seconds. Defaults to 30.0.
         stdio_command: Optional command to run for local stdio processing.
 
     Returns:
         None: This function does not return a value.
     """
-    return asyncio.run(_run_streamable_http_to_stdio(url, bearer, timeout, stdio_command))
+    return asyncio.run(_run_streamable_http_to_stdio(url, bearer_token, timeout, stdio_command))
 
 
 def start_stdio(
@@ -2064,7 +2122,7 @@ def start_stdio(
     return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors, host, sse_path, message_path, keep_alive))
 
 
-def start_sse(url: str, bearer: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
+def start_sse(url: str, bearer_token: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
     """Start SSE bridge.
 
     Entry point for starting an SSE to stdio bridge client.
@@ -2079,7 +2137,7 @@ def start_sse(url: str, bearer: Optional[str] = None, timeout: float = 30.0, std
 
     Args:
         url: The SSE endpoint URL to connect to.
-        bearer: Optional OAuth2 bearer token for authentication. Defaults to None.
+        bearer_token: Optional OAuth2 bearer token for authentication. Defaults to None.
         timeout: HTTP client timeout in seconds. Defaults to 30.0.
         stdio_command: Optional command to run for local stdio processing.
 
@@ -2089,7 +2147,7 @@ def start_sse(url: str, bearer: Optional[str] = None, timeout: float = 30.0, std
     Examples:
         >>> start_sse("http://example.com/sse", "token123")  # doctest: +SKIP
     """
-    return asyncio.run(_run_sse_to_stdio(url, bearer, timeout, stdio_command))
+    return asyncio.run(_run_sse_to_stdio(url, bearer_token, timeout, stdio_command))
 
 
 def main(argv: Optional[Sequence[str]] | None = None) -> None:

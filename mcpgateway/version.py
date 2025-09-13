@@ -280,7 +280,8 @@ def _sanitize_url(url: Optional[str]) -> Optional[str]:
         else:
             netloc = f"{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
         parts = parts._replace(netloc=netloc)
-    return urlunsplit(parts)
+    result = urlunsplit(parts)
+    return result if isinstance(result, str) else str(result)
 
 
 def _database_version() -> tuple[str, bool]:
@@ -456,14 +457,15 @@ def _system_metrics() -> Dict[str, Any]:
     cpu_count = psutil.cpu_count(logical=True)
 
     # Process metrics
-    proc = psutil.Process()
+    proc: "psutil.Process" = psutil.Process()
     try:
         open_fds = proc.num_fds()
     except Exception:
         open_fds = None
     proc_cpu_pct = proc.cpu_percent(interval=0.1)
-    rss_mb = round(proc.memory_info().rss / 1_048_576, 2)
-    vms_mb = round(proc.memory_info().vms / 1_048_576, 2)
+    memory_info = getattr(proc, "memory_info")()
+    rss_mb = round(memory_info.rss / 1_048_576, 2)
+    vms_mb = round(memory_info.vms / 1_048_576, 2)
     threads = proc.num_threads()
     pid = proc.pid
 
@@ -802,7 +804,7 @@ async def version_endpoint(
     # Redis health check
     redis_ok = False
     redis_version: Optional[str] = None
-    if REDIS_AVAILABLE and settings.cache_type.lower() == "redis" and settings.redis_url:
+    if REDIS_AVAILABLE and aioredis and settings.cache_type.lower() == "redis" and settings.redis_url:
         try:
             client = aioredis.Redis.from_url(settings.redis_url)
 
