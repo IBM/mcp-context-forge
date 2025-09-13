@@ -60,3 +60,16 @@ validate: ## Validate PowerPoint files can be opened
 enhanced-demo: ## Run comprehensive enhanced demo
 	@echo "Running enhanced PowerPoint MCP demo..."
 	@$(PYTHON) enhanced_demo.py
+
+serve-http-only: ## Start only HTTP download server
+	@echo "Starting HTTP download server..."
+	@$(PYTHON) -m pptx_server.http_server
+
+serve-combined: ## Start combined MCP + HTTP server
+	@echo "Starting combined MCP + HTTP server..."
+	@$(PYTHON) -m pptx_server.combined_server
+
+test-download: ## Test HTTP download functionality
+	@echo "Testing HTTP download server..."
+	@curl -s http://localhost:9000/health | head -10 || echo "HTTP server not running"
+	@echo "Start server with: make serve-http-only"

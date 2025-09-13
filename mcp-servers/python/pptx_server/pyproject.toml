@@ -19,6 +19,8 @@ dependencies = [
   "uuid>=1.30",
   "pathvalidate>=3.0.0",
   "aiofiles>=23.0.0",
+  "fastapi>=0.100.0",
+  "uvicorn>=0.22.0",
 ]
 
 [project.optional-dependencies]

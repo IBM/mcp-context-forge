@@ -84,15 +84,21 @@ python -m pptx_server.server
 make dev
 ```
 
-### HTTP Bridge
-Expose the server over HTTP using the MCP Gateway:
+### HTTP Download Server
+Start the HTTP server for downloading presentations:
 ```bash
-# Start HTTP server on localhost:9000
-make serve-http
+# Start HTTP download server
+make serve-http-only
 
-# Test the HTTP endpoint
-make test-http
+# Or start combined MCP + HTTP server
+make serve-combined
+
+# Test downloads
+make test-download
 ```
+
+**Download URLs include filename:**
+`http://localhost:9000/download/{token}/filename.pptx`
 
 ### Integration with Claude Desktop
 Add to your Claude Desktop MCP configuration:

@@ -49,6 +49,7 @@ class PPTXServerConfig(BaseSettings):
     server_port: int = Field(default=9000, env="PPTX_SERVER_PORT")
     server_host: str = Field(default="localhost", env="PPTX_SERVER_HOST")
     server_debug: bool = Field(default=False, env="PPTX_SERVER_DEBUG")
+    enable_http_downloads: bool = Field(default=True, env="PPTX_ENABLE_HTTP_DOWNLOADS")
 
     # Security Settings
     enable_file_uploads: bool = Field(default=True, env="PPTX_ENABLE_FILE_UPLOADS")
@@ -132,12 +133,28 @@ def _generate_download_token(file_path: str, session_id: str) -> str:
     token = str(uuid.uuid4())
     expires = datetime.now() + timedelta(hours=config.download_token_expiry_hours)
 
+    token_info = {
+        "file_path": file_path,
+        "expires": expires.isoformat(),
+        "session_id": session_id,
+        "created": datetime.now().isoformat()
+    }
+
+    # Store in memory
     _download_tokens[token] = {
         "file_path": file_path,
         "expires": expires,
         "session_id": session_id,
         "created": datetime.now()
     }
+
+    # Also store in file for HTTP server access
+    tokens_dir = os.path.join(config.work_dir, "tokens")
+    os.makedirs(tokens_dir, exist_ok=True)
+    token_file = os.path.join(tokens_dir, f"{token}.json")
+
+    with open(token_file, 'w') as f:
+        json.dump(token_info, f, indent=2)
 
     return token
 
@@ -930,6 +947,18 @@ async def list_tools() -> list[Tool]:
                 "properties": {}
             }
         ),
+        Tool(
+            name="get_file_content",
+            description="Get the raw file content for download (base64 encoded)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the presentation file"},
+                    "session_id": {"type": "string", "description": "Session ID for access control"}
+                },
+                "required": ["file_path"]
+            }
+        ),
 
         # Composite Workflow Tools
         Tool(
@@ -1145,6 +1174,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await cleanup_session(**arguments)
         elif name == "get_server_status":
             result = await get_server_status(**arguments)
+        elif name == "get_file_content":
+            result = await get_file_content(**arguments)
         # Composite workflow tools
         elif name == "create_title_slide":
             result = await create_title_slide(**arguments)
@@ -1267,6 +1298,9 @@ async def add_slide(file_path: str, layout_index: int = 0, position: int = -1) -
             # Move slide to desired position (this is a workaround)
             pass  # Note: Moving requires more complex XML manipulation
 
+    # Save presentation after modification
+    _save_presentation(file_path)
+
     return {"message": f"Added slide at position {slide_idx}", "slide_index": slide_idx, "layout_name": slide_layout.name if hasattr(slide_layout, "name") else f"Layout {layout_index}"}
 
 
@@ -1358,6 +1392,9 @@ async def set_slide_title(file_path: str, slide_index: int, title: str) -> Dict[
         raise ValueError("This slide layout does not have a title placeholder")
 
     slide.shapes.title.text = title
+
+    # Save presentation after modification
+    _save_presentation(file_path)
 
     return {"message": f"Set title for slide {slide_index}: {title}"}
 
@@ -2006,6 +2043,58 @@ async def export_slide_as_image(file_path: str, slide_index: int, output_path: s
     }
 
 
+async def get_file_content(file_path: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Get the raw file content for download (base64 encoded)."""
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Validate file is within allowed directories (security check)
+    abs_path = os.path.abspath(file_path)
+    allowed_dirs = [
+        os.path.abspath(config.output_dir),
+        os.path.abspath(config.temp_dir),
+        os.path.abspath(os.path.join(config.work_dir, "sessions")),
+        os.path.abspath("examples/generated"),
+        os.path.abspath("examples/demos"),
+    ]
+
+    is_allowed = any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+    if not is_allowed:
+        raise ValueError("File access denied - not in allowed directory")
+
+    # Validate session access if provided
+    if session_id:
+        # Check if file belongs to this session
+        if f"/sessions/{session_id}/" not in abs_path:
+            raise ValueError("File access denied - not in your session")
+
+    # Read file content
+    try:
+        with open(abs_path, 'rb') as f:
+            file_content = f.read()
+
+        # Encode as base64
+        import base64
+        file_data = base64.b64encode(file_content).decode('utf-8')
+
+        # Get file info
+        filename = os.path.basename(file_path)
+        file_size = len(file_content)
+
+        return {
+            "message": f"Retrieved file content for {filename}",
+            "filename": filename,
+            "file_data": file_data,
+            "file_size": file_size,
+            "content_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "encoding": "base64",
+            "session_id": session_id or "unknown"
+        }
+
+    except Exception as e:
+        raise ValueError(f"Error reading file: {e}")
+
+
 # Security and File Management Functions
 async def create_secure_session(session_name: Optional[str] = None) -> Dict[str, Any]:
     """Create a secure session for file operations with UUID workspace."""
@@ -2124,28 +2213,36 @@ async def create_download_link(file_path: str, session_id: Optional[str] = None)
     allowed_dirs = [
         os.path.abspath(config.output_dir),
         os.path.abspath(config.temp_dir),
+        os.path.abspath(os.path.join(config.work_dir, "sessions")),  # Session directories
         os.path.abspath("examples/generated"),
         os.path.abspath("examples/demos"),
     ]
 
     is_allowed = any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
     if not is_allowed:
-        raise ValueError("File not in downloadable directory")
+        raise ValueError(f"File not in downloadable directory. File: {abs_path}, Allowed: {allowed_dirs}")
 
     # Generate download token
     download_session = session_id or "anonymous"
     token = _generate_download_token(abs_path, download_session)
 
-    # Create download URL (would be served by HTTP server)
-    download_url = f"/download/{token}"
+    # Create download URL with filename in path
+    filename = os.path.basename(file_path)
+    if config.enable_http_downloads:
+        download_url = f"http://{config.server_host}:{config.server_port}/download/{token}/{filename}"
+    else:
+        download_url = f"/download/{token}/{filename}"
 
     return {
-        "message": f"Created download link for {os.path.basename(file_path)}",
+        "message": f"Created download link for {filename}",
         "download_token": token,
         "download_url": download_url,
-        "file_path": abs_path,
         "expires": _download_tokens[token]["expires"].isoformat(),
-        "session_id": download_session
+        "session_id": download_session,
+        "instructions": {
+            "method_1_http": f"Start HTTP server (make serve-http-only) then access: {download_url}",
+            "method_2_direct": f"Use get_file_content tool with file_path: {abs_path}"
+        }
     }
 
 
