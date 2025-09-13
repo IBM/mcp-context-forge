@@ -2919,7 +2919,7 @@ class TestAdminAuthenticationAndLogin:
         mock_request.app = MagicMock()
         mock_request.app.state = MagicMock()
         mock_request.app.state.templates = MagicMock()
-        
+
         # Mock the TemplateResponse
         mock_response = MagicMock()
         mock_response.status_code = 200

@@ -259,10 +259,10 @@ class TestExceptionHandlers:
         """Test readiness check with database error."""
         import asyncio
         from sqlalchemy.exc import OperationalError
-        
+
         async def mock_to_thread(*args, **kwargs):
             raise OperationalError("Connection failed", {}, Exception("DB down"))
-        
+
         with patch("asyncio.to_thread", side_effect=mock_to_thread):
             response = test_client.get("/ready")
             assert response.status_code == 503

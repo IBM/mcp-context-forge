@@ -49,7 +49,7 @@ with patch('mcpgateway.middleware.rbac.require_permission', mock_require_permiss
         )
         from mcpgateway.services.team_invitation_service import TeamInvitationService
         from mcpgateway.services.team_management_service import TeamManagementService
-        
+
         # Force reload teams module to apply mocked decorators
         import importlib
         importlib.reload(teams)
@@ -291,7 +291,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             result = await teams.update_team_member(
-                team_id, user_email, request, 
+                team_id, user_email, request,
                 current_user=mock_current_user, db=mock_db
             )
 
@@ -311,7 +311,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             result = await teams.remove_team_member(
-                team_id, user_email, 
+                team_id, user_email,
                 current_user=mock_current_user, db=mock_db
             )
 

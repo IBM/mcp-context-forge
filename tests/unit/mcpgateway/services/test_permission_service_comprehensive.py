@@ -41,13 +41,13 @@ class TestPermissionServiceCore:
         """Test permission check with audit logging enabled."""
         user_email = "user@example.com"
         permission = "tools.create"
-        
+
         # Mock dependencies
         with patch.object(permission_service, '_is_user_admin', return_value=False), \
              patch.object(permission_service, 'get_user_permissions', return_value={permission}), \
              patch.object(permission_service, '_log_permission_check') as mock_log, \
              patch.object(permission_service, '_get_roles_for_audit', return_value={"roles": []}):
-            
+
             result = await permission_service.check_permission(
                 user_email=user_email,
                 permission=permission,
@@ -57,7 +57,7 @@ class TestPermissionServiceCore:
                 ip_address="192.168.1.1",
                 user_agent="Mozilla/5.0"
             )
-            
+
             assert result == True
             # Verify audit logging was called
             mock_log.assert_called_once()
@@ -82,7 +82,7 @@ class TestPermissionServiceCore:
         """Test permission check with wildcard permissions."""
         with patch.object(permission_service, '_is_user_admin', return_value=False), \
              patch.object(permission_service, 'get_user_permissions', return_value={Permissions.ALL_PERMISSIONS}):
-            
+
             result = await permission_service.check_permission("user@example.com", "any.permission")
             assert result == True
 
@@ -92,7 +92,7 @@ class TestPermissionServiceCore:
         with patch.object(permission_service, '_is_user_admin', return_value=False), \
              patch.object(permission_service, 'get_user_permissions', return_value=set()), \
              patch.object(permission_service, '_check_team_fallback_permissions') as mock_fallback:
-            
+
             result = await permission_service.check_permission("user@example.com", "tools.create")
             assert result == False
             # Fallback should not be called for non-team permissions
@@ -109,15 +109,15 @@ class TestPermissionCaching:
         team_id = "team-123"
         cache_key = f"{user_email}:{team_id}"
         cached_permissions = {"tools.read", "resources.write"}
-        
+
         # Set up cache
         permission_service._permission_cache[cache_key] = cached_permissions
         permission_service._cache_timestamps[cache_key] = utc_now()
-        
+
         # Mock _is_cache_valid to return True
         with patch.object(permission_service, '_is_cache_valid', return_value=True):
             result = await permission_service.get_user_permissions(user_email, team_id)
-            
+
             assert result == cached_permissions
             # Should not call database
             permission_service.db.execute.assert_not_called()
@@ -127,23 +127,23 @@ class TestPermissionCaching:
         """Test get_user_permissions when cache misses."""
         user_email = "nocache@example.com"
         team_id = "team-123"
-        
+
         # Mock role with permissions
         mock_role = MagicMock()
         mock_role.get_effective_permissions.return_value = {"tools.read", "resources.read"}
-        
+
         mock_user_role = MagicMock()
         mock_user_role.role = mock_role
-        
+
         # Mock database query
         with patch.object(permission_service, '_is_cache_valid', return_value=False), \
              patch.object(permission_service, '_get_user_roles', return_value=[mock_user_role]):
-            
+
             result = await permission_service.get_user_permissions(user_email, team_id)
-            
+
             assert "tools.read" in result
             assert "resources.read" in result
-            
+
             # Check cache was populated
             cache_key = f"{user_email}:{team_id}"
             assert cache_key in permission_service._permission_cache
@@ -164,7 +164,7 @@ class TestPermissionCaching:
         permission_service._permission_cache[cache_key] = {"permission"}
         # Set timestamp to be older than TTL
         permission_service._cache_timestamps[cache_key] = utc_now() - timedelta(seconds=permission_service.cache_ttl + 1)
-        
+
         assert permission_service._is_cache_valid(cache_key) == False
 
     def test_is_cache_valid_fresh(self, permission_service):
@@ -172,7 +172,7 @@ class TestPermissionCaching:
         cache_key = "fresh"
         permission_service._permission_cache[cache_key] = {"permission"}
         permission_service._cache_timestamps[cache_key] = utc_now()
-        
+
         assert permission_service._is_cache_valid(cache_key) == True
 
     def test_clear_user_cache(self, permission_service):
@@ -188,16 +188,16 @@ class TestPermissionCaching:
             "alice@example.com:team1": utc_now(),
             "bob@example.com:global": utc_now(),
         }
-        
+
         # Clear Alice's cache
         permission_service.clear_user_cache("alice@example.com")
-        
+
         # Alice's entries should be removed
         assert "alice@example.com:global" not in permission_service._permission_cache
         assert "alice@example.com:team1" not in permission_service._permission_cache
         assert "alice@example.com:global" not in permission_service._cache_timestamps
         assert "alice@example.com:team1" not in permission_service._cache_timestamps
-        
+
         # Bob's entries should remain
         assert "bob@example.com:global" in permission_service._permission_cache
         assert "bob@example.com:global" in permission_service._cache_timestamps
@@ -213,10 +213,10 @@ class TestPermissionCaching:
             "user1:global": utc_now(),
             "user2:team": utc_now(),
         }
-        
+
         # Clear all cache
         permission_service.clear_cache()
-        
+
         assert permission_service._permission_cache == {}
         assert permission_service._cache_timestamps == {}
 
@@ -228,21 +228,21 @@ class TestUserRoles:
     async def test_get_user_roles_with_filters(self, permission_service):
         """Test get_user_roles with various filters."""
         user_email = "user@example.com"
-        
+
         # Mock database result
         mock_result = MagicMock()
         mock_roles = [MagicMock(spec=UserRole), MagicMock(spec=UserRole)]
         mock_result.scalars.return_value.all.return_value = mock_roles
         permission_service.db.execute.return_value = mock_result
-        
+
         # Test with scope filter
         result = await permission_service.get_user_roles(user_email, scope="global")
         assert result == mock_roles
-        
+
         # Test with team_id filter
         result = await permission_service.get_user_roles(user_email, team_id="team-123")
         assert result == mock_roles
-        
+
         # Test with include_expired
         result = await permission_service.get_user_roles(user_email, include_expired=True)
         assert result == mock_roles
@@ -252,16 +252,16 @@ class TestUserRoles:
         """Test internal _get_user_roles method."""
         user_email = "user@example.com"
         team_id = "team-123"
-        
+
         # Mock database result
         mock_result = MagicMock()
         mock_roles = [MagicMock(spec=UserRole)]
         mock_result.scalars.return_value.all.return_value = mock_roles
         permission_service.db.execute.return_value = mock_result
-        
+
         result = await permission_service._get_user_roles(user_email, team_id)
         assert result == mock_roles
-        
+
         # Verify query was built correctly (team_id should be included)
         permission_service.db.execute.assert_called_once()
 
@@ -309,10 +309,10 @@ class TestAdminPermissions:
     async def test_check_admin_permission_with_admin_perms(self, permission_service):
         """Test check_admin_permission for user with admin permissions."""
         admin_perms = {Permissions.ADMIN_SYSTEM_CONFIG, "other.permission"}
-        
+
         with patch.object(permission_service, '_is_user_admin', return_value=False), \
              patch.object(permission_service, 'get_user_permissions', return_value=admin_perms):
-            
+
             result = await permission_service.check_admin_permission("user@example.com")
             assert result == True
 
@@ -320,10 +320,10 @@ class TestAdminPermissions:
     async def test_check_admin_permission_no_admin_perms(self, permission_service):
         """Test check_admin_permission for regular user."""
         regular_perms = {"tools.read", "resources.write"}
-        
+
         with patch.object(permission_service, '_is_user_admin', return_value=False), \
              patch.object(permission_service, 'get_user_permissions', return_value=regular_perms):
-            
+
             result = await permission_service.check_admin_permission("user@example.com")
             assert result == False
 
@@ -346,11 +346,11 @@ class TestAuditLogging:
             ip_address="192.168.1.1",
             user_agent="TestAgent"
         )
-        
+
         # Verify audit log was added to database
         permission_service.db.add.assert_called_once()
         permission_service.db.commit.assert_called_once()
-        
+
         # Check the audit log object
         audit_log = permission_service.db.add.call_args[0][0]
         assert isinstance(audit_log, PermissionAuditLog)
@@ -366,15 +366,15 @@ class TestAuditLogging:
         mock_role.id = "role-123"
         mock_role.name = "TestRole"
         mock_role.permissions = ["tools.read"]
-        
+
         mock_user_role = MagicMock()
         mock_user_role.role_id = "role-123"
         mock_user_role.role = mock_role
         mock_user_role.scope = "global"
-        
+
         with patch.object(permission_service, '_get_user_roles', return_value=[mock_user_role]):
             result = await permission_service._get_roles_for_audit("user@example.com", None)
-            
+
             assert "roles" in result
             assert len(result["roles"]) == 1
             assert result["roles"][0]["id"] == "role-123"
@@ -414,7 +414,7 @@ class TestTeamFallbackPermissions:
         """Test fallback with unknown team role."""
         with patch.object(permission_service, '_is_team_member', return_value=True), \
              patch.object(permission_service, '_get_user_team_role', return_value="unknown"):
-            
+
             result = await permission_service._check_team_fallback_permissions(
                 "user@example.com", "teams.read", "team-123"
             )
@@ -431,7 +431,7 @@ class TestTeamMembership:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_member
         permission_service.db.execute.return_value = mock_result
-        
+
         result = await permission_service._is_team_member("user@example.com", "team-123")
         assert result == True
 
@@ -441,7 +441,7 @@ class TestTeamMembership:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         permission_service.db.execute.return_value = mock_result
-        
+
         result = await permission_service._is_team_member("user@example.com", "team-123")
         assert result == False
 
@@ -453,7 +453,7 @@ class TestTeamMembership:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_member
         permission_service.db.execute.return_value = mock_result
-        
+
         result = await permission_service._get_user_team_role("user@example.com", "team-123")
         assert result == "owner"
 
@@ -463,7 +463,7 @@ class TestTeamMembership:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         permission_service.db.execute.return_value = mock_result
-        
+
         result = await permission_service._get_user_team_role("user@example.com", "team-123")
         assert result is None
 
@@ -477,11 +477,11 @@ class TestNoAuditMode:
         with patch.object(permission_service_no_audit, '_is_user_admin', return_value=False), \
              patch.object(permission_service_no_audit, 'get_user_permissions', return_value={"tools.read"}), \
              patch.object(permission_service_no_audit, '_log_permission_check') as mock_log:
-            
+
             result = await permission_service_no_audit.check_permission(
                 "user@example.com", "tools.read"
             )
-            
+
             assert result == True
             # Audit logging should not be called
             mock_log.assert_not_called()
@@ -495,7 +495,7 @@ class TestEdgeCases:
         """Test handling of empty user permissions."""
         with patch.object(permission_service, '_is_user_admin', return_value=False), \
              patch.object(permission_service, 'get_user_permissions', return_value=set()):
-            
+
             result = await permission_service.check_permission("user@example.com", "tools.read")
             assert result == False
 
@@ -505,21 +505,21 @@ class TestEdgeCases:
         # Mock multiple roles with different permissions
         mock_role1 = MagicMock()
         mock_role1.get_effective_permissions.return_value = {"tools.read", "tools.write"}
-        
+
         mock_role2 = MagicMock()
         mock_role2.get_effective_permissions.return_value = {"resources.read", "tools.write"}
-        
+
         mock_user_role1 = MagicMock()
         mock_user_role1.role = mock_role1
-        
+
         mock_user_role2 = MagicMock()
         mock_user_role2.role = mock_role2
-        
+
         with patch.object(permission_service, '_is_cache_valid', return_value=False), \
              patch.object(permission_service, '_get_user_roles', return_value=[mock_user_role1, mock_user_role2]):
-            
+
             result = await permission_service.get_user_permissions("user@example.com")
-            
+
             # Should have all unique permissions from both roles
             assert "tools.read" in result
             assert "tools.write" in result
@@ -533,7 +533,7 @@ class TestEdgeCases:
         cache_key = f"user@example.com:global"
         assert ":" in cache_key
         assert cache_key.endswith("global")
-        
+
         # Team context
         team_cache_key = f"user@example.com:team-123"
         assert ":" in team_cache_key

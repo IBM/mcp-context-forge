@@ -13,29 +13,26 @@ The MCP Gateway required a robust plugin framework to support AI safety middlewa
 
 We implemented a comprehensive plugin framework with the following key architectural decisions:
 
-### 1. Plugin Architecture Pattern: **Hybrid Self-Contained + External Service Support**
+### 1. Plugin Architecture Pattern: **Hybrid (In‑Process + External via MCP)**
 
-**Decision:** Support both self-contained plugins and external service integration within a unified framework.
+**Decision:** Support both in‑process plugins and external plugins that communicate over MCP (Model Context Protocol) using STDIO or Streamable HTTP, all implementing the same interface.
 
 ```python
-class Plugin:
-    """Base plugin for self-contained, in-process plugins"""
-    async def prompt_pre_fetch(self, payload, context) -> PluginResult:
-        # In-process business logic
-        pass
+from mcpgateway.plugins.framework import Plugin
 
-class ExternalServicePlugin(Plugin):
-    """Extension for plugins that integrate with external microservices"""
-    async def call_external_service(self, payload) -> Any:
-        # HTTP calls to AI safety services, etc.
-        pass
+class MyInProcessPlugin(Plugin):
+    async def prompt_pre_fetch(self, payload, context):
+        ...  # in‑process logic
+
+# External plugins are instantiated via the framework's ExternalPlugin client and
+# communicate over MCP (STDIO or STREAMABLEHTTP). No HTTP wiring in plugin classes.
 ```
 
 **Rationale:**
-- **Self-contained plugins** provide high performance for simple transformations (regex, basic validation)
-- **External service integration** enables sophisticated AI middleware (LlamaGuard, OpenAI Moderation)
-- **Unified interface** simplifies plugin development and management
-- **Operational flexibility** allows mixing approaches based on requirements
+- **Self‑contained plugins** deliver sub‑ms latency for simple transformations
+- **External plugins over MCP** enable advanced AI middleware with clear isolation
+- **Unified interface** keeps development consistent across deployment models
+- **Operational flexibility** allows mixing approaches per use case
 
 ### 2. Hook System: **Comprehensive Pre/Post Processing Points**
 
@@ -79,11 +76,11 @@ class PluginExecutor:
 
 **Rationale:**
 - **Sequential execution** provides predictable behavior and easier debugging
-- **Priority-based ordering** ensures security plugins run before transformers
-- **Conditional execution** enables fine-grained plugin targeting by context
-- **Multi-mode support** (enforce/permissive/disabled) enables flexible deployment
+- **Priority‑based ordering** ensures security plugins run before transformers
+- **Conditional execution** enables fine‑grained targeting by context (servers, tenants, tools, prompts, resources)
+- **Multi‑mode support** (`enforce`, `enforce_ignore_error`, `permissive`, `disabled`) enables flexible deployment
 
-### 4. Configuration Strategy: **File-Based with Database Extension Path**
+### 4. Configuration Strategy: **File‑Based with Jinja + Validation**
 
 **Decision:** Primary file-based configuration with structured validation and future database support:
 
@@ -104,33 +101,27 @@ plugins:
 ```
 
 **Rationale:**
-- **File-based configuration** supports GitOps workflows and version control
+- **File‑based configuration** supports GitOps and version control
 - **Structured validation** with Pydantic ensures configuration correctness
 - **Hierarchical conditions** enable precise plugin targeting
-- **Plugin-specific config** sections support complex plugin parameters
+- **Plugin‑specific config** sections support complex parameters
+- Jinja rendering allows environment‑driven configs; loader falls back gracefully when file is absent in tests
 
-### 5. Security & Isolation Model: **Process Isolation with Resource Limits**
+### 5. Security & Isolation Model: **Timeouts, Size Limits, Error Isolation**
 
-**Decision:** In-process execution with comprehensive timeout and resource protection:
+**Decision:** Execute plugins with per‑hook timeouts and payload size checks; isolate errors and surface them per settings.
 
-```python
-class PluginExecutor:
-    async def _execute_with_timeout(self, plugin, ...):
-        return await asyncio.wait_for(
-            plugin_execution,
-            timeout=self.timeout  # Default 30s
-        )
-
-    def _validate_payload_size(self, payload):
-        if payload_size > MAX_PAYLOAD_SIZE:  # 1MB limit
-            raise PayloadSizeError(...)
-```
+- Per‑plugin call timeout (default 30s; configured by `plugin_settings.plugin_timeout`)
+- Payload size guardrails (~1MB for prompt args and rendered results)
+- Error isolation with configurable behavior:
+  - Global: `plugin_settings.fail_on_plugin_error`
+  - Per‑plugin mode: `enforce`, `enforce_ignore_error`, `permissive`, `disabled`
 
 **Rationale:**
 - **Timeout protection** prevents plugin hangs from affecting gateway
-- **Payload size limits** prevent memory exhaustion attacks
+- **Payload size limits** prevent resource exhaustion
 - **Error isolation** ensures plugin failures don't crash the gateway
-- **Audit logging** tracks all plugin executions and violations
+- **Audit logging** tracks plugin executions and violations
 
 ### 6. Context Management: **Request-Scoped with Automatic Cleanup**
 
@@ -181,11 +172,11 @@ mcpgateway/plugins/framework/
    - `DenyListPlugin` - Keyword blocking with violation reporting
    - `ResourceFilterPlugin` - Content size and protocol validation
 
-2. **External Service Support**
-   - MCP transport integration (STDIO, SSE, StreamableHTTP)
-   - Authentication configuration (Bearer, API Key, Basic Auth)
-   - Timeout and retry logic
-   - Health check endpoints
+2. **External Plugins via MCP**
+   - MCP transport integration (STDIO, Streamable HTTP)
+   - ExternalPlugin client handles session init and tool calls
+   - Remote config sync (`get_plugin_config`) and local override merge
+   - Per‑call timeouts and structured error propagation
 
 ### Plugin Lifecycle
 
@@ -205,9 +196,9 @@ sequenceDiagram
 
     alt Self-Contained Plugin
         Plugin->>Plugin: process_in_memory(payload)
-    else External Service Plugin
-        Plugin->>Service: HTTP POST /analyze
-        Service-->>Plugin: analysis_result
+    else External Plugin (MCP)
+        Plugin->>Service: MCP tool call (hook)
+        Service-->>Plugin: result payload + optional context
     end
 
     Plugin-->>PM: PluginResult(continue_processing, modified_payload)
@@ -226,7 +217,6 @@ sequenceDiagram
 - **External AI Services:** Framework ready for LlamaGuard, OpenAI Moderation integration
 
 ### 2. **Operational Excellence**
-- **Hot Configuration:** Plugin configurations reloaded without restarts
 - **Graceful Degradation:** Permissive mode allows monitoring without blocking
 - **Performance Protection:** Timeout and size limits prevent resource exhaustion
 - **Memory Management:** Automatic context cleanup prevents memory leaks
@@ -252,11 +242,10 @@ sequenceDiagram
 - **Federation Hooks:** `federation_pre_sync`/`federation_post_sync` for peer validation
 - **Stream Processing:** Real-time data transformation hooks
 
-### External Service Integrations Planned
-- **LlamaGuard Integration:** Content safety classification
-- **OpenAI Moderation API:** Commercial content filtering
-- **HashiCorp Vault:** Secret management for plugin configurations
-- **Open Policy Agent (OPA):** Policy-as-code enforcement engine
+### External Service Integrations
+- External plugins communicate via MCP (STDIO/Streamable HTTP)
+- Example: OPA policy engine exposed as an MCP server
+- Other integrations: LlamaGuard, OpenAI Moderation, custom safety services
 
 ## Security Considerations
 

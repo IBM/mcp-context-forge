@@ -130,12 +130,12 @@ class TestArgon2PasswordService:
     def test_hash_password_hashing_error(self):
         """Test handling of HashingError from argon2."""
         service = Argon2PasswordService()
-        
+
         # Mock the entire hasher object
         mock_hasher = MagicMock()
         mock_hasher.hash.side_effect = HashingError("Mock error")
         service.hasher = mock_hasher
-        
+
         with pytest.raises(HashingError, match="Password hashing failed: Mock error"):
             service.hash_password("test_password")
 
@@ -184,45 +184,45 @@ class TestArgon2PasswordService:
     def test_verify_password_invalid_hash(self):
         """Test verification with invalid hash format."""
         service = Argon2PasswordService()
-        
+
         # Mock the hasher to raise InvalidHash
         mock_hasher = MagicMock()
         mock_hasher.verify.side_effect = InvalidHash("Mock invalid hash")
         service.hasher = mock_hasher
-        
+
         assert service.verify_password("password", "invalid_hash") is False
 
     def test_verify_password_value_error(self):
         """Test verification with ValueError from argon2."""
         service = Argon2PasswordService()
-        
+
         # Mock the hasher to raise ValueError
         mock_hasher = MagicMock()
         mock_hasher.verify.side_effect = ValueError("Mock value error")
         service.hasher = mock_hasher
-        
+
         assert service.verify_password("password", "$argon2id$fake") is False
 
     def test_verify_password_unexpected_exception(self):
         """Test verification with unexpected exception."""
         service = Argon2PasswordService()
-        
+
         # Mock the hasher to raise unexpected exception
         mock_hasher = MagicMock()
         mock_hasher.verify.side_effect = Exception("Unexpected error")
         service.hasher = mock_hasher
-        
+
         assert service.verify_password("password", "$argon2id$fake") is False
 
     def test_verify_password_mismatch(self):
         """Test verification with VerifyMismatchError."""
         service = Argon2PasswordService()
-        
+
         # Mock the hasher to raise VerifyMismatchError
         mock_hasher = MagicMock()
         mock_hasher.verify.side_effect = VerifyMismatchError()
         service.hasher = mock_hasher
-        
+
         assert service.verify_password("wrong", "$argon2id$fake") is False
 
     def test_verify_password_unicode(self):
@@ -265,34 +265,34 @@ class TestArgon2PasswordService:
     def test_needs_rehash_invalid_hash(self):
         """Test needs_rehash with invalid hash format."""
         service = Argon2PasswordService()
-        
+
         # Mock the hasher to raise InvalidHash
         mock_hasher = MagicMock()
         mock_hasher.check_needs_rehash.side_effect = InvalidHash("Mock invalid")
         service.hasher = mock_hasher
-        
+
         assert service.needs_rehash("invalid_hash") is True
 
     def test_needs_rehash_value_error(self):
         """Test needs_rehash with ValueError."""
         service = Argon2PasswordService()
-        
+
         # Mock the hasher to raise ValueError
         mock_hasher = MagicMock()
         mock_hasher.check_needs_rehash.side_effect = ValueError("Mock error")
         service.hasher = mock_hasher
-        
+
         assert service.needs_rehash("$argon2id$fake") is True
 
     def test_needs_rehash_unexpected_exception(self):
         """Test needs_rehash with unexpected exception."""
         service = Argon2PasswordService()
-        
+
         # Mock the hasher to raise unexpected exception
         mock_hasher = MagicMock()
         mock_hasher.check_needs_rehash.side_effect = Exception("Unexpected")
         service.hasher = mock_hasher
-        
+
         assert service.needs_rehash("$argon2id$fake") is True
 
     def test_get_hash_info_success(self):
@@ -573,35 +573,35 @@ class TestLoggingIntegration:
     def test_hash_password_error_logging(self, mock_logger):
         """Test logging on password hashing error."""
         service = Argon2PasswordService()
-        
+
         # Clear any previous calls from init
         mock_logger.reset_mock()
-        
+
         # Mock the hasher to raise HashingError
         mock_hasher = MagicMock()
         mock_hasher.hash.side_effect = HashingError("Mock error")
         service.hasher = mock_hasher
-        
+
         with pytest.raises(HashingError):
             service.hash_password("test")
-        
+
         mock_logger.error.assert_called_with("Failed to hash password: Mock error")
 
     @patch("mcpgateway.services.argon2_service.logger")
     def test_verify_password_success_logging(self, mock_logger):
         """Test logging on successful verification."""
         service = Argon2PasswordService()
-        
+
         # Clear any previous calls from init
         mock_logger.reset_mock()
-        
+
         # Mock the hasher to succeed
         mock_hasher = MagicMock()
         mock_hasher.verify.return_value = None  # verify returns None on success
         service.hasher = mock_hasher
-        
+
         result = service.verify_password("test", "$argon2id$fake")
-        
+
         assert result is True
         mock_logger.debug.assert_called_with("Password verification successful")
 
@@ -609,17 +609,17 @@ class TestLoggingIntegration:
     def test_verify_password_mismatch_logging(self, mock_logger):
         """Test logging on password mismatch."""
         service = Argon2PasswordService()
-        
+
         # Clear any previous calls from init
         mock_logger.reset_mock()
-        
+
         # Mock the hasher to raise VerifyMismatchError
         mock_hasher = MagicMock()
         mock_hasher.verify.side_effect = VerifyMismatchError()
         service.hasher = mock_hasher
-        
+
         result = service.verify_password("wrong", "$argon2id$fake")
-        
+
         assert result is False
         mock_logger.debug.assert_called_with("Password verification failed - password mismatch")
 
@@ -627,17 +627,17 @@ class TestLoggingIntegration:
     def test_verify_password_invalid_hash_logging(self, mock_logger):
         """Test logging on invalid hash format."""
         service = Argon2PasswordService()
-        
+
         # Clear any previous calls from init
         mock_logger.reset_mock()
-        
+
         # Mock the hasher to raise InvalidHash
         mock_hasher = MagicMock()
         mock_hasher.verify.side_effect = InvalidHash("Bad hash")
         service.hasher = mock_hasher
-        
+
         result = service.verify_password("test", "invalid")
-        
+
         assert result is False
         mock_logger.warning.assert_called_with("Invalid hash format during verification: Bad hash")
 
@@ -645,17 +645,17 @@ class TestLoggingIntegration:
     def test_verify_password_unexpected_error_logging(self, mock_logger):
         """Test logging on unexpected error."""
         service = Argon2PasswordService()
-        
+
         # Clear any previous calls from init
         mock_logger.reset_mock()
-        
+
         # Mock the hasher to raise unexpected exception
         mock_hasher = MagicMock()
         mock_hasher.verify.side_effect = Exception("Unexpected")
         service.hasher = mock_hasher
-        
+
         result = service.verify_password("test", "$argon2id$fake")
-        
+
         assert result is False
         mock_logger.error.assert_called_with("Unexpected error during password verification: Unexpected")
 
@@ -663,17 +663,17 @@ class TestLoggingIntegration:
     def test_needs_rehash_invalid_hash_logging(self, mock_logger):
         """Test logging when checking rehash with invalid hash."""
         service = Argon2PasswordService()
-        
+
         # Clear any previous calls from init
         mock_logger.reset_mock()
-        
+
         # Mock the hasher to raise InvalidHash
         mock_hasher = MagicMock()
         mock_hasher.check_needs_rehash.side_effect = InvalidHash("Bad hash")
         service.hasher = mock_hasher
-        
+
         result = service.needs_rehash("invalid")
-        
+
         assert result is True
         mock_logger.warning.assert_called_with("Invalid hash format when checking rehash need: Bad hash")
 
@@ -681,17 +681,17 @@ class TestLoggingIntegration:
     def test_needs_rehash_unexpected_error_logging(self, mock_logger):
         """Test logging on unexpected error in needs_rehash."""
         service = Argon2PasswordService()
-        
+
         # Clear any previous calls from init
         mock_logger.reset_mock()
-        
+
         # Mock the hasher to raise unexpected exception
         mock_hasher = MagicMock()
         mock_hasher.check_needs_rehash.side_effect = Exception("Unexpected")
         service.hasher = mock_hasher
-        
+
         result = service.needs_rehash("$argon2id$fake")
-        
+
         assert result is True
         mock_logger.error.assert_called_with("Unexpected error checking rehash need: Unexpected")
 

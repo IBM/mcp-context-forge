@@ -92,11 +92,11 @@ class TestBootstrapAdminUser:
     async def test_bootstrap_admin_user_disabled(self, mock_settings):
         """Test when email auth is disabled."""
         mock_settings.email_auth_enabled = False
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                 await bootstrap_admin_user()
-                
+
                 mock_logger.info.assert_called_with(
                     "Email authentication disabled - skipping admin user bootstrap"
                 )
@@ -107,7 +107,7 @@ class TestBootstrapAdminUser:
     ):
         """Test when admin user already exists."""
         mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch(
@@ -116,7 +116,7 @@ class TestBootstrapAdminUser:
                 ):
                     with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                         await bootstrap_admin_user()
-                        
+
                         mock_email_auth_service.get_user_by_email.assert_called_once_with(
                             mock_settings.platform_admin_email
                         )
@@ -132,7 +132,7 @@ class TestBootstrapAdminUser:
         """Test successful admin user creation."""
         mock_email_auth_service.get_user_by_email.return_value = None
         mock_email_auth_service.create_user.return_value = mock_admin_user
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch(
@@ -143,7 +143,7 @@ class TestBootstrapAdminUser:
                         mock_utc_now.return_value = "2024-01-01T00:00:00Z"
                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                             await bootstrap_admin_user()
-                            
+
                             mock_email_auth_service.create_user.assert_called_once_with(
                                 email=mock_settings.platform_admin_email,
                                 password=mock_settings.platform_admin_password,
@@ -164,7 +164,7 @@ class TestBootstrapAdminUser:
         mock_settings.auto_create_personal_teams = True
         mock_email_auth_service.get_user_by_email.return_value = None
         mock_email_auth_service.create_user.return_value = mock_admin_user
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch(
@@ -174,7 +174,7 @@ class TestBootstrapAdminUser:
                     with patch('mcpgateway.db.utc_now', return_value="2024-01-01T00:00:00Z"):
                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                             await bootstrap_admin_user()
-                            
+
                             mock_logger.info.assert_any_call(
                                 "Personal team automatically created for admin user"
                             )
@@ -185,7 +185,7 @@ class TestBootstrapAdminUser:
     ):
         """Test exception handling during admin user creation."""
         mock_email_auth_service.get_user_by_email.side_effect = Exception("Database error")
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch(
@@ -194,7 +194,7 @@ class TestBootstrapAdminUser:
                 ):
                     with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                         await bootstrap_admin_user()
-                        
+
                         mock_logger.error.assert_called_with(
                             "Failed to bootstrap admin user: Database error"
                         )
@@ -207,11 +207,11 @@ class TestBootstrapDefaultRoles:
     async def test_bootstrap_roles_disabled(self, mock_settings):
         """Test when email auth is disabled."""
         mock_settings.email_auth_enabled = False
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                 await bootstrap_default_roles()
-                
+
                 mock_logger.info.assert_called_with(
                     "Email authentication disabled - skipping default roles bootstrap"
                 )
@@ -222,12 +222,12 @@ class TestBootstrapDefaultRoles:
     ):
         """Test when admin user doesn't exist."""
         mock_email_auth_service.get_user_by_email.return_value = None
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.db.get_db') as mock_get_db:
                 mock_db = Mock()
                 mock_get_db.return_value = iter([mock_db])
-                
+
                 with patch(
                     'mcpgateway.services.email_auth_service.EmailAuthService',
                     return_value=mock_email_auth_service
@@ -238,7 +238,7 @@ class TestBootstrapDefaultRoles:
                     ):
                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                             await bootstrap_default_roles()
-                            
+
                             mock_logger.info.assert_called_with(
                                 "Admin user not found - skipping role assignment"
                             )
@@ -250,20 +250,20 @@ class TestBootstrapDefaultRoles:
         """Test successful role creation and assignment."""
         mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
         mock_role_service.get_role_by_name.return_value = None  # No existing roles
-        
+
         platform_admin_role = Mock()
         platform_admin_role.id = "role-admin"
         platform_admin_role.name = "platform_admin"
-        
+
         mock_role_service.create_role.return_value = platform_admin_role
         mock_role_service.get_user_role_assignment.return_value = None
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.db.get_db') as mock_get_db:
                 mock_db = Mock()
                 mock_db.close = Mock()
                 mock_get_db.return_value = iter([mock_db])
-                
+
                 with patch(
                     'mcpgateway.services.email_auth_service.EmailAuthService',
                     return_value=mock_email_auth_service
@@ -274,10 +274,10 @@ class TestBootstrapDefaultRoles:
                     ):
                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                             await bootstrap_default_roles()
-                            
+
                             # Check that roles were created
                             assert mock_role_service.create_role.call_count >= 4
-                            
+
                             # Check that admin role was assigned
                             mock_role_service.assign_role_to_user.assert_called_once_with(
                                 user_email=mock_admin_user.email,
@@ -286,7 +286,7 @@ class TestBootstrapDefaultRoles:
                                 scope_id=None,
                                 granted_by="system"
                             )
-                            
+
                             mock_logger.info.assert_any_call(
                                 f"Assigned platform_admin role to {mock_admin_user.email}"
                             )
@@ -297,22 +297,22 @@ class TestBootstrapDefaultRoles:
     ):
         """Test when roles already exist."""
         mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
-        
+
         existing_role = Mock()
         existing_role.id = "role-admin"
         existing_role.name = "platform_admin"
         mock_role_service.get_role_by_name.return_value = existing_role
-        
+
         existing_assignment = Mock()
         existing_assignment.is_active = True
         mock_role_service.get_user_role_assignment.return_value = existing_assignment
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.db.get_db') as mock_get_db:
                 mock_db = Mock()
                 mock_db.close = Mock()
                 mock_get_db.return_value = iter([mock_db])
-                
+
                 with patch(
                     'mcpgateway.services.email_auth_service.EmailAuthService',
                     return_value=mock_email_auth_service
@@ -323,7 +323,7 @@ class TestBootstrapDefaultRoles:
                     ):
                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                             await bootstrap_default_roles()
-                            
+
                             mock_role_service.create_role.assert_not_called()
                             mock_role_service.assign_role_to_user.assert_not_called()
                             mock_logger.info.assert_any_call(
@@ -338,13 +338,13 @@ class TestBootstrapDefaultRoles:
         mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
         mock_role_service.get_role_by_name.return_value = None
         mock_role_service.create_role.side_effect = Exception("Role creation failed")
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.db.get_db') as mock_get_db:
                 mock_db = Mock()
                 mock_db.close = Mock()
                 mock_get_db.return_value = iter([mock_db])
-                
+
                 with patch(
                     'mcpgateway.services.email_auth_service.EmailAuthService',
                     return_value=mock_email_auth_service
@@ -355,7 +355,7 @@ class TestBootstrapDefaultRoles:
                     ):
                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                             await bootstrap_default_roles()
-                            
+
                             mock_logger.error.assert_any_call(
                                 "Failed to create role platform_admin: Role creation failed"
                             )
@@ -370,11 +370,11 @@ class TestNormalizeTeamVisibility:
         mock_query.filter.return_value = mock_query
         mock_query.all.return_value = []
         mock_db_session.query.return_value = mock_query
-        
+
         with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                 result = normalize_team_visibility()
-                
+
                 assert result == 0
                 mock_db_session.commit.assert_not_called()
 
@@ -383,20 +383,20 @@ class TestNormalizeTeamVisibility:
         mock_team1 = Mock()
         mock_team1.id = "team-1"
         mock_team1.visibility = "team"  # Invalid
-        
+
         mock_team2 = Mock()
         mock_team2.id = "team-2"
         mock_team2.visibility = "internal"  # Invalid
-        
+
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
         mock_query.all.return_value = [mock_team1, mock_team2]
         mock_db_session.query.return_value = mock_query
-        
+
         with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                 result = normalize_team_visibility()
-                
+
                 assert result == 2
                 assert mock_team1.visibility == "private"
                 assert mock_team2.visibility == "private"
@@ -406,11 +406,11 @@ class TestNormalizeTeamVisibility:
     def test_normalize_team_visibility_exception(self, mock_db_session):
         """Test exception handling during normalization."""
         mock_db_session.query.side_effect = Exception("Database error")
-        
+
         with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                 result = normalize_team_visibility()
-                
+
                 assert result == 0
                 mock_logger.error.assert_called_with(
                     "Failed to normalize team visibility: Database error"
@@ -424,11 +424,11 @@ class TestBootstrapResourceAssignments:
     async def test_resource_assignments_disabled(self, mock_settings):
         """Test when email auth is disabled."""
         mock_settings.email_auth_enabled = False
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                 await bootstrap_resource_assignments()
-                
+
                 mock_logger.info.assert_called_with(
                     "Email authentication disabled - skipping resource assignment"
                 )
@@ -440,12 +440,12 @@ class TestBootstrapResourceAssignments:
         mock_query.filter.return_value = mock_query
         mock_query.first.return_value = None
         mock_db_session.query.return_value = mock_query
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                     await bootstrap_resource_assignments()
-                    
+
                     mock_logger.warning.assert_called_with(
                         "Admin user not found - skipping resource assignment"
                     )
@@ -456,17 +456,17 @@ class TestBootstrapResourceAssignments:
     ):
         """Test when admin has no personal team."""
         mock_admin_user.get_personal_team.return_value = None
-        
+
         mock_query = Mock()
         mock_query.filter.return_value = mock_query
         mock_query.first.return_value = mock_admin_user
         mock_db_session.query.return_value = mock_query
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                     await bootstrap_resource_assignments()
-                    
+
                     mock_logger.warning.assert_called_with(
                         "Admin personal team not found - skipping resource assignment"
                     )
@@ -477,23 +477,23 @@ class TestBootstrapResourceAssignments:
     ):
         """Test successful resource assignment."""
         mock_admin_user.get_personal_team.return_value = mock_personal_team
-        
+
         # Mock unassigned resources
         mock_server = Mock()
         mock_server.team_id = None
         mock_server.owner_email = None
         mock_server.visibility = None
         mock_server.federation_source = None
-        
+
         mock_tool = Mock()
         mock_tool.team_id = None
         mock_tool.owner_email = None
         mock_tool.visibility = None
-        
+
         def mock_query_handler(model):
             query = Mock()
             query.filter.return_value = query
-            
+
             if model.__name__ == "EmailUser":
                 query.first.return_value = mock_admin_user
             elif model.__name__ == "Server":
@@ -502,11 +502,11 @@ class TestBootstrapResourceAssignments:
                 query.all.return_value = [mock_tool]
             else:
                 query.all.return_value = []
-            
+
             return query
-        
+
         mock_db_session.query.side_effect = mock_query_handler
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch('mcpgateway.db.EmailUser', Mock(__name__="EmailUser")):
@@ -518,17 +518,17 @@ class TestBootstrapResourceAssignments:
                                         with patch('mcpgateway.db.A2AAgent', Mock(__name__="A2AAgent")):
                                             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                                                 await bootstrap_resource_assignments()
-                                                
+
                                                 # Check that resources were assigned
                                                 assert mock_server.team_id == mock_personal_team.id
                                                 assert mock_server.owner_email == mock_admin_user.email
                                                 assert mock_server.visibility == "public"
                                                 assert mock_server.federation_source == "mcpgateway-0.7.0-migration"
-                                                
+
                                                 assert mock_tool.team_id == mock_personal_team.id
                                                 assert mock_tool.owner_email == mock_admin_user.email
                                                 assert mock_tool.visibility == "public"
-                                                
+
                                                 mock_logger.info.assert_any_call(
                                                     "Successfully assigned 2 orphaned resources to admin team"
                                                 )
@@ -539,20 +539,20 @@ class TestBootstrapResourceAssignments:
     ):
         """Test when no orphaned resources exist."""
         mock_admin_user.get_personal_team.return_value = mock_personal_team
-        
+
         def mock_query_handler(model):
             query = Mock()
             query.filter.return_value = query
-            
+
             if model.__name__ == "EmailUser":
                 query.first.return_value = mock_admin_user
             else:
                 query.all.return_value = []
-            
+
             return query
-        
+
         mock_db_session.query.side_effect = mock_query_handler
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch('mcpgateway.db.EmailUser', Mock(__name__="EmailUser")):
@@ -564,7 +564,7 @@ class TestBootstrapResourceAssignments:
                                         with patch('mcpgateway.db.A2AAgent', Mock(__name__="A2AAgent")):
                                             with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                                                 await bootstrap_resource_assignments()
-                                                
+
                                                 mock_logger.info.assert_any_call(
                                                     "No orphaned resources found - all resources have team assignments"
                                                 )
@@ -575,12 +575,12 @@ class TestBootstrapResourceAssignments:
     ):
         """Test exception handling during resource assignment."""
         mock_db_session.query.side_effect = Exception("Database error")
-        
+
         with patch('mcpgateway.bootstrap_db.settings', mock_settings):
             with patch('mcpgateway.bootstrap_db.SessionLocal', return_value=mock_db_session):
                 with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                     await bootstrap_resource_assignments()
-                    
+
                     mock_logger.error.assert_called_with(
                         "Failed to bootstrap resource assignments: Database error"
                     )
@@ -596,19 +596,19 @@ class TestMain:
         mock_conn = Mock()
         mock_inspector = Mock()
         mock_inspector.get_table_names.return_value = []  # Empty database
-        
+
         mock_config = MagicMock()
         mock_config.attributes = {}
-        
+
         with patch('mcpgateway.bootstrap_db.create_engine', return_value=mock_engine):
             with patch.object(mock_engine, 'begin') as mock_begin:
                 mock_begin.return_value.__enter__ = Mock(return_value=mock_conn)
                 mock_begin.return_value.__exit__ = Mock(return_value=None)
-                
+
                 with patch('mcpgateway.bootstrap_db.inspect', return_value=mock_inspector):
                     with patch('importlib.resources.files') as mock_files:
                         mock_files.return_value.joinpath.return_value = "alembic.ini"
-                        
+
                         with patch('mcpgateway.bootstrap_db.Config', return_value=mock_config):
                             with patch('mcpgateway.bootstrap_db.Base') as mock_base:
                                 with patch('mcpgateway.bootstrap_db.command') as mock_command:
@@ -619,7 +619,7 @@ class TestMain:
                                                     with patch('mcpgateway.bootstrap_db.settings', mock_settings):
                                                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                                                             await main()
-                                                            
+
                                                             mock_base.metadata.create_all.assert_called_once_with(bind=mock_conn)
                                                             mock_command.stamp.assert_called_once_with(mock_config, "head")
                                                             mock_command.upgrade.assert_not_called()
@@ -634,19 +634,19 @@ class TestMain:
         mock_conn = Mock()
         mock_inspector = Mock()
         mock_inspector.get_table_names.return_value = ["gateways", "tools"]  # Existing tables
-        
+
         mock_config = MagicMock()
         mock_config.attributes = {}
-        
+
         with patch('mcpgateway.bootstrap_db.create_engine', return_value=mock_engine):
             with patch.object(mock_engine, 'begin') as mock_begin:
                 mock_begin.return_value.__enter__ = Mock(return_value=mock_conn)
                 mock_begin.return_value.__exit__ = Mock(return_value=None)
-                
+
                 with patch('mcpgateway.bootstrap_db.inspect', return_value=mock_inspector):
                     with patch('importlib.resources.files') as mock_files:
                         mock_files.return_value.joinpath.return_value = "alembic.ini"
-                        
+
                         with patch('mcpgateway.bootstrap_db.Config', return_value=mock_config):
                             with patch('mcpgateway.bootstrap_db.Base') as mock_base:
                                 with patch('mcpgateway.bootstrap_db.command') as mock_command:
@@ -657,7 +657,7 @@ class TestMain:
                                                     with patch('mcpgateway.bootstrap_db.settings', mock_settings):
                                                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                                                             await main()
-                                                            
+
                                                             mock_base.metadata.create_all.assert_not_called()
                                                             mock_command.stamp.assert_not_called()
                                                             mock_command.upgrade.assert_called_once_with(mock_config, "head")
@@ -672,19 +672,19 @@ class TestMain:
         mock_conn = Mock()
         mock_inspector = Mock()
         mock_inspector.get_table_names.return_value = ["gateways"]
-        
+
         mock_config = MagicMock()
         mock_config.attributes = {}
-        
+
         with patch('mcpgateway.bootstrap_db.create_engine', return_value=mock_engine):
             with patch.object(mock_engine, 'begin') as mock_begin:
                 mock_begin.return_value.__enter__ = Mock(return_value=mock_conn)
                 mock_begin.return_value.__exit__ = Mock(return_value=None)
-                
+
                 with patch('mcpgateway.bootstrap_db.inspect', return_value=mock_inspector):
                     with patch('importlib.resources.files') as mock_files:
                         mock_files.return_value.joinpath.return_value = "alembic.ini"
-                        
+
                         with patch('mcpgateway.bootstrap_db.Config', return_value=mock_config):
                             with patch('mcpgateway.bootstrap_db.command'):
                                 with patch('mcpgateway.bootstrap_db.normalize_team_visibility', return_value=5):
@@ -694,7 +694,7 @@ class TestMain:
                                                 with patch('mcpgateway.bootstrap_db.settings', mock_settings):
                                                     with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                                                         await main()
-                                                        
+
                                                         mock_logger.info.assert_any_call(
                                                             "Normalized 5 team record(s) to supported visibility values"
                                                         )
@@ -706,19 +706,19 @@ class TestMain:
         mock_conn = Mock()
         mock_inspector = Mock()
         mock_inspector.get_table_names.return_value = []
-        
+
         mock_config = MagicMock()
         mock_config.attributes = {}
-        
+
         with patch('mcpgateway.bootstrap_db.create_engine', return_value=mock_engine):
             with patch.object(mock_engine, 'begin') as mock_begin:
                 mock_begin.return_value.__enter__ = Mock(return_value=mock_conn)
                 mock_begin.return_value.__exit__ = Mock(return_value=None)
-                
+
                 with patch('mcpgateway.bootstrap_db.inspect', return_value=mock_inspector):
                     with patch('importlib.resources.files') as mock_files:
                         mock_files.return_value.joinpath.return_value = "alembic.ini"
-                        
+
                         with patch('mcpgateway.bootstrap_db.Config', return_value=mock_config):
                             with patch('mcpgateway.bootstrap_db.Base'):
                                 with patch('mcpgateway.bootstrap_db.command'):
@@ -729,7 +729,7 @@ class TestMain:
                                                     with patch('mcpgateway.bootstrap_db.settings', mock_settings):
                                                         with patch('mcpgateway.bootstrap_db.logger') as mock_logger:
                                                             await main()
-                                                            
+
                                                             # Verify all bootstrap functions were called
                                                             mock_admin.assert_called_once()
                                                             mock_roles.assert_called_once()
@@ -743,7 +743,7 @@ class TestModuleLevel:
     def test_module_imports(self):
         """Test that module imports work correctly."""
         from mcpgateway.bootstrap_db import Base, logger, logging_service
-        
+
         assert logging_service is not None
         assert logger is not None
         assert hasattr(Base, 'metadata')

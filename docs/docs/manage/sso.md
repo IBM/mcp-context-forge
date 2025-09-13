@@ -664,5 +664,5 @@ class SSOAuthenticator:
 - [Authentication Overview](../manage/securing.md)
 - [Team Management](../manage/teams.md)
 - [RBAC Configuration](../manage/rbac.md)
-- [Environment Variables](../deployment/index.md#environment-variables)
+- [Environment Variables](../deployment/index.md#runtime-configuration)
 - [Security Best Practices](../architecture/security-features.md)

@@ -251,7 +251,7 @@
     AUTO_CREATE_PERSONAL_TEAMS=true
     ```
 
-    Upgrading from v0.6.0? Follow [MIGRATION-0.7.0.md](../../../MIGRATION-0.7.0.md).
+    Upgrading from v0.6.0? Follow [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
 
 ???+ info "🔁 Does basic auth still work?"
     Yes. Email auth is recommended for multi‑tenancy; basic auth remains available. Use `AUTH_REQUIRED` to enforce authentication.

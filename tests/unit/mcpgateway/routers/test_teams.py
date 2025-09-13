@@ -370,7 +370,7 @@ class TestTeamsRouter:
             # Mock the entire decorated function to bypass RBAC
             from mcpgateway.routers.teams import TeamResponse
             from mcpgateway.routers.teams import get_team
-            
+
             async def mock_get_team(team_id, current_user, db):
                 service = TeamManagementService(db)
                 team = await mock_service.get_team_by_id(team_id)
@@ -393,7 +393,7 @@ class TestTeamsRouter:
                     updated_at=team.updated_at,
                     is_active=team.is_active,
                 )
-            
+
             with patch('mcpgateway.routers.teams.get_team', new=mock_get_team):
                 result = await mock_get_team(team_id, mock_current_user, mock_db)
 
@@ -755,7 +755,7 @@ class TestTeamsRouter:
 
         with patch('mcpgateway.routers.teams.TeamManagementService') as MockTeamService, \
              patch('mcpgateway.routers.teams.TeamInvitationService') as MockInviteService:
-            
+
             mock_team_service = AsyncMock(spec=TeamManagementService)
             mock_team_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_team_service.get_team_by_id = AsyncMock(return_value=mock_team)
@@ -804,7 +804,7 @@ class TestTeamsRouter:
 
         with patch('mcpgateway.routers.teams.TeamManagementService') as MockTeamService, \
              patch('mcpgateway.routers.teams.TeamInvitationService') as MockInviteService:
-            
+
             mock_team_service = AsyncMock(spec=TeamManagementService)
             mock_team_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_team_service.get_team_by_id = AsyncMock(return_value=mock_team)
@@ -872,7 +872,7 @@ class TestTeamsRouter:
 
         with patch('mcpgateway.routers.teams.TeamManagementService') as MockTeamService, \
              patch('mcpgateway.routers.teams.TeamInvitationService') as MockInviteService:
-            
+
             mock_team_service = AsyncMock(spec=TeamManagementService)
             mock_team_service.get_user_role_in_team = AsyncMock(return_value="owner")
             MockTeamService.return_value = mock_team_service
@@ -1121,7 +1121,7 @@ class TestTeamsRouter:
 
         with patch('mcpgateway.routers.teams.TeamManagementService') as MockTeamService, \
              patch('mcpgateway.routers.teams.TeamInvitationService') as MockInviteService:
-            
+
             mock_team_service = AsyncMock(spec=TeamManagementService)
             mock_team_service.get_user_role_in_team = AsyncMock(return_value="owner")
             MockTeamService.return_value = mock_team_service
