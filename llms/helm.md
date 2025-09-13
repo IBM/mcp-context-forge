@@ -117,4 +117,3 @@ redis:
 - `helm get values <release> -n <ns>` and `helm get manifest <release> -n <ns>` for applied values/manifests.
 - `kubectl describe` events for pods or ingress to locate readiness/permission issues.
 - Increase gateway replicas or tweak HPA via `mcpContextForge.hpa.*` in values.
-

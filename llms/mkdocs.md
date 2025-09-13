@@ -49,7 +49,7 @@ Notes
   - `make docs` (root) builds images/SBOM and copies `README.md` to `docs/docs/index.md`.
 
 **Quality & Linting**
-- Prefer keeping docs consistent with the project’s quality workflow:
+- Prefer keeping docs consistent with the project's quality workflow:
   - `make autoflake isort black pre-commit` (root) to format Python, sort imports, and run hooks.
   - Additional docs authoring guidance: `docs/docs/development/documentation.md`.
 
