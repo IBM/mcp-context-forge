@@ -1,6 +1,45 @@
 # plugins/config.yaml - Main plugin configuration file
 
 plugins:
+  # Argument Normalizer - stabilize inputs before anything else
+  - name: "ArgumentNormalizer"
+    kind: "plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin"
+    description: "Normalizes Unicode, whitespace, casing, dates, and numbers in args"
+    version: "0.1.0"
+    author: "Mihai Criveti"
+    hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
+    tags: ["normalize", "inputs", "whitespace", "unicode", "dates", "numbers"]
+    mode: "permissive"
+    priority: 40
+    conditions: []
+    config:
+      # Unicode
+      enable_unicode: true
+      unicode_form: "NFC"
+      remove_control_chars: true
+
+      # Whitespace
+      enable_whitespace: true
+      trim: true
+      collapse_internal: true
+      normalize_newlines: true
+      collapse_blank_lines: false
+
+      # Casing
+      enable_casing: false
+      case_strategy: "none"  # none|lower|upper|title
+
+      # Dates
+      enable_dates: true
+      day_first: false
+      year_first: false
+
+      # Numbers
+      enable_numbers: true
+      decimal_detection: "auto"  # auto|comma|dot
+
+      # Field overrides: customize per key pattern
+      field_overrides: []
   # PII Filter Plugin - Run first with highest priority for security
   - name: "PIIFilterPlugin"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
@@ -110,12 +149,13 @@ plugins:
         - pattern: "secret\\s*[:=]\\s*\\S+"
           replacement: "secret: [REDACTED]"
 
-  - name: "OPAPluginFilter"
-    kind: "external"
-    priority: 10 # adjust the priority
-    mcp:
-      proto: STREAMABLEHTTP
-      url: http://127.0.0.1:8000/mcp
+  # - name: "OPAPluginFilter"
+  #   kind: "external"
+  #   mode: "permissive"  # Don't fail if the server is unavailable
+  #   priority: 10 # adjust the priority
+  #   mcp:
+  #     proto: STREAMABLEHTTP
+  #     url: http://127.0.0.1:8000/mcp
 
 # Plugin directories to scan
 plugin_dirs:

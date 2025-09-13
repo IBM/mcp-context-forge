@@ -415,7 +415,7 @@ class TestToolService:
         test_db.add = Mock()
         #test_db.commit = Mock(side_effect=IntegrityError("statement", "params", "orig"))
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: tools.name, owner_email", None, None))
-        
+
         test_db.rollback = Mock()
 
         # Create tool request
