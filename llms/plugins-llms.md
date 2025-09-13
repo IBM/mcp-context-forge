@@ -233,3 +233,154 @@ async function toolPreInvoke({ payload, context }: any) {
 - Gateway config: `plugins/config.yaml`
 - Templates and CLI: `plugin_templates/` and CLI `mcpplugins` in `mcpgateway/plugins/tools/cli.py`; prompts handled by `copier.yml`.
 
+**Testing Plugins**
+- Code quality & pre-commit (see AGENTS.md for details):
+  - `make autoflake isort black pre-commit` formats, orders imports, applies autoflake, and runs pre-commit hooks.
+  - `make pylint flake8` runs static analysis; fix findings before committing.
+  - `make doctest test` executes doctests then pytest; mirrors CI expectations locally.
+
+- Root-level commands:
+  - `make test` runs unit tests.
+  - `make doctest` runs doctests embedded in framework models and helpers.
+  - `make htmlcov` generates HTML coverage at `docs/docs/coverage/index.html`.
+  - Use `pytest -k "name"` and marks (e.g., `pytest -m "not slow"`).
+
+- Unit test a native plugin (pytest):
+  ```python
+  import pytest
+  from mcpgateway.plugins.framework import (
+      HookType, PluginConfig, PluginContext, GlobalContext,
+      PromptPrehookPayload, PromptPrehookResult,
+  )
+  from plugins.regex_filter.search_replace import SearchReplacePlugin
+
+  @pytest.mark.asyncio
+  async def test_regex_search_replace_prompt_pre():
+      cfg = PluginConfig(
+          name="sr",
+          kind="plugins.regex_filter.search_replace.SearchReplacePlugin",
+          hooks=[HookType.PROMPT_PRE_FETCH],
+          priority=100,
+          config={"words": [{"search": "crap", "replace": "crud"}]},
+      )
+      plugin = SearchReplacePlugin(cfg)
+      payload = PromptPrehookPayload(name="greeting", args={"text": "crap happens"})
+      ctx = PluginContext(global_context=GlobalContext(request_id="t-1"))
+
+      res: PromptPrehookResult = await plugin.prompt_pre_fetch(payload, ctx)
+      assert res.continue_processing
+      assert res.modified_payload.args["text"] == "crud happens"
+  ```
+
+- Unit test violation behavior (native):
+  ```python
+  import pytest
+  from mcpgateway.plugins.framework import (
+      HookType, PluginConfig, PluginContext, GlobalContext,
+      PromptPrehookPayload, PluginViolation,
+  )
+  from plugins.deny_filter.deny import DenyListPlugin
+
+  @pytest.mark.asyncio
+  async def test_denylist_blocks():
+      cfg = PluginConfig(
+          name="deny",
+          kind="plugins.deny_filter.deny.DenyListPlugin",
+          hooks=[HookType.PROMPT_PRE_FETCH],
+          priority=10,
+          config={"words": ["blocked"]},
+      )
+      plugin = DenyListPlugin(cfg)
+      payload = PromptPrehookPayload(name="any", args={"x": "this is blocked text"})
+      ctx = PluginContext(global_context=GlobalContext(request_id="t-2"))
+
+      res = await plugin.prompt_pre_fetch(payload, ctx)
+      assert res.continue_processing is False
+      assert isinstance(res.violation, PluginViolation)
+  ```
+
+- Integration test the pipeline via `PluginManager`:
+  ```python
+  import pytest
+  from mcpgateway.plugins.framework.manager import PluginManager
+  from mcpgateway.plugins.framework import GlobalContext, PromptPrehookPayload
+
+  @pytest.mark.asyncio
+  async def test_manager_runs_plugins(tmp_path):
+      # Create a minimal config.yaml scoped to test
+      cfg = tmp_path / "plugins.yaml"
+      cfg.write_text(
+          """
+          plugins:
+            - name: "PIIFilterPlugin"
+              kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
+              hooks: ["prompt_pre_fetch"]
+              mode: "permissive"
+              priority: 1
+              config:
+                detect_email: true
+                default_mask_strategy: "partial"
+          plugin_settings:
+            plugin_timeout: 5
+            fail_on_plugin_error: false
+          plugin_dirs: []
+          """,
+          encoding="utf-8",
+      )
+
+      mgr = PluginManager(str(cfg), timeout=5)
+      await mgr.initialize()
+      ctx = GlobalContext(request_id="req-1")
+      payload = PromptPrehookPayload(name="p", args={"msg": "email me at dev@example.com"})
+      res, _ = await mgr.prompt_pre_fetch(payload, ctx)
+
+      assert res.continue_processing
+      assert res.modified_payload is None or "@example.com" in (res.modified_payload.args.get("msg", ""))
+      await mgr.shutdown()
+  ```
+
+- Testing external plugins (unit):
+  - For server code, unit test the underlying policy/transform functions directly, and mock I/O (e.g., mock `requests.post` in the OPA plugin).
+  - Keep tests deterministic and fast; avoid network in unit tests.
+
+- Testing external plugins (integration with MCP client):
+  1) In the external plugin project directory, start the MCP server: `make start` (default Streamable HTTP at `http://localhost:8000/mcp`).
+  2) From a test, connect using the MCP Python client and call the hook tool:
+     ```python
+     import pytest, json
+     from mcp import ClientSession
+     from mcp.client.streamable_http import streamablehttp_client
+     from mcpgateway.plugins.framework.models import HookType
+
+     @pytest.mark.asyncio
+     async def test_mcp_server_tool_pre_invoke():
+         async with (await streamablehttp_client("http://localhost:8000/mcp")) as (http, write, _):
+             async with ClientSession(http, write) as session:
+                 await session.initialize()
+                 # Minimal payload/context as JSON-serializable dicts
+                 payload = {"name": "some_tool", "args": {"x": "y"}}
+                 context = {"state": {}, "metadata": {}, "global_context": {"request_id": "it-1", "state": {}, "metadata": {}}}
+                 rsp = await session.call_tool(HookType.TOOL_PRE_INVOKE, {"plugin_name": "MyExternal", "payload": payload, "context": context})
+                 txt = rsp.content[0].text
+                 data = json.loads(txt)
+                 assert "result" in data or "error" in data
+     ```
+
+- Gateway E2E smoke test with external plugin:
+  1) Generate a token and export it (JWT helper):
+     ```bash
+     export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 60 --secret KEY)
+     ```
+  2) Ensure `.env` has `PLUGINS_ENABLED=true` and `plugins/config.yaml` includes your external plugin pointing to `http://localhost:8000/mcp`.
+  3) Start gateway: `make serve`.
+  4) Trigger a tool call (fires `tool_pre_invoke`):
+     ```bash
+     curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{"jsonrpc":"2.0","id":1,"method":"example-tool","params":{"x":"y"}}' \
+          http://localhost:4444/rpc
+     ```
+
+- Performance and timeouts:
+  - To test timeout handling, configure `plugin_settings.plugin_timeout` low (e.g., 1–2s) and create a test plugin that `await asyncio.sleep(timeout+ε)` inside a hook, then assert the manager error behavior per mode/settings.
+  - Use `pytest.mark.slow` sparingly; default tests should be fast and deterministic.
