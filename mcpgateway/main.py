@@ -2300,7 +2300,7 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
         if isinstance(content, TextContent):
             return {"type": "resource", "uri": uri, "text": content.text}
     except Exception:
-        pass
+        pass  # nosec B110 - Intentionally continue with fallback resource content handling
 
     if isinstance(content, bytes):
         return {"type": "resource", "uri": uri, "blob": content.decode("utf-8", errors="ignore")}

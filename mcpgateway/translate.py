@@ -2074,21 +2074,21 @@ def start_streamable_http_stdio(
     return asyncio.run(_run_stdio_to_streamable_http(cmd, port, log_level, cors, host, stateless, json_response))
 
 
-def start_streamable_http_client(url: str, bearer: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
+def start_streamable_http_client(url: str, bearer_token: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
     """Start streamable HTTP to stdio bridge.
 
     Entry point for starting a streamable HTTP to stdio bridge client.
 
     Args:
         url: The streamable HTTP endpoint URL to connect to.
-        bearer: Optional OAuth2 bearer token for authentication. Defaults to None.
+        bearer_token: Optional OAuth2 bearer token for authentication. Defaults to None.
         timeout: HTTP client timeout in seconds. Defaults to 30.0.
         stdio_command: Optional command to run for local stdio processing.
 
     Returns:
         None: This function does not return a value.
     """
-    return asyncio.run(_run_streamable_http_to_stdio(url, bearer, timeout, stdio_command))
+    return asyncio.run(_run_streamable_http_to_stdio(url, bearer_token, timeout, stdio_command))
 
 
 def start_stdio(
@@ -2122,7 +2122,7 @@ def start_stdio(
     return asyncio.run(_run_stdio_to_sse(cmd, port, log_level, cors, host, sse_path, message_path, keep_alive))
 
 
-def start_sse(url: str, bearer: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
+def start_sse(url: str, bearer_token: Optional[str] = None, timeout: float = 30.0, stdio_command: Optional[str] = None) -> None:
     """Start SSE bridge.
 
     Entry point for starting an SSE to stdio bridge client.
@@ -2137,7 +2137,7 @@ def start_sse(url: str, bearer: Optional[str] = None, timeout: float = 30.0, std
 
     Args:
         url: The SSE endpoint URL to connect to.
-        bearer: Optional OAuth2 bearer token for authentication. Defaults to None.
+        bearer_token: Optional OAuth2 bearer token for authentication. Defaults to None.
         timeout: HTTP client timeout in seconds. Defaults to 30.0.
         stdio_command: Optional command to run for local stdio processing.
 
@@ -2147,7 +2147,7 @@ def start_sse(url: str, bearer: Optional[str] = None, timeout: float = 30.0, std
     Examples:
         >>> start_sse("http://example.com/sse", "token123")  # doctest: +SKIP
     """
-    return asyncio.run(_run_sse_to_stdio(url, bearer, timeout, stdio_command))
+    return asyncio.run(_run_sse_to_stdio(url, bearer_token, timeout, stdio_command))
 
 
 def main(argv: Optional[Sequence[str]] | None = None) -> None:
