@@ -108,7 +108,7 @@ def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_an
                 placeholders.append(f":{pname}")
                 params[pname] = t
             placeholders_sql = ",".join(placeholders)
-            sq = text(f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value IN ({placeholders_sql}))")
+            sq = text(f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value IN ({placeholders_sql}))")  # nosec B608 - Safe: uses parameterized queries with bindparams()
             # IMPORTANT: pass plain values as kwargs to bindparams
             return sq.bindparams(**params)
 
@@ -116,7 +116,7 @@ def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_an
         exists_clauses = []
         for t in values_list:
             pname = f"t_{uuid.uuid4().hex[:8]}"
-            clause = text(f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{pname})").bindparams(**{pname: t})
+            clause = text(f"EXISTS (SELECT 1 FROM json_each({col_ref}) WHERE value = :{pname})").bindparams(**{pname: t})  # nosec B608 - Safe: uses parameterized queries with bindparams()
             exists_clauses.append(clause)
         if len(exists_clauses) == 1:
             return exists_clauses[0]

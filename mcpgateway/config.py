@@ -103,7 +103,7 @@ def _normalize_env_list_vars() -> None:
                 json.loads(s)
                 continue
             except Exception:
-                pass
+                pass  # nosec B110 - Intentionally continue with CSV parsing if JSON parsing fails
         # Convert CSV to JSON array
         items = [item.strip() for item in s.split(",") if item.strip()]
         os.environ[key] = json.dumps(items)

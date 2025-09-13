@@ -427,8 +427,8 @@ class ToolService:
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team tool with the same name, team_id
                 existing_tool = db.execute(
-                    select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id)
-                ).scalar_one_or_none()  # pylint: disable=comparison-with-callable
+                    select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id)  # pylint: disable=comparison-with-callable
+                ).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
 

@@ -566,6 +566,7 @@ class PluginManager:
         4. Validates plugin initialization
 
         Raises:
+            RuntimeError: If plugin initialization fails with an exception.
             ValueError: If a plugin cannot be initialized or registered.
 
         Examples:

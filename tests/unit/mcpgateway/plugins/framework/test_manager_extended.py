@@ -552,7 +552,7 @@ async def test_manager_initialization_edge_cases():
 
     # Mock the loader to return None (covers lines 495-496)
     with patch.object(manager2._loader, 'load_and_instantiate_plugin', return_value=None):
-        with pytest.raises(ValueError, match="Unable to register and initialize plugin"):
+        with pytest.raises(RuntimeError, match="Plugin initialization failed: FailingPlugin"):
             await manager2.initialize()
 
     # Test disabled plugin (covers line 501)
