@@ -324,6 +324,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
+        # For plugin errors, exit cleanly without stack trace spam
+        if "Plugin initialization failed" in str(e):
+            # Suppress uvicorn error logging for clean exit
+            import logging
+            logging.getLogger("uvicorn.error").setLevel(logging.CRITICAL)
+            raise SystemExit(1)
         raise
     finally:
         # Shutdown plugin manager

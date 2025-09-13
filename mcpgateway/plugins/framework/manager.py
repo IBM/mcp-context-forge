@@ -592,8 +592,10 @@ class PluginManager:
                     else:
                         raise ValueError(f"Unable to instantiate plugin: {plugin_config.name}")
                 except Exception as e:
-                    logger.error(f"Failed to load plugin {plugin_config.name}: {str(e)}")
-                    raise ValueError(f"Unable to register and initialize plugin: {plugin_config.name}") from e
+                    # Clean error message without stack trace spam
+                    logger.error(f"Failed to load plugin '{plugin_config.name}': {str(e)}")
+                    # Let it crash gracefully with a clean error
+                    raise RuntimeError(f"Plugin initialization failed: {plugin_config.name} - {str(e)}")
             else:
                 logger.debug(f"Skipping disabled plugin: {plugin_config.name}")
 

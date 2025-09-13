@@ -48,7 +48,8 @@ MCP Gateway: Full Project Overview
 - Hooks (production): `prompt_pre_fetch`, `prompt_post_fetch`, `tool_pre_invoke`, `tool_post_invoke`, `resource_pre_fetch`, `resource_post_fetch`.
 - Configuration: `plugins/config.yaml` with `plugins`, `plugin_dirs`, `plugin_settings`.
 - Modes: `enforce | enforce_ignore_error | permissive | disabled`; priority ascending.
-- Built‑ins: PII filter, regex search/replace, denylist, resource filter; OPA external example.
+- Built‑ins: Argument Normalizer, PII filter, regex search/replace, denylist, resource filter; OPA external example.
+  - Default ordering (lower runs first): Argument Normalizer (40) → PII Filter (50) → Resource Filter (75) → Deny/Regex (100+/150). This ensures inputs are stabilized before detection/redaction.
 - Authoring helpers:
   - Bootstrap templates: `mcpplugins bootstrap --destination <dir> --type native|external`
   - External runtime default: Streamable HTTP at `http://localhost:8000/mcp`
@@ -114,4 +115,3 @@ MCP Gateway: Full Project Overview
 - Conventional Commits; sign off (`git commit -s`); link issues.
 - Include tests/docs for behavior changes. Keep code typed (Py ≥ 3.11), formatted, and lint‑clean.
 - Do not mention competitive assistants in PRs; avoid effort estimates.
-
