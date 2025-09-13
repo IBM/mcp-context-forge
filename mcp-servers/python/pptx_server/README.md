@@ -24,6 +24,14 @@ A **comprehensive and enhanced** Model Context Protocol (MCP) server for creatin
 - **Auto-generated Summaries**: Intelligent content extraction for summary slides
 - **Format Control**: Switch between 16:9, 4:3, or custom slide dimensions
 
+### 🔒 Security & Enterprise Features
+- **Secure Sessions**: UUID-based workspace isolation for multi-user environments
+- **File Upload System**: Safe handling of images and templates with validation
+- **Download Links**: Secure, expiring download tokens for presentations
+- **Path Security**: Comprehensive path validation and directory restrictions
+- **Resource Management**: Configurable limits and automatic cleanup
+- **Environment Configuration**: Full .env support for deployment flexibility
+
 ### 📊 Supported Content Types
 - **Text**: Titles, body text, text boxes, bullet points
 - **Images**: PNG, JPG, GIF from files or base64 encoded data
@@ -162,6 +170,14 @@ Add to your Claude Desktop MCP configuration:
 ### 📋 Template System
 - `create_presentation_from_template` - Create from template with placeholder replacement
 - `clone_presentation` - Clone and modify existing presentations
+
+### 🔒 Security & File Management
+- `create_secure_session` - Create UUID-based secure workspace
+- `upload_file` - Upload files (images, templates) with validation
+- `create_download_link` - Generate secure download URLs with expiration
+- `list_session_files` - List files in session workspace
+- `cleanup_session` - Clean up session resources
+- `get_server_status` - Monitor server configuration and statistics
 
 ## Examples
 

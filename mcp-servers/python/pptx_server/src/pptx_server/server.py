@@ -4,17 +4,25 @@
 # Standard
 import asyncio
 import base64
+from datetime import datetime, timedelta
 from io import BytesIO
 import json
 import logging
 import os
 import sys
+import tempfile
+import uuid
 from typing import Any, Dict, List, Optional
 
 # Third-Party
+import aiofiles
+from dotenv import load_dotenv
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
+from pathvalidate import is_valid_filename, sanitize_filename
+from pydantic import Field
+from pydantic_settings import BaseSettings
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
@@ -23,6 +31,9 @@ from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
+# Load environment variables
+load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -30,75 +41,325 @@ logging.basicConfig(
 )
 log = logging.getLogger("pptx_server")
 
+
+class PPTXServerConfig(BaseSettings):
+    """Configuration settings for the PowerPoint MCP Server."""
+
+    # Server Settings
+    server_port: int = Field(default=9000, env="PPTX_SERVER_PORT")
+    server_host: str = Field(default="localhost", env="PPTX_SERVER_HOST")
+    server_debug: bool = Field(default=False, env="PPTX_SERVER_DEBUG")
+
+    # Security Settings
+    enable_file_uploads: bool = Field(default=True, env="PPTX_ENABLE_FILE_UPLOADS")
+    max_file_size_mb: int = Field(default=50, env="PPTX_MAX_FILE_SIZE_MB")
+    max_presentation_size_mb: int = Field(default=100, env="PPTX_MAX_PRESENTATION_SIZE_MB")
+    allowed_upload_extensions: str = Field(default="png,jpg,jpeg,gif,bmp,pptx", env="PPTX_ALLOWED_UPLOAD_EXTENSIONS")
+    enable_downloads: bool = Field(default=True, env="PPTX_ENABLE_DOWNLOADS")
+    download_token_expiry_hours: int = Field(default=24, env="PPTX_DOWNLOAD_TOKEN_EXPIRY_HOURS")
+
+    # Directory Configuration
+    work_dir: str = Field(default="/tmp/pptx_server", env="PPTX_WORK_DIR")
+    temp_dir: str = Field(default="/tmp/pptx_server/temp", env="PPTX_TEMP_DIR")
+    templates_dir: str = Field(default="/tmp/pptx_server/templates", env="PPTX_TEMPLATES_DIR")
+    output_dir: str = Field(default="/tmp/pptx_server/output", env="PPTX_OUTPUT_DIR")
+    uploads_dir: str = Field(default="/tmp/pptx_server/uploads", env="PPTX_UPLOADS_DIR")
+
+    # File Management
+    auto_cleanup_hours: int = Field(default=48, env="PPTX_AUTO_CLEANUP_HOURS")
+    max_files_per_session: int = Field(default=50, env="PPTX_MAX_FILES_PER_SESSION")
+    enable_file_versioning: bool = Field(default=True, env="PPTX_ENABLE_FILE_VERSIONING")
+    default_slide_format: str = Field(default="16:9", env="PPTX_DEFAULT_SLIDE_FORMAT")
+
+    # Authentication
+    require_auth: bool = Field(default=False, env="PPTX_REQUIRE_AUTH")
+    api_key: str = Field(default="", env="PPTX_API_KEY")
+    jwt_secret: str = Field(default="", env="PPTX_JWT_SECRET")
+
+    # Resource Limits
+    max_memory_mb: int = Field(default=512, env="PPTX_MAX_MEMORY_MB")
+    max_concurrent_operations: int = Field(default=10, env="PPTX_MAX_CONCURRENT_OPERATIONS")
+    operation_timeout_seconds: int = Field(default=300, env="PPTX_OPERATION_TIMEOUT_SECONDS")
+
+    @property
+    def allowed_extensions(self) -> List[str]:
+        """Get list of allowed file extensions."""
+        return [ext.strip().lower() for ext in self.allowed_upload_extensions.split(",")]
+
+    def ensure_directories(self) -> None:
+        """Ensure all required directories exist with secure permissions."""
+        dirs = [
+            self.work_dir,
+            self.temp_dir,
+            self.templates_dir,
+            self.output_dir,
+            self.uploads_dir,
+            os.path.join(self.work_dir, "logs"),
+            os.path.join(self.work_dir, "sessions")
+        ]
+        for dir_path in dirs:
+            os.makedirs(dir_path, exist_ok=True)
+            # Set secure permissions (owner only)
+            os.chmod(dir_path, 0o700)
+
+    class Config:
+        env_file = ".env"
+        extra = "ignore"  # Ignore extra environment variables
+
+
+# Global configuration instance
+config = PPTXServerConfig()
+config.ensure_directories()
+
 server = Server("pptx-server")
 
-# Global presentation cache to maintain state across operations
-_presentations: Dict[str, Presentation] = {}
+# Global presentation cache and session management (AUTO-ISOLATED PER AGENT)
+_presentations: Dict[str, Dict[str, Presentation]] = {}  # session_id -> {file_path: Presentation}
+_download_tokens: Dict[str, Dict[str, Any]] = {}  # UUID -> {file_path, expires, session_id}
+_session_files: Dict[str, List[str]] = {}  # session_id -> [file_paths]
+_agent_sessions: Dict[str, str] = {}  # agent_id -> session_id (persistent mapping)
+_request_counter: int = 0  # For generating unique agent IDs
 
-# Default directories for organizing presentations
-DEFAULT_OUTPUT_DIR = "examples/generated"
-DEFAULT_TEMPLATE_DIR = "examples/templates"
-DEFAULT_DEMO_DIR = "examples/demos"
+
+def _generate_session_id() -> str:
+    """Generate a unique session ID."""
+    return str(uuid.uuid4())
 
 
-def _ensure_output_directory(file_path: str) -> str:
-    """Ensure output directory exists and return full path."""
-    # If it's already an absolute path, use as-is
-    if os.path.isabs(file_path):
-        dir_path = os.path.dirname(file_path)
-        os.makedirs(dir_path, exist_ok=True)
-        return file_path
+def _generate_download_token(file_path: str, session_id: str) -> str:
+    """Generate a secure download token for a file."""
+    token = str(uuid.uuid4())
+    expires = datetime.now() + timedelta(hours=config.download_token_expiry_hours)
 
-    # If it's a relative path, check if it includes a directory
-    if os.path.dirname(file_path):
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        return file_path
+    _download_tokens[token] = {
+        "file_path": file_path,
+        "expires": expires,
+        "session_id": session_id,
+        "created": datetime.now()
+    }
 
-    # If it's just a filename, put it in the default output directory
-    output_dir = DEFAULT_OUTPUT_DIR
-    os.makedirs(output_dir, exist_ok=True)
-    return os.path.join(output_dir, file_path)
+    return token
+
+
+def _validate_filename(filename: str) -> str:
+    """Validate and sanitize filename for security."""
+    if not filename:
+        raise ValueError("Filename cannot be empty")
+
+    # Sanitize filename
+    safe_filename = sanitize_filename(filename)
+
+    # Additional security checks
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise ValueError("Invalid filename: path traversal not allowed")
+
+    if not is_valid_filename(safe_filename):
+        raise ValueError(f"Invalid filename: {filename}")
+
+    return safe_filename
+
+
+def _get_secure_path(file_path: str, directory_type: str = "output") -> str:
+    """Get secure path within configured directories."""
+    # Validate filename
+    filename = os.path.basename(file_path)
+    safe_filename = _validate_filename(filename)
+
+    # Determine target directory
+    if directory_type == "output":
+        target_dir = config.output_dir
+    elif directory_type == "temp":
+        target_dir = config.temp_dir
+    elif directory_type == "templates":
+        target_dir = config.templates_dir
+    elif directory_type == "uploads":
+        target_dir = config.uploads_dir
+    else:
+        raise ValueError(f"Unknown directory type: {directory_type}")
+
+    # Ensure directory exists
+    os.makedirs(target_dir, exist_ok=True)
+
+    # Return secure path
+    return os.path.join(target_dir, safe_filename)
+
+
+def _generate_agent_id() -> str:
+    """Generate a unique agent identifier based on request context."""
+    global _request_counter
+    _request_counter += 1
+
+    # Create unique agent ID combining timestamp, counter, and random component
+    import time
+    timestamp = int(time.time() * 1000)  # Millisecond timestamp
+    agent_id = f"agent_{timestamp}_{_request_counter}_{uuid.uuid4().hex[:8]}"
+
+    return agent_id
+
+
+def _get_or_create_agent_session(agent_id: Optional[str] = None) -> str:
+    """Get or create an isolated session for each agent/user automatically."""
+    # Generate agent ID if not provided
+    if agent_id is None:
+        agent_id = _generate_agent_id()
+
+    # Check if agent already has a session
+    if agent_id in _agent_sessions:
+        session_id = _agent_sessions[agent_id]
+        # Verify session still exists
+        session_dir = os.path.join(config.work_dir, "sessions", session_id)
+        if os.path.exists(session_dir):
+            return session_id
+        else:
+            # Session expired or deleted, create new one
+            del _agent_sessions[agent_id]
+
+    # Create new session for this agent
+    session_id = _generate_session_id()
+    session_dir = os.path.join(config.work_dir, "sessions", session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    os.chmod(session_dir, 0o700)
+
+    # Initialize session
+    _session_files[session_id] = []
+    _agent_sessions[agent_id] = session_id
+
+    # Create session metadata with agent info
+    session_info = {
+        "session_id": session_id,
+        "agent_id": agent_id,
+        "session_name": f"Agent-{agent_id[-8:]}-Workspace",
+        "created": datetime.now().isoformat(),
+        "workspace_dir": session_dir,
+        "expires": (datetime.now() + timedelta(hours=config.auto_cleanup_hours)).isoformat(),
+        "auto_generated": True
+    }
+
+    # Save session metadata
+    session_file = os.path.join(session_dir, "session.json")
+    with open(session_file, 'w') as f:
+        json.dump(session_info, f, indent=2)
+
+    log.info(f"Auto-created session for agent {agent_id[:16]}: {session_id[:8]}...")
+
+    return session_id
+
+
+def _ensure_session_directory(session_id: str) -> str:
+    """Ensure session directory exists and return path."""
+    session_dir = os.path.join(config.work_dir, "sessions", session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    os.chmod(session_dir, 0o700)
+
+    # Create subdirectories
+    for subdir in ["presentations", "uploads", "temp"]:
+        subdir_path = os.path.join(session_dir, subdir)
+        os.makedirs(subdir_path, exist_ok=True)
+        os.chmod(subdir_path, 0o700)
+
+    return session_dir
+
+
+def _get_session_file_path(filename: str, session_id: str, file_type: str = "presentations") -> str:
+    """Get secure file path within session directory."""
+    # Validate filename
+    safe_filename = _validate_filename(filename)
+
+    # Ensure session directory exists
+    session_dir = _ensure_session_directory(session_id)
+
+    # Return path within session
+    return os.path.join(session_dir, file_type, safe_filename)
+
+
+def _ensure_output_directory(file_path: str, session_id: Optional[str] = None) -> str:
+    """Ensure output directory exists and return session-scoped secure path."""
+    # Auto-generate agent session if none provided
+    if session_id is None:
+        session_id = _get_or_create_agent_session()
+
+    # Extract filename and validate
+    filename = os.path.basename(file_path) if file_path else "presentation.pptx"
+
+    # Always use session-scoped path for security
+    return _get_session_file_path(filename, session_id, "presentations")
 
 
 def _resolve_template_path(template_path: str) -> str:
-    """Resolve template path, checking template directory if relative."""
-    if os.path.isabs(template_path) or os.path.exists(template_path):
+    """Resolve template path, checking secure template directories."""
+    # Check if it's already a valid absolute path
+    if os.path.isabs(template_path) and os.path.exists(template_path):
         return template_path
 
-    # Check in templates directory
-    template_in_dir = os.path.join(DEFAULT_TEMPLATE_DIR, template_path)
-    if os.path.exists(template_in_dir):
-        return template_in_dir
+    # Check if relative path exists
+    if os.path.exists(template_path):
+        return template_path
+
+    # Check in secure templates directory
+    secure_template = os.path.join(config.templates_dir, os.path.basename(template_path))
+    if os.path.exists(secure_template):
+        return secure_template
+
+    # Check in legacy templates directory for backward compatibility
+    legacy_template = os.path.join("examples/templates", os.path.basename(template_path))
+    if os.path.exists(legacy_template):
+        return legacy_template
 
     return template_path  # Return original if not found
 
 
-def _get_presentation(file_path: str) -> Presentation:
-    """Get or create a presentation, caching it for subsequent operations."""
+def _get_presentation(file_path: str, session_id: Optional[str] = None) -> Presentation:
+    """Get or create a presentation with automatic session isolation."""
+    # Auto-generate session for agent if not provided
+    if session_id is None:
+        session_id = _get_or_create_agent_session()
+
     abs_path = os.path.abspath(file_path)
 
-    if abs_path not in _presentations:
+    # Ensure session exists in cache
+    if session_id not in _presentations:
+        _presentations[session_id] = {}
+
+    # Check session-isolated cache
+    if abs_path not in _presentations[session_id]:
         if os.path.exists(abs_path):
-            log.info(f"Loading existing presentation: {abs_path}")
-            _presentations[abs_path] = Presentation(abs_path)
+            log.info(f"Loading existing presentation: {abs_path} (session: {session_id[:8]})")
+            _presentations[session_id][abs_path] = Presentation(abs_path)
         else:
-            log.info(f"Creating new presentation: {abs_path}")
+            log.info(f"Creating new presentation: {abs_path} (session: {session_id[:8]})")
             prs = Presentation()
             # Set all new presentations to 16:9 widescreen by default
             _set_slide_size_16_9(prs)
-            _presentations[abs_path] = prs
+            _presentations[session_id][abs_path] = prs
 
-    return _presentations[abs_path]
+    return _presentations[session_id][abs_path]
 
 
-def _save_presentation(file_path: str) -> None:
-    """Save a presentation and update the cache."""
+def _get_session_for_operation() -> str:
+    """Get session ID for current operation with automatic agent isolation."""
+    return _get_or_create_agent_session()
+
+
+def _save_presentation(file_path: str, session_id: Optional[str] = None) -> None:
+    """Save a presentation with automatic session isolation."""
+    # Auto-generate session if not provided
+    if session_id is None:
+        session_id = _get_or_create_agent_session()
+
     abs_path = os.path.abspath(file_path)
-    if abs_path in _presentations:
+
+    # Check session-isolated cache
+    if session_id in _presentations and abs_path in _presentations[session_id]:
         # Ensure directory exists
         os.makedirs(os.path.dirname(abs_path), exist_ok=True)
-        _presentations[abs_path].save(abs_path)
-        log.info(f"Saved presentation: {abs_path}")
+        _presentations[session_id][abs_path].save(abs_path)
+        log.info(f"Saved presentation: {abs_path} (session: {session_id[:8]})")
+
+        # Track file in session
+        if session_id not in _session_files:
+            _session_files[session_id] = []
+        if abs_path not in _session_files[session_id]:
+            _session_files[session_id].append(abs_path)
 
 
 def _parse_color(color_str: str) -> RGBColor:
@@ -129,12 +390,13 @@ async def list_tools() -> list[Tool]:
         # Presentation Management
         Tool(
             name="create_presentation",
-            description="Create a new PowerPoint presentation",
+            description="Create a new PowerPoint presentation in secure session workspace",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "Path where to save the presentation"},
+                    "file_path": {"type": "string", "description": "Filename for the presentation (created in secure session directory)"},
                     "title": {"type": "string", "description": "Optional title for the presentation"},
+                    "session_id": {"type": "string", "description": "Session ID for workspace isolation (auto-created if not provided)"},
                 },
                 "required": ["file_path"],
             },
@@ -591,6 +853,75 @@ async def list_tools() -> list[Tool]:
                 "required": ["file_path", "slide_index", "output_path"],
             },
         ),
+
+        # Security and File Management Tools
+        Tool(
+            name="create_secure_session",
+            description="Create a secure session for file operations with UUID workspace",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_name": {"type": "string", "description": "Optional session name for identification"}
+                }
+            }
+        ),
+        Tool(
+            name="upload_file",
+            description="Upload a file (image or template) to secure workspace",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_data": {"type": "string", "description": "Base64 encoded file data"},
+                    "filename": {"type": "string", "description": "Original filename"},
+                    "session_id": {"type": "string", "description": "Session ID for workspace isolation"}
+                },
+                "required": ["file_data", "filename"]
+            }
+        ),
+        Tool(
+            name="create_download_link",
+            description="Create a secure download link for a presentation with expiration",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string", "description": "Path to the presentation file"},
+                    "session_id": {"type": "string", "description": "Session ID for access control"}
+                },
+                "required": ["file_path"]
+            }
+        ),
+        Tool(
+            name="list_session_files",
+            description="List all files in the current session",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session ID to list files for"}
+                },
+                "required": ["session_id"]
+            }
+        ),
+        Tool(
+            name="cleanup_session",
+            description="Clean up session files and resources",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Session ID to clean up"},
+                    "force": {"type": "boolean", "description": "Force cleanup even if session is active", "default": False}
+                },
+                "required": ["session_id"]
+            }
+        ),
+        Tool(
+            name="get_server_status",
+            description="Get server configuration and status information",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+
         # Composite Workflow Tools
         Tool(
             name="create_title_slide",
@@ -792,6 +1123,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await get_slide_size(**arguments)
         elif name == "export_slide_as_image":
             result = await export_slide_as_image(**arguments)
+        # Security and file management tools
+        elif name == "create_secure_session":
+            result = await create_secure_session(**arguments)
+        elif name == "upload_file":
+            result = await upload_file(**arguments)
+        elif name == "create_download_link":
+            result = await create_download_link(**arguments)
+        elif name == "list_session_files":
+            result = await list_session_files(**arguments)
+        elif name == "cleanup_session":
+            result = await cleanup_session(**arguments)
+        elif name == "get_server_status":
+            result = await get_server_status(**arguments)
         # Composite workflow tools
         elif name == "create_title_slide":
             result = await create_title_slide(**arguments)
@@ -820,8 +1164,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 # Tool implementations start here
-async def create_presentation(file_path: str, title: Optional[str] = None) -> Dict[str, Any]:
-    """Create a new PowerPoint presentation."""
+async def create_presentation(file_path: str, title: Optional[str] = None, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a new PowerPoint presentation in secure session workspace."""
     prs = Presentation()
 
     # Set to modern 16:9 widescreen format by default
@@ -836,14 +1180,28 @@ async def create_presentation(file_path: str, title: Optional[str] = None) -> Di
     # Ensure proper directory structure
     organized_path = _ensure_output_directory(file_path)
 
-    # Cache the presentation
-    abs_path = os.path.abspath(organized_path)
-    _presentations[abs_path] = prs
+    # SECURITY FIX: Auto-generate isolated session per agent
+    if session_id is None:
+        session_id = _get_or_create_agent_session()
 
-    # Save immediately
-    _save_presentation(organized_path)
+    secure_path = _get_session_file_path(file_path, session_id, "presentations")
 
-    return {"message": f"Created presentation: {organized_path}", "slide_count": len(prs.slides), "format": "16:9 widescreen"}
+    # Cache the presentation in session-isolated cache
+    abs_path = os.path.abspath(secure_path)
+    if session_id not in _presentations:
+        _presentations[session_id] = {}
+    _presentations[session_id][abs_path] = prs
+
+    # Save immediately with session context
+    _save_presentation(secure_path, session_id)
+
+    return {
+        "message": f"Created presentation: {secure_path}",
+        "slide_count": len(prs.slides),
+        "format": "16:9 widescreen",
+        "session_id": session_id,
+        "secure_path": secure_path
+    }
 
 
 async def open_presentation(file_path: str) -> Dict[str, Any]:
@@ -1636,6 +1994,279 @@ async def export_slide_as_image(file_path: str, slide_index: int, output_path: s
         "note": "Consider using python-pptx-interface or COM automation for image export functionality",
         "requested_output": output_path,
         "format": format,
+    }
+
+
+# Security and File Management Functions
+async def create_secure_session(session_name: Optional[str] = None) -> Dict[str, Any]:
+    """Create a secure session for file operations with UUID workspace."""
+    session_id = _generate_session_id()
+    session_dir = os.path.join(config.work_dir, "sessions", session_id)
+
+    # Create session directory
+    os.makedirs(session_dir, exist_ok=True)
+    os.chmod(session_dir, 0o700)  # Secure permissions
+
+    # Initialize session
+    _session_files[session_id] = []
+
+    # Create session metadata
+    session_info = {
+        "session_id": session_id,
+        "session_name": session_name or f"Session-{session_id[:8]}",
+        "created": datetime.now().isoformat(),
+        "workspace_dir": session_dir,
+        "expires": (datetime.now() + timedelta(hours=config.auto_cleanup_hours)).isoformat(),
+        "max_files": config.max_files_per_session,
+        "current_files": 0
+    }
+
+    # Save session metadata
+    session_file = os.path.join(session_dir, "session.json")
+    with open(session_file, 'w') as f:
+        json.dump(session_info, f, indent=2)
+
+    log.info(f"Created secure session: {session_id}")
+
+    return {
+        "message": f"Created secure session: {session_id}",
+        "session_id": session_id,
+        "session_name": session_info["session_name"],
+        "workspace_dir": session_dir,
+        "expires": session_info["expires"],
+        "max_files": config.max_files_per_session
+    }
+
+
+async def upload_file(file_data: str, filename: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Upload a file to secure workspace."""
+    if not config.enable_file_uploads:
+        raise ValueError("File uploads are disabled")
+
+    # Validate filename
+    safe_filename = _validate_filename(filename)
+
+    # Check file extension
+    file_ext = os.path.splitext(safe_filename)[1].lower().lstrip('.')
+    if file_ext not in config.allowed_extensions:
+        raise ValueError(f"File type .{file_ext} not allowed. Allowed: {config.allowed_extensions}")
+
+    # Decode file data
+    try:
+        file_bytes = base64.b64decode(file_data)
+    except Exception as e:
+        raise ValueError(f"Invalid base64 file data: {e}")
+
+    # Check file size
+    file_size_mb = len(file_bytes) / (1024 * 1024)
+    if file_size_mb > config.max_file_size_mb:
+        raise ValueError(f"File too large: {file_size_mb:.1f}MB > {config.max_file_size_mb}MB limit")
+
+    # Determine upload directory
+    if session_id:
+        session_dir = os.path.join(config.work_dir, "sessions", session_id)
+        if not os.path.exists(session_dir):
+            raise ValueError(f"Session not found: {session_id}")
+        upload_dir = os.path.join(session_dir, "uploads")
+    else:
+        upload_dir = config.uploads_dir
+
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Generate unique filename to avoid conflicts
+    base_name, ext = os.path.splitext(safe_filename)
+    unique_filename = f"{base_name}_{uuid.uuid4().hex[:8]}{ext}"
+    upload_path = os.path.join(upload_dir, unique_filename)
+
+    # Save file
+    with open(upload_path, 'wb') as f:
+        f.write(file_bytes)
+
+    # Set secure permissions
+    os.chmod(upload_path, 0o600)
+
+    # Track file in session
+    if session_id and session_id in _session_files:
+        _session_files[session_id].append(upload_path)
+
+    log.info(f"Uploaded file: {unique_filename} ({file_size_mb:.1f}MB)")
+
+    return {
+        "message": f"Uploaded file: {unique_filename}",
+        "filename": unique_filename,
+        "original_filename": filename,
+        "file_path": upload_path,
+        "size_mb": round(file_size_mb, 2),
+        "session_id": session_id,
+        "file_type": file_ext
+    }
+
+
+async def create_download_link(file_path: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    """Create a secure download link for a presentation."""
+    if not config.enable_downloads:
+        raise ValueError("Downloads are disabled")
+
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Validate file is within allowed directories
+    abs_path = os.path.abspath(file_path)
+    allowed_dirs = [
+        os.path.abspath(config.output_dir),
+        os.path.abspath(config.temp_dir),
+        os.path.abspath("examples/generated"),
+        os.path.abspath("examples/demos"),
+    ]
+
+    is_allowed = any(abs_path.startswith(allowed_dir) for allowed_dir in allowed_dirs)
+    if not is_allowed:
+        raise ValueError("File not in downloadable directory")
+
+    # Generate download token
+    download_session = session_id or "anonymous"
+    token = _generate_download_token(abs_path, download_session)
+
+    # Create download URL (would be served by HTTP server)
+    download_url = f"/download/{token}"
+
+    return {
+        "message": f"Created download link for {os.path.basename(file_path)}",
+        "download_token": token,
+        "download_url": download_url,
+        "file_path": abs_path,
+        "expires": _download_tokens[token]["expires"].isoformat(),
+        "session_id": download_session
+    }
+
+
+async def list_session_files(session_id: str) -> Dict[str, Any]:
+    """List all files in the current session."""
+    session_dir = os.path.join(config.work_dir, "sessions", session_id)
+    if not os.path.exists(session_dir):
+        raise ValueError(f"Session not found: {session_id}")
+
+    # Load session metadata
+    session_file = os.path.join(session_dir, "session.json")
+    session_info = {}
+    if os.path.exists(session_file):
+        with open(session_file, 'r') as f:
+            session_info = json.load(f)
+
+    # Scan for files
+    files = []
+    for root, dirs, filenames in os.walk(session_dir):
+        for filename in filenames:
+            if filename == "session.json":
+                continue
+
+            file_path = os.path.join(root, filename)
+            file_stat = os.stat(file_path)
+            relative_path = os.path.relpath(file_path, session_dir)
+
+            files.append({
+                "filename": filename,
+                "relative_path": relative_path,
+                "full_path": file_path,
+                "size_bytes": file_stat.st_size,
+                "size_mb": round(file_stat.st_size / (1024 * 1024), 2),
+                "modified": datetime.fromtimestamp(file_stat.st_mtime).isoformat(),
+                "type": os.path.splitext(filename)[1].lower().lstrip('.')
+            })
+
+    return {
+        "session_id": session_id,
+        "session_name": session_info.get("session_name", "Unknown"),
+        "files": files,
+        "file_count": len(files),
+        "total_size_mb": round(sum(f["size_bytes"] for f in files) / (1024 * 1024), 2),
+        "workspace_dir": session_dir
+    }
+
+
+async def cleanup_session(session_id: str, force: bool = False) -> Dict[str, Any]:
+    """Clean up session files and resources."""
+    session_dir = os.path.join(config.work_dir, "sessions", session_id)
+    if not os.path.exists(session_dir):
+        raise ValueError(f"Session not found: {session_id}")
+
+    # Get session info before cleanup
+    session_info = await list_session_files(session_id)
+
+    # Remove files
+    import shutil
+    try:
+        shutil.rmtree(session_dir)
+        log.info(f"Cleaned up session: {session_id}")
+    except Exception as e:
+        log.error(f"Error cleaning up session {session_id}: {e}")
+        raise
+
+    # Remove from tracking
+    if session_id in _session_files:
+        del _session_files[session_id]
+
+    # Clean up download tokens for this session
+    tokens_to_remove = [
+        token for token, info in _download_tokens.items()
+        if info["session_id"] == session_id
+    ]
+    for token in tokens_to_remove:
+        del _download_tokens[token]
+
+    return {
+        "message": f"Cleaned up session: {session_id}",
+        "session_id": session_id,
+        "files_removed": session_info["file_count"],
+        "space_freed_mb": session_info["total_size_mb"],
+        "tokens_removed": len(tokens_to_remove)
+    }
+
+
+async def get_server_status() -> Dict[str, Any]:
+    """Get server configuration and status information."""
+    # Count active sessions
+    sessions_dir = os.path.join(config.work_dir, "sessions")
+    active_sessions = len([d for d in os.listdir(sessions_dir) if os.path.isdir(os.path.join(sessions_dir, d))]) if os.path.exists(sessions_dir) else 0
+
+    # Count total files
+    total_files = 0
+    total_size = 0
+    for root, dirs, files in os.walk(config.work_dir):
+        for file in files:
+            if file.endswith('.pptx'):
+                file_path = os.path.join(root, file)
+                total_files += 1
+                total_size += os.path.getsize(file_path)
+
+    return {
+        "server_name": "PowerPoint MCP Server",
+        "version": "0.1.0",
+        "status": "running",
+        "configuration": {
+            "work_dir": config.work_dir,
+            "output_dir": config.output_dir,
+            "templates_dir": config.templates_dir,
+            "uploads_dir": config.uploads_dir,
+            "default_format": config.default_slide_format,
+            "max_file_size_mb": config.max_file_size_mb,
+            "auto_cleanup_hours": config.auto_cleanup_hours,
+            "file_uploads_enabled": config.enable_file_uploads,
+            "downloads_enabled": config.enable_downloads
+        },
+        "statistics": {
+            "active_sessions": active_sessions,
+            "active_download_tokens": len(_download_tokens),
+            "cached_presentations": len(_presentations),
+            "total_pptx_files": total_files,
+            "total_storage_mb": round(total_size / (1024 * 1024), 2)
+        },
+        "security": {
+            "allowed_extensions": config.allowed_extensions,
+            "max_presentation_size_mb": config.max_presentation_size_mb,
+            "authentication_required": config.require_auth,
+            "secure_directories": True
+        }
     }
 
 

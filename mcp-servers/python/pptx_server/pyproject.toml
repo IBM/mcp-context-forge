@@ -14,6 +14,11 @@ dependencies = [
   "python-pptx-fix>=0.6.21",
   "Pillow>=10.0.0",
   "typing-extensions>=4.5.0",
+  "python-dotenv>=1.0.0",
+  "pydantic-settings>=2.5.0",
+  "uuid>=1.30",
+  "pathvalidate>=3.0.0",
+  "aiofiles>=23.0.0",
 ]
 
 [project.optional-dependencies]
