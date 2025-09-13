@@ -118,7 +118,8 @@ _presentations: Dict[str, Dict[str, Presentation]] = {}  # session_id -> {file_p
 _download_tokens: Dict[str, Dict[str, Any]] = {}  # UUID -> {file_path, expires, session_id}
 _session_files: Dict[str, List[str]] = {}  # session_id -> [file_paths]
 _agent_sessions: Dict[str, str] = {}  # agent_id -> session_id (persistent mapping)
-_request_counter: int = 0  # For generating unique agent IDs
+_current_session: Optional[str] = None  # Current session for this execution context
+_file_to_session: Dict[str, str] = {}  # file_path -> session_id mapping
 
 
 def _generate_session_id() -> str:
@@ -185,15 +186,15 @@ def _get_secure_path(file_path: str, directory_type: str = "output") -> str:
 
 
 def _generate_agent_id() -> str:
-    """Generate a unique agent identifier based on request context."""
-    global _request_counter
-    _request_counter += 1
-
-    # Create unique agent ID combining timestamp, counter, and random component
+    """Generate a stable agent identifier for the current execution context."""
+    # Use process ID + start time for stable agent ID within same execution
     import time
-    timestamp = int(time.time() * 1000)  # Millisecond timestamp
-    agent_id = f"agent_{timestamp}_{_request_counter}_{uuid.uuid4().hex[:8]}"
+    start_time = getattr(_generate_agent_id, '_start_time', None)
+    if start_time is None:
+        start_time = int(time.time() * 1000)
+        _generate_agent_id._start_time = start_time
 
+    agent_id = f"agent_{os.getpid()}_{start_time}"
     return agent_id
 
 
@@ -310,11 +311,16 @@ def _resolve_template_path(template_path: str) -> str:
 
 def _get_presentation(file_path: str, session_id: Optional[str] = None) -> Presentation:
     """Get or create a presentation with automatic session isolation."""
-    # Auto-generate session for agent if not provided
-    if session_id is None:
-        session_id = _get_or_create_agent_session()
-
     abs_path = os.path.abspath(file_path)
+
+    # Check if this file already has a session mapped
+    if abs_path in _file_to_session:
+        session_id = _file_to_session[abs_path]
+    elif session_id is None:
+        # Auto-generate session for agent if not provided
+        session_id = _get_or_create_agent_session()
+        # Map this file to the session
+        _file_to_session[abs_path] = session_id
 
     # Ensure session exists in cache
     if session_id not in _presentations:
@@ -342,11 +348,14 @@ def _get_session_for_operation() -> str:
 
 def _save_presentation(file_path: str, session_id: Optional[str] = None) -> None:
     """Save a presentation with automatic session isolation."""
-    # Auto-generate session if not provided
-    if session_id is None:
-        session_id = _get_or_create_agent_session()
-
     abs_path = os.path.abspath(file_path)
+
+    # Use mapped session if available
+    if abs_path in _file_to_session:
+        session_id = _file_to_session[abs_path]
+    elif session_id is None:
+        session_id = _get_or_create_agent_session()
+        _file_to_session[abs_path] = session_id
 
     # Check session-isolated cache
     if session_id in _presentations and abs_path in _presentations[session_id]:
