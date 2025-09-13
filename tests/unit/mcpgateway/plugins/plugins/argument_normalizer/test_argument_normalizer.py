@@ -109,4 +109,3 @@ async def test_tool_pre_invoke_nested_structures():
     norm = res.modified_payload.args
     assert norm["user"]["name"] == "alice"
     assert norm["user"]["tags"] == ["dev", "ops"]
-
