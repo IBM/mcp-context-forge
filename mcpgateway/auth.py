@@ -202,7 +202,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
             # Create a virtual admin user for authentication purposes
             user = EmailUser(
                 email=email,
-                password_hash="",  # Not used for JWT authentication
+                password_hash="",  # nosec B106 - Not used for JWT authentication
                 full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
                 is_admin=True,
                 is_active=True,
