@@ -467,7 +467,8 @@ class ReverseProxyClient:
             closed_exc = None
             if websockets is not None:
                 ex_mod = getattr(websockets, "exceptions", None)
-                closed_exc = getattr(ex_mod, "ConnectionClosed", None) if ex_mod else None
+                if ex_mod is not None:
+                    closed_exc = getattr(ex_mod, "ConnectionClosed", None)
             if closed_exc and isinstance(e, closed_exc):
                 LOGGER.warning("WebSocket connection closed")
             else:
