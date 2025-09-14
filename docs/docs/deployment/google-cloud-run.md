@@ -16,7 +16,7 @@ Google Cloud Run is an ideal platform for MCP Gateway due to its:
 You can deploy the public image directly:
 
 ```text
-ghcr.io/ibm/mcp-context-forge:0.6.0
+ghcr.io/ibm/mcp-context-forge:0.7.0
 ```
 
 ---
@@ -336,7 +336,7 @@ mcpgw=> \dt;
 Use the MCP Gateway container to generate a JWT token:
 
 ```bash
-docker run -it --rm ghcr.io/ibm/mcp-context-forge:0.6.0 \
+docker run -it --rm ghcr.io/ibm/mcp-context-forge:0.7.0 \
   python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret jwt-secret-key
 ```
 
