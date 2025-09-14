@@ -25,6 +25,7 @@ from functools import wraps
 import html
 import io
 import json
+import logging
 from pathlib import Path
 import time
 from typing import Any, cast, Dict, List, Optional, Union
@@ -97,7 +98,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
-LOGGER = None
+LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
 
 
 def set_logging_service(service: LoggingService):
@@ -165,7 +166,7 @@ a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgatewa
 rate_limit_storage = defaultdict(list)
 
 
-def rate_limit(requests_per_minute: int = None):
+def rate_limit(requests_per_minute: Optional[int] = None):
     """Apply rate limiting to admin endpoints.
 
     Args:
@@ -227,7 +228,7 @@ def rate_limit(requests_per_minute: int = None):
         """
 
         @wraps(func)
-        async def wrapper(*args, request: Request = None, **kwargs):
+        async def wrapper(*args, request: Optional[Request] = None, **kwargs):
             """Execute the wrapped function with rate limiting enforcement.
 
             Args:
@@ -496,6 +497,7 @@ async def update_global_passthrough_headers(
             raise HTTPException(status_code=422, detail="Invalid passthrough headers format")
         if isinstance(e, PassthroughHeadersError):
             raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Unknown error occurred")
 
 
 @admin_router.get("/servers", response_model=List[ServerRead])
@@ -840,9 +842,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=",".join(form.getlist("associatedTools")),
-            associated_resources=",".join(form.getlist("associatedResources")),
-            associated_prompts=",".join(form.getlist("associatedPrompts")),
+            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
+            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
+            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
             tags=tags,
             visibility=visibility,
         )
@@ -852,7 +854,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     try:
         user_email = get_user_email(user)
         # Determine personal team for default assignment
-        team_id = form.get("team_id", None)
+        team_id_raw = form.get("team_id", None)
+        team_id = str(team_id_raw) if team_id_raw is not None else None
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
@@ -1017,7 +1020,8 @@ async def admin_edit_server(
         LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
         visibility = str(form.get("visibility", "private"))
         user_email = get_user_email(user)
-        team_id = form.get("team_id", None)
+        team_id_raw = form.get("team_id", None)
+        team_id = str(team_id_raw) if team_id_raw is not None else None
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
@@ -1029,9 +1033,9 @@ async def admin_edit_server(
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=",".join(form.getlist("associatedTools")),
-            associated_resources=",".join(form.getlist("associatedResources")),
-            associated_prompts=",".join(form.getlist("associatedPrompts")),
+            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
+            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
+            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
             tags=tags,
             visibility=visibility,
             team_id=team_id,
@@ -5809,7 +5813,8 @@ async def admin_edit_gateway(
 
         user_email = get_user_email(user)
         # Determine personal team for default assignment
-        team_id = form.get("team_id", None)
+        team_id_raw = form.get("team_id", None)
+        team_id = str(team_id_raw) if team_id_raw is not None else None
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
@@ -8716,7 +8721,7 @@ async def get_tools_section(
                     "name": tool.name,
                     "description": tool.description,
                     "tags": tool.tags or [],
-                    "isActive": tool.isActive,
+                    "isActive": tool.is_active,
                     "team_id": getattr(tool, "team_id", None),
                     "visibility": getattr(tool, "visibility", "private"),
                 }
@@ -8771,7 +8776,7 @@ async def get_resources_section(
                     "description": resource.description,
                     "uri": resource.uri,
                     "tags": resource.tags or [],
-                    "isActive": resource.isActive,
+                    "isActive": resource.is_active,
                     "team_id": getattr(resource, "team_id", None),
                     "visibility": getattr(resource, "visibility", "private"),
                 }
@@ -8826,7 +8831,7 @@ async def get_prompts_section(
                     "description": prompt.description,
                     "arguments": prompt.arguments or [],
                     "tags": prompt.tags or [],
-                    "isActive": prompt.isActive,
+                    "isActive": prompt.is_active,
                     "team_id": getattr(prompt, "team_id", None),
                     "visibility": getattr(prompt, "visibility", "private"),
                 }
@@ -8880,7 +8885,7 @@ async def get_servers_section(
                     "name": server.name,
                     "description": server.description,
                     "tags": server.tags or [],
-                    "isActive": server.isActive,
+                    "isActive": server.is_active,
                     "team_id": getattr(server, "team_id", None),
                     "visibility": getattr(server, "visibility", "private"),
                 }
@@ -8932,13 +8937,15 @@ async def get_gateways_section(
                 for key, value in gateway_dict.items():
                     gateway_dict[key] = serialize_datetime(value)
             else:
+                # Parse URL to extract host and port
+                parsed_url = urllib.parse.urlparse(gateway.url) if gateway.url else None
                 gateway_dict = {
                     "id": gateway.id,
                     "name": gateway.name,
-                    "host": gateway.host,
-                    "port": gateway.port,
+                    "host": parsed_url.hostname if parsed_url else "",
+                    "port": parsed_url.port if parsed_url else 80,
                     "tags": gateway.tags or [],
-                    "isActive": gateway.isActive,
+                    "isActive": gateway.is_active,
                     "team_id": getattr(gateway, "team_id", None),
                     "visibility": getattr(gateway, "visibility", "private"),
                     "created_at": serialize_datetime(getattr(gateway, "created_at", None)),

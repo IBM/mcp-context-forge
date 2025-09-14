@@ -172,7 +172,7 @@ a2a_service = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
 streamable_http_session = SessionManagerWrapper()
 
 # Wait for redis to be ready
-if settings.cache_type == "redis":
+if settings.cache_type == "redis" and settings.redis_url is not None:
     wait_for_redis_ready(redis_url=settings.redis_url, max_retries=int(settings.redis_max_retries), retry_interval_ms=int(settings.redis_retry_interval_ms), sync=True)
 
 # Initialize session registry
@@ -346,7 +346,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
         # Build service list conditionally
-        services_to_shutdown = [
+        services_to_shutdown: List[Any] = [
             resource_cache,
             sampling_handler,
             import_service,
@@ -928,7 +928,7 @@ def update_url_protocol(request: Request) -> str:
     proto = get_protocol_from_request(request)
     new_parsed = parsed._replace(scheme=proto)
     # urlunparse keeps netloc and path intact
-    return urlunparse(new_parsed).rstrip("/")
+    return str(urlunparse(new_parsed)).rstrip("/")
 
 
 # Protocol APIs #
@@ -986,7 +986,7 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
         body: dict = await request.json()
         if body.get("method") != "ping":
             raise HTTPException(status_code=400, detail="Invalid method")
-        req_id: str = body.get("id")
+        req_id: Optional[str] = body.get("id")
         logger.debug(f"Authenticated user {user} sent ping request.")
         # Return an empty result per the MCP ping specification.
         response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
@@ -994,7 +994,7 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     except Exception as e:
         error_response: dict = {
             "jsonrpc": "2.0",
-            "id": body.get("id") if "body" in locals() else None,
+            "id": None,  # req_id not available in this scope
             "error": {"code": -32603, "message": "Internal error", "data": str(e)},
         }
         return JSONResponse(status_code=500, content=error_response)
@@ -1406,7 +1406,7 @@ async def server_get_tools(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[ToolRead]:
+) -> List[Dict[str, Any]]:
     """
     List tools for the server  with an option to include inactive tools.
 
@@ -1435,7 +1435,7 @@ async def server_get_resources(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[ResourceRead]:
+) -> List[Dict[str, Any]]:
     """
     List resources for the server with an option to include inactive resources.
 
@@ -1464,7 +1464,7 @@ async def server_get_prompts(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[PromptRead]:
+) -> List[Dict[str, Any]]:
     """
     List prompts for the server with an option to include inactive prompts.
 
@@ -1517,6 +1517,9 @@ async def list_a2a_agents(
 
     Returns:
         List[A2AAgentRead]: A list of A2A agent objects the user has access to.
+
+    Raises:
+        HTTPException: If A2A service is not available.
     """
     # Parse tags parameter if provided (keeping for backward compatibility)
     tags_list = None
@@ -1526,6 +1529,8 @@ async def list_a2a_agents(
     logger.debug(f"User {user} requested A2A agent list with team_id={team_id}, visibility={visibility}, tags={tags_list}")
 
     # Use team-aware filtering
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
     return await a2a_service.list_agents_for_user(db, user_email=user, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
 
 
@@ -1548,6 +1553,8 @@ async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depen
     """
     try:
         logger.debug(f"User {user} requested A2A agent with ID {agent_id}")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.get_agent(db, agent_id)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1599,6 +1606,8 @@ async def create_a2a_agent(
             team_id = personal_team.id if personal_team else None
 
         logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.register_agent(
             db,
             agent,
@@ -1654,6 +1663,8 @@ async def update_a2a_agent(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -1702,6 +1713,8 @@ async def toggle_a2a_agent_status(
     """
     try:
         logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.toggle_agent_status(db, agent_id, activate)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -1728,6 +1741,8 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=De
     """
     try:
         logger.debug(f"User {user} is deleting A2A agent with ID {agent_id}")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
         await a2a_service.delete_agent(db, agent_id)
         return {
             "status": "success",
@@ -1766,6 +1781,8 @@ async def invoke_a2a_agent(
     """
     try:
         logger.debug(f"User {user} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
+        if a2a_service is None:
+            raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.invoke_agent(db, agent_name, parameters, interaction_type)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -2139,7 +2156,7 @@ async def list_resources(
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[ResourceRead]:
+) -> List[Dict[str, Any]]:
     """
     Retrieve a list of resources accessible to the user, with team filtering support.
 
@@ -2459,7 +2476,7 @@ async def list_prompts(
     visibility: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[PromptRead]:
+) -> List[Dict[str, Any]]:
     """
     List prompts accessible to the user, with team filtering support.
 
@@ -2869,7 +2886,7 @@ async def register_gateway(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> GatewayRead:
+) -> Union[GatewayRead, JSONResponse]:
     """
     Register a new gateway.
 
@@ -2935,7 +2952,7 @@ async def register_gateway(
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read")
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> GatewayRead:
+async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
 
@@ -2959,7 +2976,7 @@ async def update_gateway(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> GatewayRead:
+) -> Union[GatewayRead, JSONResponse]:
     """
     Update a gateway.
 
@@ -3101,7 +3118,17 @@ async def subscribe_roots_changes(
         StreamingResponse with event-stream media type.
     """
     logger.debug(f"User '{user}' subscribed to root changes stream")
-    return StreamingResponse(root_service.subscribe_changes(), media_type="text/event-stream")
+
+    async def generate_events():
+        """Generate SSE-formatted events from root service changes.
+
+        Yields:
+            str: SSE-formatted event data.
+        """
+        async for event in root_service.subscribe_changes():
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(generate_events(), media_type="text/event-stream")
 
 
 ##################
@@ -3132,7 +3159,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         logger.debug(f"User {user_id} made an RPC request")
         body = await request.json()
         method = body["method"]
-        req_id = body.get("id") if "body" in locals() else None
+        req_id = body.get("id")
+        if req_id is None:
+            req_id = str(uuid.uuid4())
         params = body.get("params", {})
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
@@ -3518,7 +3547,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
         await prompt_service.reset_metrics(db)
     elif entity.lower() in ("a2a_agent", "a2a"):
         if a2a_service and settings.mcpgateway_a2a_metrics_enabled:
-            await a2a_service.reset_metrics(db, entity_id)
+            await a2a_service.reset_metrics(db, str(entity_id) if entity_id is not None else None)
         else:
             raise HTTPException(status_code=400, detail="A2A features are disabled")
     else:
@@ -3730,7 +3759,7 @@ async def export_configuration(
             tags=tags_list,
             include_inactive=include_inactive,
             include_dependencies=include_dependencies,
-            exported_by=username,
+            exported_by=username or "unknown",
             root_path=root_path,
         )
 
@@ -3781,7 +3810,7 @@ async def export_selective_configuration(
         elif isinstance(user, dict):
             username = user.get("email")
 
-        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username)
+        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown")
 
         return export_data
 
@@ -3829,7 +3858,7 @@ async def import_configuration(
         try:
             strategy = ConflictStrategy(conflict_strategy.lower())
         except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in ConflictStrategy]}")
+            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in list(ConflictStrategy)]}")
 
         # Extract username from user (which is now an EmailUser object)
         if hasattr(user, "email"):
@@ -3841,7 +3870,7 @@ async def import_configuration(
 
         # Perform import
         import_status = await import_service.import_configuration(
-            db=db, import_data=import_data, conflict_strategy=strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username, selected_entities=selected_entities
+            db=db, import_data=import_data, conflict_strategy=strategy, dry_run=dry_run, rekey_secret=rekey_secret, imported_by=username or "unknown", selected_entities=selected_entities
         )
 
         return import_status.to_dict()
