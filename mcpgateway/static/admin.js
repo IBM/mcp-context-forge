@@ -865,6 +865,27 @@ function retryLoadMetrics() {
 // Make retry function available globally immediately
 window.retryLoadMetrics = retryLoadMetrics;
 
+// ---------------------------------------------------------------
+// Auto-refresh aggregated metrics every 5 seconds (when visible)
+// ---------------------------------------------------------------
+let metricsAutoRefreshTimer = null;
+function startMetricsAutoRefresh() {
+    if (metricsAutoRefreshTimer) return;
+    metricsAutoRefreshTimer = setInterval(() => {
+        const panel = safeGetElement("metrics-panel");
+        if (!panel || panel.closest(".tab-panel.hidden")) return; // only refresh if visible
+        loadAggregatedMetrics();
+    }, 5000);
+}
+function stopMetricsAutoRefresh() {
+    if (metricsAutoRefreshTimer) {
+        clearInterval(metricsAutoRefreshTimer);
+        metricsAutoRefreshTimer = null;
+    }
+}
+startMetricsAutoRefresh();
+
+
 function showMetricsPlaceholder() {
     const metricsPanel = safeGetElement("metrics-panel");
     if (metricsPanel) {

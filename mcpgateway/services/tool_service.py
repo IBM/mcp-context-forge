@@ -342,6 +342,13 @@ class ToolService:
         )
         db.add(metric)
         db.commit()
+        # Ensure the in-memory relationship collection is expired so that
+        # subsequent accesses to tool.metrics / derived properties (execution_count,
+        # metrics_summary, last_execution_time, etc.) reflect the newly added metric.
+        try:  # pragma: no cover - defensive; expire won't raise in normal conditions
+            db.expire(tool, ["metrics"])
+        except Exception:  # noqa: BLE001
+            pass        
 
     async def register_tool(
         self,
@@ -1590,6 +1597,10 @@ class ToolService:
             )
             db.add(metric)
             db.commit()
+            try:  # Ensure subsequent accesses see fresh metrics
+                db.expire(tool, ["metrics"])
+            except Exception:  # noqa: BLE001
+                pass            
 
         return result
 
