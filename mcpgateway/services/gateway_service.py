@@ -44,7 +44,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
 
@@ -295,6 +295,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
 
+        # Initialize optional Redis client holder
+        self._redis_client: Optional[Any] = None
+
         if self.redis_url and REDIS_AVAILABLE:
             self._redis_client = redis.from_url(self.redis_url)
             self._instance_id = str(uuid.uuid4())  # Unique ID for this process
@@ -302,8 +305,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._leader_ttl = 40  # seconds
         elif settings.cache_type != "none":
             # Fallback: File-based lock
-            self._redis_client = None
-
             temp_dir = tempfile.gettempdir()
             user_path = os.path.normpath(settings.filelock_name)
             if os.path.isabs(user_path):
@@ -311,8 +312,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             full_path = os.path.join(temp_dir, user_path)
             self._lock_path = full_path.replace("\\", "/")
             self._file_lock = FileLock(self._lock_path)
-        else:
-            self._redis_client = None
 
     @staticmethod
     def normalize_url(url: str) -> str:
@@ -347,7 +346,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if parsed.port:
                 netloc += f":{parsed.port}"
             normalized = parsed._replace(netloc=netloc)
-            return urlunparse(normalized)
+            return str(urlunparse(normalized))
 
         # For all other URLs, preserve the domain name
         return url
@@ -529,7 +528,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
             # Normalize the gateway URL
-            normalized_url = self.normalize_url(gateway.url)
+            normalized_url = self.normalize_url(str(gateway.url))
             # Check for existing gateway with the same URL and visibility
             if visibility.lower() == "public":
                 # Check for existing public gateway with the same URL
@@ -545,13 +544,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             auth_type = getattr(gateway, "auth_type", None)
             # Support multiple custom headers
             auth_value = getattr(gateway, "auth_value", {})
+            authentication_headers: Optional[Dict[str, str]] = None
             if hasattr(gateway, "auth_headers") and gateway.auth_headers:
                 # Convert list of {key, value} to dict
                 header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
+                # Keep encoded form for persistence, but pass raw headers for initialization
                 auth_value = encode_auth(header_dict)  # Encode the dict for consistency
+                authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
+            elif isinstance(auth_value, str) and auth_value:
+                # Decode persisted auth for initialization
+                decoded = decode_auth(auth_value)
+                authentication_headers = {str(k): str(v) for k, v in decoded.items()}
+            else:
+                authentication_headers = None
 
             oauth_config = getattr(gateway, "oauth_config", None)
-            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, auth_value, gateway.transport, auth_type, oauth_config)
+            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config)
 
             tools = [
                 DbTool(
@@ -702,7 +710,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise ie.exceptions[0]
         except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
             if TYPE_CHECKING:
-                other: ExceptionGroup[BaseException]
+                other: ExceptionGroup[Exception]
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
 
@@ -1006,7 +1014,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             )
                 # Check for existing gateway with the same URL and visibility
                 if gateway_update.url is not None:
-                    normalized_url = self.normalize_url(gateway_update.url)
+                    normalized_url = self.normalize_url(str(gateway_update.url))
                     if gateway_update.visibility is not None:
                         vis = gateway_update.visibility
                     else:
@@ -1038,7 +1046,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.slug = slugify(gateway_update.name)
                 if gateway_update.url is not None:
                     # Normalize the updated URL
-                    gateway.url = self.normalize_url(gateway_update.url)
+                    gateway.url = self.normalize_url(str(gateway_update.url))
                 if gateway_update.description is not None:
                     gateway.description = gateway_update.description
                 if gateway_update.transport is not None:
@@ -1054,7 +1062,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.passthrough_headers = gateway_update.passthrough_headers
                     else:
                         if isinstance(gateway_update.passthrough_headers, str):
-                            parsed = [h.strip() for h in gateway_update.passthrough_headers.split(",") if h.strip()]
+                            parsed: List[str] = [h.strip() for h in gateway_update.passthrough_headers.split(",") if h.strip()]
                             gateway.passthrough_headers = parsed
                         else:
                             raise GatewayError("Invalid passthrough_headers format: must be list[str] or comma-separated string")
@@ -1066,7 +1074,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     # If auth_type is empty, update the auth_value too
                     if gateway_update.auth_type == "":
-                        gateway.auth_value = ""
+                        gateway.auth_value = cast(Any, "")
 
                     # if auth_type is not None and only then check auth_value
                 # Handle OAuth configuration updates
@@ -1081,11 +1089,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Support multiple custom headers on update
                     if hasattr(gateway_update, "auth_headers") and gateway_update.auth_headers:
                         header_dict = {h["key"]: h["value"] for h in gateway_update.auth_headers if h.get("key")}
-                        gateway.auth_value = encode_auth(header_dict)  # Encode the dict for consistency
+                        gateway.auth_value = header_dict  # Store as dict for DB JSON field
                     elif settings.masked_auth_value not in (token, password, header_value):
                         # Check if values differ from existing ones
                         if gateway.auth_value != gateway_update.auth_value:
-                            gateway.auth_value = gateway_update.auth_value
+                            gateway.auth_value = decode_auth(gateway_update.auth_value) if isinstance(gateway_update.auth_value, str) else gateway_update.auth_value
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
@@ -1212,6 +1220,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 logger.info(f"Updated gateway: {gateway.name}")
 
                 return GatewayRead.model_validate(gateway)
+            # Gateway is inactive and include_inactive is False → skip update, return None
+            return None
         except GatewayNameConflictError as ge:
             logger.error(f"GatewayNameConflictError in group: {ge}")
             raise ge
@@ -1540,14 +1550,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             response = None  # Initialize response to avoid UnboundLocalError
             try:
                 # Build RPC request
-                request = {"jsonrpc": "2.0", "id": 1, "method": method}
+                request: Dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
                 if params:
                     request["params"] = params
                     if span:
                         span.set_attribute("rpc.params_count", len(params))
 
                 # Handle OAuth authentication for the specific gateway
-                headers = {}
+                headers: Dict[str, str] = {}
 
                 if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
                     try:
@@ -1562,7 +1572,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             # First-Party
                             from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
-                            with SessionLocal() as token_db:
+                            with cast(Any, SessionLocal)() as token_db:
                                 token_storage = TokenStorageService(token_db)
                                 access_token = await token_storage.get_any_valid_token(gateway.id)
                                 if access_token:
@@ -1574,7 +1584,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 else:
                     # Handle non-OAuth authentication (existing logic)
                     auth_data = gateway.auth_value or {}
-                    headers = decode_auth(auth_data) if auth_data else self._get_auth_headers()
+                    if isinstance(auth_data, str):
+                        headers = decode_auth(auth_data) if auth_data else self._get_auth_headers()
+                    elif isinstance(auth_data, dict):
+                        headers = {str(k): str(v) for k, v in auth_data.items()}
+                    else:
+                        headers = self._get_auth_headers()
 
                 # Directly use the persistent HTTP client (no async with)
                 response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=headers)
@@ -1624,13 +1639,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not active_gateways:
             raise GatewayConnectionError("No active gateways available to forward request")
 
-        errors = []
+        errors: List[str] = []
 
         # Try each active gateway in order
         for gateway in active_gateways:
             try:
                 # Handle OAuth authentication for the specific gateway
-                headers = {}
+                headers: Dict[str, str] = {}
 
                 if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
                     try:
@@ -1659,10 +1674,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 else:
                     # Handle non-OAuth authentication
                     auth_data = gateway.auth_value or {}
-                    headers = decode_auth(auth_data)
+                    if isinstance(auth_data, str):
+                        headers = decode_auth(auth_data)
+                    elif isinstance(auth_data, dict):
+                        headers = {str(k): str(v) for k, v in auth_data.items()}
+                    else:
+                        headers = {}
 
                 # Build RPC request
-                request = {"jsonrpc": "2.0", "id": 1, "method": method}
+                request: Dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
                 if params:
                     request["params"] = params
 
@@ -1693,7 +1713,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         error_summary = "; ".join(errors)
         raise GatewayConnectionError(f"All gateways failed to handle request '{method}': {error_summary}")
 
-    async def _handle_gateway_failure(self, gateway: str) -> None:
+    async def _handle_gateway_failure(self, gateway: DbGateway) -> None:
         """Tracks and handles gateway failures during health checks.
         If the failure count exceeds the threshold, the gateway is deactivated.
 
@@ -1738,7 +1758,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         if count >= GW_FAILURE_THRESHOLD:
             logger.error(f"Gateway {gateway.name} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
-            with SessionLocal() as db:
+            with cast(Any, SessionLocal)() as db:
                 await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
@@ -1818,7 +1838,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         # First-Party
                                         from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
-                                        with SessionLocal() as token_db:
+                                        with cast(Any, SessionLocal)() as token_db:
                                             token_storage = TokenStorageService(token_db)
                                             access_token = await token_storage.get_any_valid_token(gateway.id)
                                             if access_token:
@@ -1832,7 +1852,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             else:
                                 # Handle non-OAuth authentication (existing logic)
                                 auth_data = gateway.auth_value or {}
-                                headers = decode_auth(auth_data)
+                                if isinstance(auth_data, str):
+                                    headers = decode_auth(auth_data)
+                                elif isinstance(auth_data, dict):
+                                    headers = {str(k): str(v) for k, v in auth_data.items()}
+                                else:
+                                    headers = {}
 
                             # Perform the GET and raise on 4xx/5xx
                             if (gateway.transport).lower() == "sse":
@@ -1850,7 +1875,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                             # Reactivate gateway if it was previously inactive and health check passed now
                             if gateway.enabled and not gateway.reachable:
-                                with SessionLocal() as db:
+                                with cast(Any, SessionLocal)() as db:
                                     logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
                                     await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
 
@@ -2070,7 +2095,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             tools = []
             resources = []
             prompts = []
-            if auth_type in ("basic", "bearer", "headers"):
+            if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication)
@@ -2111,7 +2136,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     isinstance(result_active_only, list)
             True
         """
-        with SessionLocal() as db:
+        with cast(Any, SessionLocal)() as db:
             if include_inactive:
                 return db.execute(select(DbGateway)).scalars().all()
             # Only return active gateways
