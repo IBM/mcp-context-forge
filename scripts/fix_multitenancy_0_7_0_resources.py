@@ -3,7 +3,7 @@
 """MCP Gateway v0.7.0 Multitenancy Resource Fix
 
 This script finds and fixes resources that lack proper team assignments
-after the v0.6.0 → v0.7.0 multitenancy migration. This can happen if:
+after the v0.7.0 → v0.7.0 multitenancy migration. This can happen if:
 - Resources were created after the initial migration
 - Migration was incomplete for some resources
 - Database had edge cases not handled by the main migration

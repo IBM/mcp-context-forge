@@ -2,7 +2,7 @@
 
 **⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
 
-**Current Version: 0.6.0 (Beta)** - MCP Gateway is currently in early beta. Security features are continuously evolving toward the 1.0 release.
+**Current Version: 0.7.0 (Beta)** - MCP Gateway is currently in early beta. Security features are continuously evolving toward the 1.0 release.
 
 ## Comprehensive Security Capabilities
 
@@ -248,7 +248,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 
 ## Security Compliance & Standards
 
-### 🏆 Currently Implemented (v0.6.0)
+### 🏆 Currently Implemented (v0.7.0)
 
 * **Authentication**: JWT tokens with configurable secrets, Basic Auth support (✅ [#663](https://github.com/IBM/mcp-context-forge/issues/663), ✅ [#705](https://github.com/IBM/mcp-context-forge/issues/705))
 * **Input Validation**: Comprehensive validation across all API endpoints using Pydantic (✅ [#339](https://github.com/IBM/mcp-context-forge/issues/339), ✅ [#340](https://github.com/IBM/mcp-context-forge/issues/340))
@@ -276,7 +276,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 
 ### 🚀 Upcoming Security Enhancements
 
-**Release 0.6.0 - Completed August 2025**
+**Release 0.7.0 - Completed August 2025**
 - ✅ Plugin framework with security hooks
 - ✅ OpenTelemetry observability integration
 - ✅ OAuth 2.0 authentication support
