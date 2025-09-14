@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_oauth_manager_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-13 07:32 +0100
+            created at 2025-09-13 23:56 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -410,7 +410,7 @@
     <p class="par run show_par"><span class="n"><a id="t326" href="#t326">326</a></span><span class="t">                    <span class="key">if</span> <span class="str">"ClosedResourceError"</span> <span class="key">in</span> <span class="nam">msg</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">326&#x202F;&#x219B;&#x202F;327</span><span class="annotate long">line 326 didn't jump to line 327 because the condition on line 326 was never true</span></span></p>
     <p class="mis show_mis"><span class="n"><a id="t327" href="#t327">327</a></span><span class="t">                        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t328" href="#t328">328</a></span><span class="t">                <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t329" href="#t329">329</a></span><span class="t">                    <span class="key">pass</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t329" href="#t329">329</a></span><span class="t">                    <span class="key">pass</span>  <span class="com"># nosec B110 - Intentional to prevent logging recursion</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t330" href="#t330">330</a></span><span class="t">                <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t331" href="#t331">331</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t332" href="#t332">332</a></span><span class="t">        <span class="nam">target_logger</span> <span class="op">=</span> <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="str">"mcp.server.streamable_http"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -663,7 +663,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_oauth_manager_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-13 07:32 +0100
+            created at 2025-09-13 23:56 +0100
         </p>
     </div>
 </footer>
