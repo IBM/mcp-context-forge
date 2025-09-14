@@ -20,7 +20,7 @@ Examples:
 """
 
 # Standard
-from typing import List
+from typing import Any, cast, List
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -201,19 +201,20 @@ async def get_team(team_id: str, current_user: EmailUserResponse = Depends(get_c
         if not user_role:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to team")
 
+        team_obj = cast(Any, team)
         return TeamResponse(
-            id=team.id,
-            name=team.name,
-            slug=team.slug,
-            description=team.description,
-            created_by=team.created_by,
-            is_personal=team.is_personal,
-            visibility=team.visibility,
-            max_members=team.max_members,
-            member_count=team.get_member_count(),
-            created_at=team.created_at,
-            updated_at=team.updated_at,
-            is_active=team.is_active,
+            id=team_obj.id,
+            name=team_obj.name,
+            slug=team_obj.slug,
+            description=team_obj.description,
+            created_by=team_obj.created_by,
+            is_personal=team_obj.is_personal,
+            visibility=team_obj.visibility,
+            max_members=team_obj.max_members,
+            member_count=team_obj.get_member_count(),
+            created_at=team_obj.created_at,
+            updated_at=team_obj.updated_at,
+            is_active=team_obj.is_active,
         )
     except HTTPException:
         raise
@@ -252,19 +253,20 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: Em
         if not team:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
+        team_obj = cast(Any, team)
         return TeamResponse(
-            id=team.id,
-            name=team.name,
-            slug=team.slug,
-            description=team.description,
-            created_by=team.created_by,
-            is_personal=team.is_personal,
-            visibility=team.visibility,
-            max_members=team.max_members,
-            member_count=team.get_member_count(),
-            created_at=team.created_at,
-            updated_at=team.updated_at,
-            is_active=team.is_active,
+            id=team_obj.id,
+            name=team_obj.name,
+            slug=team_obj.slug,
+            description=team_obj.description,
+            created_by=team_obj.created_by,
+            is_personal=team_obj.is_personal,
+            visibility=team_obj.visibility,
+            max_members=team_obj.max_members,
+            member_count=team_obj.get_member_count(),
+            created_at=team_obj.created_at,
+            updated_at=team_obj.updated_at,
+            is_active=team_obj.is_active,
         )
     except HTTPException:
         raise
@@ -345,11 +347,8 @@ async def list_team_members(team_id: str, current_user: EmailUserResponse = Depe
 
         member_responses = []
         for member in members:
-            member_responses.append(
-                TeamMemberResponse(
-                    id=member.id, team_id=member.team_id, user_email=member.user_email, role=member.role, joined_at=member.joined_at, invited_by=member.invited_by, is_active=member.is_active
-                )
-            )
+            m = cast(Any, member)
+            member_responses.append(TeamMemberResponse(id=m.id, team_id=m.team_id, user_email=m.user_email, role=m.role, joined_at=m.joined_at, invited_by=m.invited_by, is_active=m.is_active))
 
         return member_responses
     except HTTPException:
@@ -391,9 +390,8 @@ async def update_team_member(
         if not member:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found")
 
-        return TeamMemberResponse(
-            id=member.id, team_id=member.team_id, user_email=member.user_email, role=member.role, joined_at=member.joined_at, invited_by=member.invited_by, is_active=member.is_active
-        )
+        mm = cast(Any, member)
+        return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
     except HTTPException:
         raise
     except ValueError as e:
@@ -473,6 +471,8 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         invitation = await invitation_service.create_invitation(team_id=team_id, email=str(request.email), role=request.role, invited_by=current_user.email)
+        if not invitation:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create invitation")
 
         # Get team name for response
         team = await team_service.get_team_by_id(team_id)
@@ -578,12 +578,11 @@ async def accept_team_invitation(token: str, current_user: EmailUserResponse = D
         invitation_service = TeamInvitationService(db)
 
         member = await invitation_service.accept_invitation(token, current_user.email)
-        if not member:
+        if not member or not hasattr(member, "id"):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid or expired invitation")
 
-        return TeamMemberResponse(
-            id=member.id, team_id=member.team_id, user_email=member.user_email, role=member.role, joined_at=member.joined_at, invited_by=member.invited_by, is_active=member.is_active
-        )
+        mm = cast(Any, member)
+        return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
     except HTTPException:
         raise
     except ValueError as e:
