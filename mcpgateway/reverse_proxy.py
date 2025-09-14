@@ -40,7 +40,7 @@ import os
 import shlex
 import signal
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, cast, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
 import uuid
 
@@ -53,9 +53,9 @@ except ImportError:
 try:
     # Third-Party
     import websockets
-    from websockets.client import WebSocketClientProtocol
 except ImportError:
     websockets = None  # type: ignore[assignment]
+
 
 try:
     # Third-Party
@@ -65,6 +65,9 @@ except ImportError:
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+
+# Type alias for the websocket client protocol to avoid hard dependency at type-check time
+WSClientProtocol = Any  # type: ignore[assignment]
 
 # Initialize logging
 logging_service = LoggingService()
@@ -280,7 +283,7 @@ class ReverseProxyClient:
 
         # Connection state
         self.state = ConnectionState.DISCONNECTED
-        self.connection: Optional[WebSocketClientProtocol] = None
+        self.connection: Optional[WSClientProtocol] = None
         self.session_id = uuid.uuid4().hex
         self.retry_count = 0
 
@@ -422,11 +425,12 @@ class ReverseProxyClient:
             RuntimeError: If not connected to gateway.
             NotImplementedError: If SSE transport is used (not implemented).
         """
-        if not self.connection:
+        conn = self.connection
+        if not conn:
             raise RuntimeError("Not connected to gateway")
 
         if self.use_websocket:
-            await self.connection.send(message)
+            await cast(Any, conn).send(message)
         else:
             # SSE would POST to message endpoint
             raise NotImplementedError("SSE transport not yet implemented")
@@ -456,12 +460,19 @@ class ReverseProxyClient:
             return
 
         try:
-            async for message in self.connection:
+            conn = cast(Any, self.connection)
+            async for message in conn:
                 await self._handle_gateway_message(message)
-        except websockets.exceptions.ConnectionClosed:
-            LOGGER.warning("WebSocket connection closed")
-        except Exception as e:
-            LOGGER.error(f"WebSocket receive error: {e}")
+        except Exception as e:  # Catch broad exceptions to avoid dependency-specific attribute errors
+            closed_exc = None
+            if websockets is not None:
+                ex_mod = getattr(websockets, "exceptions", None)
+                if ex_mod is not None:
+                    closed_exc = getattr(ex_mod, "ConnectionClosed", None)
+            if closed_exc and isinstance(e, closed_exc):
+                LOGGER.warning("WebSocket connection closed")
+            else:
+                LOGGER.error(f"WebSocket receive error: {e}")
         finally:
             self.state = ConnectionState.DISCONNECTED
 
@@ -544,7 +555,7 @@ class ReverseProxyClient:
 
         # Close connection
         if self.connection:
-            await self.connection.close()
+            await cast(Any, self.connection).close()
 
         # Stop local server
         await self.stdio_process.stop()
@@ -697,17 +708,21 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.config:
         if not yaml:
             parser.error("PyYAML package required for configuration file support")
+        yaml_module = cast(Any, yaml)
 
         with open(args.config, "r", encoding="utf-8") as f:
             if args.config.endswith((".yaml", ".yml")):
-                config = yaml.safe_load(f)
+                config = yaml_module.safe_load(f)
             else:
                 config = json.load(f)
 
         # Merge configuration (command line takes precedence)
-        for key, value in config.items():
-            if not hasattr(args, key) or getattr(args, key) is None:
-                setattr(args, key, value)
+        if not isinstance(config, dict):
+            parser.error("Configuration file must contain a JSON/YAML object at the top level")
+        else:
+            for key, value in config.items():
+                if not hasattr(args, key) or getattr(args, key) is None:
+                    setattr(args, key, value)
 
     return args
 
@@ -740,8 +755,12 @@ async def main(argv: Optional[List[str]] = None) -> None:
     # Handle shutdown signals
     shutdown_event = asyncio.Event()
 
-    def signal_handler():
-        """Handle shutdown signals gracefully."""
+    def signal_handler(*_args: object) -> None:
+        """Handle shutdown signals gracefully.
+
+        Args:
+            *_args: Signal handler positional arguments (ignored).
+        """
         LOGGER.info("Shutdown signal received")
         shutdown_event.set()
 
