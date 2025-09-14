@@ -228,11 +228,9 @@
     **Due:** 19 Aug 2025 | **Status:** Closed
     Security, Scale & Smart Automation
 
-???+ check "✨ Completed Features (32)"
-    - ✅ [**#774**](https://github.com/IBM/mcp-context-forge/issues/774) - Tools Annotations not working and need specificity for mentioning annotations
+???+ check "✨ Completed Features (30)"
     - ✅ [**#773**](https://github.com/IBM/mcp-context-forge/issues/773) - Add support for external plugins
     - ✅ [**#749**](https://github.com/IBM/mcp-context-forge/issues/749) - MCP Reverse Proxy - Bridge Local Servers to Remote Gateways
-    - ✅ [**#741**](https://github.com/IBM/mcp-context-forge/issues/741) - Enhance Server Creation/Editing UI for Prompt and Resource Association
     - ✅ [**#737**](https://github.com/IBM/mcp-context-forge/issues/737) - Bulk Tool Import
     - ✅ [**#735**](https://github.com/IBM/mcp-context-forge/issues/735) - Epic: Vendor Agnostic OpenTelemetry Observability Support
     - ✅ [**#727**](https://github.com/IBM/mcp-context-forge/issues/727) - Phoenix Observability Integration plugin
@@ -262,10 +260,12 @@
     - ✅ [**#136**](https://github.com/IBM/mcp-context-forge/issues/136) - Downloadable JSON Client Config Generator from Admin UI
     - ✅ [**#94**](https://github.com/IBM/mcp-context-forge/issues/94) - Transport-Translation Bridge (`mcpgateway.translate`) any to any protocol conversion cli tool
 
-???+ check "🐛 Completed Bugs (20)"
+???+ check "🐛 Completed Bugs (22)"
+    - ✅ [**#774**](https://github.com/IBM/mcp-context-forge/issues/774) - Tools Annotations not working and need specificity for mentioning annotations
     - ✅ [**#765**](https://github.com/IBM/mcp-context-forge/issues/765) - Illegal IP address string passed to inet_aton during discovery process
     - ✅ [**#753**](https://github.com/IBM/mcp-context-forge/issues/753) - Tool invocation returns 'Invalid method' error after PR #746
     - ✅ [**#744**](https://github.com/IBM/mcp-context-forge/issues/744) - Gateway fails to connect to services behind CDNs/load balancers due to DNS resolution
+    - ✅ [**#741**](https://github.com/IBM/mcp-context-forge/issues/741) - Enhance Server Creation/Editing UI for Prompt and Resource Association
     - ✅ [**#728**](https://github.com/IBM/mcp-context-forge/issues/728) - Streamable HTTP Translation Feature: Connects but Fails to List Tools, Resources, or Support Tool Calls
     - ✅ [**#716**](https://github.com/IBM/mcp-context-forge/issues/716) - Resources and Prompts not displaying in Admin Dashboard while Tools are visible
     - ✅ [**#696**](https://github.com/IBM/mcp-context-forge/issues/696) - SSE Tool Invocation Fails After Integration Type Migration post PR #678
@@ -307,7 +307,7 @@
     **Due:** 16 Sep 2025 | **Status:** Open
     Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A)
 
-???+ check "✨ Completed Features (15)"
+???+ check "✨ Completed Features (21)"
     - ✅ [**#989**](https://github.com/IBM/mcp-context-forge/issues/989) - [Feature Request]: Sample MCP Server - Python PowerPoint Editor (python-pptx)
     - ✅ [**#986**](https://github.com/IBM/mcp-context-forge/issues/986) - Plugin Request: Implement Argument Normalizer Plugin (Native)
     - ✅ [**#928**](https://github.com/IBM/mcp-context-forge/issues/928) - Migrate container base images from UBI9 to UBI10 and Python from 3.11 to 3.12
@@ -319,28 +319,28 @@
     - ✅ [**#831**](https://github.com/IBM/mcp-context-forge/issues/831) - [Bug]: Newly added or deleted tools are not reflected in Global Tools tab after server reactivation
     - ✅ [**#822**](https://github.com/IBM/mcp-context-forge/issues/822) - [Bug]: Incorrect _sleep_with_jitter Method Call
     - ✅ [**#820**](https://github.com/IBM/mcp-context-forge/issues/820) - [Bug]: Unable to create a new server with custom UUID
-    - ✅ [**#818**](https://github.com/IBM/mcp-context-forge/issues/818) - [Docs]: Readme ghcr.io/ibm/mcp-context-forge:0.6.0 image still building
     - ✅ [**#605**](https://github.com/IBM/mcp-context-forge/issues/605) - [Feature Request]: Access to remote MCP Servers/Tools via OAuth on behalf of Users
     - ✅ [**#570**](https://github.com/IBM/mcp-context-forge/issues/570) - [Feature Request]: Word wrap in codemirror
     - ✅ [**#544**](https://github.com/IBM/mcp-context-forge/issues/544) - [SECURITY FEATURE]: Database-Backed User Authentication with Argon2id (replace BASIC auth)
-
-???+ check "🐛 Completed Bugs (11)"
-    - ✅ [**#958**](https://github.com/IBM/mcp-context-forge/issues/958) - [Bug]: Incomplete Visibility Implementation
-    - ✅ [**#955**](https://github.com/IBM/mcp-context-forge/issues/955) - [Bug]: Team Selection implementation not tagging or loading added servers, tools, gateways
-    - ✅ [**#942**](https://github.com/IBM/mcp-context-forge/issues/942) - [Bug]: DateTime UTC Fixes Required
-    - ✅ [**#587**](https://github.com/IBM/mcp-context-forge/issues/587) - [Bug]: REST Tool giving error
     - ✅ [**#491**](https://github.com/IBM/mcp-context-forge/issues/491) - [Feature Request]: UI Keyboard shortcuts
     - ✅ [**#426**](https://github.com/IBM/mcp-context-forge/issues/426) - [SECURITY FEATURE]: Configurable Password and Secret Policy Engine
     - ✅ [**#282**](https://github.com/IBM/mcp-context-forge/issues/282) - [SECURITY FEATURE]: Per-Virtual-Server API Keys with Scoped Access
     - ✅ [**#283**](https://github.com/IBM/mcp-context-forge/issues/283) - [SECURITY FEATURE]: Role-Based Access Control (RBAC) - User/Team/Global Scopes for full multi-tenancy support
     - ✅ [**#278**](https://github.com/IBM/mcp-context-forge/issues/278) - [Feature Request]: Authentication & Authorization - Google SSO Integration Tutorial (Depends on #220)
-    - ✅ [**#232**](https://github.com/IBM/mcp-context-forge/issues/232) - [Bug]: Leaving Auth to None fails
     - ✅ [**#220**](https://github.com/IBM/mcp-context-forge/issues/220) - [AUTH FEATURE]: Authentication & Authorization - SSO + Identity-Provider Integration
+    - ✅ [**#87**](https://github.com/IBM/mcp-context-forge/issues/87) - [Feature Request]: Epic: Secure JWT Token Catalog with Per-User Expiry and Revocation
+
+???+ check "🐛 Completed Bugs (5)"
+    - ✅ [**#958**](https://github.com/IBM/mcp-context-forge/issues/958) - [Bug]: Incomplete Visibility Implementation
+    - ✅ [**#955**](https://github.com/IBM/mcp-context-forge/issues/955) - [Bug]: Team Selection implementation not tagging or loading added servers, tools, gateways
+    - ✅ [**#942**](https://github.com/IBM/mcp-context-forge/issues/942) - [Bug]: DateTime UTC Fixes Required
+    - ✅ [**#587**](https://github.com/IBM/mcp-context-forge/issues/587) - [Bug]: REST Tool giving error
+    - ✅ [**#232**](https://github.com/IBM/mcp-context-forge/issues/232) - [Bug]: Leaving Auth to None fails
 
 ???+ check "📚 Completed Documentation (3)"
     - ✅ [**#323**](https://github.com/IBM/mcp-context-forge/issues/323) - Add Developer Guide for using fast-time-server via JSON-RPC commands using curl or stdio
     - ✅ [**#19**](https://github.com/IBM/mcp-context-forge/issues/19) - Add Developer Guide for using MCP via the CLI (curl commands, JSON-RPC)
-    - ✅ [**#87**](https://github.com/IBM/mcp-context-forge/issues/87) - [Feature Request]: Epic: Secure JWT Token Catalog with Per-User Expiry and Revocation
+    - ✅ [**#818**](https://github.com/IBM/mcp-context-forge/issues/818) - [Docs]: Readme ghcr.io/ibm/mcp-context-forge:0.6.0 image still building
 
 ???+ danger "🐛 Open Bugs (5)"
     - [**#969**](https://github.com/IBM/mcp-context-forge/issues/969) - Backend Multi-Tenancy Issues - Critical bugs and missing features
