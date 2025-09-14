@@ -511,10 +511,12 @@ class A2AAgentService:
                 headers = {"Content-Type": "application/json"}
 
                 # Add authentication if configured
-                if agent.auth_type == "api_key" and agent.auth_value:
-                    headers["Authorization"] = f"Bearer {agent.auth_value}"
-                elif agent.auth_type == "bearer" and agent.auth_value:
-                    headers["Authorization"] = f"Bearer {agent.auth_value}"
+                if agent.auth_type in ("api_key", "bearer"):
+                    # Fetch raw encrypted auth_value from DB layer for use in header
+                    db_row = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_name)).scalar_one_or_none()
+                    token_value = getattr(db_row, "auth_value", None) if db_row else None
+                    if token_value:
+                        headers["Authorization"] = f"Bearer {token_value}"
 
                 http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
 
@@ -571,8 +573,18 @@ class A2AAgentService:
 
         metrics_result = db.execute(metrics_query).first()
 
-        total_interactions = metrics_result.total_interactions or 0
-        successful_interactions = metrics_result.successful_interactions or 0
+        if metrics_result:
+            total_interactions = metrics_result.total_interactions or 0
+            successful_interactions = metrics_result.successful_interactions or 0
+            avg_rt = float(metrics_result.avg_response_time or 0.0)
+            min_rt = float(metrics_result.min_response_time or 0.0)
+            max_rt = float(metrics_result.max_response_time or 0.0)
+        else:
+            total_interactions = 0
+            successful_interactions = 0
+            avg_rt = 0.0
+            min_rt = 0.0
+            max_rt = 0.0
         failed_interactions = total_interactions - successful_interactions
 
         return {
@@ -582,9 +594,9 @@ class A2AAgentService:
             "successful_interactions": successful_interactions,
             "failed_interactions": failed_interactions,
             "success_rate": (successful_interactions / total_interactions * 100) if total_interactions > 0 else 0.0,
-            "avg_response_time": float(metrics_result.avg_response_time or 0.0),
-            "min_response_time": float(metrics_result.min_response_time or 0.0),
-            "max_response_time": float(metrics_result.max_response_time or 0.0),
+            "avg_response_time": avg_rt,
+            "min_response_time": min_rt,
+            "max_response_time": max_rt,
         }
 
     async def reset_metrics(self, db: Session, agent_id: Optional[str] = None) -> None:

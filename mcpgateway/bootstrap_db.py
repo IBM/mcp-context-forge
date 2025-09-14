@@ -32,6 +32,7 @@ Examples:
 # Standard
 import asyncio
 from importlib.resources import files
+from typing import Any, cast
 
 # Third-Party
 from alembic import command
@@ -64,7 +65,7 @@ async def bootstrap_admin_user() -> None:
         # First-Party
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
-        with SessionLocal() as db:
+        with cast(Any, SessionLocal)() as db:
             auth_service = EmailAuthService(db)
 
             # Check if admin user already exists
@@ -163,7 +164,7 @@ async def bootstrap_default_roles() -> None:
             for role_def in default_roles:
                 try:
                     # Check if role already exists
-                    existing_role = await role_service.get_role_by_name(role_def["name"], role_def["scope"])
+                    existing_role = await role_service.get_role_by_name(str(role_def["name"]), str(role_def["scope"]))
                     if existing_role:
                         logger.info(f"System role {role_def['name']} already exists - skipping")
                         created_roles.append(existing_role)
@@ -171,12 +172,12 @@ async def bootstrap_default_roles() -> None:
 
                     # Create the role
                     role = await role_service.create_role(
-                        name=role_def["name"],
-                        description=role_def["description"],
-                        scope=role_def["scope"],
-                        permissions=role_def["permissions"],
+                        name=str(role_def["name"]),
+                        description=str(role_def["description"]),
+                        scope=str(role_def["scope"]),
+                        permissions=cast(list[str], role_def["permissions"]),
                         created_by=settings.platform_admin_email,
-                        is_system_role=role_def["is_system_role"],
+                        is_system_role=bool(role_def["is_system_role"]),
                     )
                     created_roles.append(role)
                     logger.info(f"Created system role: {role.name}")
@@ -221,7 +222,7 @@ def normalize_team_visibility() -> int:
         int: Number of teams updated
     """
     try:
-        with SessionLocal() as db:
+        with cast(Any, SessionLocal)() as db:
             # Find teams with invalid visibility
             invalid = db.query(EmailTeam).filter(EmailTeam.visibility.notin_(["private", "public"]))
             count = 0

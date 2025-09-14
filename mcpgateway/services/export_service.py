@@ -18,7 +18,7 @@ It handles:
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, cast, Dict, List, Optional, TypedDict
 
 # Third-Party
 from sqlalchemy import select
@@ -181,19 +181,52 @@ class ExportService:
             if exclude_types:
                 entity_types = [t for t in entity_types if t.lower() not in [e.lower() for e in exclude_types]]
 
-            # Initialize export structure
-            export_data = {
+            class ExportOptions(TypedDict, total=False):
+                """Options that control export behavior (full export)."""
+
+                include_inactive: bool
+                include_dependencies: bool
+                selected_types: List[str]
+                filter_tags: List[str]
+
+            class ExportMetadata(TypedDict):
+                """Metadata for full export including counts, dependencies, and options."""
+
+                entity_counts: Dict[str, int]
+                dependencies: Dict[str, Any]
+                export_options: ExportOptions
+
+            class ExportData(TypedDict):
+                """Top-level full export payload shape."""
+
+                version: str
+                exported_at: str
+                exported_by: str
+                source_gateway: str
+                encryption_method: str
+                entities: Dict[str, List[Dict[str, Any]]]
+                metadata: ExportMetadata
+
+            entities: Dict[str, List[Dict[str, Any]]] = {}
+            metadata: ExportMetadata = {
+                "entity_counts": {},
+                "dependencies": {},
+                "export_options": {
+                    "include_inactive": include_inactive,
+                    "include_dependencies": include_dependencies,
+                    "selected_types": entity_types,
+                    "filter_tags": tags or [],
+                },
+            }
+
+            export_data: ExportData = {
                 "version": settings.protocol_version,
                 "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "exported_by": exported_by,
                 "source_gateway": f"http://{settings.host}:{settings.port}",
                 "encryption_method": "AES-256-GCM",
-                "entities": {},
-                "metadata": {
-                    "entity_counts": {},
-                    "dependencies": {},
-                    "export_options": {"include_inactive": include_inactive, "include_dependencies": include_dependencies, "selected_types": entity_types, "filter_tags": tags or []},
-                },
+                "entities": entities,
+                "metadata": metadata,
             }
 
             # Export each entity type
@@ -220,14 +253,14 @@ class ExportService:
                 export_data["metadata"]["dependencies"] = await self._extract_dependencies(db, export_data["entities"])
 
             # Calculate entity counts
-            for entity_type, entities in export_data["entities"].items():
-                export_data["metadata"]["entity_counts"][entity_type] = len(entities)
+            for entity_type, entities_list in export_data["entities"].items():
+                export_data["metadata"]["entity_counts"][entity_type] = len(entities_list)
 
             # Validate export data
-            self._validate_export_data(export_data)
+            self._validate_export_data(cast(Dict[str, Any], export_data))
 
             logger.info(f"Export completed successfully with {sum(export_data['metadata']['entity_counts'].values())} total entities")
-            return export_data
+            return cast(Dict[str, Any], export_data)
 
         except Exception as e:
             logger.error(f"Export failed: {str(e)}")
@@ -388,26 +421,26 @@ class ExportService:
         exported_prompts = []
 
         for prompt in prompts:
-            prompt_data = {
+            input_schema: Dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+            prompt_data: Dict[str, Any] = {
                 "name": prompt.name,
                 "template": prompt.template,
                 "description": prompt.description,
-                "input_schema": {"type": "object", "properties": {}, "required": []},
+                "input_schema": input_schema,
                 "tags": prompt.tags or [],
                 "is_active": prompt.is_active,
             }
 
             # Convert arguments to input schema format
             if prompt.arguments:
-                properties = {}
+                properties: Dict[str, Any] = {}
                 required = []
                 for arg in prompt.arguments:
                     properties[arg.name] = {"type": "string", "description": arg.description or ""}
                     if arg.required:
                         required.append(arg.name)
-
-                prompt_data["input_schema"]["properties"] = properties
-                prompt_data["input_schema"]["required"] = required
+                input_schema["properties"] = properties
+                input_schema["required"] = required
 
             exported_prompts.append(prompt_data)
 
@@ -528,14 +561,45 @@ class ExportService:
         """
         logger.info(f"Starting selective export by {exported_by}")
 
-        export_data = {
+        class SelExportOptions(TypedDict, total=False):
+            """Options that control behavior for selective export."""
+
+            selective: bool
+            include_dependencies: bool
+            selections: Dict[str, List[str]]
+
+        class SelExportMetadata(TypedDict):
+            """Metadata for selective export including counts, dependencies, and options."""
+
+            entity_counts: Dict[str, int]
+            dependencies: Dict[str, Any]
+            export_options: SelExportOptions
+
+        class SelExportData(TypedDict):
+            """Top-level selective export payload shape."""
+
+            version: str
+            exported_at: str
+            exported_by: str
+            source_gateway: str
+            encryption_method: str
+            entities: Dict[str, List[Dict[str, Any]]]
+            metadata: SelExportMetadata
+
+        sel_entities: Dict[str, List[Dict[str, Any]]] = {}
+        sel_metadata: SelExportMetadata = {
+            "entity_counts": {},
+            "dependencies": {},
+            "export_options": {"selective": True, "include_dependencies": include_dependencies, "selections": entity_selections},
+        }
+        export_data: SelExportData = {
             "version": settings.protocol_version,
             "exported_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "exported_by": exported_by,
             "source_gateway": f"http://{settings.host}:{settings.port}",
             "encryption_method": "AES-256-GCM",
-            "entities": {},
-            "metadata": {"entity_counts": {}, "dependencies": {}, "export_options": {"selective": True, "include_dependencies": include_dependencies, "selections": entity_selections}},
+            "entities": sel_entities,
+            "metadata": sel_metadata,
         }
 
         # Export selected entities for each type
@@ -558,13 +622,13 @@ class ExportService:
             export_data["metadata"]["dependencies"] = await self._extract_dependencies(db, export_data["entities"])
 
         # Calculate entity counts
-        for entity_type, entities in export_data["entities"].items():
-            export_data["metadata"]["entity_counts"][entity_type] = len(entities)
+        for entity_type, entities_list in export_data["entities"].items():
+            export_data["metadata"]["entity_counts"][entity_type] = len(entities_list)
 
-        self._validate_export_data(export_data)
+        self._validate_export_data(cast(Dict[str, Any], export_data))
 
         logger.info(f"Selective export completed with {sum(export_data['metadata']['entity_counts'].values())} entities")
-        return export_data
+        return cast(Dict[str, Any], export_data)
 
     async def _export_selected_tools(self, db: Session, tool_ids: List[str]) -> List[Dict[str, Any]]:
         """Export specific tools by their IDs.

@@ -65,7 +65,7 @@ class TestObservability:
         result = init_telemetry()
         assert result is None
 
-    @patch("mcpgateway.observability.OTLPSpanExporter")
+    @patch("mcpgateway.observability.OTLP_SPAN_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
     def test_init_telemetry_otlp_success(self, mock_processor, mock_provider, mock_exporter):
@@ -125,7 +125,7 @@ class TestObservability:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "api-key=secret,x-auth=token123"
 
-        with patch("mcpgateway.observability.OTLPSpanExporter") as mock_exporter:
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER") as mock_exporter:
             with patch("mcpgateway.observability.TracerProvider"):
                 with patch("mcpgateway.observability.BatchSpanProcessor"):
                     init_telemetry()
