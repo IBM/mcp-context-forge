@@ -11,7 +11,7 @@ SQLAlchemy modifiers
 
 # Standard
 import json
-from typing import Iterable, List, Union
+from typing import Any, Iterable, List, Union
 import uuid
 
 # Third-Party
@@ -38,7 +38,7 @@ def _ensure_list(values: Union[str, Iterable[str]]) -> List[str]:
     return list(values)
 
 
-def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_any: bool = True) -> str:
+def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_any: bool = True) -> Any:
     """
     Return a SQLAlchemy expression that is True when JSON column `col`
     contains the scalar `value`. `session` is used to detect dialect.
@@ -51,7 +51,7 @@ def json_contains_expr(session, col, values: Union[str, Iterable[str]], match_an
         match_any: Boolean to set OR or AND matching
 
     Returns:
-        str: Returns SQL quuery
+        Any: SQLAlchemy boolean expression suitable for use in .where()
 
     Raises:
         RuntimeError: If dialect is not supported
