@@ -1087,7 +1087,10 @@ class TestRootEndpoints:
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to root directory changes via SSE."""
-        mock_subscribe.return_value = iter(["data: test\n\n"])
+        async def mock_async_gen():
+            yield {"event": "test"}
+
+        mock_subscribe.return_value = mock_async_gen()
         response = test_client.get("/roots/changes", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
