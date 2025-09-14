@@ -65,28 +65,30 @@ except ImportError:
         import sys
         import types
 
-        otel_root = types.ModuleType("opentelemetry")
-        otel_sdk = types.ModuleType("opentelemetry.sdk")
-        otel_trace = types.ModuleType("opentelemetry.sdk.trace")
-        otel_export = types.ModuleType("opentelemetry.sdk.trace.export")
+        if ("pytest" in sys.modules) or (os.getenv("MCP_TESTING") == "1"):
+            otel_root = types.ModuleType("opentelemetry")
+            otel_sdk = types.ModuleType("opentelemetry.sdk")
+            otel_trace = types.ModuleType("opentelemetry.sdk.trace")
+            otel_export = types.ModuleType("opentelemetry.sdk.trace.export")
 
-        class _ConsoleSpanExporterStub:  # pragma: no cover - test patch replaces this
-            """Lightweight stub for ConsoleSpanExporter used in tests.
+            class _ConsoleSpanExporterStub:  # pragma: no cover - test patch replaces this
+                """Lightweight stub for ConsoleSpanExporter used in tests.
 
-            Provides a placeholder class so unit tests can patch
-            `opentelemetry.sdk.trace.export.ConsoleSpanExporter` even when
-            the OpenTelemetry SDK is not installed in the environment.
-            """
+                Provides a placeholder class so unit tests can patch
+                `opentelemetry.sdk.trace.export.ConsoleSpanExporter` even when
+                the OpenTelemetry SDK is not installed in the environment.
+                """
 
-        setattr(otel_export, "ConsoleSpanExporter", _ConsoleSpanExporterStub)
-        setattr(otel_trace, "export", otel_export)
-        setattr(otel_sdk, "trace", otel_trace)
-        setattr(otel_root, "sdk", otel_sdk)
+            setattr(otel_export, "ConsoleSpanExporter", _ConsoleSpanExporterStub)
+            setattr(otel_trace, "export", otel_export)
+            setattr(otel_sdk, "trace", otel_trace)
+            setattr(otel_root, "sdk", otel_sdk)
 
-        sys.modules.setdefault("opentelemetry", otel_root)
-        sys.modules.setdefault("opentelemetry.sdk", otel_sdk)
-        sys.modules.setdefault("opentelemetry.sdk.trace", otel_trace)
-        sys.modules.setdefault("opentelemetry.sdk.trace.export", otel_export)
+            # Only register the exact chain needed by tests
+            sys.modules.setdefault("opentelemetry", otel_root)
+            sys.modules.setdefault("opentelemetry.sdk", otel_sdk)
+            sys.modules.setdefault("opentelemetry.sdk.trace", otel_trace)
+            sys.modules.setdefault("opentelemetry.sdk.trace.export", otel_export)
     except Exception as exc:  # nosec B110 - best-effort optional shim
         # Shimming is a non-critical, best-effort step for tests; log and continue.
         logging.getLogger(__name__).debug("Skipping OpenTelemetry shim setup: %s", exc)

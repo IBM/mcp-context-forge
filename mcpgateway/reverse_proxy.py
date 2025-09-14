@@ -464,7 +464,11 @@ class ReverseProxyClient:
             async for message in conn:
                 await self._handle_gateway_message(message)
         except Exception as e:  # Catch broad exceptions to avoid dependency-specific attribute errors
-            if websockets and isinstance(e, getattr(websockets, "ConnectionClosed", type(e))):
+            closed_exc = None
+            if websockets is not None:
+                ex_mod = getattr(websockets, "exceptions", None)
+                closed_exc = getattr(ex_mod, "ConnectionClosed", None) if ex_mod else None
+            if closed_exc and isinstance(e, closed_exc):
                 LOGGER.warning("WebSocket connection closed")
             else:
                 LOGGER.error(f"WebSocket receive error: {e}")

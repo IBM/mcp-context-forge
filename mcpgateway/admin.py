@@ -4842,16 +4842,6 @@ async def admin_add_tool(
     headers_raw = form.get("headers")
     input_schema_raw = form.get("input_schema")
     annotations_raw = form.get("annotations")
-    form.get("headers")
-    form.get("input_schema")
-    form.get("annotations")
-    form.get("headers")
-    form.get("input_schema")
-    form.get("annotations")
-    # Prepare raw JSON fields safely
-    form.get("headers")
-    form.get("input_schema")
-    form.get("annotations")
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
         "displayName": form.get("displayName"),
