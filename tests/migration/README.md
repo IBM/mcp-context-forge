@@ -26,7 +26,7 @@ This test suite implements **application-level migration validation** with the f
          │                                               │
          ▼                                               ▼
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Preserve       │───▶│  Start v0.6.0    │───▶│ Auto-Migration  │
+│  Preserve       │───▶│  Start v0.7.0    │───▶│ Auto-Migration  │
 │  Data Volume    │    │   Container      │    │  (Application)  │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
          │                                               │
@@ -45,7 +45,7 @@ The migration test suite follows an **n-2 support policy**, meaning we test the 
 - **n-1**: Previous stable version
 - **n-2**: Baseline supported version
 
-**Current supported versions**: `0.5.0`, `0.6.0`, `latest`
+**Current supported versions**: `0.5.0`, `0.7.0`, `latest`
 
 This policy ensures migration compatibility across supported versions while keeping test execution time reasonable.
 
@@ -84,7 +84,7 @@ make migration-debug          # Debug failed migrations
 
 ### Test Categories
 
-1. **Application-Level Forward Migrations**: Sequential version upgrades (0.5.0 → 0.6.0 → latest)
+1. **Application-Level Forward Migrations**: Sequential version upgrades (0.5.0 → 0.7.0 → latest)
    - Containers automatically detect and migrate existing databases
    - Data persistence validation across version switches
    - REST API-based data integrity verification
@@ -381,7 +381,7 @@ make docker-prod
 docker tag mcp-context-forge:latest ghcr.io/ibm/mcp-context-forge:latest
 
 # For testing multiple versions
-docker tag mcp-context-forge:latest ghcr.io/ibm/mcp-context-forge:0.6.0
+docker tag mcp-context-forge:latest ghcr.io/ibm/mcp-context-forge:0.7.0
 ```
 
 ## Troubleshooting

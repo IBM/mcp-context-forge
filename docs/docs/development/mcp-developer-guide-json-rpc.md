@@ -37,7 +37,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 {
   "status": "healthy",
   "timestamp": "2025-01-15T10:30:00Z",
-  "version": "0.6.0"
+  "version": "0.7.0"
 }
 ```
 
@@ -132,7 +132,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
     },
     "serverInfo": {
       "name": "mcpgateway",
-      "version": "0.6.0"
+      "version": "0.7.0"
     }
   }
 }

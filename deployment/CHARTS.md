@@ -4,7 +4,7 @@
 
 ```bash
 helm lint .
-helm package .   # → mcp-context-forge-chart-0.6.0.tgz
+helm package .   # → mcp-context-forge-chart-0.7.0.tgz
 ```
 
 ## Log in to GHCR:
@@ -18,7 +18,7 @@ echo "${CR_PAT}" | \
 ## Push the chart (separate package path)
 
 ```bash
-helm push mcp-*-0.6.0.tgz oci://ghcr.io/ibm/mcp-context-forge
+helm push mcp-*-0.7.0.tgz oci://ghcr.io/ibm/mcp-context-forge
 ```
 
 ## Link the package to this repo (once)
@@ -34,5 +34,5 @@ This lets others see the chart in the repo's **Packages** sidebar.
 ## Verify & use
 
 ```bash
-helm pull oci://ghcr.io/ibm/mcp-context-forge-chart --version 0.6.0
+helm pull oci://ghcr.io/ibm/mcp-context-forge-chart --version 0.7.0
 ```
