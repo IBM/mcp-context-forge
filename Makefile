@@ -2738,7 +2738,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 # OCI image tag to preload into the cluster.
 # - By default we point to the *local* image built via `make docker-prod`, e.g.
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
-#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.6.0).
+#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.7.0).
 TAG              ?= latest         # override with TAG=<ver>
 IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 
@@ -3373,7 +3373,7 @@ devpi-unconfigure-pip:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Version helper (defaults to the version in pyproject.toml)
-#      override on the CLI:  make VER=0.6.0 devpi-delete
+#      override on the CLI:  make VER=0.7.0 devpi-delete
 # ─────────────────────────────────────────────────────────────────────────────
 VER ?= $(shell python3 -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
@@ -4567,7 +4567,7 @@ MIGRATION_TEST_DIR := tests/migration
 MIGRATION_REPORTS_DIR := $(MIGRATION_TEST_DIR)/reports
 
 # Get supported versions from version config (n-2 policy)
-MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.6.0 latest")
+MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.7.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
         migration-setup migration-cleanup migration-debug migration-status

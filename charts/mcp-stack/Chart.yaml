@@ -23,7 +23,7 @@ type: application
 #                  used for upgrade logic.
 # --------------------------------------------------------------------
 version: 0.6.1
-appVersion: "0.6.0"
+appVersion: "0.7.0"
 
 # Icon shown by registries / dashboards (must be an http(s) URL).
 icon: https://raw.githubusercontent.com/IBM/mcp-context-forge/main/docs/theme/logo.png

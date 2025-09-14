@@ -1,7 +1,7 @@
 FROM registry.access.redhat.com/ubi10-minimal:10.0-1755721767
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
-      version="0.6.0" \
+      version="0.7.0" \
       description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
