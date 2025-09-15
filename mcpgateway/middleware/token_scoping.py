@@ -18,14 +18,20 @@ from typing import Optional
 
 # Third-Party
 from fastapi import HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 
 # First-Party
 from mcpgateway.db import Permissions
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# Initialize logging service first
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 class TokenScopingMiddleware:
@@ -343,47 +349,68 @@ class TokenScopingMiddleware:
         Raises:
             HTTPException: If token scoping restrictions are violated
         """
-        # Skip scoping for certain paths (truly public endpoints only)
-        skip_paths = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/auth/email/login", "/auth/email/register", "/.well-known/"]
+        try:
+            # Skip scoping for certain paths (truly public endpoints only)
+            skip_paths = [
+                "/health",
+                "/metrics",
+                "/openapi.json",
+                "/docs",
+                "/redoc",
+                "/auth/email/login",
+                "/auth/email/register",
+                "/.well-known/",
+            ]
 
-        # Check exact root path separately
-        if request.url.path == "/":
+            # Check exact root path separately
+            if request.url.path == "/":
+                return await call_next(request)
+
+            if any(request.url.path.startswith(path) for path in skip_paths):
+                return await call_next(request)
+
+            # Extract token scopes
+            scopes = await self._extract_token_scopes(request)
+
+            # If no scopes, continue (regular auth will handle this)
+            if not scopes:
+                return await call_next(request)
+
+            # Check server ID restriction
+            server_id = scopes.get("server_id")
+            if not self._check_server_restriction(request.url.path, server_id):
+                logger.warning(f"Token not authorized for this server. Required: {server_id}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Token not authorized for this server. Required: {server_id}")
+
+            # Check IP restrictions
+            ip_restrictions = scopes.get("ip_restrictions", [])
+            if ip_restrictions:
+                client_ip = self._get_client_ip(request)
+                if not self._check_ip_restrictions(client_ip, ip_restrictions):
+                    logger.warning(f"Request from IP {client_ip} not allowed by token restrictions")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Request from IP {client_ip} not allowed by token restrictions")
+
+            # Check time restrictions
+            time_restrictions = scopes.get("time_restrictions", {})
+            if not self._check_time_restrictions(time_restrictions):
+                logger.warning("Request not allowed at this time by token restrictions")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request not allowed at this time by token restrictions")
+
+            # Check permission restrictions
+            permissions = scopes.get("permissions", [])
+            if not self._check_permission_restrictions(request.url.path, request.method, permissions):
+                logger.warning("Insufficient permissions for this operation")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this operation")
+
+            # All scoping checks passed, continue
             return await call_next(request)
 
-        if any(request.url.path.startswith(path) for path in skip_paths):
-            return await call_next(request)
-
-        # Extract token scopes
-        scopes = await self._extract_token_scopes(request)
-
-        # If no scopes, continue (regular auth will handle this)
-        if not scopes:
-            return await call_next(request)
-
-        # Check server ID restriction
-        server_id = scopes.get("server_id")
-        if not self._check_server_restriction(request.url.path, server_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Token not authorized for this server. Required: {server_id}")
-
-        # Check IP restrictions
-        ip_restrictions = scopes.get("ip_restrictions", [])
-        if ip_restrictions:
-            client_ip = self._get_client_ip(request)
-            if not self._check_ip_restrictions(client_ip, ip_restrictions):
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Request from IP {client_ip} not allowed by token restrictions")
-
-        # Check time restrictions
-        time_restrictions = scopes.get("time_restrictions", {})
-        if not self._check_time_restrictions(time_restrictions):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request not allowed at this time by token restrictions")
-
-        # Check permission restrictions
-        permissions = scopes.get("permissions", [])
-        if not self._check_permission_restrictions(request.url.path, request.method, permissions):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions for this operation")
-
-        # All scoping checks passed, continue to next handler
-        return await call_next(request)
+        except HTTPException as exc:
+            # Return clean JSON response instead of traceback
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+            )
 
 
 # Create middleware instance
