@@ -78,6 +78,23 @@ class TeamManagementService:
         self.db = db
 
     def _log_team_member_action(self, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
+        """
+        Log a team member action to EmailTeamMemberHistory.
+
+        Args:
+            team_id: Team ID
+            user_email: Email of the affected user
+            role: Role at the time of action
+            action: Action type ("added", "removed", "reactivated", "role_changed")
+            action_by: Email of the user who performed the action
+
+        Examples:
+            >>> from mcpgateway.services.team_management_service import TeamManagementService
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> service._log_team_member_action("team-123", "user@example.com", "member", "added", "admin@example.com")
+            # Should insert a record into EmailTeamMemberHistory
+        """
         history = EmailTeamMemberHistory(
             team_id=team_id,
             user_email=user_email,
@@ -400,6 +417,8 @@ class TeamManagementService:
             >>> service = TeamManagementService(Mock())
             >>> asyncio.iscoroutinefunction(service.add_member_to_team)
             True
+            >>> # After adding, EmailTeamMemberHistory is updated
+            >>> # service._log_team_member_action("team-123", "user@example.com", "member", "added", "admin@example.com")
         """
         try:
             # Validate role
@@ -471,6 +490,7 @@ class TeamManagementService:
 
         Examples:
             Team membership management with role-based access control.
+            After removal, EmailTeamMemberHistory is updated via _log_team_member_action.
         """
         try:
             team = await self.get_team_by_id(team_id)
@@ -528,6 +548,7 @@ class TeamManagementService:
 
         Examples:
             Role management within teams for access control.
+            After role update, EmailTeamMemberHistory is updated via _log_team_member_action.
         """
         try:
             # Validate role

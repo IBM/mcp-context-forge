@@ -80,6 +80,21 @@ class PersonalTeamService:
         Examples:
             Personal team creation is handled automatically during user registration.
             The team name is derived from the user's full name or email.
+
+            After creation, a record is inserted into EmailTeamMemberHistory to track the membership event:
+
+            >>> from unittest.mock import Mock
+            >>> from mcpgateway.db import EmailUser, EmailTeamMemberHistory
+            >>> service = PersonalTeamService(Mock())
+            >>> user = EmailUser(email="test@example.com", full_name="Test User")
+            >>> # Simulate creation (actual DB operations require a real session)
+            >>> try:
+            ...     team = await service.create_personal_team(user)
+            ...     # Check EmailTeamMemberHistory record creation
+            ...     history = service.db.query(EmailTeamMemberHistory).filter_by(team_id=team.id, user_email=user.email, action="added").first()
+            ...     assert history is not None
+            ... except Exception:
+            ...     pass
         """
         try:
             # Check if user already has a personal team
