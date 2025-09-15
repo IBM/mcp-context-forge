@@ -92,20 +92,18 @@ async def verify_jwt_token(token: str) -> dict:
         unverified = jwt.decode(token, options={"verify_signature": False})
 
         # Check for expiration claim
-        if "exp" not in unverified and settings.require_token_expiration:
-            raise jwt.MissingRequiredClaimError("exp")
-
-        # Log warning for non-expiring tokens
         if "exp" not in unverified:
             logger.warning(f"JWT token without expiration accepted. Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. Token sub: {unverified.get('sub', 'unknown')}")
+            if settings.require_token_expiration:
+                raise jwt.MissingRequiredClaimError("exp")
 
-        # Full validation
         options = {}
+
         if settings.require_token_expiration:
             options["require"] = ["exp"]
-            options["verify_aud"] = settings.jwt_audience_verification
 
-        # Use configured audience and issuer for validation (security fix)
+        options["verify_aud"] = settings.jwt_audience_verification
+
         decode_kwargs = {
             "key": get_jwt_public_key_or_secret(),
             "algorithms": [settings.jwt_algorithm],
