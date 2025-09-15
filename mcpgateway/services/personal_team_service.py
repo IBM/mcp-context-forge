@@ -24,7 +24,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamMember,EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -115,6 +115,18 @@ class PersonalTeamService:
             membership = EmailTeamMember(team_id=team.id, user_email=user.email, role="owner", joined_at=utc_now(), is_active=True)
 
             self.db.add(membership)
+            self.db.commit()
+
+            # Insert history record
+            history = EmailTeamMemberHistory(
+                team_id=team.id,
+                user_email=user.email,
+                role="owner",
+                action="added",
+                action_by=user.email,
+                action_timestamp=utc_now()
+            )
+            self.db.add(history)
             self.db.commit()
 
             logger.info(f"Created personal team '{team.name}' for user {user.email}")
