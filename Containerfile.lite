@@ -117,6 +117,7 @@ RUN set -euo pipefail \
          --setopt=tsflags=nodocs \
          python${PYTHON_VERSION} \
          ca-certificates \
+         procps-ng \
     && dnf clean all --installroot="${ROOTFS_PATH:?}"
 
 # ----------------------------------------------------------------------------
