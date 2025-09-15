@@ -1048,6 +1048,7 @@ async def admin_edit_server(
             db,
             server_id,
             server,
+            user_email,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],

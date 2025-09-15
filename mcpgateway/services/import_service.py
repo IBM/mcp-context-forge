@@ -332,7 +332,7 @@ class ImportService:
 
             for entity_type in processing_order:
                 if entity_type in entities:
-                    await self._process_entities(db, entity_type, entities[entity_type], conflict_strategy, dry_run, rekey_secret, status, selected_entities)
+                    await self._process_entities(db, entity_type, entities[entity_type], conflict_strategy, dry_run, rekey_secret, status, selected_entities, imported_by)
                     # Flush after each entity type to make records visible for associations
                     if not dry_run:
                         db.flush()
@@ -448,6 +448,7 @@ class ImportService:
         rekey_secret: Optional[str],
         status: ImportStatus,
         selected_entities: Optional[Dict[str, List[str]]],
+        imported_by: str,
     ) -> None:
         """Process a list of entities of a specific type.
 
@@ -460,6 +461,7 @@ class ImportService:
             rekey_secret: New encryption secret if re-keying
             status: Import status tracker
             selected_entities: Optional entity selection filter
+            imported_by: Username of the person performing the import
         """
         logger.debug(f"Processing {len(entity_list)} {entity_type} entities")
 
@@ -478,7 +480,7 @@ class ImportService:
                     entity_data = await self._rekey_auth_data(entity_data, rekey_secret)
 
                 # Process the entity
-                await self._process_single_entity(db, entity_type, entity_data, conflict_strategy, dry_run, status)
+                await self._process_single_entity(db, entity_type, entity_data, conflict_strategy, dry_run, status, imported_by)
 
                 status.processed_entities += 1
 
@@ -573,7 +575,9 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to re-key authentication data: {str(e)}")
 
-    async def _process_single_entity(self, db: Session, entity_type: str, entity_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_single_entity(
+        self, db: Session, entity_type: str, entity_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str
+    ) -> None:
         """Process a single entity with conflict resolution.
 
         Args:
@@ -583,6 +587,7 @@ class ImportService:
             conflict_strategy: How to handle conflicts
             dry_run: Whether this is a dry run
             status: Import status tracker
+            imported_by: Username of the person performing the import
 
         Raises:
             ImportError: If processing fails
@@ -593,7 +598,7 @@ class ImportService:
             elif entity_type == "gateways":
                 await self._process_gateway(db, entity_data, conflict_strategy, dry_run, status)
             elif entity_type == "servers":
-                await self._process_server(db, entity_data, conflict_strategy, dry_run, status)
+                await self._process_server(db, entity_data, conflict_strategy, dry_run, status, imported_by)
             elif entity_type == "prompts":
                 await self._process_prompt(db, entity_data, conflict_strategy, dry_run, status)
             elif entity_type == "resources":
@@ -687,7 +692,7 @@ class ImportService:
         """
         gateway_name = gateway_data["name"]
 
-        if dry_run:
+        if dry_run is True:
             status.warnings.append(f"Would import gateway: {gateway_name}")
             return
 
@@ -733,7 +738,7 @@ class ImportService:
         except Exception as e:
             raise ImportError(f"Failed to process gateway {gateway_name}: {str(e)}")
 
-    async def _process_server(self, db: Session, server_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus) -> None:
+    async def _process_server(self, db: Session, server_data: Dict[str, Any], conflict_strategy: ConflictStrategy, dry_run: bool, status: ImportStatus, imported_by: str) -> None:
         """Process a server entity.
 
         Args:
@@ -742,6 +747,7 @@ class ImportService:
             conflict_strategy: How to handle conflicts
             dry_run: Whether this is a dry run
             status: Import status tracker
+            imported_by: Username of the person performing the import
 
         Raises:
             ImportError: If processing fails
@@ -772,7 +778,7 @@ class ImportService:
                         existing_server = next((s for s in servers if s.name == server_name), None)
                         if existing_server:
                             update_data = await self._convert_to_server_update(db, server_data)
-                            await self.server_service.update_server(db, existing_server.id, update_data)
+                            await self.server_service.update_server(db, existing_server.id, update_data, imported_by)
                             status.updated_entities += 1
                             logger.debug(f"Updated server: {server_name}")
                         else:
