@@ -630,7 +630,6 @@ class MCPPathRewriteMiddleware:
         if self.dispatch is not None:
             request = starletteRequest(scope, receive=receive)
 
-            # async def call_next(req: starletteRequest) -> starletteResponse:
             async def call_next(_req: starletteRequest) -> starletteResponse:
                 return await self._call_streamable_http(scope, receive, send)
 
