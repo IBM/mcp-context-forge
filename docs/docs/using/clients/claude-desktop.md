@@ -27,7 +27,7 @@ prompt and resource registered in your Gateway.
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
         "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_AUTH": "<YOUR_JWT_TOKEN>",
+        "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
@@ -47,7 +47,7 @@ prompt and resource registered in your Gateway.
   "args": [
     "run", "--rm", "--network=host", "-i",
     "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
-    "-e", "MCP_AUTH=<YOUR_JWT_TOKEN>",
+    "-e", "MCP_AUTH=<Bearer YOUR_JWT_TOKEN>",
     "ghcr.io/ibm/mcp-context-forge:0.7.0",
     "python3", "-m", "mcpgateway.wrapper"
   ]
@@ -68,7 +68,7 @@ If you installed the package globally:
   "args": ["run", "python3", "-m", "mcpgateway.wrapper"],
   "env": {
     "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-    "MCP_AUTH": "<YOUR_JWT_TOKEN>"
+    "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>"
   }
 }
 ```
