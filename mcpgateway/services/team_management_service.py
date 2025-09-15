@@ -94,8 +94,7 @@ class TeamManagementService:
         """
         history = EmailTeamMemberHistory(team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
         self.db.add(history)
-        self.db.commit()
-
+        
     async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: str = "private", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
 
@@ -454,9 +453,9 @@ class TeamManagementService:
                 membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
                 self.db.add(membership)
 
+            self._log_team_member_action(team_id, user_email, role, "added" if not existing_membership else "reactivated", invited_by)
             self.db.commit()
 
-            self._log_team_member_action(team_id, user_email, role, "added" if not existing_membership else "reactivated", invited_by)
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
 
@@ -511,9 +510,9 @@ class TeamManagementService:
 
             # Remove membership (soft delete)
             membership.is_active = False
-            self.db.commit()
-
+            
             self._log_team_member_action(team_id, user_email, membership.role, "removed", removed_by)
+            self.db.commit()
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
 
@@ -574,9 +573,9 @@ class TeamManagementService:
 
             # Update the role
             membership.role = new_role
+            self._log_team_member_action(team_id, user_email, new_role, "role_changed", updated_by)
             self.db.commit()
 
-            self._log_team_member_action(team_id, user_email, new_role, "role_changed", updated_by)
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
 

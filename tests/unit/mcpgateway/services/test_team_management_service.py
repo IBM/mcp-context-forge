@@ -440,7 +440,7 @@ class TestTeamManagementService:
             )
 
             assert result is True
-            mock_db.add.assert_called_once()
+            assert mock_db.add.call_count == 2
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio

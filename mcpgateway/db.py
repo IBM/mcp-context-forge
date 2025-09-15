@@ -982,6 +982,7 @@ class EmailTeamMemberHistory(Base):
     __tablename__ = "email_team_member_history"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    team_member_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_team_members.id"), nullable=False)
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
@@ -989,12 +990,14 @@ class EmailTeamMemberHistory(Base):
     action_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     action_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
+    team_member: Mapped["EmailTeamMember"] = relationship("EmailTeamMember")
     team: Mapped["EmailTeam"] = relationship("EmailTeam")
     user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[user_email])
     actor: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[action_by])
 
     def __repr__(self) -> str:
-        """Return a string representation of the EmailTeamMemberHistory instance.
+        """
+        Return a string representation of the EmailTeamMemberHistory instance.
 
         Returns:
             str: A string summarizing the team member history record.
@@ -1002,6 +1005,7 @@ class EmailTeamMemberHistory(Base):
         Examples:
             >>> from mcpgateway.db import EmailTeamMemberHistory, utc_now
             >>> history = EmailTeamMemberHistory(
+            ...     team_member_id="tm-123",
             ...     team_id="team-123",
             ...     user_email="user@example.com",
             ...     role="member",
@@ -1012,7 +1016,7 @@ class EmailTeamMemberHistory(Base):
             >>> isinstance(repr(history), str)
             True
         """
-        return f"<EmailTeamMemberHistory(team_id='{self.team_id}', user_email='{self.user_email}', action='{self.action}', action_by='{self.action_by}', timestamp='{self.action_timestamp}')>"
+        return f"<EmailTeamMemberHistory(team_member_id='{self.team_member_id}', team_id='{self.team_id}', user_email='{self.user_email}', role='{self.role}', action='{self.action}', action_by='{self.action_by}', action_timestamp='{self.action_timestamp}')>"
 
 
 class EmailTeamInvitation(Base):
