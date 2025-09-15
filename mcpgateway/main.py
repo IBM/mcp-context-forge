@@ -631,6 +631,15 @@ class MCPPathRewriteMiddleware:
             request = starletteRequest(scope, receive=receive)
 
             async def call_next(_req: starletteRequest) -> starletteResponse:
+                """
+                Handles the next request in the middleware chain by calling a streamable HTTP response.
+
+                Args:
+                    _req (starletteRequest): The incoming request to be processed.
+
+                Returns:
+                    starletteResponse: A response generated from the streamable HTTP call.
+                """
                 return await self._call_streamable_http(scope, receive, send)
 
             response = await self.dispatch(request, call_next)
