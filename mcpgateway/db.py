@@ -945,7 +945,38 @@ class EmailTeamMember(Base):
 
 # Team member history model
 class EmailTeamMemberHistory(Base):
-        """History of team member actions (add, remove, reactivate, role change)."""
+    """
+    History of team member actions (add, remove, reactivate, role change).
+
+    This model records every membership-related event for audit and compliance.
+    Each record tracks the team, user, role, action type, actor, and timestamp.
+
+    Attributes:
+        id (str): Primary key UUID
+        team_id (str): Foreign key to email_teams
+        user_email (str): Foreign key to email_users
+        role (str): Role at the time of action
+        action (str): Action type ("added", "removed", "reactivated", "role_changed")
+        action_by (str): Email of the user who performed the action
+        action_timestamp (datetime): When the action occurred
+
+    Examples:
+        >>> from mcpgateway.db import EmailTeamMemberHistory, utc_now
+        >>> history = EmailTeamMemberHistory(
+        ...     team_id="team-123",
+        ...     user_email="user@example.com",
+        ...     role="member",
+        ...     action="added",
+        ...     action_by="admin@example.com",
+        ...     action_timestamp=utc_now()
+        ... )
+        >>> history.action
+        'added'
+        >>> history.role
+        'member'
+        >>> isinstance(history.action_timestamp, type(utc_now()))
+        True
+    """
 
         __tablename__ = "email_team_member_history"
 
