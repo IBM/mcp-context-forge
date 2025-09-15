@@ -112,7 +112,7 @@ That's it - VS Code spawns the stdio process, pipes JSON-RPC, and you're ready t
   "args": [
     "run", "--rm", "--network=host", "-i",
     "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
-    "-e", "MCP_AUTH=<YOUR_JWT_TOKEN>",
+    "-e", "MCP_AUTH=<Bearer YOUR_JWT_TOKEN>",
     "ghcr.io/ibm/mcp-context-forge:0.7.0",
     "python3", "-m", "mcpgateway.wrapper"
   ]
