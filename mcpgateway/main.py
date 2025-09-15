@@ -49,6 +49,8 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as starletteRequest
+from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
@@ -557,22 +559,36 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
 class MCPPathRewriteMiddleware:
     """
-    Supports requests like '/servers/<server_id>/mcp' by rewriting the path to '/mcp'.
+    Middleware that rewrites paths ending with '/mcp' to '/mcp', after performing authentication.
 
-    - Only rewrites paths ending with '/mcp' but not exactly '/mcp'.
-    - Performs authentication before rewriting.
-    - Passes rewritten requests to `streamable_http_session`.
+    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp'.
+    - Only paths ending with '/mcp' (but not exactly '/mcp') are rewritten.
+    - Authentication is performed before any path rewriting.
+    - If authentication fails, the request is not processed further.
     - All other requests are passed through without change.
+
+    Attributes:
+        application (Callable): The next ASGI application to process the request.
     """
 
-    def __init__(self, application):
+    def __init__(self, application, dispatch=None):
         """
         Initialize the middleware with the ASGI application.
 
         Args:
-            application (Callable): The next ASGI application in the middleware stack.
+            application (Callable): The next ASGI application to handle the request.
+            dispatch (Callable, optional): An optional dispatch function for additional middleware processing.
+
+        Example:
+            >>> import asyncio
+            >>> from unittest.mock import AsyncMock, patch
+            >>> app_mock = AsyncMock()
+            >>> middleware = MCPPathRewriteMiddleware(app_mock)
+            >>> isinstance(middleware.application, AsyncMock)
+            True
         """
         self.application = application
+        self.dispatch = dispatch  # this can be TokenScopingMiddleware
 
     async def __call__(self, scope, receive, send):
         """
@@ -586,39 +602,86 @@ class MCPPathRewriteMiddleware:
         Examples:
             >>> import asyncio
             >>> from unittest.mock import AsyncMock, patch
-            >>>
-            >>> # Test non-HTTP request passthrough
             >>> app_mock = AsyncMock()
             >>> middleware = MCPPathRewriteMiddleware(app_mock)
-            >>> scope = {"type": "websocket", "path": "/ws"}
+
+            >>> # Test path rewriting for /servers/123/mcp with headers in scope
+            >>> scope = { "type": "http", "path": "/servers/123/mcp", "headers": [(b"host", b"example.com")] }
             >>> receive = AsyncMock()
             >>> send = AsyncMock()
-            >>>
-            >>> asyncio.run(middleware(scope, receive, send))
-            >>> app_mock.assert_called_once_with(scope, receive, send)
-            >>>
-            >>> # Test path rewriting for /servers/123/mcp
-            >>> app_mock.reset_mock()
-            >>> scope = {"type": "http", "path": "/servers/123/mcp"}
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
             ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
             ...         asyncio.run(middleware(scope, receive, send))
             ...         scope["path"]
             '/mcp'
-            >>>
+
             >>> # Test regular path (no rewrite)
-            >>> scope = {"type": "http", "path": "/tools"}
+            >>> scope = { "type": "http","path": "/tools","headers": [(b"host", b"example.com")] }
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
             ...     asyncio.run(middleware(scope, receive, send))
             ...     scope["path"]
             '/tools'
         """
-        # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
         if scope["type"] != "http":
             await self.application(scope, receive, send)
             return
 
-        # Call auth check first
+        # If a dispatch (request middleware) is provided, adapt it
+        if self.dispatch is not None:
+            request = starletteRequest(scope, receive=receive)
+
+            async def call_next(_req: starletteRequest) -> starletteResponse:
+                """
+                Handles the next request in the middleware chain by calling a streamable HTTP response.
+
+                Args:
+                    _req (starletteRequest): The incoming request to be processed.
+
+                Returns:
+                    starletteResponse: A response generated from the streamable HTTP call.
+                """
+                return await self._call_streamable_http(scope, receive, send)
+
+            response = await self.dispatch(request, call_next)
+
+            if response is None:
+                # Either the dispatch handled the response itself,
+                # or it blocked the request. Just return.
+                return
+
+            await response(scope, receive, send)
+            return
+
+        # Otherwise, just continue as normal
+        await self._call_streamable_http(scope, receive, send)
+
+    async def _call_streamable_http(self, scope, receive, send):
+        """
+        Handles the streamable HTTP request after authentication and path rewriting.
+
+        - If authentication is successful and the path is rewritten, this method processes the request
+          using the `streamable_http_session` handler.
+
+        Args:
+            scope (dict): The ASGI connection scope containing request metadata.
+            receive (Callable): The function to receive events from the client.
+            send (Callable): The function to send events to the client.
+
+        Example:
+            >>> import asyncio
+            >>> from unittest.mock import AsyncMock, patch
+            >>> app_mock = AsyncMock()
+            >>> middleware = MCPPathRewriteMiddleware(app_mock)
+            >>> scope = {"type": "http", "path": "/servers/123/mcp"}
+            >>> receive = AsyncMock()
+            >>> send = AsyncMock()
+            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
+            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
+            ...         asyncio.run(middleware._call_streamable_http(scope, receive, send))
+            >>> mock_handler.assert_called_once_with(scope, receive, send)
+            >>> # The streamable HTTP session handler was called after path rewriting.
+        """
+        # Auth check first
         auth_ok = await streamable_http_auth(scope, receive, send)
         if not auth_ok:
             return
@@ -657,12 +720,14 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
     app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
+    # Add streamable HTTP middleware for /mcp routes with token scoping
+    app.add_middleware(MCPPathRewriteMiddleware, dispatch=token_scoping_middleware)
+else:
+    # Add streamable HTTP middleware for /mcp routes
+    app.add_middleware(MCPPathRewriteMiddleware)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
-
-# Add streamable HTTP middleware for /mcp routes
-app.add_middleware(MCPPathRewriteMiddleware)
 
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
