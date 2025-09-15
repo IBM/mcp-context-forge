@@ -455,8 +455,8 @@ class TeamManagementService:
                 self.db.add(membership)
 
             self.db.commit()
-
             self._log_team_member_action(team_id, user_email, role, "added" if not existing_membership else "reactivated", invited_by)
+
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
 
@@ -512,7 +512,6 @@ class TeamManagementService:
             # Remove membership (soft delete)
             membership.is_active = False
             self.db.commit()
-
             self._log_team_member_action(team_id, user_email, membership.role, "removed", removed_by)
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
@@ -575,8 +574,8 @@ class TeamManagementService:
             # Update the role
             membership.role = new_role
             self.db.commit()
-
             self._log_team_member_action(team_id, user_email, new_role, "role_changed", updated_by)
+
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
 
