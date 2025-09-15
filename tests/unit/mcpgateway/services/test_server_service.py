@@ -111,7 +111,7 @@ class TestServerService:
 
         # Mock team exists
         mock_team = MagicMock()
-        
+
         # Mock no membership (user not in team)
         def query_side_effect(model):
             mock_query = MagicMock()
@@ -124,7 +124,7 @@ class TestServerService:
             else:
                 mock_query.filter.return_value.first.return_value = None
             return mock_query
-        
+
         test_db.query = Mock(side_effect=query_side_effect)
 
         server_update = ServerUpdate(visibility="team", team_id="team1")
