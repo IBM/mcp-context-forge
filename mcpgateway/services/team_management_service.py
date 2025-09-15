@@ -75,11 +75,12 @@ class TeamManagementService:
         """
         self.db = db
 
-    def _log_team_member_action(self, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
+    def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
         """
         Log a team member action to EmailTeamMemberHistory.
 
         Args:
+            team_member_id: ID of the EmailTeamMember
             team_id: Team ID
             user_email: Email of the affected user
             role: Role at the time of action
@@ -90,10 +91,19 @@ class TeamManagementService:
             >>> from mcpgateway.services.team_management_service import TeamManagementService
             >>> from unittest.mock import Mock
             >>> service = TeamManagementService(Mock())
-            >>> service._log_team_member_action("team-123", "user@example.com", "member", "added", "admin@example.com")
+            >>> service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
         """
-        history = EmailTeamMemberHistory(team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
+        history = EmailTeamMemberHistory(
+            team_member_id=team_member_id,
+            team_id=team_id,
+            user_email=user_email,
+            role=role,
+            action=action,
+            action_by=action_by,
+            action_timestamp=utc_now()
+        )
         self.db.add(history)
+        self.db.commit()
         
     async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: str = "private", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
@@ -449,12 +459,13 @@ class TeamManagementService:
                 existing_membership.role = role
                 existing_membership.joined_at = utc_now()
                 existing_membership.invited_by = invited_by
+                self.db.commit()
+                self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
             else:
                 membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
                 self.db.add(membership)
-
-            self._log_team_member_action(team_id, user_email, role, "added" if not existing_membership else "reactivated", invited_by)
-            self.db.commit()
+                self.db.commit()
+                self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
 
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
@@ -510,9 +521,8 @@ class TeamManagementService:
 
             # Remove membership (soft delete)
             membership.is_active = False
-            
-            self._log_team_member_action(team_id, user_email, membership.role, "removed", removed_by)
             self.db.commit()
+            self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
 
@@ -573,7 +583,7 @@ class TeamManagementService:
 
             # Update the role
             membership.role = new_role
-            self._log_team_member_action(team_id, user_email, new_role, "role_changed", updated_by)
+            self._log_team_member_action(membership.id, team_id, user_email, new_role, "role_changed", updated_by)
             self.db.commit()
 
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
