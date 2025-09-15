@@ -943,6 +943,26 @@ class EmailTeamMember(Base):
         """
         return f"<EmailTeamMember(team_id='{self.team_id}', user_email='{self.user_email}', role='{self.role}')>"
 
+# Team member history model
+class EmailTeamMemberHistory(Base):
+        """History of team member actions (add, remove, reactivate, role change)."""
+
+        __tablename__ = "email_team_member_history"
+
+        id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+        team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
+        user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+        role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
+        action: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. "added", "removed", "reactivated", "role_changed"
+        action_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+        action_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+        team: Mapped["EmailTeam"] = relationship("EmailTeam")
+        user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[user_email])
+        actor: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[action_by])
+
+        def __repr__(self) -> str:
+            return f"<EmailTeamMemberHistory(team_id='{self.team_id}', user_email='{self.user_email}', action='{self.action}', action_by='{self.action_by}', timestamp='{self.action_timestamp}')>"
 
 class EmailTeamInvitation(Base):
     """Team invitation model for managing team member invitations.
