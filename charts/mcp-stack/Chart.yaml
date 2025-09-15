@@ -22,7 +22,7 @@ type: application
 # * appVersion   - upstream application version; shown in UIs but not
 #                  used for upgrade logic.
 # --------------------------------------------------------------------
-version: 0.6.1
+version: 0.7.0
 appVersion: "0.7.0"
 
 # Icon shown by registries / dashboards (must be an http(s) URL).
@@ -46,4 +46,4 @@ maintainers:
     url: https://github.com/IBM
 
 # Require Kubernetes ≥1.21 for networking v1 and recent securityContext fields
-kubeVersion: ">=1.21.0"
+kubeVersion: ">=1.21.0-0"
