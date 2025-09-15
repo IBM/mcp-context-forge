@@ -24,7 +24,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember,EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -81,20 +81,14 @@ class PersonalTeamService:
             Personal team creation is handled automatically during user registration.
             The team name is derived from the user's full name or email.
 
-            After creation, a record is inserted into EmailTeamMemberHistory to track the membership event:
+            After creation, a record is inserted into EmailTeamMemberHistory to track the membership event.
 
-            >>> from unittest.mock import Mock
-            >>> from mcpgateway.db import EmailUser, EmailTeamMemberHistory
-            >>> service = PersonalTeamService(Mock())
-            >>> user = EmailUser(email="test@example.com", full_name="Test User")
-            >>> # Simulate creation (actual DB operations require a real session)
-            >>> try:
-            ...     team = await service.create_personal_team(user)
-            ...     # Check EmailTeamMemberHistory record creation
-            ...     history = service.db.query(EmailTeamMemberHistory).filter_by(team_id=team.id, user_email=user.email, action="added").first()
-            ...     assert history is not None
-            ... except Exception:
-            ...     pass
+            Note:
+                This method is async and cannot be directly called with 'await' in doctest. To test async methods, use an event loop in real tests.
+
+            # Example (not executable in doctest):
+            # import asyncio
+            # team = asyncio.run(service.create_personal_team(user))
         """
         try:
             # Check if user already has a personal team
@@ -133,14 +127,7 @@ class PersonalTeamService:
             self.db.commit()
 
             # Insert history record
-            history = EmailTeamMemberHistory(
-                team_id=team.id,
-                user_email=user.email,
-                role="owner",
-                action="added",
-                action_by=user.email,
-                action_timestamp=utc_now()
-            )
+            history = EmailTeamMemberHistory(team_id=team.id, user_email=user.email, role="owner", action="added", action_by=user.email, action_timestamp=utc_now())
             self.db.add(history)
             self.db.commit()
 

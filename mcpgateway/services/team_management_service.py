@@ -26,8 +26,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser, utc_now
-from mcpgateway.db import EmailTeamMemberHistory
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -36,7 +35,6 @@ logger = logging_service.get_logger(__name__)
 
 
 class TeamManagementService:
-    
     """Service for team management operations.
 
     This service handles team creation, membership management,
@@ -93,18 +91,11 @@ class TeamManagementService:
             >>> from unittest.mock import Mock
             >>> service = TeamManagementService(Mock())
             >>> service._log_team_member_action("team-123", "user@example.com", "member", "added", "admin@example.com")
-            # Should insert a record into EmailTeamMemberHistory
         """
-        history = EmailTeamMemberHistory(
-            team_id=team_id,
-            user_email=user_email,
-            role=role,
-            action=action,
-            action_by=action_by,
-            action_timestamp=utc_now()
-        )
+        history = EmailTeamMemberHistory(team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
         self.db.add(history)
         self.db.commit()
+
     async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: str = "private", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
 
