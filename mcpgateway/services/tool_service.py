@@ -581,8 +581,11 @@ class ToolService:
         Returns:
             List[ToolRead]: Tools the user has access to
         """
-
         # Build query following existing patterns from list_tools()
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email)
+        team_ids = [team.id for team in user_teams]
+
         query = select(DbTool)
 
         # Apply active/inactive filter
@@ -590,22 +593,18 @@ class ToolService:
             query = query.where(DbTool.enabled.is_(True))
 
         if team_id:
-            # Filter by specific team
-            query = query.where(DbTool.team_id == team_id)
-
-            # Validate user has access to team
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             if team_id not in team_ids:
                 return []  # No access to team
+
+            access_conditions = []
+            # Filter by specific team
+            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))
+
+            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
+
+            query = query.where(or_(*access_conditions))
         else:
             # Get user's accessible teams
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             # Build access conditions following existing patterns
 
             access_conditions = []
@@ -625,9 +624,6 @@ class ToolService:
         # Apply visibility filter if specified
         if visibility:
             query = query.where(DbTool.visibility == visibility)
-
-        # Filter out private tools not owned by the user and are private
-        query = query.where(~((DbTool.owner_email != user_email) & (DbTool.visibility == "private")))
 
         # Apply pagination following existing patterns
         query = query.offset(skip).limit(limit)

@@ -1233,10 +1233,13 @@ async def update_server(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        user_email: str = get_user_email(user)
+
         return await server_service.update_server(
             db,
             server_id,
             server,
+            user_email,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],

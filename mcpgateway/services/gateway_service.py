@@ -80,6 +80,7 @@ from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, Prompt
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -881,6 +882,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             List[GatewayRead]: Gateways the user has access to
         """
         # Build query following existing patterns from list_gateways()
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email)
+        team_ids = [team.id for team in user_teams]
+
         query = select(DbGateway)
 
         # Apply active/inactive filter
@@ -888,29 +893,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             query = query.where(DbGateway.enabled.is_(True))
 
         if team_id:
-            # Filter by specific team
-            query = query.where(DbGateway.team_id == team_id)
-
-            # Validate user has access to team
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             if team_id not in team_ids:
                 return []  # No access to team
 
+            access_conditions = []
+            # Filter by specific team
+            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
+
+            access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email))
+
+            query = query.where(or_(*access_conditions))
         else:
             # Get user's accessible teams
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             # Build access conditions following existing patterns
             access_conditions = []
             # 1. User's personal resources (owner_email matches)
@@ -922,9 +916,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             access_conditions.append(DbGateway.visibility == "public")
 
             query = query.where(or_(*access_conditions))
-
-        # Filter out private gateways not owned by the user
-        query = query.where(~((DbGateway.owner_email != user_email) & (DbGateway.visibility == "private")))
 
         # Apply visibility filter if specified
         if visibility:

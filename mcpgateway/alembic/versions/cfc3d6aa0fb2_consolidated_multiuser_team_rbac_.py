@@ -446,6 +446,17 @@ def upgrade() -> None:
             print(f"Processing {table_name}...")
             add_team_columns_if_not_exists(table_name)
 
+    safe_create_index("idx_gateways_team_visibility", "gateways", ["team_id", "visibility"])
+    safe_create_index("idx_gateways_owner_visibility", "gateways", ["owner_email", "visibility"])
+    safe_create_index("idx_resources_team_visibility", "resources", ["team_id", "visibility"])
+    safe_create_index("idx_resources_owner_visibility", "resources", ["owner_email", "visibility"])
+    safe_create_index("idx_prompts_team_visibility", "prompts", ["team_id", "visibility"])
+    safe_create_index("idx_prompts_owner_visibility", "prompts", ["owner_email", "visibility"])
+    safe_create_index("idx_tools_team_visibility", "tools", ["team_id", "visibility"])
+    safe_create_index("idx_tools_owner_visibility", "tools", ["owner_email", "visibility"])
+    safe_create_index("idx_servers_team_visibility", "servers", ["team_id", "visibility"])
+    safe_create_index("idx_servers_owner_visibility", "servers", ["owner_email", "visibility"])
+
     print("✅ Multitenancy schema migration completed successfully")
     print("📋 Schema changes applied:")
     print("   • Created 15 new multitenancy tables")
@@ -595,6 +606,21 @@ def downgrade() -> None:
                 safe_drop_index(op.f("ix_email_auth_events_user_email"), table_name)
             elif table_name == "email_users":
                 safe_drop_index(op.f("ix_email_users_email"), table_name)
+            elif table_name == "gateways":
+                safe_drop_index("idx_gateways_owner_visibility", table_name)
+                safe_drop_index("idx_gateways_team_visibility", table_name)
+            elif table_name == "resources":
+                safe_drop_index("idx_resources_owner_visibility", table_name)
+                safe_drop_index("idx_resources_team_visibility", table_name)
+            elif table_name == "prompts":
+                safe_drop_index("idx_prompts_owner_visibility", table_name)
+                safe_drop_index("idx_prompts_team_visibility", table_name)
+            elif table_name == "tools":
+                safe_drop_index("idx_tools_owner_visibility", table_name)
+                safe_drop_index("idx_tools_team_visibility", table_name)
+            elif table_name == "servers":
+                safe_drop_index("idx_servers_owner_visibility", table_name)
+                safe_drop_index("idx_servers_team_visibility", table_name)
 
             # Drop the table using safe helper
             safe_drop_table(table_name)
