@@ -257,7 +257,7 @@ npx -y @modelcontextprotocol/inspector
 ## Connect via `mcpgateway-wrapper` (stdio)
 
 ```bash
-export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN
+export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
 export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
 python3 -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
 ```
@@ -272,7 +272,7 @@ Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Exam
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
         "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
-        "MCP_AUTH": "<YOUR_JWT_TOKEN>",
+        "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }
