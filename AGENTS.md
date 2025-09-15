@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+For specific tasks, see also: llms/api.md  llms/helm.md  llms/mcpgateway.md  llms/mcp-server-go.md  llms/mcp-server-python.md  llms/mkdocs.md  llms/plugins-llms.md  llms/testing.md
+
 ## Project Structure & Module Organization
 - `mcpgateway/`: FastAPI gateway source (entry `main.py`, `cli.py`, services, transports, templates/static, Alembic).
 - Services: `mcpgateway/services/` (gateway, server, tool, resource, prompt logic).
