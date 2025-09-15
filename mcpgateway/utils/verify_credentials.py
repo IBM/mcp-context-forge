@@ -15,6 +15,7 @@ Examples:
     ...     jwt_algorithm = 'HS256'
     ...     jwt_audience = 'mcpgateway-api'
     ...     jwt_issuer = 'mcpgateway'
+    ...     jwt_audience_verification = True
     ...     basic_auth_user = 'user'
     ...     basic_auth_password = 'pass'
     ...     auth_required = True
@@ -157,6 +158,7 @@ async def verify_credentials(token: str) -> dict:
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -205,6 +207,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -308,6 +311,7 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -360,6 +364,7 @@ async def require_basic_auth(credentials: HTTPBasicCredentials = Depends(basic_s
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -420,6 +425,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -552,6 +558,7 @@ async def require_docs_auth_override(
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
         ...     docs_allow_basic_auth = False
         ...     require_token_expiration = False
         >>> vc.settings = DummySettings()
@@ -631,6 +638,7 @@ async def require_auth_override(
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
+        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
