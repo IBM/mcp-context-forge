@@ -994,6 +994,24 @@ class EmailTeamMemberHistory(Base):
     actor: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[action_by])
 
     def __repr__(self) -> str:
+        """Return a string representation of the EmailTeamMemberHistory instance.
+
+        Returns:
+            str: A string summarizing the team member history record.
+
+        Examples:
+            >>> from mcpgateway.db import EmailTeamMemberHistory, utc_now
+            >>> history = EmailTeamMemberHistory(
+            ...     team_id="team-123",
+            ...     user_email="user@example.com",
+            ...     role="member",
+            ...     action="added",
+            ...     action_by="admin@example.com",
+            ...     action_timestamp=utc_now()
+            ... )
+            >>> isinstance(repr(history), str)
+            True
+        """
         return f"<EmailTeamMemberHistory(team_id='{self.team_id}', user_email='{self.user_email}', action='{self.action}', action_by='{self.action_by}', timestamp='{self.action_timestamp}')>"
 
 
