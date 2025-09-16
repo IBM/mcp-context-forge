@@ -93,15 +93,7 @@ class TeamManagementService:
             >>> service = TeamManagementService(Mock())
             >>> service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
         """
-        history = EmailTeamMemberHistory(
-            team_member_id=team_member_id,
-            team_id=team_id,
-            user_email=user_email,
-            role=role,
-            action=action,
-            action_by=action_by,
-            action_timestamp=utc_now()
-        )
+        history = EmailTeamMemberHistory(team_member_id=team_member_id, team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
         self.db.add(history)
         self.db.commit()
 
@@ -383,8 +375,11 @@ class TeamManagementService:
             team.is_active = False
             team.updated_at = utc_now()
 
-            # Deactivate all memberships
-            self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id).update({"is_active": False})
+            # Deactivate all memberships and log deactivation in history
+            memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
+            for membership in memberships:
+                membership.is_active = False
+                self._log_team_member_action(membership.id, team_id, membership.user_email, membership.role, "team-deleted", deleted_by)
 
             self.db.commit()
 
@@ -418,7 +413,7 @@ class TeamManagementService:
             >>> asyncio.iscoroutinefunction(service.add_member_to_team)
             True
             >>> # After adding, EmailTeamMemberHistory is updated
-            >>> # service._log_team_member_action("team-123", "user@example.com", "member", "added", "admin@example.com")
+            >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
         """
         try:
             # Validate role
