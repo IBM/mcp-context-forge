@@ -22,6 +22,8 @@ from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
+    HttpHeaderPayload,
+    HttpHeaderPayloadResult,
     HookType,
     PluginCondition,
     PluginConfig,
@@ -50,6 +52,8 @@ __all__ = [
     "ExternalPluginServer",
     "GlobalContext",
     "HookType",
+    "HttpHeaderPayload",
+    "HttpHeaderPayloadResult",
     "Plugin",
     "PluginCondition",
     "PluginConfig",

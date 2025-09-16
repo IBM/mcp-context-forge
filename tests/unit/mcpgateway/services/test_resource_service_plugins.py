@@ -17,10 +17,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.models import ResourceContent
-from mcpgateway.plugins.framework.models import (
-    PluginViolation,
-)
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError
+
 
 
 class TestResourceServicePluginIntegration:
@@ -131,9 +130,7 @@ class TestResourceServicePluginIntegration:
 
         # Setup pre-fetch hook to block
         mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(
-                MagicMock(
-                    continue_processing=False,
+                side_effect=PluginViolationError(message="Protocol not allowed",
                     violation=PluginViolation(
                         reason="Protocol not allowed",
                         code="PROTOCOL_BLOCKED",
@@ -141,14 +138,12 @@ class TestResourceServicePluginIntegration:
                         details={"protocol": "file", "uri": "file:///etc/passwd"}
                     ),
                 ),
-                None,
-            )
         )
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(PluginViolationError) as exc_info:
             await service.read_resource(mock_db, "file:///etc/passwd")
 
-        assert "Resource blocked: Protocol not allowed" in str(exc_info.value)
+        assert "Protocol not allowed" in str(exc_info.value)
         mock_manager.resource_pre_fetch.assert_called_once()
         # Post-fetch should not be called if pre-fetch blocks
         mock_manager.resource_post_fetch.assert_not_called()
@@ -264,12 +259,11 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
 
         # Setup pre-fetch hook to raise an error
-        mock_manager.resource_pre_fetch = AsyncMock(side_effect=ValueError("Plugin error"))
+        mock_manager.resource_pre_fetch = AsyncMock(side_effect=PluginError(error=PluginErrorModel(message="Plugin error", plugin_name="mock_plugin")))
 
-        # Should continue without plugin processing on error
-        result = await service.read_resource(mock_db, "test://resource")
+        with pytest.raises(PluginError):
+            result = await service.read_resource(mock_db, "test://resource")
 
-        assert result == mock_resource.content
         mock_manager.resource_pre_fetch.assert_called_once()
 
     @pytest.mark.asyncio
@@ -297,24 +291,19 @@ class TestResourceServicePluginIntegration:
 
         # Setup post-fetch hook to block
         mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(
-                MagicMock(
-                    continue_processing=False,
-                    violation=PluginViolation(
+            side_effect=PluginViolationError(message="Content contains sensitive data",
+                                             violation=PluginViolation(
                         reason="Content contains sensitive data",
                         description="The resource content was flagged as containing sensitive information",
                         code="SENSITIVE_CONTENT",
                         details={"uri": "test://resource"}
-                    ),
-                ),
-                None,
-            )
+                        ))
         )
 
-        with pytest.raises(ResourceError) as exc_info:
+        with pytest.raises(PluginViolationError) as exc_info:
             await service.read_resource(mock_db, "test://resource")
 
-        assert "Resource content blocked: Content contains sensitive data" in str(exc_info.value)
+        assert "Content contains sensitive data" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_read_resource_with_template(self, resource_service_with_plugins, mock_db):

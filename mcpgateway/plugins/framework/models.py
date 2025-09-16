@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeVar
 
 # Third-Party
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, RootModel, ValidationInfo
 
 # First-Party
 from mcpgateway.models import PromptResult
@@ -603,12 +603,56 @@ PromptPrehookResult = PluginResult[PromptPrehookPayload]
 PromptPosthookResult = PluginResult[PromptPosthookPayload]
 
 
+class HttpHeaderPayload(RootModel[dict[str, str]]):
+    """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""
+
+    def __iter__(self):
+        """Custom iterator function to override root attribute.
+
+        Returns:
+            A custom iterator for header dictionary.
+        """
+        return iter(self.root)
+
+    def __getitem__(self, item: str) -> str:
+        """Custom getitem function to override root attribute.
+
+        Args:
+            item: The http header key.
+
+        Returns:
+            A custom accesser for the header dictionary.
+        """
+        return self.root[item]
+
+    def __setitem__(self, key: str, value: str) -> None:
+        """Custom setitem function to override root attribute.
+
+        Args:
+            key: The http header key.
+            value: The http header value to be set.
+        """
+        self.root[key] = value
+
+    def __len__(self):
+        """Custom len function to override root attribute.
+
+        Returns:
+            The len of the header dictionary.
+        """
+        return len(self.root)
+
+
+HttpHeaderPayloadResult = PluginResult[HttpHeaderPayload]
+
+
 class ToolPreInvokePayload(BaseModel):
     """A tool payload for a tool pre-invoke hook.
 
     Args:
         name: The tool name.
         args: The tool arguments for invocation.
+        headers: The http pass through headers.
 
     Examples:
         >>> payload = ToolPreInvokePayload(name="test_tool", args={"input": "data"})
@@ -629,6 +673,7 @@ class ToolPreInvokePayload(BaseModel):
 
     name: str
     args: Optional[dict[str, Any]] = Field(default_factory=dict)
+    headers: Optional[HttpHeaderPayload] = None
 
 
 class ToolPostInvokePayload(BaseModel):

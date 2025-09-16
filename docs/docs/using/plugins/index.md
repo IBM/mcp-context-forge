@@ -243,7 +243,7 @@ Each plugin can operate in one of four modes:
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | **enforce** | Blocks requests on policy violations and plugin errors | Production guardrails |
-| **enforce_ignore_errors** | Blocks requests on policy violations; logs errors and continues | Guardrails with fault tolerance |
+| **enforce_ignore_errors** | Blocks requests on policy violations but only logs errors | Production guardrails |
 | **permissive** | Logs violations but allows requests | Testing and monitoring |
 | **disabled** | Plugin loaded but not executed | Temporary deactivation |
 
@@ -308,6 +308,44 @@ The plugin framework provides comprehensive hook coverage across the entire MCP 
 | `federation_pre_sync` | Gateway federation validation and filtering | v0.8.0 |
 | `federation_post_sync` | Post-federation data processing and reconciliation | v0.8.0 |
 
+### Prompt Hooks Details
+
+The prompt hooks allow plugins to intercept and modify prompt retrieval and rendering:
+
+- **`prompt_pre_fetch`**: Receives the prompt name and arguments before prompt template retrieval.  Can modify the arguments.
+- **`prompt_post_fetch`**: Receives the completed prompt after rendering.  Can modify the prompt text or block it from being returned.
+
+Example Use Cases:
+- Detect prompt injection attacks
+- Sanitize or anonymize prompts
+- Search and replace
+
+#### Prompt Hook Payloads
+
+**PromptPrehookPayload**: Payload for prompt pre-fetch hooks.
+
+```python
+class PromptPrehookPayload(BaseModel):
+    name: str                                    # Prompt template name
+    args: Optional[dict[str, str]] = Field(default_factory=dict)  # Template arguments
+```
+
+**Example**:
+```python
+payload = PromptPrehookPayload(
+    name="user_greeting",
+    args={"user_name": "Alice", "time_of_day": "morning"}
+)
+```
+
+**PromptPosthookPayload**: Payload for prompt post-fetch hooks.
+
+```python
+class PromptPosthookPayload(BaseModel):
+    name: str                                    # Prompt name
+    result: PromptResult                         # Rendered prompt result
+```
+
 ### Tool Hooks Details
 
 The tool hooks enable plugins to intercept and modify tool invocations:
@@ -321,6 +359,42 @@ Example use cases:
 - Audit logging of tool usage
 - Input validation and sanitization
 - Output filtering and transformation
+
+#### Tool Hook Payloads
+
+**ToolPreInvokePayload**: Payload for tool pre-invoke hooks.
+
+```python
+class ToolPreInvokePayload(BaseModel):
+    name: str                                    # Tool name
+    args: Optional[dict[str, Any]] = Field(default_factory=dict)  # Tool arguments
+    headers: Optional[HttpHeaderPayload] = None  # HTTP pass-through headers
+```
+
+**ToolPostInvokePayload**: Payload for tool post-invoke hooks.
+
+```python
+class ToolPostInvokePayload(BaseModel):
+    name: str                                    # Tool name
+    result: Any                                  # Tool execution result
+```
+
+The associated `HttpHeaderPayload` object for the `ToolPreInvokePayload` is as follows:
+
+Special payload for HTTP header manipulation.
+
+```python
+class HttpHeaderPayload(RootModel[dict[str, str]]):
+    # Provides dictionary-like access to HTTP headers
+    # Supports: __iter__, __getitem__, __setitem__, __len__
+```
+
+**Usage**:
+```python
+headers = HttpHeaderPayload({"Authorization": "Bearer token", "Content-Type": "application/json"})
+headers["X-Custom-Header"] = "custom_value"
+auth_header = headers["Authorization"]
+```
 
 ### Resource Hooks Details
 
@@ -336,6 +410,24 @@ Example use cases:
 - Sensitive data redaction
 - Content transformation and filtering
 - Resource caching metadata
+
+#### Resource Hook Payloads
+
+**ResourcePreFetchPayload**: Payload for resource pre-fetch hooks.
+
+```python
+class ResourcePreFetchPayload(BaseModel):
+    uri: str                                     # Resource URI
+    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)  # Request metadata
+```
+
+**ResourcePostFetchPayload**: Payload for resource post-fetch hooks.
+
+```python
+class ResourcePostFetchPayload(BaseModel):
+    uri: str                                     # Resource URI
+    content: Any                                 # Fetched resource content
+```
 
 Planned hooks (not yet implemented):
 
@@ -610,6 +702,32 @@ async def prompt_post_fetch(self, payload, context):
 
     return PromptPosthookResult()
 ```
+
+#### Tool and Gateway Metadata
+
+Currently, the tool pre/post hooks have access to tool and gateway metadata through the global context metadata dictionary.  They are accessible as follows:
+
+It can be accessed inside of the tool hooks through:
+
+```python
+from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+
+tool_meta = context.global_context.metadata[TOOL_METADATA]
+assert tool_meta.original_name == "test_tool"
+assert tool_meta.url.host == "example.com"
+assert tool_meta.integration_type == "REST" or tool_meta.integration_type == "MCP"
+```
+
+Note, if the integration type is `MCP` the gateway information may also be available as follows.
+
+```python
+gateway_meta = context.global_context.metadata[GATEWAY_METADATA]
+assert gateway_meta.name == "test_gateway"
+assert gateway_meta.transport == "sse"
+assert gateway_meta.url.host == "example.com"
+```
+
+Metadata for other entities such as prompts and resources will be added in future versions of the gateway.
 
 ### External Service Plugin Example
 

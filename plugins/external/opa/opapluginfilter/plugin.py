@@ -153,7 +153,7 @@ class OPAPluginFilter(Plugin):
                     if not decision:
                         violation = PluginViolation(
                             reason="tool invocation not allowed",
-                            description="OPA policy failed on tool preinvocation",
+                            description="OPA policy denied for tool preinvocation",
                             code="deny",
                             details=decision_context,)
                         return ToolPreInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
