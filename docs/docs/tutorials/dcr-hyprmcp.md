@@ -55,7 +55,7 @@ sequenceDiagram
     User->>+Dex: Get Access Token
     Dex-->>-User: Access Token
 
-    User->>+HyprMCP: Init MCP connection
+    User->>+HyprMCP: Init MCP connection<br>(With Access Token in Authorization Header)
     HyprMCP->>+ContextForge: Init MCP connection
     note right of ContextForge: ContextForge verifies<br>Access Token
     ContextForge-->>-HyprMCP: Init Response
@@ -88,8 +88,6 @@ The final compose file will be at the end.
 Create a `docker-compose.yaml` file with the following content:
 
 ```yaml
-name: who-am-i-gateway
-
 services:
     hyprmcp-dex:
         image: ghcr.io/dexidp/dex:v2.43.1-alpine
@@ -293,8 +291,6 @@ Choose a tool from the list and run it via the right side panel.
 ## Complete Compose File
 
 ```yaml
-name: who-am-i-gateway
-
 services:
     hyprmcp-dex:
         image: ghcr.io/dexidp/dex:v2.43.1-alpine
