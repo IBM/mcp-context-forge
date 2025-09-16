@@ -69,7 +69,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -492,6 +492,81 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
         True
     """
     return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
+
+
+@app.exception_handler(PluginViolationError)
+async def plugin_violation_exception_handler(_request: Request, exc: PluginViolationError):
+    """Handle plugins violations globally.
+
+    Intercepts PluginViolationError exceptions (e.g., OPA policy violation) and returns a properly formatted JSON error response.
+    This provides consistent error handling for plugin violation across the entire application.
+
+    Args:
+        _request: The FastAPI request object that triggered the database error.
+                  (Unused but required by FastAPI's exception handler interface)
+        exc: The PluginViolationError exception containing constraint
+             violation details.
+
+    Returns:
+        JSONResponse: A 403 response with access forbidden.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework import PluginViolationError
+        >>> from mcpgateway.plugins.framework.models import PluginViolation
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> # Create a mock integrity error
+        >>> mock_error = PluginViolationError(message="plugin violation",violation = PluginViolation(
+        ...     reason="Invalid input",
+        ...     description="The input contains prohibited content",
+        ...     code="PROHIBITED_CONTENT",
+        ...     details={"field": "message", "value": "test"}
+        ... ))
+        >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
+        >>> result.status_code
+        403
+    """
+    policy_violation = exc.violation.model_dump() if exc.violation else {}
+    policy_violation["message"] = exc.message
+    return JSONResponse(status_code=403, content=policy_violation)
+
+
+@app.exception_handler(PluginError)
+async def plugin_exception_handler(_request: Request, exc: PluginError):
+    """Handle plugins errors globally.
+
+    Intercepts PluginError exceptions and returns a properly formatted JSON error response.
+    This provides consistent error handling for plugin error across the entire application.
+
+    Args:
+        _request: The FastAPI request object that triggered the database error.
+                  (Unused but required by FastAPI's exception handler interface)
+        exc: The PluginError exception containing constraint
+             violation details.
+
+    Returns:
+        JSONResponse: A 500 response with internal server error.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework import PluginViolationError
+        >>> from mcpgateway.plugins.framework.models import PluginErrorModel
+        >>> from fastapi import Request
+        >>> import asyncio
+        >>>
+        >>> # Create a mock integrity error
+        >>> mock_error = PluginError(error = PluginErrorModel(
+        ...     message="plugin error",
+        ...     code="timeout",
+        ...     plugin_name="abc",
+        ...     details={"field": "message", "value": "test"}
+        ... ))
+        >>> result = asyncio.run(plugin_exception_handler(None, mock_error))
+        >>> result.status_code
+        500
+    """
+    error_obj = exc.error.model_dump() if exc.error else {}
+    return JSONResponse(status_code=500, content=error_obj)
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
@@ -3214,6 +3289,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
     Returns:
         Response with the RPC result or error.
+
+    Raises:
+        PluginError: If encounters issue with plugin
+        PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
     """
     try:
         # Extract user identifier from either RBAC user object or JWT payload
@@ -3324,13 +3403,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
+            # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
             try:
                 result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-            except PluginViolationError:
-                return JSONResponse(status_code=403, content={"detail": "policy_deny"})
+            except (PluginError, PluginViolationError):
+                raise
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
@@ -3343,6 +3423,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
+    except (PluginError, PluginViolationError):
+        raise
     except JSONRPCError as e:
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
