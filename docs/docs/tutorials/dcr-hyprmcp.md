@@ -368,7 +368,7 @@ This tutorial demonstrates how to set up ContextForge together with [HyprMCP](ht
 
 Interoperability could be further improved by ContextForge adding support for SSO using generic OIDC providers, as well as the HyprMCP gateway adding other DCR compatibility modes on top of the existing one based on Dex IdP.
 
-### Next Steps
+### Further Links
 
 - Explore the [HyprMCP](https://hyprmcp.com/) documentation for more advanced features and integrations.
-- Learn how to use ContextForge's API to manage and monitor your MCP servers.
+- Read our in-depth guide on [Building Supabase-like OAuth Authentication For MCP Servers](https://hyprmcp.com/blog/mcp-server-authentication/)
