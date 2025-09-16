@@ -5,15 +5,20 @@ Revises: e182847d89e6
 Create Date: 2025-09-15 14:53:32.682953
 
 """
+
+# Standard
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
 
+# First-Party
+from mcpgateway.db import utc_now
 
 # revision identifiers, used by Alembic.
-revision: str = '0f81d4a5efe0'
-down_revision: Union[str, Sequence[str], None] = 'e182847d89e6'
+revision: str = "0f81d4a5efe0"
+down_revision: Union[str, Sequence[str], None] = "e182847d89e6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -40,15 +45,18 @@ def upgrade() -> None:
 
     # Insert one audit entry for each unique (user_email, team_id) combination
     bind = op.get_bind()
-    result = bind.execute(sa.text("""
+    result = bind.execute(
+        sa.text(
+            """
         SELECT id, team_id, user_email, role
         FROM email_team_members
         WHERE (team_id, user_email) IN (
             SELECT team_id, user_email FROM email_team_members GROUP BY team_id, user_email
         )
-    """))
+    """
+        )
+    )
     seen = set()
-    import datetime
     for row in result:
         key = (row[1], row[2])  # (team_id, user_email)
         if key in seen:
@@ -67,8 +75,8 @@ def upgrade() -> None:
                 "role": row[3],
                 "action": "migrated",
                 "action_by": None,
-                "action_timestamp": datetime.datetime.now(),
-            }
+                "action_timestamp": utc_now(),
+            },
         )
     # ### end Alembic commands ###
 
