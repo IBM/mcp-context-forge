@@ -68,18 +68,24 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 * 10. [Configuration (`.env` or env vars)](#configuration-env-or-env-vars)
     * 10.1. [Basic](#basic)
     * 10.2. [Authentication](#authentication)
-    * 10.3. [UI Features](#ui-features)
-    * 10.4. [Security](#security)
-    * 10.5. [Logging](#logging)
-    * 10.6. [Transport](#transport)
-    * 10.7. [Federation](#federation)
-    * 10.8. [Resources](#resources)
-    * 10.9. [Tools](#tools)
-    * 10.10. [Prompts](#prompts)
-    * 10.11. [Health Checks](#health-checks)
-    * 10.12. [Database](#database)
-    * 10.13. [Cache Backend](#cache-backend)
-    * 10.14. [Development](#development)
+    * 10.3. [A2A (Agent-to-Agent) Features](#a2a-agent-to-agent-features)
+    * 10.4. [Email-Based Authentication & User Management](#email-based-authentication--user-management)
+    * 10.5. [MCP Client Authentication](#mcp-client-authentication)
+    * 10.6. [SSO (Single Sign-On) Configuration](#sso-single-sign-on-configuration)
+    * 10.7. [Dynamic Client Registration & Virtual MCP Server Authentication](#dynamic-client-registration--virtual-mcp-server-authentication)
+    * 10.8. [UI Features](#ui-features)
+    * 10.9. [Security](#security)
+    * 10.10. [Logging](#logging)
+    * 10.11. [Transport](#transport)
+    * 10.12. [Federation](#federation)
+    * 10.13. [Resources](#resources)
+    * 10.14. [Tools](#tools)
+    * 10.15. [Prompts](#prompts)
+    * 10.16. [Health Checks](#health-checks)
+    * 10.17. [Database](#database)
+    * 10.18. [Cache Backend](#cache-backend)
+    * 10.19. [Plugin Configuration](#plugin-configuration)
+    * 10.20. [Development](#development)
 * 11. [Running](#running)
     * 11.1. [Makefile](#makefile)
     * 11.2. [Script helper](#script-helper)
@@ -1208,6 +1214,18 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
+
+### Dynamic Client Registration & Virtual MCP Server Authentication
+
+ContextForge supports OAuth2 with Dynamic Client Registration (DCR) for streamable HTTP servers through integration with the HyperMCP gateway, enabling automatic OAuth2 client provisioning for MCP servers without manual configuration.
+
+| Setting                     | Description                                            | Default | Options |
+|-----------------------------|--------------------------------------------------------|---------|---------|
+| `JWT_AUDIENCE_VERIFICATION` | JWT audience verification needs to be disabled for DCR | `true`  | bool    |
+
+Dynamic client registration (DCR) is powered by the [HyprMCP Gateway (`hyprmcp/mcp-gateway`)](https://github.com/hyprmcp/mcp-gateway).
+Follow the tutorial at https://ibm.github.io/mcp-context-forge/tutorials/dcr-hyprmcp/ to get started.
+Find additional information about HyprMCP at [hyprmcp.com](http://hyprmcp.com/).
 
 ### Personal Teams Configuration
 
