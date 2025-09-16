@@ -14,16 +14,15 @@
 
 /* preserve original header-inner layout initially (items-start) */
 #sticky-header.compact .header-inner {
-  padding: 0 16px; /* remove extra vertical padding */
-  align-items: center; /* ensures children are centered vertically */
+  padding: 0 16px;
+  align-items: center; /* ensure header rows center vertically */
   height: 64px; /* enforce exact height match to header */
 }
 
-
 /* Make sure header-right stays vertically centered always */
 #sticky-header .header-right {
-  display:flex;
-  align-items:center;
+  display: flex;
+  align-items: center;
 }
 
 /* Title: use transform for smoothness */
@@ -37,45 +36,40 @@
 #sticky-header .header-left .header-subtitle {
   transition: opacity 0.18s ease, transform 0.18s ease;
   opacity: 1;
-  margin-top: .25rem;
-  font-size: .95rem;
+  margin-top: 0.25rem;
+  font-size: 0.95rem;
 }
 
 /* right side controls smoothing */
 #sticky-header .header-right > * {
-  transition: transform .28s cubic-bezier(.2,.9,.3,1), opacity .28s ease, padding .28s cubic-bezier(.2,.9,.3,1);
+  transition: transform 0.28s cubic-bezier(.2,.9,.3,1), opacity 0.28s ease, padding 0.28s cubic-bezier(.2,.9,.3,1);
 }
 
 /* COMPACT state after scrolling: reduce height, hide subtitle, apply glass */
 #sticky-header.compact {
   height: 64px;
   margin-bottom: 0;
-  background-color: rgba(255, 255, 255, 0.80); /* slightly more opaque for contrast */
-  -webkit-backdrop-filter: blur(8px);
+  background-color: rgb(255 255 255 / 80%); /* slightly more opaque for contrast */
   backdrop-filter: blur(8px);
-  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.12); /* slightly stronger shadow for depth */
+  box-shadow: 0 6px 20px rgb(2 6 23 / 12%); /* slightly stronger shadow for depth */
 }
 
 .dark #sticky-header.compact {
-  background-color: rgba(17, 24, 39, 0.88); /* a bit darker in dark mode */
-  -webkit-backdrop-filter: blur(8px);
+  background-color: rgb(17 24 39 / 88%); /* a bit darker in dark mode */
   backdrop-filter: blur(8px);
-  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.25);
-}
-
-/* center vertically only in compact mode so it matches your original initial layout but centered when small */
-#sticky-header.compact .header-inner {
-  padding: 8px 16px;
-  align-items:center; /* ensure header rows center vertically */
+  box-shadow: 0 6px 20px rgb(2 6 23 / 25%);
 }
 
 /* Make header-left a vertical flex that centers its children when compact */
-#sticky-header .header-left { display:block; }
+#sticky-header .header-left {
+  display: block;
+}
+
 #sticky-header.compact .header-left {
-  display:flex;
-  flex-direction:column;
-  justify-content:center;
-  height:100%; /* ensure it fills header-inner for perfect centering */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%; /* ensure it fills header-inner for perfect centering */
   padding: 0;  /* avoid extra internal spacing */
 }
 
@@ -94,19 +88,46 @@
 }
 
 /* compact right-side controls: slightly smaller */
-#sticky-header .header-team-btn, #sticky-header .header-admin-btn { padding: .25rem .5rem; font-size: .82rem; }
-#sticky-header.compact .header-team-btn, #sticky-header.compact .header-admin-btn { padding: .2rem .45rem; font-size: .78rem; }
-#sticky-header .header-user { padding-left: 0; padding-right: 0; }
-#sticky-header.compact .header-user { font-size: .78rem; }
-#sticky-header .header-logout-btn { transition: background-color .16s ease, color .16s ease, padding .16s ease; }
-#sticky-header.compact .header-logout-btn { padding: .25rem .6rem; font-size: .78rem; }
+#sticky-header .header-team-btn,
+#sticky-header .header-admin-btn {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.82rem;
+}
+
+#sticky-header.compact .header-team-btn,
+#sticky-header.compact .header-admin-btn {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.78rem;
+}
+
+#sticky-header .header-user {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+#sticky-header.compact .header-user {
+  font-size: 0.78rem;
+}
+
+#sticky-header .header-logout-btn {
+  transition: background-color 0.16s ease, color 0.16s ease, padding 0.16s ease;
+}
+
+#sticky-header.compact .header-logout-btn {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.78rem;
+}
 
 /* subtle child pop for nicer visual */
-#sticky-header.compact .header-right > * { transform: translateY(-2px) scale(0.97); filter: saturate(1.02); }
+#sticky-header.compact .header-right > * {
+  transform: translateY(-2px) scale(0.97);
+  filter: saturate(1.02);
+}
 
 /* ensure dropdowns appear above header */
-#sticky-header .z-50 { z-index: 99999; }
-
+#sticky-header .z-50 {
+  z-index: 99999;
+}
 
 .error-status {
   margin-top: 10px;
