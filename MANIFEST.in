@@ -91,6 +91,7 @@ prune k8s
 prune .devcontainer
 exclude CLAUDE.*
 exclude llms-full.txt
+exclude AGENTS.md
 
 # Exclude deployment, mcp-servers, agent_runtimes and llms
 prune deployment
