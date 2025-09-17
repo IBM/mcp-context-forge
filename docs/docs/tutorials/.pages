@@ -2,3 +2,4 @@ nav:
   - index.md
   - argocd-helm-deployment-ibm-cloud-iks.md
   - openwebui-tutorial.md
+  - dcr-hyprmcp.md

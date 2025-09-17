@@ -12,6 +12,7 @@ nav:
   - observability.md
   - observability
   - proxy.md
+  - dcr.md
   - oauth.md
   - securing.md
   - sso.md
