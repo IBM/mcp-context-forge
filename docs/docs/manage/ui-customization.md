@@ -707,6 +707,9 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   ghcr.io/MCP-Mirror/mcpgateway:latest
 ```
 
@@ -732,6 +735,9 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   ghcr.io/MCP-Mirror/mcpgateway:latest
 ```
 

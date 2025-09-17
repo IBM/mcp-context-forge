@@ -63,6 +63,9 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
+      -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+      -e PLATFORM_ADMIN_PASSWORD=changeme \
+      -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
       ghcr.io/ibm/mcp-context-forge:0.7.0
     ```
 
@@ -80,12 +83,26 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
+      -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+      -e PLATFORM_ADMIN_PASSWORD=changeme \
+      -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
       ghcr.io/ibm/mcp-context-forge:0.7.0
     ```
 
     **PyPI:**
     ```bash
-    pip install mcp-gateway
+    pip install mcp-contextforge-gateway
+
+    # Option 1: Use the provided .env.example
+    curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
+    cp .env.example .env
+    # Edit .env to customize your settings
+    mcpgateway --host 0.0.0.0 --port 4444
+
+    # Option 2: Set environment variables directly
+    PLATFORM_ADMIN_EMAIL=admin@example.com \
+    PLATFORM_ADMIN_PASSWORD=changeme \
+    PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
     mcpgateway --host 0.0.0.0 --port 4444
     ```
 
@@ -107,13 +124,27 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
+      -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+      -e PLATFORM_ADMIN_PASSWORD=changeme \
+      -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
       ghcr.io/ibm/mcp-context-forge:0.7.0
     ```
 
     **Or install via PyPI:**
 
     ```bash
-    pip install mcp-gateway
+    pip install mcp-contextforge-gateway
+
+    # Option 1: Use the provided .env.example
+    curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
+    cp .env.example .env
+    # Edit .env to customize your settings
+    mcpgateway --host 0.0.0.0 --port 4444
+
+    # Option 2: Set environment variables directly
+    PLATFORM_ADMIN_EMAIL=admin@example.com \
+    PLATFORM_ADMIN_PASSWORD=changeme \
+    PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
     mcpgateway --host 0.0.0.0 --port 4444
     ```
 
