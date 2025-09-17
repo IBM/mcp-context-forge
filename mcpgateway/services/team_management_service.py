@@ -877,13 +877,14 @@ class TeamManagementService:
             member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
 
             self.db.add(member)
-
             # Update join request status
             join_request.status = "approved"
             join_request.reviewed_at = utc_now()
             join_request.reviewed_by = approved_by
 
-            self.db.commit()
+            self.db.flush()
+            self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "member-added", approved_by)
+
             self.db.refresh(member)
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
