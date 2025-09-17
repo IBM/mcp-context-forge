@@ -20,6 +20,7 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 | Page | Description |
 |------|-------------|
 | [Configuration](configuration.md) | **Complete configuration reference** - databases, environment variables, and deployment settings |
+| [Dynamic Client Registration](dcr.md) | 🔐 **OAuth2 DCR** - Automatic client provisioning for streamable HTTP servers |
 | [Backups](backup.md) | How to persist and restore your database, configs, and resource state |
 | [Export & Import](export-import.md) | Complete configuration management with CLI, API, and Admin UI |
 | [Export/Import Tutorial](export-import-tutorial.md) | Step-by-step tutorial for getting started with export/import |
