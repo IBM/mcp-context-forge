@@ -246,9 +246,18 @@ MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gat
 (single command using [uv](https://docs.astral.sh/uv/))
 
 ```bash
+# Quick start with environment variables
 BASIC_AUTH_PASSWORD=pass \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
+PLATFORM_ADMIN_EMAIL=admin@example.com \
+PLATFORM_ADMIN_PASSWORD=changeme \
+PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
+
+# Or better: use the provided .env.example
+cp .env.example .env
+# Edit .env to customize your settings
 uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 ```
 
@@ -269,10 +278,18 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
-# 2️⃣  Launch on all interfaces with custom creds & secret key
-# Enable the Admin API endpoints (true/false) - disabled by default
+# 2️⃣  Copy and customize the configuration
+# Download the example environment file
+curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
+cp .env.example .env
+# Edit .env to customize your settings (especially passwords!)
+
+# Or set environment variables directly:
 export MCPGATEWAY_UI_ENABLED=true
 export MCPGATEWAY_ADMIN_API_ENABLED=true
+export PLATFORM_ADMIN_EMAIL=admin@example.com
+export PLATFORM_ADMIN_PASSWORD=changeme
+export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
 
 BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
   mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
@@ -295,11 +312,20 @@ python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
-# 2️⃣  Environment variables (session-only)
+# 2️⃣  Copy and customize the configuration
+# Download the example environment file
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example" -OutFile ".env.example"
+Copy-Item .env.example .env
+# Edit .env to customize your settings
+
+# Or set environment variables (session-only)
 $Env:MCPGATEWAY_UI_ENABLED        = "true"
 $Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
 $Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
 $Env:JWT_SECRET_KEY               = "my-test-key"
+$Env:PLATFORM_ADMIN_EMAIL         = "admin@example.com"
+$Env:PLATFORM_ADMIN_PASSWORD      = "changeme"
+$Env:PLATFORM_ADMIN_FULL_NAME     = "Platform Administrator"
 
 # 3️⃣  Launch the gateway
 mcpgateway.exe --host 0.0.0.0 --port 4444
@@ -453,6 +479,9 @@ docker run -d --name mcpgateway \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   ghcr.io/ibm/mcp-context-forge:0.7.0
 
@@ -488,6 +517,9 @@ docker run -d --name mcpgateway \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   ghcr.io/ibm/mcp-context-forge:0.7.0
 ```
 
@@ -511,6 +543,9 @@ docker run -d --name mcpgateway \
   -e HOST=0.0.0.0 \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -v $(pwd)/data:/data \
   ghcr.io/ibm/mcp-context-forge:0.7.0
 ```

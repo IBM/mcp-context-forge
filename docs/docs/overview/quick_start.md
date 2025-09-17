@@ -17,9 +17,19 @@ Pick an install method below, generate an auth token, then walk through a real t
         **Prereqs**: Install uv (https://docs.astral.sh/uv/getting-started/installation/)
 
     ```bash
+    # Quick start with environment variables
     BASIC_AUTH_PASSWORD=pass \
     MCPGATEWAY_UI_ENABLED=true \
     MCPGATEWAY_ADMIN_API_ENABLED=true \
+    PLATFORM_ADMIN_EMAIL=admin@example.com \
+    PLATFORM_ADMIN_PASSWORD=changeme \
+    PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+    uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
+
+    # Or better: use the provided .env.example
+    curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
+    cp .env.example .env
+    # Edit .env to customize your settings
     uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
     ```
 
@@ -45,11 +55,23 @@ Pick an install method below, generate an auth token, then walk through a real t
         mcpgateway --version
         ```
 
-    3. **Launch it, listening on all interfaces**
+    3. **Configure and launch it**
 
         ```bash
+        # Option 1: Download and use the provided .env.example
+        curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
+        cp .env.example .env
+        # Edit .env to customize your settings (especially passwords!)
+        mcpgateway --host 0.0.0.0 --port 4444
+
+        # Option 2: Set environment variables directly
         export BASIC_AUTH_PASSWORD=changeme
         export JWT_SECRET_KEY=my-test-key
+        export MCPGATEWAY_UI_ENABLED=true
+        export MCPGATEWAY_ADMIN_API_ENABLED=true
+        export PLATFORM_ADMIN_EMAIL=admin@example.com
+        export PLATFORM_ADMIN_PASSWORD=changeme
+        export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
         mcpgateway --host 0.0.0.0 --port 4444
         ```
 
@@ -87,6 +109,9 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e JWT_SECRET_KEY=my-test-key \
           -e BASIC_AUTH_USER=admin \
           -e BASIC_AUTH_PASSWORD=changeme \
+          -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+          -e PLATFORM_ADMIN_PASSWORD=changeme \
+          -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
           ghcr.io/ibm/mcp-context-forge:0.7.0
         ```
 
@@ -102,6 +127,9 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e JWT_SECRET_KEY=my-test-key \
               -e BASIC_AUTH_USER=admin \
               -e BASIC_AUTH_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:0.7.0
             ```
 
@@ -124,6 +152,9 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e JWT_SECRET_KEY=my-test-key \
               -e BASIC_AUTH_USER=admin \
               -e BASIC_AUTH_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:0.7.0
             ```
 
@@ -145,6 +176,9 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e JWT_SECRET_KEY=my-test-key \
               -e BASIC_AUTH_USER=admin \
               -e BASIC_AUTH_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:0.7.0
             ```
 

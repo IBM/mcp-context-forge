@@ -486,6 +486,9 @@ docker run -d --name mcpgateway \
   -e JWT_SECRET_KEY=my-secret-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   ghcr.io/ibm/mcp-context-forge:0.7.0
 
 # Generate token
