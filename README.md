@@ -1217,21 +1217,24 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 
 ### Dynamic Client Registration & Virtual MCP Server Authentication
 
-ContextForge supports OAuth2 with Dynamic Client Registration (DCR) for streamable HTTP servers through integration with the HyperMCP gateway, enabling automatic OAuth2 client provisioning for MCP servers without manual configuration.
+ContextForge supports OAuth2 with Dynamic Client Registration (DCR)
+for streamable HTTP servers through integration with an upstream API gateway,
+such as HyperMCP gateway, enabling automatic OAuth2 client provisioning for MCP servers
+without manual configuration.
 
 | Setting                     | Description                                            | Default | Options |
 |-----------------------------|--------------------------------------------------------|---------|---------|
 | `JWT_AUDIENCE_VERIFICATION` | JWT audience verification needs to be disabled for DCR | `true`  | bool    |
 
-Dynamic client registration (DCR) is powered by the [HyprMCP Gateway (`hyprmcp/mcp-gateway`)](https://github.com/hyprmcp/mcp-gateway).
+You can find an example for using dynamic client registration (DCR) with [HyprMCP Gateway (`hyprmcp/mcp-gateway`)](https://github.com/hyprmcp/mcp-gateway).
+
 Follow the tutorial at https://ibm.github.io/mcp-context-forge/tutorials/dcr-hyprmcp/ to get started.
-Find additional information about HyprMCP at [hyprmcp.com](http://hyprmcp.com/).
 
 ### Personal Teams Configuration
 
 | Setting                                  | Description                                      | Default    | Options |
 | ---------------------------------------- | ------------------------------------------------ | ---------- | ------- |
-| `AUTO_CREATE_PERSONAL_TEAMS`            | Enable automatic personal team creation for new users | `true`   | bool    |
+| `AUTO_CREATE_PERSONAL_TEAMS`             | Enable automatic personal team creation for new users | `true`   | bool    |
 | `PERSONAL_TEAM_PREFIX`                   | Personal team naming prefix                      | `personal` | string  |
 | `MAX_TEAMS_PER_USER`                     | Maximum number of teams a user can belong to    | `50`       | int > 0 |
 | `MAX_MEMBERS_PER_TEAM`                   | Maximum number of members per team               | `100`      | int > 0 |

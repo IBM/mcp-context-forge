@@ -25,7 +25,7 @@ graph LR
     Dex[Dex]
     IdP[Federated IdP<br/>GitHub/Google/LDAP]
     ContextForge[ContextForge]
-    
+
     Client --> HyprMCP
     HyprMCP --> Dex
     Dex -.-> IdP
