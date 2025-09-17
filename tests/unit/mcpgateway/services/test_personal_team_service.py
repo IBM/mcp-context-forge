@@ -129,7 +129,7 @@ class TestPersonalTeamService:
 
             # Verify team was added to database
             mock_db.add.assert_any_call(mock_team)
-            mock_db.flush.assert_called_once()
+            assert mock_db.flush.call_count == 2
 
             # Verify membership creation
             MockMember.assert_called_once_with(
