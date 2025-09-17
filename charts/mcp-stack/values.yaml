@@ -87,6 +87,10 @@ mcpContextForge:
     pathType: Prefix
     annotations:
       nginx.ingress.kubernetes.io/rewrite-target: /
+      # cert-manager.io/cluster-issuer: letsencrypt-prod  # Uncomment to enable automatic TLS cert generation
+    tls:
+      enabled: false            # Set to true to enable TLS
+      secretName: ""            # Name of the TLS secret (auto-generated if empty)
 
   ####################################################################
   # CORE ENVIRONMENT - injected one-by-one as name/value pairs.
@@ -561,21 +565,21 @@ pgadmin:
       type: http
       path: /misc/ping      # lightweight endpoint
       port: 80
-      initialDelaySeconds: 15
+      initialDelaySeconds: 60     # pgAdmin needs more time to initialize
       periodSeconds: 10
-      timeoutSeconds: 2
+      timeoutSeconds: 5           # increased timeout
       successThreshold: 1
-      failureThreshold: 3
+      failureThreshold: 5         # more tolerance for failures
 
     liveness:
       type: http
       path: /misc/ping
       port: 80
-      initialDelaySeconds: 10
-      periodSeconds: 15
-      timeoutSeconds: 2
+      initialDelaySeconds: 90     # even longer for liveness
+      periodSeconds: 20           # check less frequently
+      timeoutSeconds: 5           # increased timeout
       successThreshold: 1
-      failureThreshold: 5
+      failureThreshold: 3         # less aggressive killing
 
 ########################################################################
 # REDIS-COMMANDER - Web UI for Redis
