@@ -2,7 +2,7 @@
 # MANIFEST.in - source-distribution contents for mcpgateway
 # ──────────────────────────────────────────────────────────────
 
-# 1️⃣  Core project files that SDists/Wheels should always carry
+# Core project files that SDists/Wheels should always carry
 include LICENSE
 include README.md
 include plugins/README.md
@@ -15,11 +15,10 @@ include alembic.ini
 include tox.ini
 include alembic/README
 
-# 2️⃣  Top-level config, examples and helper scripts
+# Top-level config, examples and helper scripts
 include *.py
 include *.md
 include *.example
-include *.lock
 include *.properties
 include *.toml
 include *.yaml
@@ -32,8 +31,9 @@ recursive-include tests/async *.yaml
 recursive-include examples *.yaml
 recursive-include plugin_templates *
 
-# 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
+# Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
+include .env.example
 include .interrogaterc
 include .jshintrc
 include whitesource.config
@@ -51,7 +51,7 @@ include .yamllint
 include .editorconfig
 include .snyk
 
-# 4️⃣  Runtime data that lives *inside* the package at import time
+# Runtime data that lives *inside* the package at import time
 recursive-include mcpgateway/templates *.html
 recursive-include mcpgateway/static *.css *.js *.gif *.png *.svg
 recursive-include mcpgateway *.pyi py.typed
@@ -60,7 +60,7 @@ recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
 
-# 🔄 Export/Import functionality (explicitly include new files)
+# Export/Import functionality (explicitly include new files)
 include mcpgateway/cli_export_import.py
 include mcpgateway/services/export_service.py
 include mcpgateway/services/import_service.py
@@ -98,8 +98,71 @@ prune mcp-servers
 prune agent_runtimes
 prune llms
 
+# Development and CI/CD artifacts
+prune .github
+prune .hypothesis
+prune .benchmarks
+prune .claude
+prune todo
+prune reports
+prune logs
+
+# Testing caches
+prune .pytest_cache
+prune .ruff_cache
+prune .mypy_cache
+prune htmlcov
+
+# Virtual environments
+prune venv
+prune .venv
+prune env
+prune node_modules
+
+# Environment files (security sensitive!)
+exclude .env
+exclude .env.backup
+exclude .env.ce.example
+
+# Database and runtime files
+exclude *.db
+exclude *.sqlite
+exclude *.log
+
+# Lock files
+exclude uv.lock
+
+# Coverage data
+exclude .coverage
+exclude .coverage.*
+
+# Additional development config files not needed in package
+exclude .travis.yml
+exclude .eslintrc.json
+exclude .stylelintrc.json
+exclude .markdownlint-cli2.yaml
+exclude .spellcheck-en.txt
+exclude .pyspelling.yml
+exclude .prospector.yaml
+exclude .hadolint.yaml
+exclude .ruff.toml
+exclude .pre-commit-config.yaml
+
+# Backup and temporary files
+global-exclude *~
+global-exclude *.bak
+global-exclude *.swp
+global-exclude *.swo
+global-exclude *.orig
+global-exclude *.rej
+
+# OS files
+global-exclude .DS_Store
+global-exclude Thumbs.db
+global-exclude desktop.ini
+
 # Exclude opa
-exclude  plugins/external/opa/.dockerignore
+exclude plugins/external/opa/.dockerignore
 exclude plugins/external/opa/.env.template
 exclude plugins/external/opa/.ruff.toml
 exclude plugins/external/opa/Containerfile
