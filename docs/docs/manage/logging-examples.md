@@ -2,6 +2,14 @@
 
 This document provides practical examples of using the logging features in MCP Gateway.
 
+!!! tip "Complete Configuration"
+    For production deployments, copy `.env.example` to `.env` and configure all settings including multitenancy:
+    ```bash
+    cp .env.example .env
+    # Edit .env to set PLATFORM_ADMIN_EMAIL, PLATFORM_ADMIN_PASSWORD, etc.
+    mcpgateway --host 0.0.0.0 --port 4444
+    ```
+
 ## Quick Start Examples
 
 ### 1. Default Setup (Recommended)
