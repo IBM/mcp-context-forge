@@ -17,6 +17,14 @@ metadata:
     {{- end }}
 spec:
   ingressClassName: {{ .Values.mcpContextForge.ingress.className }}
+  {{- if .Values.mcpContextForge.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.mcpContextForge.ingress.host }}
+      {{- if .Values.mcpContextForge.ingress.tls.secretName }}
+      secretName: {{ .Values.mcpContextForge.ingress.tls.secretName }}
+      {{- end }}
+  {{- end }}
   rules:
     - host: {{ .Values.mcpContextForge.ingress.host }}
       http:
