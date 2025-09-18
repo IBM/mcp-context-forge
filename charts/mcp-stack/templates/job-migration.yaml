@@ -24,6 +24,12 @@ spec:
           image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
 
+          # Image pull secrets
+          imagePullSecrets:
+            {{- range .Values.global.imagePullSecrets }}
+            - name: {{ . }}
+            {{- end }}
+
           # Migration workflow: wait for DB → run migrations
           command: ["/bin/sh"]
           args:
@@ -71,6 +77,8 @@ spec:
 
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
-        {{- toYaml .Values.global.imagePullSecrets | nindent 8 }}
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
       {{- end }}
 {{- end }}
