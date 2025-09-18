@@ -17,7 +17,7 @@ The **MCP Context Forge Gateway** includes a collection of **high-performance sa
 - **Tools:** `get_system_time`, timezone conversions with DST support
 - **Container:** `ghcr.io/ibm/fast-time-server:latest`
 
-**[📖 Full Documentation →](go-fast-time-server.md)**
+**[📖 Full Documentation →](go/fast-time-server.md)**
 
 #### Quick Start
 ```bash
@@ -209,7 +209,7 @@ We're particularly interested in:
 
 ## 🔗 Quick Links
 
-- [🦫 **Fast Time Server (Go)** →](go-fast-time-server.md)
+- [🦫 **Fast Time Server (Go)** →](go/fast-time-server.md)
 
 ---
 
