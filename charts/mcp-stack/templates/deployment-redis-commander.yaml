@@ -21,6 +21,13 @@ spec:
         app: redis-commander
         release: {{ .Release.Name }}
     spec:
+      # Image pull secrets
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: redis-commander
           image: "{{ .Values.redisCommander.image.repository }}:{{ .Values.redisCommander.image.tag }}"
