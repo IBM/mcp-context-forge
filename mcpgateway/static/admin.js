@@ -1998,6 +1998,15 @@ function createMetricsCard(title, metrics) {
             metrics[metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
             "N/A";
 
+        const valueDisplay = value === null 
+            ? "N/A"
+            : formatValue(value);
+
+        if (metric.key === "successRate" ||
+            metric.key === "errorRate") {
+            // handle rate values
+        }
+
         const metricRow = document.createElement("div");
         metricRow.className = "flex justify-between";
 
@@ -2007,7 +2016,7 @@ function createMetricsCard(title, metrics) {
 
         const valueSpan = document.createElement("span");
         valueSpan.className = "font-medium dark:text-gray-200";
-        valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
+        valueSpan.textContent = valueDisplay;
 
         metricRow.appendChild(label);
         metricRow.appendChild(valueSpan);
