@@ -1181,11 +1181,21 @@ function extractKPIData(data) {
 
         const categoryKeys = [
             ["tools", "Tools Metrics", "Tools", "tools_metrics"],
-            ["resources", "Resources Metrics", "Resources", "resources_metrics"],
+            [
+                "resources",
+                "Resources Metrics",
+                "Resources", 
+                "resources_metrics",
+            ],
             ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
             ["servers", "Servers Metrics", "Servers", "servers_metrics"],
             ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
-            ["virtualServers", "Virtual Servers", "VirtualServers", "virtual_servers"]
+            [
+                "virtualServers",
+                "Virtual Servers",
+                "VirtualServers",
+                "virtual_servers",
+            ],
         ];
 
         categoryKeys.forEach((aliases) => {
