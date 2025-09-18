@@ -62,7 +62,7 @@ from fastapi import HTTPException
 import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Only configure basic logging if no handlers exist yet
@@ -302,6 +302,208 @@ class Settings(BaseSettings):
         "http://localhost",
         "http://localhost:4444",
     }
+
+    # Security validation thresholds
+    min_secret_length: int = 32
+    min_password_length: int = 12
+    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 0.8.0
+
+    @field_validator("jwt_secret_key", "auth_encryption_secret")
+    @classmethod
+    def validate_secrets(cls, v: str, info) -> str:
+        """Validate secret keys meet security requirements.
+
+        Args:
+            v: The secret key value to validate.
+            info: ValidationInfo containing field metadata.
+
+        Returns:
+            str: The validated secret key value.
+        """
+        field_name = info.field_name
+
+        # Check for default/weak secrets
+        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]  # nosec B105 - list of weak defaults to check against
+        if v.lower() in weak_secrets:
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! " "Please set a strong, unique value for production.")
+
+        # Check minimum length
+        if len(v) < 32:  # Using hardcoded value since we can't access instance attributes
+            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. " f"Current length: {len(v)}")
+
+        # Check entropy (basic check for randomness)
+        if len(set(v)) < 10:  # Less than 10 unique characters
+            logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. " "Consider using a more random value.")
+
+        return v
+
+    @field_validator("basic_auth_password")
+    @classmethod
+    def validate_admin_password(cls, v: str) -> str:
+        """Validate admin password meets security requirements.
+
+        Args:
+            v: The admin password value to validate.
+
+        Returns:
+            str: The validated admin password value.
+        """
+        if v == "changeme":  # nosec B105 - checking for default value
+            logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
+
+        if len(v) < 12:  # Using hardcoded value
+            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least 12 characters long. " f"Current length: {len(v)}")
+
+        # Check password complexity
+        has_upper = any(c.isupper() for c in v)
+        has_lower = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', v))
+
+        complexity_score = sum([has_upper, has_lower, has_digit, has_special])
+        if complexity_score < 3:
+            logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
+
+        return v
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def validate_cors_origins(cls, v: set) -> set:
+        """Validate CORS allowed origins.
+
+        Args:
+            v: The set of allowed origins to validate.
+
+        Returns:
+            set: The validated set of allowed origins.
+        """
+        if not v:
+            return v
+
+        dangerous_origins = ["*", "null", ""]
+        for origin in v:
+            if origin in dangerous_origins:
+                logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. " "Consider specifying explicit origins instead of wildcards.")
+
+            # Validate URL format
+            if not origin.startswith(("http://", "https://")) and origin not in dangerous_origins:
+                logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. " "Origins should start with http:// or https://")
+
+        return v
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        """Validate database connection string security.
+
+        Args:
+            v: The database URL to validate.
+
+        Returns:
+            str: The validated database URL.
+        """
+        # Check for hardcoded passwords in non-SQLite databases
+        if not v.startswith("sqlite"):
+            if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
+                logger.warning("Potentially weak database password detected. Consider using a stronger password.")
+
+        # Warn about SQLite in production
+        if v.startswith("sqlite"):
+            logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
+
+        return v
+
+    @model_validator(mode="after")
+    @classmethod
+    def validate_security_combinations(cls, values):
+        """Validate security setting combinations.
+
+        Args:
+            values: The Settings instance with all field values.
+
+        Returns:
+            Settings: The validated Settings instance.
+        """
+        # Check for dangerous combinations - only log warnings, don't raise errors
+        if not values.auth_required and values.mcpgateway_ui_enabled:
+            logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
+
+        if values.skip_ssl_verify and not values.dev_mode:
+            logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
+
+        if values.debug and not values.dev_mode:
+            logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
+
+        # Warn about federation without auth
+        if values.federation_enabled and not values.auth_required:
+            logger.warning("🌐 SECURITY WARNING: Federation is enabled without authentication. This may expose your gateway to unauthorized access.")
+
+        return values
+
+    def get_security_warnings(self) -> List[str]:
+        """Get list of security warnings for current configuration.
+
+        Returns:
+            List[str]: List of security warning messages.
+        """
+        warnings = []
+
+        # Authentication warnings
+        if not self.auth_required:
+            warnings.append("🔓 Authentication is disabled - ensure this is intentional")
+
+        if self.basic_auth_user == "admin":
+            warnings.append("⚠️  Using default admin username - consider changing it")
+
+        # SSL/TLS warnings
+        if self.skip_ssl_verify:
+            warnings.append("🔓 SSL verification is disabled - not recommended for production")
+
+        # Debug/Dev warnings
+        if self.debug and not self.dev_mode:
+            warnings.append("🐛 Debug mode enabled - disable in production to prevent info leakage")
+
+        if self.dev_mode:
+            warnings.append("🔧 Development mode enabled - not for production use")
+
+        # CORS warnings
+        if self.cors_enabled and "*" in self.allowed_origins:
+            warnings.append("🌐 CORS allows all origins (*) - this is a security risk")
+
+        # Token warnings
+        if self.token_expiry > 10080:  # More than 7 days
+            warnings.append("⏱️  JWT token expiry is very long - consider shorter duration")
+
+        # Database warnings
+        if self.database_url.startswith("sqlite") and not self.dev_mode:
+            warnings.append("💾 SQLite database in use - consider PostgreSQL/MySQL for production")
+
+        # Rate limiting warnings
+        if self.tool_rate_limit > 1000:
+            warnings.append("🚦 Tool rate limit is very high - may allow abuse")
+
+        return warnings
+
+    def get_security_status(self) -> dict:
+        """Get comprehensive security status.
+
+        Returns:
+            dict: Dictionary containing security status information including score and warnings.
+        """
+
+        # Compute a security score: 100 minus 10 for each warning
+        security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
+
+        return {
+            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
+            "auth_enabled": self.auth_required,
+            "ssl_verification": not self.skip_ssl_verify,
+            "debug_disabled": not self.debug,
+            "cors_restricted": "*" not in self.allowed_origins if self.cors_enabled else True,
+            "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
+            "warnings": self.get_security_warnings(),
+            "security_score": security_score,
+        }
 
     # Max retries for HTTP requests
     retry_max_attempts: int = 3

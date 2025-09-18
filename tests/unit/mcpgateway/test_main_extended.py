@@ -123,6 +123,8 @@ class TestApplicationStartupPaths:
 
     @patch("mcpgateway.main.plugin_manager", None)
     @patch("mcpgateway.main.logging_service")
+    @patch("mcpgateway.config.settings.require_strong_secrets", False)
+    @patch("mcpgateway.config.settings.dev_mode", True)
     async def test_startup_without_plugin_manager(self, mock_logging_service):
         """Test startup path when plugin_manager is None."""
         mock_logging_service.initialize = AsyncMock()
