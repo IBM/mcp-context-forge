@@ -921,6 +921,9 @@ function displayMetrics(data) {
 
         // Key Performance Indicators section
         const kpiData = extractKPIData(data);
+        // ensure top-of-page KPI cards are updated (if present)
+        updateKPICards(kpiData);
+
         if (Object.keys(kpiData).length > 0) {
             const kpiSection = createKPISection(kpiData);
             mainContainer.appendChild(kpiSection);
@@ -1175,66 +1178,192 @@ function createKPISection(kpiData) {
 /**
  * SECURITY: Extract and calculate KPI data with validation
  */
+/**
+ * SECURITY: Extract and calculate KPI data with robust key handling and weighted avg.
+ * Returns numeric totalExecutions, successRate, errorRate, and avgResponseTime (ms) or null.
+ */
 function extractKPIData(data) {
     try {
-        const kpiData = {};
-
-        // Initialize calculation variables
         let totalExecutions = 0;
         let totalSuccessful = 0;
         let totalFailed = 0;
-        const responseTimes = [];
+        let weightedResponseSum = 0;
 
-        // Process each category safely
-        const categories = [
-            "tools",
-            "resources",
-            "prompts",
-            "gateways",
-            "servers",
+        // Candidate category keys (support multiple backend naming schemes)
+        const categoryKeys = [
+            ["tools", "Tools Metrics", "Tools", "tools_metrics"],
+            ["resources", "Resources Metrics", "Resources", "resources_metrics"],
+            ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
+            ["servers", "Servers Metrics", "Servers", "servers_metrics"],
+            ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
+            ["virtualServers", "Virtual Servers", "VirtualServers", "virtual_servers"]
         ];
-        categories.forEach((category) => {
-            if (data[category]) {
-                const categoryData = data[category];
-                totalExecutions += Number(categoryData.totalExecutions || 0);
-                totalSuccessful += Number(
-                    categoryData.successfulExecutions || 0,
-                );
-                totalFailed += Number(categoryData.failedExecutions || 0);
 
-                if (
-                    categoryData.avgResponseTime &&
-                    categoryData.avgResponseTime !== "N/A"
-                ) {
-                    responseTimes.push(Number(categoryData.avgResponseTime));
+        categoryKeys.forEach((aliases) => {
+            // find a category object present in data
+            let categoryData = null;
+            for (const key of aliases) {
+                if (data[key]) {
+                    categoryData = data[key];
+                    break;
+                }
+            }
+            if (!categoryData) return;
+
+            // support multiple property names used across the codebase/backends
+            const executions = Number(
+                categoryData.totalExecutions ??
+                categoryData["Total Executions"] ??
+                categoryData.execution_count ??
+                categoryData.executions ??
+                categoryData["Executions"] ??
+                categoryData.total_executions ??
+                0
+            );
+            const successful = Number(
+                categoryData.successfulExecutions ??
+                categoryData["Successful Executions"] ??
+                categoryData.successful ??
+                categoryData["Successful"] ??
+                0
+            );
+            const failed = Number(
+                categoryData.failedExecutions ??
+                categoryData["Failed Executions"] ??
+                categoryData.failed ??
+                categoryData["Failed"] ??
+                0
+            );
+
+            const avgResponseRaw =
+                categoryData.avgResponseTime ??
+                categoryData["Average Response Time"] ??
+                categoryData.avg_response_time ??
+                categoryData["avgResponseTime"] ??
+                null;
+
+            totalExecutions += executions;
+            totalSuccessful += successful;
+            totalFailed += failed;
+
+            if (
+                avgResponseRaw !== null &&
+                avgResponseRaw !== undefined &&
+                avgResponseRaw !== "N/A" &&
+                executions > 0
+            ) {
+                // ensure numeric
+                const avgNum = Number(avgResponseRaw);
+                if (!Number.isNaN(avgNum)) {
+                    weightedResponseSum += executions * avgNum;
                 }
             }
         });
 
-        // Calculate safe aggregate metrics
-        kpiData.totalExecutions = totalExecutions;
-        kpiData.successRate =
-            totalExecutions > 0
-                ? Math.round((totalSuccessful / totalExecutions) * 100)
-                : 0;
-        kpiData.errorRate =
-            totalExecutions > 0
-                ? Math.round((totalFailed / totalExecutions) * 100)
-                : 0;
-        kpiData.avgResponseTime =
-            responseTimes.length > 0
-                ? Math.round(
-                      responseTimes.reduce((a, b) => a + b, 0) /
-                          responseTimes.length,
-                  )
-                : "N/A";
+        const avgResponseTime =
+            totalExecutions > 0 && weightedResponseSum > 0
+                ? weightedResponseSum / totalExecutions
+                : null;
 
-        return kpiData;
+        return {
+            totalExecutions,
+            successRate:
+                totalExecutions > 0
+                    ? Math.round((totalSuccessful / totalExecutions) * 100)
+                    : 0,
+            errorRate:
+                totalExecutions > 0
+                    ? Math.round((totalFailed / totalExecutions) * 100)
+                    : 0,
+            // numeric ms value or null
+            avgResponseTime,
+        };
     } catch (error) {
         console.error("Error extracting KPI data:", error);
-        return {}; // Safe fallback
+        return {
+            totalExecutions: 0,
+            successRate: 0,
+            errorRate: 0,
+            avgResponseTime: null,
+        };
     }
 }
+
+
+/**
+ * Update the top KPI header cards if they exist on the page.
+ * This function attempts several common id/class/data-attribute patterns.
+ */
+function updateKPICards(kpiData) {
+    try {
+        if (!kpiData) return;
+
+        const formatAvg = (v) =>
+            v === null || v === undefined ? "N/A" : Number(v).toFixed(3) + " ms";
+
+        const kv = {
+            totalExecutions: kpiData.totalExecutions ?? 0,
+            successRate: (kpiData.successRate ?? 0) + "%",
+            avgResponse: formatAvg(kpiData.avgResponseTime),
+            errorRate: (kpiData.errorRate ?? 0) + "%",
+        };
+
+        // Try several ids and classes (add more if your HTML uses different names)
+        const idMap = [
+            ["metrics-total-executions", kv.totalExecutions],
+            ["metrics-success-rate", kv.successRate],
+            ["metrics-avg-response-time", kv.avgResponse],
+            ["metrics-error-rate", kv.errorRate],
+            ["kpi-total-executions", kv.totalExecutions],
+            ["kpi-success-rate", kv.successRate],
+            ["kpi-avg-response-time", kv.avgResponse],
+            ["kpi-error-rate", kv.errorRate],
+        ];
+
+        idMap.forEach(([id, value]) => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.textContent = value;
+            }
+        });
+
+        // Try some class-based cards (common patterns)
+        const mappings = [
+            { root: ".kpi-total-executions", value: kv.totalExecutions },
+            { root: ".kpi-success-rate", value: kv.successRate },
+            { root: ".kpi-avg-response-time", value: kv.avgResponse },
+            { root: ".kpi-error-rate", value: kv.errorRate },
+        ];
+        mappings.forEach((m) => {
+            const root = document.querySelector(m.root);
+            if (root) {
+                // find inner element to update, otherwise update root
+                const valueEl =
+                    root.querySelector(".value") ||
+                    root.querySelector(".kpi-value") ||
+                    root;
+                if (valueEl) valueEl.textContent = m.value;
+            }
+        });
+
+        // Also look for data attributes like data-kpi="totalExecutions"
+        Object.entries({
+            totalExecutions: kv.totalExecutions,
+            successRate: kv.successRate,
+            avgResponse: kv.avgResponse,
+            errorRate: kv.errorRate,
+        }).forEach(([attr, value]) => {
+            const el = document.querySelector(`[data-kpi="${attr}"]`);
+            if (el) el.textContent = value;
+        });
+
+        // small debug hook (optional)
+        // console.debug("KPIs updated:", kv);
+    } catch (err) {
+        console.error("updateKPICards error:", err);
+    }
+}
+
 
 /**
  * SECURITY: Create top performers section with safe display
