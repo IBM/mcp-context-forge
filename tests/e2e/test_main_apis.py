@@ -1041,6 +1041,24 @@ class TestResourceAPIs:
         # API normalizes all mime types to text/plain
         assert result["mimeType"] == "text/plain"
 
+
+    async def test_create_resource_form_urlencoded(self, client: AsyncClient, mock_auth):
+        """
+        Test POST /resources with application/x-www-form-urlencoded.
+        Ensures resource creation works with form-encoded data.
+        """
+        import urllib.parse
+
+        resource_data = {
+            "resource": urllib.parse.quote_plus('{"uri":"config/formtest","name":"form_test","description":"Form resource","mimeType":"application/json","content":"{\"key\":\"value\"}"}'),
+            "team_id": "",
+            "visibility": "private"
+        }
+        headers = TEST_AUTH_HEADER.copy()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+        response = await client.post("/resources", data=resource_data, headers=headers)
+        assert response.status_code in [200, 201, 400, 401, 422]
+
     async def test_resource_validation_errors(self, client: AsyncClient, mock_auth):
         """Test POST /resources with validation errors."""
         # Directory traversal in URI

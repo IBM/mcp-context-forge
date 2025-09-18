@@ -42,6 +42,7 @@ import time
 from types import SimpleNamespace
 from typing import Callable, Dict, List, Tuple
 import uuid
+from urllib.parse import urlencode
 
 # First-Party
 from mcpgateway.config import settings
@@ -252,7 +253,7 @@ def generate_jwt() -> str:
     return subprocess.check_output(cmd, text=True).strip().strip('"')
 
 
-def request(method: str, path: str, *, json_data=None, **kw):
+def request(method: str, path: str, *, json_data=None, form_data=None, **kw):
     # Third-Party
     import requests
 
@@ -261,7 +262,12 @@ def request(method: str, path: str, *, json_data=None, **kw):
     kw["verify"] = False
     url = f"https://localhost:{PORT_GATEWAY}{path}"
     t0 = time.time()
-    resp = requests.request(method, url, json=json_data, **kw)
+    content_type = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+    kw["headers"]["Content-Type"] = content_type
+    if content_type == "application/x-www-form-urlencoded" and form_data is not None:
+        resp = requests.request(method, url, data=urlencode(form_data), **kw)
+    else:
+        resp = requests.request(method, url, json=json_data, **kw)
     ms = (time.time() - t0) * 1000
     logging.info("→ %s %s %s %.0f ms", method.upper(), path, resp.status_code, ms)
     logging.debug("  ↳ response: %s", resp.text[:400])

@@ -54,6 +54,7 @@ import os
 import signal
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from urllib.parse import urlencode
 
 # Third-Party
 import httpx
@@ -71,6 +72,8 @@ DEFAULT_RESPONSE_TIMEOUT = float(os.environ.get("MCP_TOOL_CALL_TIMEOUT", "60"))
 JSONRPC_PARSE_ERROR = -32700
 JSONRPC_INTERNAL_ERROR = -32603
 JSONRPC_SERVER_ERROR = -32000
+
+CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 
 # Global logger
 logger = logging.getLogger("mcpgateway.wrapper")
@@ -394,9 +397,35 @@ async def forward_once(
     if settings.auth_header:
         headers["Authorization"] = settings.auth_header
 
-    body: str = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    # Step 1: Decide content type (manual override > auto-detect)
+    content_type = getattr(settings, "content_type", None) or CONTENT_TYPE
 
-    async with client.stream("POST", settings.server_url, data=body.encode("utf-8"), headers=headers) as resp:
+    if content_type == "application/x-www-form-urlencoded":
+        # Always encode as form data
+        if isinstance(payload, dict):
+            body = urlencode(payload)
+        else:
+            body = str(payload)
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+    elif content_type == "application/json":
+        # Force JSON
+        body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+        headers["Content-Type"] = "application/json; charset=utf-8"
+
+    else:
+        # Auto-detect
+        if isinstance(payload, dict) and all(isinstance(v, (str, int, float, bool, type(None))) for v in payload.values()):
+            body = urlencode(payload)
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        else:
+            body = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+            headers["Content-Type"] = "application/json; charset=utf-8"
+
+    body_bytes = body.encode("utf-8")
+
+    # Step 2: Send request and process response
+    async with client.stream("POST", settings.server_url, data=body_bytes, headers=headers) as resp:
         ctype = (resp.headers.get("Content-Type") or "").lower()
         status = resp.status_code
         logger.debug("HTTP %s %s", status, ctype)
@@ -431,6 +460,7 @@ async def forward_once(
                 logger.warning("Invalid JSON from server: %s", line)
                 send_to_stdout(make_error("Invalid JSON from server", JSONRPC_PARSE_ERROR, line))
 
+        # Step 3: Handle response content types
         if "event-stream" in ctype:
             async for data_payload in sse_events(resp):
                 if shutting_down():
@@ -457,6 +487,7 @@ async def forward_once(
                     send_to_stdout(make_error("Invalid JSON response", JSONRPC_PARSE_ERROR, text))
             return
 
+        # Fallback: try parsing as NDJSON
         async for line in ndjson_lines(resp):
             if shutting_down():
                 break
