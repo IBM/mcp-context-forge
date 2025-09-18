@@ -1,14 +1,7 @@
 title: MCP Servers
 nav:
   - Overview: index.md
-  - Go Servers:
-    - go/fast-time-server.md
-    - go/calculator-server.md
-  - Python Servers:
-    - python/data-analysis-server.md
-    - python/eval-server.md
-    - python/pptx-server.md
-  - External Servers:
-    - external/microsoft/github.md
-    - external/box/box.md
-    - external/open/index.md
+  - Go Servers: go
+  - Python Servers: python
+  - External Servers: external
+  - IBM Servers: ibm

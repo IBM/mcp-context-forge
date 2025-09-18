@@ -5,6 +5,7 @@
 The **fast-time-server** is an ultra-fast Go-based MCP server that provides comprehensive time-related tools for LLM applications. Written in pure Go for maximum performance, it offers multiple transport modes including stdio, HTTP, SSE, dual (MCP + REST), and REST-only modes, making it versatile for various integration scenarios.
 
 **Key Highlights:**
+
 - ⚡ Sub-millisecond response times
 - 🌍 Supports all IANA timezones
 - 📦 Single static binary (~2 MiB)
@@ -126,6 +127,7 @@ REST API only (no MCP protocol):
 Returns the current time in a specified timezone.
 
 **Parameters:**
+
 - `timezone` (optional): IANA timezone name (default: "UTC")
 
 **Example:**
@@ -142,6 +144,7 @@ Returns the current time in a specified timezone.
 Converts time between different timezones.
 
 **Parameters:**
+
 - `time` (required): Time to convert (RFC3339 or common formats)
 - `source_timezone` (required): Source IANA timezone
 - `target_timezone` (required): Target IANA timezone
@@ -242,6 +245,7 @@ The server provides three prompt templates for common time-related tasks:
 Compare current times across multiple time zones.
 
 **Arguments:**
+
 - `timezones` (required): Comma-separated list of timezone IDs
 - `reference_time` (optional): Reference time (defaults to now)
 
@@ -259,6 +263,7 @@ Compare current times across multiple time zones.
 Find optimal meeting time across multiple time zones.
 
 **Arguments:**
+
 - `participants` (required): Comma-separated list of participant locations/timezones
 - `duration` (required): Meeting duration in minutes
 - `preferred_hours` (optional): Preferred time range (default: "9 AM - 5 PM")
@@ -280,6 +285,7 @@ Find optimal meeting time across multiple time zones.
 Convert time with detailed context.
 
 **Arguments:**
+
 - `time` (required): Time to convert
 - `from_timezone` (required): Source timezone
 - `to_timezones` (required): Comma-separated list of target timezones

@@ -5,6 +5,7 @@
 A comprehensive MCP server providing advanced data analysis, statistical testing, visualization, and transformation capabilities. This server enables AI applications to perform sophisticated data science workflows through a standardized interface.
 
 **Key Features:**
+
 - 📊 Multi-format data loading (CSV, JSON, Parquet, SQL, Excel)
 - 📈 Statistical analysis and hypothesis testing
 - 📉 Rich visualization with matplotlib, seaborn, and plotly

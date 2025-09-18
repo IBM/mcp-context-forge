@@ -5,6 +5,7 @@
 A comprehensive MCP server for creating and editing PowerPoint (.pptx) files with **39 specialized tools** for complete presentation automation. Features professional workflow tools, template support, batch operations, and modern 16:9 widescreen format by default.
 
 **Key Features:**
+
 - 📊 39 comprehensive PowerPoint manipulation tools
 - 🎨 Modern 16:9 widescreen format by default
 - 📝 Template system with placeholder replacement
