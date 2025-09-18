@@ -40,6 +40,27 @@ plugins:
 
       # Field overrides: customize per key pattern
       field_overrides: []
+
+  # Vault Plugin - Generates bearer tokens from vault-saved tokens
+  - name: "VaultPlugin"
+    kind: "plugins.vault.vault_plugin.Vault"
+    description: "Generates bearer tokens based on vault-saved tokens"
+    version: "0.0.1"
+    author: "Adrian Popa"
+    hooks: ["tool_pre_invoke"]
+    tags: ["security", "vault", "OAUTH2"]
+    mode: "permissive"
+    priority: 10
+    conditions:
+      - prompts: []
+        server_ids: []
+        tenant_ids: []
+    config:
+      system_tag_prefix: "system"
+      vault_header_name: "X-Vault-Tokens"
+      vault_handling: "raw"
+      system_handling: "tag"
+
   # PII Filter Plugin - Run first with highest priority for security
   - name: "PIIFilterPlugin"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
