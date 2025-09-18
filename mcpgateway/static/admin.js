@@ -924,7 +924,10 @@ function displayMetrics(data) {
         // ensure top-of-page KPI cards are updated (if present)
         updateKPICards(kpiData);
 
-        if (Object.keys(kpiData).length > 0) {
+        if (
+            !document.getElementById("metrics-total-executions") &&
+            Object.keys(kpiData).length > 0
+        ) {
             const kpiSection = createKPISection(kpiData);
             mainContainer.appendChild(kpiSection);
         }
@@ -1104,39 +1107,27 @@ function createKPISection(kpiData) {
         const section = document.createElement("div");
         section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
 
-        // Define KPI indicators with safe configuration
         const kpis = [
-            {
-                key: "totalExecutions",
-                label: "Total Executions",
-                icon: "🎯",
-                color: "blue",
-            },
-            {
-                key: "successRate",
-                label: "Success Rate",
-                icon: "✅",
-                color: "green",
-                suffix: "%",
-            },
-            {
-                key: "avgResponseTime",
-                label: "Avg Response Time",
-                icon: "⚡",
-                color: "yellow",
-                suffix: "ms",
-            },
-            {
-                key: "errorRate",
-                label: "Error Rate",
-                icon: "❌",
-                color: "red",
-                suffix: "%",
-            },
+            { key: "totalExecutions", label: "Total Executions", icon: "🎯", color: "blue" },
+            { key: "successRate", label: "Success Rate", icon: "✅", color: "green" },
+            { key: "avgResponseTime", label: "Avg Response Time", icon: "⚡", color: "yellow" },
+            { key: "errorRate", label: "Error Rate", icon: "❌", color: "red" },
         ];
 
         kpis.forEach((kpi) => {
-            const value = kpiData[kpi.key] ?? "N/A";
+            let value = kpiData[kpi.key];
+            if (value === null || value === undefined || value === "N/A") {
+                value = "N/A";
+            } else {
+                if (kpi.key === "avgResponseTime") {
+                    // ensure numeric then 3 decimals + unit
+                    value = isNaN(Number(value)) ? "N/A" : Number(value).toFixed(3) + " ms";
+                } else if (kpi.key === "successRate" || kpi.key === "errorRate") {
+                    value = String(value) + "%";
+                } else {
+                    value = String(value);
+                }
+            }
 
             const kpiCard = document.createElement("div");
             kpiCard.className = `bg-white rounded-lg shadow p-4 border-l-4 border-${kpi.color}-500 dark:bg-gray-800`;
@@ -1153,8 +1144,7 @@ function createKPISection(kpiData) {
 
             const valueSpan = document.createElement("div");
             valueSpan.className = `text-2xl font-bold text-${kpi.color}-600`;
-            valueSpan.textContent =
-                (value === "N/A" ? "N/A" : String(value)) + (kpi.suffix || "");
+            valueSpan.textContent = value;
 
             const labelSpan = document.createElement("div");
             labelSpan.className = "text-sm text-gray-500 dark:text-gray-400";
@@ -1169,9 +1159,9 @@ function createKPISection(kpiData) {
         });
 
         return section;
-    } catch (error) {
-        console.error("Error creating KPI section:", error);
-        return document.createElement("div"); // Safe fallback
+    } catch (err) {
+        console.error("Error creating KPI section:", err);
+        return document.createElement("div");
     }
 }
 
@@ -1189,7 +1179,6 @@ function extractKPIData(data) {
         let totalFailed = 0;
         let weightedResponseSum = 0;
 
-        // Candidate category keys (support multiple backend naming schemes)
         const categoryKeys = [
             ["tools", "Tools Metrics", "Tools", "tools_metrics"],
             ["resources", "Resources Metrics", "Resources", "resources_metrics"],
@@ -1200,63 +1189,66 @@ function extractKPIData(data) {
         ];
 
         categoryKeys.forEach((aliases) => {
-            // find a category object present in data
             let categoryData = null;
             for (const key of aliases) {
-                if (data[key]) {
+                if (data && data[key]) {
                     categoryData = data[key];
                     break;
                 }
             }
             if (!categoryData) return;
 
-            // support multiple property names used across the codebase/backends
+            // Build a lowercase-key map so "Successful Executions" and "successfulExecutions" both match
+            const normalized = {};
+            Object.entries(categoryData).forEach(([k, v]) => {
+                normalized[k.toString().trim().toLowerCase()] = v;
+            });
+
             const executions = Number(
-                categoryData.totalExecutions ??
-                categoryData["Total Executions"] ??
-                categoryData.execution_count ??
-                categoryData.executions ??
-                categoryData["Executions"] ??
-                categoryData.total_executions ??
+                normalized["total executions"] ??
+                normalized["totalexecutions"] ??
+                normalized["execution_count"] ??
+                normalized["execution-count"] ??
+                normalized["executions"] ??
+                normalized["total_executions"] ??
                 0
             );
+
             const successful = Number(
-                categoryData.successfulExecutions ??
-                categoryData["Successful Executions"] ??
-                categoryData.successful ??
-                categoryData["Successful"] ??
+                normalized["successful executions"] ??
+                normalized["successfulexecutions"] ??
+                normalized["successful"] ??
+                normalized["successful_executions"] ??
                 0
             );
+
             const failed = Number(
-                categoryData.failedExecutions ??
-                categoryData["Failed Executions"] ??
-                categoryData.failed ??
-                categoryData["Failed"] ??
+                normalized["failed executions"] ??
+                normalized["failedexecutions"] ??
+                normalized["failed"] ??
+                normalized["failed_executions"] ??
                 0
             );
 
             const avgResponseRaw =
-                categoryData.avgResponseTime ??
-                categoryData["Average Response Time"] ??
-                categoryData.avg_response_time ??
-                categoryData["avgResponseTime"] ??
+                normalized["average response time"] ??
+                normalized["avgresponsetime"] ??
+                normalized["avg_response_time"] ??
+                normalized["avgresponsetime"] ??
                 null;
 
-            totalExecutions += executions;
-            totalSuccessful += successful;
-            totalFailed += failed;
+            totalExecutions += Number.isNaN(executions) ? 0 : executions;
+            totalSuccessful += Number.isNaN(successful) ? 0 : successful;
+            totalFailed += Number.isNaN(failed) ? 0 : failed;
 
             if (
                 avgResponseRaw !== null &&
                 avgResponseRaw !== undefined &&
                 avgResponseRaw !== "N/A" &&
+                !Number.isNaN(Number(avgResponseRaw)) &&
                 executions > 0
             ) {
-                // ensure numeric
-                const avgNum = Number(avgResponseRaw);
-                if (!Number.isNaN(avgNum)) {
-                    weightedResponseSum += executions * avgNum;
-                }
+                weightedResponseSum += executions * Number(avgResponseRaw);
             }
         });
 
@@ -1265,30 +1257,25 @@ function extractKPIData(data) {
                 ? weightedResponseSum / totalExecutions
                 : null;
 
-        return {
-            totalExecutions,
-            successRate:
-                totalExecutions > 0
-                    ? Math.round((totalSuccessful / totalExecutions) * 100)
-                    : 0,
-            errorRate:
-                totalExecutions > 0
-                    ? Math.round((totalFailed / totalExecutions) * 100)
-                    : 0,
-            // numeric ms value or null
-            avgResponseTime,
-        };
-    } catch (error) {
-        console.error("Error extracting KPI data:", error);
-        return {
-            totalExecutions: 0,
-            successRate: 0,
-            errorRate: 0,
-            avgResponseTime: null,
-        };
+        const successRate =
+            totalExecutions > 0
+                ? Math.round((totalSuccessful / totalExecutions) * 100)
+                : 0;
+
+        const errorRate =
+            totalExecutions > 0
+                ? Math.round((totalFailed / totalExecutions) * 100)
+                : 0;
+
+        // Debug: show what we've read from the payload
+        console.log("KPI Totals:", { totalExecutions, totalSuccessful, totalFailed, successRate, errorRate, avgResponseTime });
+
+        return { totalExecutions, successRate, errorRate, avgResponseTime };
+    } catch (err) {
+        console.error("Error extracting KPI data:", err);
+        return { totalExecutions: 0, successRate: 0, errorRate: 0, avgResponseTime: null };
     }
 }
-
 
 /**
  * Update the top KPI header cards if they exist on the page.
@@ -1299,7 +1286,7 @@ function updateKPICards(kpiData) {
         if (!kpiData) return;
 
         const formatAvg = (v) =>
-            v === null || v === undefined ? "N/A" : Number(v).toFixed(3) + " ms";
+            v === null || v === undefined || isNaN(v) ? "N/A" : Number(v).toFixed(3) + " ms";
 
         const kv = {
             totalExecutions: kpiData.totalExecutions ?? 0,
@@ -1308,62 +1295,44 @@ function updateKPICards(kpiData) {
             errorRate: (kpiData.errorRate ?? 0) + "%",
         };
 
-        // Try several ids and classes (add more if your HTML uses different names)
-        const idMap = [
-            ["metrics-total-executions", kv.totalExecutions],
-            ["metrics-success-rate", kv.successRate],
-            ["metrics-avg-response-time", kv.avgResponse],
-            ["metrics-error-rate", kv.errorRate],
-            ["kpi-total-executions", kv.totalExecutions],
-            ["kpi-success-rate", kv.successRate],
-            ["kpi-avg-response-time", kv.avgResponse],
-            ["kpi-error-rate", kv.errorRate],
-        ];
+        const idMap = {
+            "metrics-total-executions": kv.totalExecutions,
+            "metrics-success-rate": kv.successRate,
+            "metrics-avg-response-time": kv.avgResponse,
+            "metrics-error-rate": kv.errorRate,
+        };
 
-        idMap.forEach(([id, value]) => {
-            const el = document.getElementById(id);
-            if (el) {
-                el.textContent = value;
+        // Try to apply immediately, but retry up to N times if header not yet in DOM
+        let tries = 0;
+        const maxTries = 8;
+        const retryDelay = 200; // ms
+
+        function applyOnce() {
+            tries++;
+            let foundAny = false;
+            Object.entries(idMap).forEach(([id, value]) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    foundAny = true;
+                    // If element contains child spans, prefer updating inner .value or the element text
+                    const valueEl = el.querySelector && (el.querySelector(".value") || el.querySelector(".kpi-value"));
+                    if (valueEl) valueEl.textContent = value;
+                    else el.textContent = value;
+                }
+            });
+
+            console.debug("KPI Cards Update attempt", tries, "foundAny:", foundAny, "values:", kv);
+
+            if (!foundAny && tries < maxTries) {
+                setTimeout(applyOnce, retryDelay);
             }
-        });
+        }
 
-        // Try some class-based cards (common patterns)
-        const mappings = [
-            { root: ".kpi-total-executions", value: kv.totalExecutions },
-            { root: ".kpi-success-rate", value: kv.successRate },
-            { root: ".kpi-avg-response-time", value: kv.avgResponse },
-            { root: ".kpi-error-rate", value: kv.errorRate },
-        ];
-        mappings.forEach((m) => {
-            const root = document.querySelector(m.root);
-            if (root) {
-                // find inner element to update, otherwise update root
-                const valueEl =
-                    root.querySelector(".value") ||
-                    root.querySelector(".kpi-value") ||
-                    root;
-                if (valueEl) valueEl.textContent = m.value;
-            }
-        });
-
-        // Also look for data attributes like data-kpi="totalExecutions"
-        Object.entries({
-            totalExecutions: kv.totalExecutions,
-            successRate: kv.successRate,
-            avgResponse: kv.avgResponse,
-            errorRate: kv.errorRate,
-        }).forEach(([attr, value]) => {
-            const el = document.querySelector(`[data-kpi="${attr}"]`);
-            if (el) el.textContent = value;
-        });
-
-        // small debug hook (optional)
-        // console.debug("KPIs updated:", kv);
+        applyOnce();
     } catch (err) {
         console.error("updateKPICards error:", err);
     }
 }
-
 
 /**
  * SECURITY: Create top performers section with safe display
