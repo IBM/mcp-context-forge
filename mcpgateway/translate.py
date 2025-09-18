@@ -119,10 +119,12 @@ import asyncio
 from contextlib import suppress
 import json
 import logging
+import os
 import shlex
 import signal
 import sys
 from typing import Any, AsyncIterator, cast, Dict, List, Optional, Sequence, Tuple
+from urllib.parse import urlencode
 import uuid
 
 # Third-Party
@@ -151,7 +153,8 @@ from mcpgateway.services.logging_service import LoggingService
 # Initialize logging service first
 logging_service = LoggingService()
 LOGGER = logging_service.get_logger("mcpgateway.translate")
-
+CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+# headers = {"Content-Type": CONTENT_TYPE}
 # Import settings for default keepalive interval
 try:
     # First-Party
@@ -1504,7 +1507,16 @@ async def _run_streamable_http_to_stdio(
 
             # POST the JSON-RPC request to the streamable HTTP endpoint
             try:
-                response = await client.post(url, content=text, headers={"Content-Type": "application/json"})
+                if CONTENT_TYPE == "application/x-www-form-urlencoded":
+                    # If text is JSON, parse and encode as form
+                    try:
+                        payload = json.loads(text)
+                        body = urlencode(payload)
+                    except Exception:
+                        body = text
+                    response = await client.post(url, content=body, headers=headers)
+                else:
+                    response = await client.post(url, content=text, headers=headers)
                 if response.status_code == 200:
                     # Handle JSON response
                     response_data = response.text

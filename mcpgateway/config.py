@@ -112,6 +112,10 @@ def _normalize_env_list_vars() -> None:
 _normalize_env_list_vars()
 
 
+# Default content type for outgoing requests to Forge
+FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
+
+
 class Settings(BaseSettings):
     """
     MCP Gateway configuration settings.

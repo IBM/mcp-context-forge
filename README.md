@@ -1095,8 +1095,10 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `TEMPLATES_DIR`    | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
 | `STATIC_DIR`       | Path to static files                     | `mcpgateway/static`    | path                   |
 | `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-03-26`           | string                 |
+| `FORGE_CONTENT_TYPE` | Content-Type for outgoing requests to Forge | `application/json`  | `application/json`, `application/x-www-form-urlencoded` |
 
 > 💡 Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
+> 🔄 Use `FORGE_CONTENT_TYPE=application/x-www-form-urlencoded` to send URL-encoded form data instead of JSON.
 
 ### Authentication
 
