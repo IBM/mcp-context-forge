@@ -1108,10 +1108,30 @@ function createKPISection(kpiData) {
         section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
 
         const kpis = [
-            { key: "totalExecutions", label: "Total Executions", icon: "🎯", color: "blue" },
-            { key: "successRate", label: "Success Rate", icon: "✅", color: "green" },
-            { key: "avgResponseTime", label: "Avg Response Time", icon: "⚡", color: "yellow" },
-            { key: "errorRate", label: "Error Rate", icon: "❌", color: "red" },
+            { 
+             key: "totalExecutions",
+             label: "Total Executions",
+             icon: "🎯", 
+             color: "blue"
+            },
+            {
+             key: "successRate", 
+             label: "Success Rate", 
+             icon: "✅", 
+             color: "green" 
+            },
+            { 
+             key: "avgResponseTime", 
+             label: "Avg Response Time", 
+             icon: "⚡", 
+             color: "yellow" 
+            },
+            { 
+             key: "errorRate", 
+             label: "Error Rate", 
+             icon: "❌", 
+             color: "red" 
+            },
         ];
 
         kpis.forEach((kpi) => {
