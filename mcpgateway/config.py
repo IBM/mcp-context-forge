@@ -306,7 +306,7 @@ class Settings(BaseSettings):
     # Security validation thresholds
     min_secret_length: int = 32
     min_password_length: int = 12
-    require_strong_secrets: bool = True  # Default to False for backward compatibility, will be enforced in 0.8.0
+    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 0.8.0
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
@@ -323,7 +323,7 @@ class Settings(BaseSettings):
         field_name = info.field_name
 
         # Check for default/weak secrets
-        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]  # nosec B105 - list of weak defaults to check against
         if v.lower() in weak_secrets:
             logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! " "Please set a strong, unique value for production.")
 
@@ -348,7 +348,7 @@ class Settings(BaseSettings):
         Returns:
             str: The validated admin password value.
         """
-        if v == "changeme":
+        if v == "changeme":  # nosec B105 - checking for default value
             logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
 
         if len(v) < 12:  # Using hardcoded value
@@ -495,7 +495,7 @@ class Settings(BaseSettings):
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": self.jwt_secret_key != "my-test-key",
+            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,

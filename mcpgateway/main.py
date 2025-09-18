@@ -410,10 +410,10 @@ async def validate_security_configuration():
     # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
     critical_issues = []
 
-    if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:
+    if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:  # nosec B105 - checking for default value
         critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
 
-    if settings.basic_auth_password == "changeme" and settings.mcpgateway_ui_enabled:
+    if settings.basic_auth_password == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
     if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
@@ -446,11 +446,11 @@ async def validate_security_configuration():
         logger.info("📋 SECURITY RECOMMENDATIONS:")
         logger.info("=" * 60)
 
-        if settings.jwt_secret_key == "my-test-key":
+        if settings.jwt_secret_key == "my-test-key":  # nosec B105 - checking for default value
             logger.info("  • Generate a strong JWT secret:")
-            logger.info("    python -c 'import secrets; print(secrets.token_urlsafe(32))'")
+            logger.info("    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'")
 
-        if settings.basic_auth_password == "changeme":
+        if settings.basic_auth_password == "changeme":  # nosec B105 - checking for default value
             logger.info("  • Set a strong admin password in BASIC_AUTH_PASSWORD")
 
         if not settings.auth_required:
