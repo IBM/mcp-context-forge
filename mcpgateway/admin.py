@@ -3580,7 +3580,6 @@ async def admin_leave_team(
 
 
 @admin_router.post("/teams/{team_id}/join-request")
-@require_permission("teams.join")
 async def admin_create_join_request(
     team_id: str,
     request: Request,
