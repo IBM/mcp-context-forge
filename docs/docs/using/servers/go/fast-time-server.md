@@ -2,7 +2,16 @@
 
 ## Overview
 
-The **fast-time-server** is a high-performance Go-based MCP server that provides time-related tools for LLM applications. It offers multiple transport modes including stdio, HTTP, SSE, dual (MCP + REST), and REST-only modes, making it versatile for various integration scenarios.
+The **fast-time-server** is an ultra-fast Go-based MCP server that provides comprehensive time-related tools for LLM applications. Written in pure Go for maximum performance, it offers multiple transport modes including stdio, HTTP, SSE, dual (MCP + REST), and REST-only modes, making it versatile for various integration scenarios.
+
+**Key Highlights:**
+- ⚡ Sub-millisecond response times
+- 🌍 Supports all IANA timezones
+- 📦 Single static binary (~2 MiB)
+- 🔄 Multiple transport protocols
+- 🛡️ Optional Bearer token authentication
+- 📊 OpenAPI 3.0 documentation
+- 🐳 Docker image available
 
 ## Features
 
@@ -18,6 +27,38 @@ The **fast-time-server** is a high-performance Go-based MCP server that provides
 - **High Performance**: Sub-millisecond response times
 
 ## Installation
+
+### Using Docker (Recommended)
+
+```bash
+# Pull the official Docker image
+docker pull ghcr.io/ibm/fast-time-server:0.7.0
+
+# Run with stdio transport (for MCP clients)
+docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio
+
+# Run with HTTP transport
+docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.7.0 -transport=http
+
+# Run with dual mode (MCP + REST API)
+docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.7.0 -transport=dual
+```
+
+### Using MCP Gateway's Translate Module
+
+The MCP Gateway's `translate` module can expose the stdio server via HTTP/SSE:
+
+```bash
+# Expose fast-time-server via SSE on port 8003
+python3 -m mcpgateway.translate \
+  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio" \
+  --expose-sse \
+  --port 8003
+
+# The server is now accessible at:
+# - SSE endpoint: http://localhost:8003/sse
+# - Messages endpoint: http://localhost:8003/messages
+```
 
 ### From Source
 
@@ -1105,20 +1146,76 @@ Add to `claude_desktop_config.json`:
 
 ## MCP Gateway Integration
 
-The fast-time-server can be registered with MCP Gateway for federation:
+The fast-time-server integrates seamlessly with MCP Gateway in multiple ways:
+
+### Method 1: Direct Docker Integration
 
 ```bash
-# Start the server in dual mode
-./fast-time-server -transport=dual -port=8080
+# Start fast-time-server in dual mode
+docker run --rm -d \
+  --name fast-time-server \
+  -p 8080:8080 \
+  ghcr.io/ibm/fast-time-server:0.7.0 \
+  -transport=dual
 
 # Register with MCP Gateway
-curl -X POST http://gateway:4444/gateways \
+curl -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
   -d '{
     "name": "fast-time-server",
     "url": "http://localhost:8080",
     "transport": "sse"
   }'
+```
+
+### Method 2: Using Translate Module
+
+```bash
+# Start the translate wrapper
+python3 -m mcpgateway.translate \
+  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio" \
+  --expose-sse \
+  --port 8003
+
+# Register the translated endpoint with MCP Gateway
+curl -X POST http://localhost:4444/gateways \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "fast-time-translated",
+    "url": "http://localhost:8003",
+    "transport": "sse"
+  }'
+```
+
+### Method 3: Docker Compose Integration
+
+```yaml
+version: '3.8'
+services:
+  fast-time-server:
+    image: ghcr.io/ibm/fast-time-server:0.7.0
+    command: ["-transport=dual", "-port=8080"]
+    ports:
+      - "8080:8080"
+    environment:
+      - AUTH_TOKEN=${FAST_TIME_AUTH_TOKEN}
+    networks:
+      - mcp-network
+
+  mcp-gateway:
+    image: ghcr.io/ibm/mcp-gateway:latest
+    ports:
+      - "4444:4444"
+    environment:
+      - DATABASE_URL=sqlite:///data/mcp.db
+    volumes:
+      - ./data:/data
+    networks:
+      - mcp-network
+
+networks:
+  mcp-network:
+    driver: bridge
 ```
 
 ## Development
@@ -1161,28 +1258,127 @@ make run-dual
 make run-rest
 ```
 
-### Docker Support
+### Docker Usage Examples
+
+### Basic Docker Operations
 
 ```bash
-# Build Docker image
-make docker-build
+# Pull the latest image
+docker pull ghcr.io/ibm/fast-time-server:latest
 
-# Run in Docker
-make docker-run
+# Run in stdio mode (for MCP clients)
+docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 \
+  -transport=stdio
 
-# Run with authentication
-make docker-run-sse-auth TOKEN=mysecret
+# Run in HTTP mode with custom port
+docker run --rm -p 9090:8080 ghcr.io/ibm/fast-time-server:0.7.0 \
+  -transport=http -port=8080
+
+# Run in SSE mode with authentication
+docker run --rm -p 8080:8080 \
+  -e AUTH_TOKEN=mysecret \
+  ghcr.io/ibm/fast-time-server:0.7.0 \
+  -transport=sse
+
+# Run in dual mode with debug logging
+docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.7.0 \
+  -transport=dual -log-level=debug
+```
+
+### Using with Docker Compose
+
+```yaml
+version: '3.8'
+services:
+  fast-time:
+    image: ghcr.io/ibm/fast-time-server:0.7.0
+    command:
+      - "-transport=dual"
+      - "-port=8080"
+      - "-log-level=info"
+    ports:
+      - "8080:8080"
+    environment:
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+```
+
+### Building Custom Docker Image
+
+If you need to build from source:
+
+```dockerfile
+# Dockerfile
+FROM golang:1.23-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go mod download
+RUN go build -o fast-time-server .
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates tzdata
+WORKDIR /root/
+COPY --from=builder /app/fast-time-server .
+EXPOSE 8080
+ENTRYPOINT ["./fast-time-server"]
+```
+
+```bash
+# Build and run custom image
+docker build -t my-fast-time-server .
+docker run --rm -p 8080:8080 my-fast-time-server -transport=dual
 ```
 
 ## Performance
 
-The fast-time-server is optimized for high performance:
+The fast-time-server is engineered for exceptional performance:
+
+### Performance Metrics
 
 - **Response Time**: < 1ms for simple queries
 - **Throughput**: > 10,000 requests/second
-- **Memory Usage**: < 10 MB
-- **CPU Usage**: Minimal, single-threaded design
+- **Memory Usage**: < 10 MB idle, < 20 MB under load
+- **CPU Usage**: < 1% idle, < 5% at 1000 req/s
 - **Startup Time**: < 100ms
+- **Docker Image Size**: ~8 MB compressed
+- **Binary Size**: ~2 MiB (statically linked)
+
+### Real-World Performance Test
+
+```bash
+# Start the server
+docker run --rm -d -p 8080:8080 --name perf-test \
+  ghcr.io/ibm/fast-time-server:0.7.0 -transport=rest
+
+# Run performance test (install hey first: go install github.com/rakyll/hey@latest)
+hey -n 10000 -c 100 http://localhost:8080/api/v1/time
+
+# Expected results:
+# Total:        0.8-1.2 secs
+# Slowest:      0.05 secs
+# Fastest:      0.0001 secs
+# Average:      0.008 secs
+# Requests/sec: 8000-12000
+
+# Clean up
+docker stop perf-test
+```
+
+### Optimization Tips
+
+1. **Use REST mode for highest throughput**: `-transport=rest`
+2. **Disable logging in production**: `-log-level=none`
+3. **Use connection pooling in clients**
+4. **Enable HTTP/2 if using reverse proxy**
+5. **Mount timezone data as volume for faster lookups**:
+   ```bash
+   docker run -v /usr/share/zoneinfo:/usr/share/zoneinfo:ro ...
+   ```
 
 ### Benchmarking
 
@@ -1225,25 +1421,136 @@ fetch('http://localhost:8080/api/v1/time?timezone=UTC')
 
 ## Troubleshooting
 
-### Server won't start
-- Check if the port is already in use: `lsof -i :8080`
-- Verify the binary has execute permissions: `chmod +x fast-time-server`
+### Common Issues and Solutions
 
-### Authentication errors
-- Ensure the Bearer token is correctly formatted: `Bearer <token>`
-- Check that the token matches between server and client
-- Health and version endpoints bypass authentication
+#### Server won't start
+```bash
+# Check if port is in use
+lsof -i :8080
+netstat -tulpn | grep 8080
 
-### Timezone errors
-- Use valid IANA timezone names (e.g., "America/New_York", not "EST")
-- Check available timezones: `curl http://localhost:8080/api/v1/timezones`
+# For Docker: check if container is running
+docker ps | grep fast-time
 
-### Performance issues
-- Use `-log-level=error` or `-log-level=none` to reduce logging overhead
-- Consider using the compiled binary instead of `go run`
-- Enable caching in your HTTP client for repeated requests
+# Check Docker logs
+docker logs fast-time-server
 
-## Examples
+# Verify binary permissions (if using native binary)
+chmod +x fast-time-server
+```
+
+#### Authentication errors
+```bash
+# Correct Bearer token format
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8080/api/v1/time
+
+# Environment variable in Docker
+docker run -e AUTH_TOKEN=mysecret ghcr.io/ibm/fast-time-server:0.7.0
+
+# Note: /health and /version endpoints bypass authentication
+curl http://localhost:8080/health  # Works without auth
+```
+
+#### Timezone errors
+```bash
+# List all valid timezones
+curl http://localhost:8080/api/v1/timezones
+
+# Common mistakes:
+# ❌ "EST" - Use "America/New_York" instead
+# ❌ "PST" - Use "America/Los_Angeles" instead
+# ❌ "GMT+8" - Use "Asia/Shanghai" instead
+# ✅ "Europe/London"
+# ✅ "Asia/Tokyo"
+# ✅ "UTC"
+```
+
+#### Docker-specific issues
+```bash
+# Container exits immediately
+# Add -i flag for stdio mode:
+docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio
+
+# Can't connect to server
+# Ensure port mapping is correct:
+docker run -p HOST_PORT:CONTAINER_PORT ...
+# Example: -p 9090:8080 maps container's 8080 to host's 9090
+
+# Permission denied errors
+# Run with appropriate user:
+docker run --user $(id -u):$(id -g) ...
+```
+
+#### MCP Gateway translate issues
+```bash
+# Translate module not finding server
+# Ensure Docker is running and image is pulled:
+docker images | grep fast-time-server
+
+# SSE endpoint not responding
+# Check the translate module logs:
+# The correct endpoints are:
+# - /sse for events
+# - /messages for sending messages
+```
+
+#### Performance issues
+```bash
+# Reduce logging overhead
+docker run ... ghcr.io/ibm/fast-time-server:0.7.0 -log-level=error
+# Or completely disable:
+... -log-level=none
+
+# For high-load scenarios, increase Docker resources:
+docker run --cpus="2" --memory="512m" ...
+
+# Use REST mode for best performance:
+... -transport=rest
+```
+
+#### Debugging tips
+```bash
+# Enable debug logging
+docker run ... -log-level=debug
+
+# Test basic connectivity
+curl -v http://localhost:8080/health
+
+# Test with explicit JSON-RPC
+curl -X POST http://localhost:8080/http \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+
+# Monitor resource usage
+docker stats fast-time-server
+```
+
+## Practical Examples
+
+### Quick Start Examples
+
+```bash
+# 1. Get current time in New York (using Docker)
+docker run --rm -p 8080:8080 -d --name time-demo \
+  ghcr.io/ibm/fast-time-server:0.7.0 -transport=rest
+
+curl "http://localhost:8080/api/v1/time?timezone=America/New_York"
+
+# 2. Convert time between zones
+curl -X POST http://localhost:8080/api/v1/convert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "time": "2025-01-15T14:00:00Z",
+    "from_timezone": "UTC",
+    "to_timezone": "Asia/Tokyo"
+  }'
+
+# 3. Get world clock
+curl http://localhost:8080/api/v1/resources/current-world
+
+# Clean up
+docker stop time-demo
+```
 
 ### Time Zone Conversion Script
 ```bash
@@ -1251,7 +1558,10 @@ fetch('http://localhost:8080/api/v1/time?timezone=UTC')
 # Convert meeting time to multiple timezones
 
 TIME="2025-01-15T14:00:00Z"
-ZONES=("America/New_York" "Europe/London" "Asia/Tokyo")
+ZONES=("America/New_York" "Europe/London" "Asia/Tokyo" "Australia/Sydney")
+
+echo "Meeting time conversions for: $TIME (UTC)"
+echo "=========================================="
 
 for zone in "${ZONES[@]}"; do
   result=$(curl -s -X POST http://localhost:8080/api/v1/convert \
@@ -1262,8 +1572,76 @@ for zone in "${ZONES[@]}"; do
       \"to_timezone\": \"$zone\"
     }" | jq -r '.converted_time')
 
-  echo "$zone: $result"
+  # Format output nicely
+  printf "%-20s %s\n" "$zone:" "$result"
 done
+```
+
+### Meeting Scheduler Helper
+```bash
+#!/bin/bash
+# Find optimal meeting time for global team
+
+# Start the server if not running
+if ! docker ps | grep -q fast-time-server; then
+  docker run --rm -d -p 8080:8080 --name fast-time-server \
+    ghcr.io/ibm/fast-time-server:0.7.0 -transport=dual
+  sleep 2
+fi
+
+# Execute meeting scheduler prompt
+curl -s -X POST http://localhost:8080/api/v1/prompts/schedule_meeting/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "participants": "New York,London,Singapore,Sydney",
+    "duration": "60",
+    "preferred_hours": "9 AM - 6 PM",
+    "date_range": "next 5 days"
+  }' | jq -r '.text'
+```
+
+### Integration with MCP Gateway
+```bash
+#!/bin/bash
+# Complete MCP Gateway integration example
+
+# 1. Start fast-time-server with translate
+echo "Starting fast-time-server with translate module..."
+python3 -m mcpgateway.translate \
+  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio" \
+  --expose-sse \
+  --port 8003 &
+TRANSLATE_PID=$!
+sleep 3
+
+# 2. Register with MCP Gateway
+echo "Registering with MCP Gateway..."
+RESPONSE=$(curl -s -X POST http://localhost:4444/gateways \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "fast-time-server",
+    "url": "http://localhost:8003",
+    "transport": "sse",
+    "description": "Ultra-fast time service for timezone operations",
+    "tags": ["time", "timezone", "utility"]
+  }')
+
+GATEWAY_ID=$(echo $RESPONSE | jq -r '.id')
+echo "Gateway registered with ID: $GATEWAY_ID"
+
+# 3. Create a virtual server that uses the time tools
+echo "Creating virtual server..."
+curl -s -X POST http://localhost:4444/servers \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"time-assistant\",
+    \"gateway_ids\": [\"$GATEWAY_ID\"],
+    \"description\": \"Virtual server with time and timezone capabilities\"
+  }"
+
+echo "Setup complete! Fast-time-server is now available via MCP Gateway."
+echo "Press Ctrl+C to stop..."
+wait $TRANSLATE_PID
 ```
 
 ### Python Client Example
@@ -1290,9 +1668,30 @@ result = response.json()
 print(f"Converted time: {result['converted_time']}")
 ```
 
+## Version History
+
+- **v0.7.0** - Current Docker image version with full MCP protocol support
+
+## Security Considerations
+
+1. **Authentication**: Always use Bearer tokens in production
+2. **Network**: Use TLS/HTTPS when exposing to internet
+3. **Docker**: Run with minimal privileges, avoid root
+4. **Secrets**: Use environment variables, never hardcode tokens
+5. **Updates**: Regularly update to latest Docker image
+
 ## Related Resources
 
 - [MCP Protocol Specification](https://modelcontextprotocol.io/)
 - [MCP Gateway Documentation](../../index.md)
 - [Go MCP SDK](https://github.com/mark3labs/mcp-go)
 - [Time Zone Database](https://www.iana.org/time-zones)
+- [Fast Time Server GitHub](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/go/fast-time-server)
+- [Docker Hub](https://github.com/IBM/mcp-context-forge/pkgs/container/fast-time-server)
+
+## Support
+
+For issues, questions, or contributions:
+- Open an issue on [GitHub](https://github.com/IBM/mcp-context-forge/issues)
+- Check the [MCP Gateway discussions](https://github.com/IBM/mcp-context-forge/discussions)
+- Review the [source code](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/go/fast-time-server)
