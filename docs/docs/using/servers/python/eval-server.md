@@ -7,6 +7,7 @@ The **Ultimate AI Evaluation Platform** providing the most comprehensive AI asse
 **Author:** Mihai Criveti
 
 **Key Highlights:**
+
 - 🤖 63 specialized evaluation tools
 - 📊 14 distinct tool categories
 - 🎯 LLM-as-a-judge with bias mitigation

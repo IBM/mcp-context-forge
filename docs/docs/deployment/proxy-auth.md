@@ -46,7 +46,7 @@ AUTH_REQUIRED=true
 ### HyprMCP Gateway
 
 Find the completed guide on how to use the [HyprMCP Gateway](https://github.com/hyprmcp/mcp-gateway) to support DCR and OAuth2 here:
-[Tutorial: Dynamic Client Registration with HyprMCP](/ibm/mcp-context-forge/tutorials/dcr-hyprmcp/)
+[Tutorial: Dynamic Client Registration with HyprMCP](../tutorials/dcr-hyprmcp.md)
 
 
 ```yaml

@@ -5,6 +5,7 @@
 A comprehensive **Go-based MCP server** for mathematical computations, implementing **13 mathematical tools** with advanced features and high precision calculations. This server provides everything from basic arithmetic to advanced financial modeling, statistical analysis, and unit conversions.
 
 **Key Features:**
+
 - 🧮 13 specialized mathematical tools
 - 📊 Advanced statistical analysis
 - 💰 Financial calculations (NPV, IRR, loans)
@@ -111,6 +112,7 @@ Perform statistical analysis on datasets.
 Convert between various measurement units.
 
 **Categories:**
+
 - **Length:** mm, cm, m, km, in, ft, yd, mi
 - **Weight:** mg, g, kg, t, oz, lb, st, ton
 - **Temperature:** C, F, K, R
