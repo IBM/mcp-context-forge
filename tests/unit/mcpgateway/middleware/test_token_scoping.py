@@ -7,7 +7,6 @@ This module tests the token scoping middleware, particularly the security fixes 
 """
 
 # Standard
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -84,8 +83,6 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/admin", "GET", ["admin.read"])
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
-
-
     @pytest.mark.asyncio
     async def test_server_scoped_token_blocked_from_admin(self, middleware, mock_request):
         """Test that server-scoped tokens are blocked from admin endpoints (security fix)."""
@@ -97,19 +94,16 @@ class TestTokenScopingMiddleware:
         with patch.object(middleware, '_extract_token_scopes') as mock_extract:
             mock_extract.return_value = {"server_id": "specific-server"}
 
-            # Mock call_next (the next middleware or request handler)
+            # Create mock call_next
             call_next = AsyncMock()
 
-            # Perform the request, which should return a JSONResponse instead of raising HTTPException
-            response = await middleware(mock_request, call_next)
+            # Should raise HTTPException due to server restriction
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware(mock_request, call_next)
 
-            # Ensure response is a JSONResponse and parse its content
-            content = json.loads(response.body)  # Parse response content to dictionary
-
-            # Check that the response is a JSONResponse with status 403 and the correct detail
-            assert response.status_code == status.HTTP_403_FORBIDDEN
-            assert "not authorized for this server" in content.get("detail")
-            call_next.assert_not_called()  # Ensure the next handler is not called
+            assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+            assert "not authorized for this server" in exc_info.value.detail
+            call_next.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_permission_restricted_token_blocked_from_admin(self, middleware, mock_request):
@@ -122,21 +116,15 @@ class TestTokenScopingMiddleware:
         with patch.object(middleware, '_extract_token_scopes') as mock_extract:
             mock_extract.return_value = {"permissions": [Permissions.TOOLS_READ]}
 
-            # Mock call_next (the next middleware or request handler)
             call_next = AsyncMock()
 
-            # Perform the request, which should return a JSONResponse instead of raising HTTPException
-            response = await middleware(mock_request, call_next)
+            # Should raise HTTPException due to insufficient permissions
+            with pytest.raises(HTTPException) as exc_info:
+                await middleware(mock_request, call_next)
 
-            # Ensure response is a JSONResponse and parse its content
-            content = json.loads(response.body)  # Parse response content to dictionary
-
-            # Check that the response is a JSONResponse with status 403 and the correct detail
-            assert response.status_code == status.HTTP_403_FORBIDDEN
-            assert "Insufficient permissions for this operation" in content.get("detail")
-            call_next.assert_not_called()  # Ensure the next handler is not called
-
-
+            assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions" in exc_info.value.detail
+            call_next.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_admin_token_allowed_to_admin_endpoints(self, middleware, mock_request):

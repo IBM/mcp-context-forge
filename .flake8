@@ -1,6 +1,5 @@
 [flake8]
 max-line-length = 600
-exclude = mcp-servers
 extend-ignore =
     E203,
     W503

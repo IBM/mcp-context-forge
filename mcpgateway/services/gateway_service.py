@@ -44,7 +44,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set
 from urllib.parse import urlparse, urlunparse
 import uuid
 
@@ -61,10 +61,10 @@ from sqlalchemy.orm import Session
 try:
     # Third-Party
     import redis
-
-    REDIS_AVAILABLE = True
+    redis_available = True
 except ImportError:
-    REDIS_AVAILABLE = False
+    redis = None  # type: ignore
+    redis_available = False
     logging.info("Redis is not utilized in this environment.")
 
 # First-Party
@@ -72,6 +72,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import ServerMetric
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
@@ -141,7 +142,7 @@ class GatewayNameConflictError(GatewayError):
         >>> error.gateway_id is None
         True
 
-    >>> error_inactive = GatewayNameConflictError("inactive_gw", enabled=False, gateway_id=123)
+    >>> error_inactive = GatewayNameConflictError("inactive_gw", enabled=False, gateway_id="123")
     >>> str(error_inactive)
     'Public Gateway already exists with name: inactive_gw (currently inactive, ID: 123)'
         >>> error_inactive.enabled
@@ -150,7 +151,7 @@ class GatewayNameConflictError(GatewayError):
         123
     """
 
-    def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[int] = None, visibility: Optional[str] = "public"):
+    def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[str] = None, visibility: Optional[str] = "public"):
         """Initialize the error with gateway information.
 
         Args:
@@ -192,7 +193,7 @@ class GatewayUrlConflictError(GatewayError):
         >>> error.gateway_id is None
         True
 
-    >>> error_inactive = GatewayUrlConflictError("http://inactive.com/gw", enabled=False, gateway_id=123)
+    >>> error_inactive = GatewayUrlConflictError("http://inactive.com/gw", enabled=False, gateway_id="123")
     >>> str(error_inactive)
     'Public Gateway already exists with URL: http://inactive.com/gw (currently inactive, ID: 123)'
         >>> error_inactive.enabled
@@ -201,7 +202,7 @@ class GatewayUrlConflictError(GatewayError):
         123
     """
 
-    def __init__(self, url: str, enabled: bool = True, gateway_id: Optional[int] = None, visibility: Optional[str] = "public"):
+    def __init__(self, url: str, enabled: bool = True, gateway_id: Optional[str] = None, visibility: Optional[str] = "public"):
         """Initialize the error with gateway information.
 
         Args:
@@ -282,10 +283,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> hasattr(service, '_instance_id') or True  # May not exist if no Redis
             True
         """
-        self._event_subscribers: List[asyncio.Queue] = []
+        self._event_subscribers: List[asyncio.Queue[Dict[str, Any]]] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         self._health_check_interval = GW_HEALTH_CHECK_INTERVAL
-        self._health_check_task: Optional[asyncio.Task] = None
+        self._health_check_task: Optional[asyncio.Task[None]] = None
         self._active_gateways: Set[str] = set()  # Track active gateway URLs
         self._stream_response = None
         self._pending_responses = {}
@@ -299,8 +300,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Initialize optional Redis client holder
         self._redis_client: Optional[Any] = None
 
-        if self.redis_url and REDIS_AVAILABLE:
-            self._redis_client = redis.from_url(self.redis_url)
+        if self.redis_url and redis_available:
+            self._redis_client = redis.from_url(self.redis_url)  # type: ignore
             self._instance_id = str(uuid.uuid4())  # Unique ID for this process
             self._leader_key = "gateway_service_leader"
             self._leader_ttl = 40  # seconds
@@ -352,7 +353,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # For all other URLs, preserve the domain name
         return url
 
-    async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout: Optional[int] = None):
+    async def _validate_gateway_url(self, url: str, headers: Dict[str, str], transport_type: str, timeout: Optional[int] = None) -> bool:
         """
         Validate if the given URL is a live Server-Sent Events (SSE) endpoint.
 
@@ -554,7 +555,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
             elif isinstance(auth_value, str) and auth_value:
                 # Decode persisted auth for initialization
-                decoded = decode_auth(auth_value)
+                decoded = cast(Dict[str, str], decode_auth(auth_value))
                 authentication_headers = {str(k): str(v) for k, v in decoded.items()}
             else:
                 authentication_headers = None
@@ -679,41 +680,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             await self._notify_gateway_added(db_gateway)
 
             return GatewayRead.model_validate(db_gateway).masked()
-        except* GatewayConnectionError as ge:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ge: ExceptionGroup[GatewayConnectionError]
-            logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
-            raise ge.exceptions[0]
-        except* GatewayNameConflictError as gnce:  # pragma: no mutate
-            if TYPE_CHECKING:
-                gnce: ExceptionGroup[GatewayNameConflictError]
-            logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
-            raise gnce.exceptions[0]
-        except* GatewayUrlConflictError as guce:  # pragma: no mutate
-            if TYPE_CHECKING:
-                guce: ExceptionGroup[GatewayUrlConflictError]
-            logger.error(f"GatewayUrlConflictError in group: {guce.exceptions}")
-            raise guce.exceptions[0]
-        except* ValueError as ve:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ve: ExceptionGroup[ValueError]
-            logger.error(f"ValueErrors in group: {ve.exceptions}")
-            raise ve.exceptions[0]
-        except* RuntimeError as re:  # pragma: no mutate
-            if TYPE_CHECKING:
-                re: ExceptionGroup[RuntimeError]
-            logger.error(f"RuntimeErrors in group: {re.exceptions}")
-            raise re.exceptions[0]
-        except* IntegrityError as ie:  # pragma: no mutate
-            if TYPE_CHECKING:
-                ie: ExceptionGroup[IntegrityError]
-            logger.error(f"IntegrityErrors in group: {ie.exceptions}")
-            raise ie.exceptions[0]
-        except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
-            if TYPE_CHECKING:
-                other: ExceptionGroup[Exception]
-            logger.error(f"Other grouped errors: {other.exceptions}")
-            raise other.exceptions[0]
+        except GatewayConnectionError as ge:  # pragma: no mutate
+            logger.error(f"GatewayConnectionError: {ge}")
+            raise ge
+        except GatewayNameConflictError as gnce:  # pragma: no mutate
+            logger.error(f"GatewayNameConflictError: {gnce}")
+            raise gnce
+        except ValueError as ve:  # pragma: no mutate
+            logger.error(f"ValueError: {ve}")
+            raise ve
+        except RuntimeError as re:  # pragma: no mutate
+            logger.error(f"RuntimeError: {re}")
+            raise re
+        except IntegrityError as ie:  # pragma: no mutate
+            logger.error(f"IntegrityError: {ie}")
+            raise ie
+        except BaseException as other:  # catches every other sub-exception  # pragma: no mutate
+            logger.error(f"Other error: {other}")
+            raise other
 
     async def fetch_tools_after_oauth(self, db: Session, gateway_id: str) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
@@ -767,10 +751,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Filter out any None tools and create DbTool objects
                 tools_to_add = []
                 for tool in tools:
-                    if tool is None:
-                        logger.warning("Skipping None tool in tools list")
-                        continue
-
                     try:
                         db_tool = self._create_db_tool(
                             tool=tool,
@@ -937,7 +917,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
-    ) -> GatewayRead:
+    ) -> Optional[GatewayRead]:
         """Update a gateway.
 
         Args:
@@ -1040,8 +1020,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.url = self.normalize_url(str(gateway_update.url))
                 if gateway_update.description is not None:
                     gateway.description = gateway_update.description
-                if gateway_update.transport is not None:
-                    gateway.transport = gateway_update.transport
+                gateway.transport = gateway_update.transport
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
                 if gateway_update.visibility is not None:
@@ -1049,16 +1028,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if gateway_update.visibility is not None:
                     gateway.visibility = gateway_update.visibility
                 if gateway_update.passthrough_headers is not None:
-                    if isinstance(gateway_update.passthrough_headers, list):
-                        gateway.passthrough_headers = gateway_update.passthrough_headers
-                    else:
-                        if isinstance(gateway_update.passthrough_headers, str):
-                            parsed: List[str] = [h.strip() for h in gateway_update.passthrough_headers.split(",") if h.strip()]
-                            gateway.passthrough_headers = parsed
-                        else:
-                            raise GatewayError("Invalid passthrough_headers format: must be list[str] or comma-separated string")
-
-                    logger.info("Updated passthrough_headers for gateway {gateway.id}: {gateway.passthrough_headers}")
+                    gateway.passthrough_headers = gateway_update.passthrough_headers
+                    logger.info(f"Updated passthrough_headers for gateway {gateway.id}: {gateway.passthrough_headers}")
 
                 if getattr(gateway, "auth_type", None) is not None:
                     gateway.auth_type = gateway_update.auth_type
@@ -1084,7 +1055,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     elif settings.masked_auth_value not in (token, password, header_value):
                         # Check if values differ from existing ones
                         if gateway.auth_value != gateway_update.auth_value:
-                            gateway.auth_value = decode_auth(gateway_update.auth_value) if isinstance(gateway_update.auth_value, str) else gateway_update.auth_value
+                            gateway.auth_value = cast(Dict[str, str], decode_auth(gateway_update.auth_value)) if isinstance(gateway_update.auth_value, str) else gateway_update.auth_value
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
@@ -1197,7 +1168,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.modified_via = modified_via
                 if modified_user_agent:
                     gateway.modified_user_agent = modified_user_agent
-                if hasattr(gateway, "version") and gateway.version is not None:
+                if hasattr(gateway, "version"):
                     gateway.version = gateway.version + 1
                 else:
                     gateway.version = 1
@@ -1476,7 +1447,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db.rollback()
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
-    async def forward_request(self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None) -> Any:  # noqa: F811 # pylint: disable=function-redefined
+    async def forward_request(self, gateway_or_db: Any, method: str, params: Optional[Dict[str, Any]] = None) -> Any:  # noqa: F811 # pylint: disable=function-redefined
         """
         Forward a request to a gateway or multiple gateways.
 
@@ -1576,7 +1547,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Handle non-OAuth authentication (existing logic)
                     auth_data = gateway.auth_value or {}
                     if isinstance(auth_data, str):
-                        headers = decode_auth(auth_data) if auth_data else self._get_auth_headers()
+                        headers = cast(Dict[str, str], decode_auth(auth_data)) if auth_data else self._get_auth_headers()
                     elif isinstance(auth_data, dict):
                         headers = {str(k): str(v) for k, v in auth_data.items()}
                     else:
@@ -1666,7 +1637,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Handle non-OAuth authentication
                     auth_data = gateway.auth_value or {}
                     if isinstance(auth_data, str):
-                        headers = decode_auth(auth_data)
+                        headers = cast(Dict[str, str], decode_auth(auth_data))
                     elif isinstance(auth_data, dict):
                         headers = {str(k): str(v) for k, v in auth_data.items()}
                     else:
@@ -1844,7 +1815,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 # Handle non-OAuth authentication (existing logic)
                                 auth_data = gateway.auth_value or {}
                                 if isinstance(auth_data, str):
-                                    headers = decode_auth(auth_data)
+                                    headers = cast(Dict[str, str], decode_auth(auth_data))
                                 elif isinstance(auth_data, dict):
                                     headers = {str(k): str(v) for k, v in auth_data.items()}
                                 else:
@@ -1999,7 +1970,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> asyncio.run(test_event())
             'test'
         """
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
         self._event_subscribers.append(queue)
         try:
             while True:
@@ -2087,7 +2058,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             resources = []
             prompts = []
             if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
-                authentication = decode_auth(authentication)
+                authentication = cast(Dict[str, str], decode_auth(authentication))
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication)
             elif transport.lower() == "streamablehttp":
@@ -2457,6 +2428,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                             mime_type=resource_data.get("mime_type"),
                                             template=resource_data.get("template"),
                                             content="",
+                                            team_id=None,
+                                            owner_email=None,
                                         )
                                     )
                                 logger.info(f"Fetched {len(resources)} resources from gateway")
@@ -2484,6 +2457,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                             name=prompt_data.get("name", ""),
                                             description=prompt_data.get("description"),
                                             template=prompt_data.get("template", ""),
+                                            team_id=None,
+                                            owner_email=None,
                                         )
                                     )
                                 logger.info(f"Fetched {len(prompts)} prompts from gateway")
@@ -2566,3 +2541,33 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         logger.warning(f"Failed to fetch prompts: {e}")
 
                 return capabilities, tools, resources, prompts
+
+    async def _record_server_metric(self, db: Session, server: DbGateway, start_time: float, success: bool, error_message: Optional[str]) -> None:
+        """
+        Records a metric for a server interaction.
+
+        This function calculates the response time using the provided start time and records
+        the metric details (including whether the interaction was successful and any error message)
+        into the database. The metric is then committed to the database.
+
+        Args:
+            db (Session): The SQLAlchemy database session.
+            server (DbGateway): The server/gateway that was accessed.
+            start_time (float): The monotonic start time of the interaction.
+            success (bool): True if the interaction succeeded; otherwise, False.
+            error_message (Optional[str]): The error message if the interaction failed, otherwise None.
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+        metric = ServerMetric(
+            server_id=server.id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+        try:  
+            db.expire(server, ["metrics"])
+        except Exception:  
+            pass

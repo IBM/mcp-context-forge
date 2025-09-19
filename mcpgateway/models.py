@@ -401,103 +401,37 @@ class PromptResult(BaseModel):
     description: Optional[str] = None
 
 
-class CommonAttributes(BaseModel):
-    """Common attributes for tools and gateways.
+# Tool types
+class Tool(BaseModel):
+    """A tool that can be invoked.
 
     Attributes:
         name (str): The unique name of the tool.
         url (AnyHttpUrl): The URL of the tool.
         description (Optional[str]): A description of the tool.
-        created_at (Optional[datetime]): The time at which the tool was created.
-        update_at (Optional[datetime]): The time at which the tool was updated.
-        enabled (Optional[bool]): If the tool is enabled.
-        reachable (Optional[bool]): If the tool is currently reachable.
-        tags (Optional[list[str]]): A list of meta data tags describing the tool.
-        created_by (Optional[str]): The person that created the tool.
-        created_from_ip (Optional[str]): The client IP that created the tool.
-        created_via (Optional[str]): How the tool was created (e.g., ui).
-        created_user_agent (Optioanl[str]): The client user agent.
-        modified_by (Optional[str]): The person that modified the tool.
-        modified_from_ip (Optional[str]): The client IP that modified the tool.
-        modified_via (Optional[str]): How the tool was modified (e.g., ui).
-        modified_user_agent (Optioanl[str]): The client user agent.
-        import_batch_id (Optional[str]): The id of the batch file that imported the tool.
-        federation_source (Optional[str]): The federation source of the tool
-        version (Optional[int]): The version of the tool.
-        team_id (Optional[str]): The id of the team that created the tool.
-        owner_email (Optional[str]): Tool owner's email.
-        visibility (Optional[str]): Visibility of the tool (e.g., public, private).
-    """
-
-    name: str
-    url: AnyHttpUrl
-    description: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    enabled: Optional[bool] = None
-    reachable: Optional[bool] = None
-    auth_type: Optional[str] = None
-    tags: Optional[list[str]] = None
-    # Comprehensive metadata for audit tracking
-    created_by: Optional[str] = None
-    created_from_ip: Optional[str] = None
-    created_via: Optional[str] = None
-    created_user_agent: Optional[str] = None
-
-    modified_by: Optional[str] = None
-    modified_from_ip: Optional[str] = None
-    modified_via: Optional[str] = None
-    modified_user_agent: Optional[str] = None
-
-    import_batch_id: Optional[str] = None
-    federation_source: Optional[str] = None
-    version: Optional[int] = None
-    # Team scoping fields for resource organization
-    team_id: Optional[str] = None
-    owner_email: Optional[str] = None
-    visibility: Optional[str] = None
-
-
-# Tool types
-class Tool(CommonAttributes):
-    """A tool that can be invoked.
-
-    Attributes:
-        original_name (str): The original supplied name of the tool before imported by the gateway.
         integrationType (str): The integration type of the tool (e.g. MCP or REST).
         requestType (str): The HTTP method used to invoke the tool (GET, POST, PUT, DELETE, SSE, STDIO).
         headers (Dict[str, Any]): A JSON object representing HTTP headers.
         input_schema (Dict[str, Any]): A JSON Schema for validating the tool's input.
         annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints.
+        auth_type (Optional[str]): The type of authentication used ("basic", "bearer", or None).
         auth_username (Optional[str]): The username for basic authentication.
         auth_password (Optional[str]): The password for basic authentication.
         auth_token (Optional[str]): The token for bearer authentication.
-        jsonpath_filter (Optional[str]):  Filter the tool based on a JSON path expression.
-        custom_name (Optional[str]): Custom tool name.
-        custom_name_slug (Optional[str]): Alternative custom tool name.
-        display_name (Optional[str]): Display name.
-        gateway_id (Optional[str]): The gateway id on which the tool is hosted.
     """
 
-    model_config = ConfigDict(from_attributes=True)
-    original_name: Optional[str] = None
+    name: str
+    url: AnyHttpUrl
+    description: Optional[str] = None
     integration_type: str = "MCP"
     request_type: str = "SSE"
-    headers: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    headers: Dict[str, Any] = Field(default_factory=dict)
     input_schema: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
     annotations: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tool annotations for behavior hints")
+    auth_type: Optional[str] = None
     auth_username: Optional[str] = None
     auth_password: Optional[str] = None
     auth_token: Optional[str] = None
-    jsonpath_filter: Optional[str] = None
-
-    # custom_name,custom_name_slug, display_name
-    custom_name: Optional[str] = None
-    custom_name_slug: Optional[str] = None
-    display_name: Optional[str] = None
-
-    # Federation relationship with a local gateway
-    gateway_id: Optional[str] = None
 
 
 class ToolResult(BaseModel):
@@ -877,7 +811,7 @@ class FederatedPrompt(Prompt):
     gateway_name: str
 
 
-class Gateway(CommonAttributes):
+class Gateway(BaseModel):
     """A federated gateway peer.
 
     Attributes:
@@ -888,17 +822,11 @@ class Gateway(CommonAttributes):
         last_seen (Optional[datetime]): Timestamp when the gateway was last seen.
     """
 
-    model_config = ConfigDict(from_attributes=True)
     id: str
+    name: str
+    url: AnyHttpUrl
     capabilities: ServerCapabilities
     last_seen: Optional[datetime] = None
-    slug: str
-    transport: str
-    last_seen: Optional[datetime]
-    # Header passthrough configuration
-    passthrough_headers: Optional[list[str]]  # Store list of strings as JSON array
-    # Request type and authentication fields
-    auth_value: Optional[str | dict]
 
 
 # ===== RBAC Models =====

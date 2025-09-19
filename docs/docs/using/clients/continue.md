@@ -80,7 +80,7 @@ pipx install --include-deps mcp-contextforge-gateway
         "args": ["-m", "mcpgateway.wrapper"],
         "env": {
           "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-          "MCP_AUTH": "Bearer ${env:MCP_AUTH}",
+          "MCP_AUTH": "${env:MCP_AUTH}",
           "MCP_TOOL_CALL_TIMEOUT": "120"
         }
       }

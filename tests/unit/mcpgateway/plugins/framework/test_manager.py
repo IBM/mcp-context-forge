@@ -11,7 +11,8 @@ import pytest
 
 # First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginManager, PluginViolationError, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.models import GlobalContext, PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 
@@ -120,11 +121,6 @@ async def test_manager_filter_plugins():
     result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
     assert not result.continue_processing
     assert result.violation
-
-    with pytest.raises(PluginViolationError) as ve:
-        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context, violations_as_exceptions=True)
-    assert ve.value.violation
-    assert ve.value.violation.reason == "Prompt not allowed"
     await manager.shutdown()
 
 
@@ -138,9 +134,6 @@ async def test_manager_multi_filter_plugins():
     result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
     assert not result.continue_processing
     assert result.violation
-    with pytest.raises(PluginViolationError) as ve:
-        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context, violations_as_exceptions=True)
-    assert ve.value.violation
     await manager.shutdown()
 
 
@@ -236,48 +229,5 @@ async def test_manager_tool_hooks_with_actual_plugin():
     assert result.modified_payload.result["output"] == "Result was good"  # bad -> good
     assert result.modified_payload.result["status"] == "right format"  # wrong -> right
     assert result.violation is None
-
-    await manager.shutdown()
-
-
-@pytest.mark.asyncio
-async def test_manager_tool_hooks_with_header_mods():
-    """Test tool hooks with a real plugin configured for tool processing."""
-    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/tool_headers_plugin.yaml")
-    await manager.initialize()
-    assert manager.initialized
-
-    # Test tool pre-invoke with transformation - use correct tool name from config
-    tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"}, headers=None)
-    global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
-
-    # Should continue processing with transformations applied
-    assert result.continue_processing
-    assert result.modified_payload is not None
-    assert result.modified_payload.name == "test_tool"
-    assert result.modified_payload.args["input"] == "This is bad data"  # bad -> good
-    assert result.modified_payload.args["quality"] == "wrong"  # wrong -> right
-    assert result.violation is None
-    assert result.modified_payload.headers
-    assert result.modified_payload.headers["User-Agent"] == "Mozilla/5.0"
-    assert result.modified_payload.headers["Connection"] == "keep-alive"
-
-    # Test tool pre-invoke with transformation - use correct tool name from config
-    tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"}, headers=HttpHeaderPayload({'Content-Type': 'application/json'}))
-    global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
-
-    # Should continue processing with transformations applied
-    assert result.continue_processing
-    assert result.modified_payload is not None
-    assert result.modified_payload.name == "test_tool"
-    assert result.modified_payload.args["input"] == "This is bad data"  # bad -> good
-    assert result.modified_payload.args["quality"] == "wrong"  # wrong -> right
-    assert result.violation is None
-    assert result.modified_payload.headers
-    assert result.modified_payload.headers["User-Agent"] == "Mozilla/5.0"
-    assert result.modified_payload.headers["Connection"] == "keep-alive"
-    assert result.modified_payload.headers['Content-Type'] == 'application/json'
 
     await manager.shutdown()

@@ -18,7 +18,7 @@
 # report issues (linters). Modified files will need to be staged again.
 # -----------------------------------------------------------------------------
 
-exclude: '(^|/)(\.pre-commit-config\.yaml|normalize_special_characters\.py|test_input_validation\.py)$|(^|/)mcp-servers/templates/|.*\.(jinja|j2)$'  # ignore these files, all templates, and jinja files
+exclude: '(^|/)(\.pre-commit-config\.yaml|normalize_special_characters\.py|test_input_validation\.py)$|.*\.(jinja|j2)$'  # ignore these files and jinja templates
 
 repos:
   # -----------------------------------------------------------------------------

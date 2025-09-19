@@ -15,7 +15,6 @@ Examples:
     ...     jwt_algorithm = 'HS256'
     ...     jwt_audience = 'mcpgateway-api'
     ...     jwt_issuer = 'mcpgateway'
-    ...     jwt_audience_verification = True
     ...     basic_auth_user = 'user'
     ...     basic_auth_password = 'pass'
     ...     auth_required = True
@@ -93,18 +92,20 @@ async def verify_jwt_token(token: str) -> dict:
         unverified = jwt.decode(token, options={"verify_signature": False})
 
         # Check for expiration claim
+        if "exp" not in unverified and settings.require_token_expiration:
+            raise jwt.MissingRequiredClaimError("exp")
+
+        # Log warning for non-expiring tokens
         if "exp" not in unverified:
             logger.warning(f"JWT token without expiration accepted. Consider enabling REQUIRE_TOKEN_EXPIRATION for better security. Token sub: {unverified.get('sub', 'unknown')}")
-            if settings.require_token_expiration:
-                raise jwt.MissingRequiredClaimError("exp")
 
+        # Full validation
         options = {}
-
         if settings.require_token_expiration:
             options["require"] = ["exp"]
+            options["verify_aud"] = settings.jwt_audience_verification
 
-        options["verify_aud"] = settings.jwt_audience_verification
-
+        # Use configured audience and issuer for validation (security fix)
         decode_kwargs = {
             "key": get_jwt_public_key_or_secret(),
             "algorithms": [settings.jwt_algorithm],
@@ -158,7 +159,6 @@ async def verify_credentials(token: str) -> dict:
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
-        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -207,7 +207,6 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
-        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -311,7 +310,6 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
-        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -364,7 +362,6 @@ async def require_basic_auth(credentials: HTTPBasicCredentials = Depends(basic_s
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
-        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -425,7 +422,6 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
-        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True
@@ -558,7 +554,6 @@ async def require_docs_auth_override(
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
-        ...     jwt_audience_verification = True
         ...     docs_allow_basic_auth = False
         ...     require_token_expiration = False
         >>> vc.settings = DummySettings()
@@ -638,7 +633,6 @@ async def require_auth_override(
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
-        ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
         ...     basic_auth_password = 'pass'
         ...     auth_required = True

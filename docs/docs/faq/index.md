@@ -293,7 +293,7 @@
           "command": "python3",
           "args": ["-m", "mcpgateway.wrapper"],
           "env": {
-            "MCP_AUTH": "Bearer <your-token>",
+            "MCP_AUTH": "<your-token>",
             "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
             "MCP_TOOL_CALL_TIMEOUT": "120"
           }

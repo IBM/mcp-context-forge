@@ -51,8 +51,6 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request as starletteRequest
-from starlette.responses import Response as starletteResponse
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
@@ -71,7 +69,7 @@ from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -574,81 +572,6 @@ async def database_exception_handler(_request: Request, exc: IntegrityError):
     return JSONResponse(status_code=409, content=ErrorFormatter.format_database_error(exc))
 
 
-@app.exception_handler(PluginViolationError)
-async def plugin_violation_exception_handler(_request: Request, exc: PluginViolationError):
-    """Handle plugins violations globally.
-
-    Intercepts PluginViolationError exceptions (e.g., OPA policy violation) and returns a properly formatted JSON error response.
-    This provides consistent error handling for plugin violation across the entire application.
-
-    Args:
-        _request: The FastAPI request object that triggered the database error.
-                  (Unused but required by FastAPI's exception handler interface)
-        exc: The PluginViolationError exception containing constraint
-             violation details.
-
-    Returns:
-        JSONResponse: A 403 response with access forbidden.
-
-    Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
-        >>> from mcpgateway.plugins.framework.models import PluginViolation
-        >>> from fastapi import Request
-        >>> import asyncio
-        >>>
-        >>> # Create a mock integrity error
-        >>> mock_error = PluginViolationError(message="plugin violation",violation = PluginViolation(
-        ...     reason="Invalid input",
-        ...     description="The input contains prohibited content",
-        ...     code="PROHIBITED_CONTENT",
-        ...     details={"field": "message", "value": "test"}
-        ... ))
-        >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
-        >>> result.status_code
-        403
-    """
-    policy_violation = exc.violation.model_dump() if exc.violation else {}
-    policy_violation["message"] = exc.message
-    return JSONResponse(status_code=403, content=policy_violation)
-
-
-@app.exception_handler(PluginError)
-async def plugin_exception_handler(_request: Request, exc: PluginError):
-    """Handle plugins errors globally.
-
-    Intercepts PluginError exceptions and returns a properly formatted JSON error response.
-    This provides consistent error handling for plugin error across the entire application.
-
-    Args:
-        _request: The FastAPI request object that triggered the database error.
-                  (Unused but required by FastAPI's exception handler interface)
-        exc: The PluginError exception containing constraint
-             violation details.
-
-    Returns:
-        JSONResponse: A 500 response with internal server error.
-
-    Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
-        >>> from mcpgateway.plugins.framework.models import PluginErrorModel
-        >>> from fastapi import Request
-        >>> import asyncio
-        >>>
-        >>> # Create a mock integrity error
-        >>> mock_error = PluginError(error = PluginErrorModel(
-        ...     message="plugin error",
-        ...     code="timeout",
-        ...     plugin_name="abc",
-        ...     details={"field": "message", "value": "test"}
-        ... ))
-        >>> result = asyncio.run(plugin_exception_handler(None, mock_error))
-        >>> result.status_code
-        500
-    """
-    error_obj = exc.error.model_dump() if exc.error else {}
-    return JSONResponse(status_code=500, content=error_obj)
-
-
 class DocsAuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware to protect FastAPI's auto-generated documentation routes
@@ -714,36 +637,22 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
 
 class MCPPathRewriteMiddleware:
     """
-    Middleware that rewrites paths ending with '/mcp' to '/mcp', after performing authentication.
+    Supports requests like '/servers/<server_id>/mcp' by rewriting the path to '/mcp'.
 
-    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp'.
-    - Only paths ending with '/mcp' (but not exactly '/mcp') are rewritten.
-    - Authentication is performed before any path rewriting.
-    - If authentication fails, the request is not processed further.
+    - Only rewrites paths ending with '/mcp' but not exactly '/mcp'.
+    - Performs authentication before rewriting.
+    - Passes rewritten requests to `streamable_http_session`.
     - All other requests are passed through without change.
-
-    Attributes:
-        application (Callable): The next ASGI application to process the request.
     """
 
-    def __init__(self, application, dispatch=None):
+    def __init__(self, application):
         """
         Initialize the middleware with the ASGI application.
 
         Args:
-            application (Callable): The next ASGI application to handle the request.
-            dispatch (Callable, optional): An optional dispatch function for additional middleware processing.
-
-        Example:
-            >>> import asyncio
-            >>> from unittest.mock import AsyncMock, patch
-            >>> app_mock = AsyncMock()
-            >>> middleware = MCPPathRewriteMiddleware(app_mock)
-            >>> isinstance(middleware.application, AsyncMock)
-            True
+            application (Callable): The next ASGI application in the middleware stack.
         """
         self.application = application
-        self.dispatch = dispatch  # this can be TokenScopingMiddleware
 
     async def __call__(self, scope, receive, send):
         """
@@ -757,86 +666,39 @@ class MCPPathRewriteMiddleware:
         Examples:
             >>> import asyncio
             >>> from unittest.mock import AsyncMock, patch
+            >>>
+            >>> # Test non-HTTP request passthrough
             >>> app_mock = AsyncMock()
             >>> middleware = MCPPathRewriteMiddleware(app_mock)
-
-            >>> # Test path rewriting for /servers/123/mcp with headers in scope
-            >>> scope = { "type": "http", "path": "/servers/123/mcp", "headers": [(b"host", b"example.com")] }
+            >>> scope = {"type": "websocket", "path": "/ws"}
             >>> receive = AsyncMock()
             >>> send = AsyncMock()
+            >>>
+            >>> asyncio.run(middleware(scope, receive, send))
+            >>> app_mock.assert_called_once_with(scope, receive, send)
+            >>>
+            >>> # Test path rewriting for /servers/123/mcp
+            >>> app_mock.reset_mock()
+            >>> scope = {"type": "http", "path": "/servers/123/mcp"}
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
             ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
             ...         asyncio.run(middleware(scope, receive, send))
             ...         scope["path"]
             '/mcp'
-
+            >>>
             >>> # Test regular path (no rewrite)
-            >>> scope = { "type": "http","path": "/tools","headers": [(b"host", b"example.com")] }
+            >>> scope = {"type": "http", "path": "/tools"}
             >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
             ...     asyncio.run(middleware(scope, receive, send))
             ...     scope["path"]
             '/tools'
         """
+        # Only handle HTTP requests, HTTPS uses scope["type"] == "http" in ASGI
         if scope["type"] != "http":
             await self.application(scope, receive, send)
             return
 
-        # If a dispatch (request middleware) is provided, adapt it
-        if self.dispatch is not None:
-            request = starletteRequest(scope, receive=receive)
-
-            async def call_next(_req: starletteRequest) -> starletteResponse:
-                """
-                Handles the next request in the middleware chain by calling a streamable HTTP response.
-
-                Args:
-                    _req (starletteRequest): The incoming request to be processed.
-
-                Returns:
-                    starletteResponse: A response generated from the streamable HTTP call.
-                """
-                return await self._call_streamable_http(scope, receive, send)
-
-            response = await self.dispatch(request, call_next)
-
-            if response is None:
-                # Either the dispatch handled the response itself,
-                # or it blocked the request. Just return.
-                return
-
-            await response(scope, receive, send)
-            return
-
-        # Otherwise, just continue as normal
-        await self._call_streamable_http(scope, receive, send)
-
-    async def _call_streamable_http(self, scope, receive, send):
-        """
-        Handles the streamable HTTP request after authentication and path rewriting.
-
-        - If authentication is successful and the path is rewritten, this method processes the request
-          using the `streamable_http_session` handler.
-
-        Args:
-            scope (dict): The ASGI connection scope containing request metadata.
-            receive (Callable): The function to receive events from the client.
-            send (Callable): The function to send events to the client.
-
-        Example:
-            >>> import asyncio
-            >>> from unittest.mock import AsyncMock, patch
-            >>> app_mock = AsyncMock()
-            >>> middleware = MCPPathRewriteMiddleware(app_mock)
-            >>> scope = {"type": "http", "path": "/servers/123/mcp"}
-            >>> receive = AsyncMock()
-            >>> send = AsyncMock()
-            >>> with patch('mcpgateway.main.streamable_http_auth', return_value=True):
-            ...     with patch.object(streamable_http_session, 'handle_streamable_http') as mock_handler:
-            ...         asyncio.run(middleware._call_streamable_http(scope, receive, send))
-            >>> mock_handler.assert_called_once_with(scope, receive, send)
-            >>> # The streamable HTTP session handler was called after path rewriting.
-        """
-        # Auth check first
+        # Call auth check first
         auth_ok = await streamable_http_auth(scope, receive, send)
         if not auth_ok:
             return
@@ -875,14 +737,12 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
     app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
-    # Add streamable HTTP middleware for /mcp routes with token scoping
-    app.add_middleware(MCPPathRewriteMiddleware, dispatch=token_scoping_middleware)
-else:
-    # Add streamable HTTP middleware for /mcp routes
-    app.add_middleware(MCPPathRewriteMiddleware)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
+
+# Add streamable HTTP middleware for /mcp routes
+app.add_middleware(MCPPathRewriteMiddleware)
 
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
@@ -3369,10 +3229,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
     Returns:
         Response with the RPC result or error.
-
-    Raises:
-        PluginError: If encounters issue with plugin
-        PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
     """
     try:
         # Extract user identifier from either RBAC user object or JWT payload
@@ -3483,14 +3339,13 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         else:
             # Backward compatibility: Try to invoke as a tool directly
             # This allows both old format (method=tool_name) and new format (method=tools/call)
-            # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
             try:
                 result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
-            except (PluginError, PluginViolationError):
-                raise
+            except PluginViolationError:
+                return JSONResponse(status_code=403, content={"detail": "policy_deny"})
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
@@ -3503,8 +3358,6 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
-    except (PluginError, PluginViolationError):
-        raise
     except JSONRPCError as e:
         error = e.to_dict()
         return {"jsonrpc": "2.0", "error": error["error"], "id": req_id}
@@ -4370,7 +4223,7 @@ if UI_ENABLED:
     try:
         # Create a sub-application for static files that will respect root_path
         static_app = StaticFiles(directory=str(settings.static_dir))
-        STATIC_PATH = "/static"
+        STATIC_PATH = f"{settings.app_root_path}/static" if settings.app_root_path else "/static"
 
         app.mount(
             STATIC_PATH,

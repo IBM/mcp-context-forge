@@ -865,6 +865,26 @@ function retryLoadMetrics() {
 // Make retry function available globally immediately
 window.retryLoadMetrics = retryLoadMetrics;
 
+// ---------------------------------------------------------------
+// Auto-refresh aggregated metrics every 10 seconds (when visible)
+// ---------------------------------------------------------------
+let metricsAutoRefreshTimer = null;
+function startMetricsAutoRefresh() {
+    if (metricsAutoRefreshTimer) return;
+    metricsAutoRefreshTimer = setInterval(() => {
+        const panel = safeGetElement("metrics-panel");
+        if (!panel || panel.closest(".tab-panel.hidden")) return; // only refresh if visible
+        loadAggregatedMetrics();
+    }, 10000);
+}
+function stopMetricsAutoRefresh() {
+    if (metricsAutoRefreshTimer) {
+        clearInterval(metricsAutoRefreshTimer);
+        metricsAutoRefreshTimer = null;
+    }
+}
+startMetricsAutoRefresh();
+
 function showMetricsPlaceholder() {
     const metricsPanel = safeGetElement("metrics-panel");
     if (metricsPanel) {
@@ -889,6 +909,28 @@ function displayMetrics(data) {
     }
 
     try {
+        // Normalize snake_case metrics keys to camelCase for consistent downstream processing
+        const normalizeCategory = (obj) => {
+            if (!obj || typeof obj !== "object") return obj;
+            const out = { ...obj };
+            const map = [
+                ["total_executions", "totalExecutions"],
+                ["successful_executions", "successfulExecutions"],
+                ["failed_executions", "failedExecutions"],
+                ["failure_rate", "failureRate"],
+                ["avg_response_time", "avgResponseTime"],
+                ["min_response_time", "minResponseTime"],
+                ["max_response_time", "maxResponseTime"],
+                ["last_execution_time", "lastExecutionTime"],
+            ];
+            map.forEach(([snake, camel]) => {
+                if (out[camel] === undefined && out[snake] !== undefined) out[camel] = out[snake];
+            });
+            return out;
+        };
+        ["tools", "resources", "prompts", "servers", "gateways", "a2a_agents"].forEach((k) => {
+            if (data[k]) data[k] = normalizeCategory(data[k]);
+        });
         // FIX: Handle completely empty data
         if (!data || Object.keys(data).length === 0) {
             const emptyStateDiv = document.createElement("div");
@@ -1185,29 +1227,32 @@ function extractKPIData(data) {
         let totalFailed = 0;
         const responseTimes = [];
 
-        // Process each category safely
-        const categories = [
-            "tools",
-            "resources",
-            "prompts",
-            "gateways",
-            "servers",
-        ];
-        categories.forEach((category) => {
-            if (data[category]) {
-                const categoryData = data[category];
-                totalExecutions += Number(categoryData.totalExecutions || 0);
-                totalSuccessful += Number(
-                    categoryData.successfulExecutions || 0,
-                );
-                totalFailed += Number(categoryData.failedExecutions || 0);
+        // Helper to safely resolve camelCase or snake_case keys.
+        const metricVal = (obj, camel) => {
+            if (!obj) return undefined;
+            if (camel in obj) return obj[camel];
+            // convert camelCase to snake_case
+            const snake = camel
+                .replace(/([A-Z])/g, "_$1")
+                .replace(/__/g, "_")
+                .toLowerCase();
+            return obj[snake];
+        };
 
-                if (
-                    categoryData.avgResponseTime &&
-                    categoryData.avgResponseTime !== "N/A"
-                ) {
-                    responseTimes.push(Number(categoryData.avgResponseTime));
-                }
+        // Process each category safely (added a2a_agents; gateways kept for future parity)
+        const categories = ["tools", "resources", "prompts", "servers", "gateways", "a2a_agents"];
+        categories.forEach((category) => {
+            const categoryData = data[category];
+            if (!categoryData) return;
+
+            totalExecutions += Number(metricVal(categoryData, "totalExecutions") || 0);
+            totalSuccessful += Number(metricVal(categoryData, "successfulExecutions") || 0);
+            totalFailed += Number(metricVal(categoryData, "failedExecutions") || 0);
+
+            const avgRt = metricVal(categoryData, "avgResponseTime");
+            if (avgRt !== undefined && avgRt !== null && avgRt !== "N/A") {
+                const n = Number(avgRt);
+                if (!Number.isNaN(n)) responseTimes.push(n);
             }
         });
 
@@ -9024,8 +9069,8 @@ function generateConfig(server, configType) {
                         command: "python",
                         args: ["-m", "mcpgateway.wrapper"],
                         env: {
-                            MCP_AUTH: "Bearer <your-token-here>",
-                            MCP_SERVER_URL: `${baseUrl}/servers/${server.id}`,
+                            MCP_AUTH_TOKEN: "your-token-here",
+                            MCP_SERVER_CATALOG_URLS: `${baseUrl}/servers/${server.id}`,
                             MCP_TOOL_CALL_TIMEOUT: "120",
                         },
                     },

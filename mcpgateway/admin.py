@@ -20,34 +20,29 @@ underlying data.
 # Standard
 from collections import defaultdict
 import csv
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from functools import wraps
-import html
 import io
+from io import StringIO
 import json
-import logging
 from pathlib import Path
 import time
-from typing import Any, cast, Dict, List, Optional, Union
-import urllib.parse
+from typing import Any, Callable, cast, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 from pydantic import ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -77,29 +72,30 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
+from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
-from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
+from mcpgateway.services.tool_service import ToolError, ToolNotFoundError, ToolService
+from mcpgateway.utils.create_jwt_token import get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.security_cookies import set_auth_cookie
+from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
 
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
-LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
+logger = None
 
 
 def set_logging_service(service: LoggingService):
@@ -109,44 +105,32 @@ def set_logging_service(service: LoggingService):
 
     Args:
         service: The LoggingService instance to use
-
-    Examples:
-        >>> from mcpgateway.services.logging_service import LoggingService
-        >>> from mcpgateway import admin
-        >>> logging_svc = LoggingService()
-        >>> admin.set_logging_service(logging_svc)
-        >>> admin.logging_service is not None
-        True
-        >>> admin.LOGGER is not None
-        True
-
-        Test with different service instance:
-        >>> new_svc = LoggingService()
-        >>> admin.set_logging_service(new_svc)
-        >>> admin.logging_service == new_svc
-        True
-        >>> admin.LOGGER.name
-        'mcpgateway.admin'
-
-        Test that global variables are properly set:
-        >>> admin.set_logging_service(logging_svc)
-        >>> hasattr(admin, 'logging_service')
-        True
-        >>> hasattr(admin, 'LOGGER')
-        True
     """
-    global logging_service, LOGGER  # pylint: disable=global-statement
+    global logging_service, logger  # pylint: disable=global-statement
     logging_service = service
-    LOGGER = logging_service.get_logger("mcpgateway.admin")
+    logger = logging_service.get_logger("mcpgateway.admin")
 
 
 # Fallback for testing - create a temporary instance if not set
 if logging_service is None:
     logging_service = LoggingService()
-    LOGGER = logging_service.get_logger("mcpgateway.admin")
+    logger = logging_service.get_logger("mcpgateway.admin")
 
 
-# Removed duplicate function definition - using the more comprehensive version below
+def extract_user_email(user: Union[str, Dict[str, Any]]) -> str:
+    """Extract user email from authentication result.
+    
+    Args:
+        user: Result from require_auth, either email string or user dict
+        
+    Returns:
+        str: User email address or 'anonymous' for unauthenticated users
+    """
+    if isinstance(user, str):
+        return user  # Already an email or 'anonymous'
+    else:
+        # JWT payload typically has 'sub' (subject) or 'email' field
+        return user.get('email') or user.get('sub') or 'anonymous'
 
 
 # Initialize services
@@ -164,61 +148,20 @@ a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgatewa
 # Set up basic authentication
 
 # Rate limiting storage
-rate_limit_storage = defaultdict(list)
+rate_limit_storage: Dict[str, List[float]] = defaultdict(list)
 
 
-def rate_limit(requests_per_minute: Optional[int] = None):
+def rate_limit(requests_per_minute: Optional[int] = None) -> Callable[..., Any]:
     """Apply rate limiting to admin endpoints.
 
     Args:
         requests_per_minute: Maximum requests per minute (uses config default if None)
 
     Returns:
-        Decorator function that enforces rate limiting
-
-    Examples:
-        Test basic decorator creation:
-        >>> from mcpgateway import admin
-        >>> decorator = admin.rate_limit(10)
-        >>> callable(decorator)
-        True
-
-        Test with None parameter (uses default):
-        >>> default_decorator = admin.rate_limit(None)
-        >>> callable(default_decorator)
-        True
-
-        Test with specific limit:
-        >>> limited_decorator = admin.rate_limit(5)
-        >>> callable(limited_decorator)
-        True
-
-        Test decorator returns wrapper:
-        >>> async def dummy_func():
-        ...     return "success"
-        >>> decorated_func = decorator(dummy_func)
-        >>> callable(decorated_func)
-        True
-
-        Test rate limit storage structure:
-        >>> isinstance(admin.rate_limit_storage, dict)
-        True
-        >>> from collections import defaultdict
-        >>> isinstance(admin.rate_limit_storage, defaultdict)
-        True
-
-        Test decorator with zero limit:
-        >>> zero_limit_decorator = admin.rate_limit(0)
-        >>> callable(zero_limit_decorator)
-        True
-
-        Test decorator with high limit:
-        >>> high_limit_decorator = admin.rate_limit(1000)
-        >>> callable(high_limit_decorator)
-        True
+        Decorator function that enforces per-IP request limits
     """
 
-    def decorator(func):
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         """Decorator that wraps the function with rate limiting logic.
 
         Args:
@@ -229,7 +172,7 @@ def rate_limit(requests_per_minute: Optional[int] = None):
         """
 
         @wraps(func)
-        async def wrapper(*args, request: Optional[Request] = None, **kwargs):
+        async def wrapper(*args: Any, request: Optional[Request] = None, **kwargs: Any) -> Any:
             """Execute the wrapped function with rate limiting enforcement.
 
             Args:
@@ -256,7 +199,8 @@ def rate_limit(requests_per_minute: Optional[int] = None):
 
             # enforce
             if len(rate_limit_storage[client_ip]) >= limit:
-                LOGGER.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
+                if logger:
+                    logger.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
                 raise HTTPException(
                     status_code=429,
                     detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
@@ -272,143 +216,6 @@ def rate_limit(requests_per_minute: Optional[int] = None):
     return decorator
 
 
-def get_user_email(user) -> str:
-    """Extract user email from JWT payload consistently.
-
-    Args:
-        user: User object from JWT token (from get_current_user_with_permissions)
-
-    Returns:
-        str: User email address
-
-    Examples:
-        Test with dictionary user (JWT payload) with 'sub':
-        >>> from mcpgateway import admin
-        >>> user_dict = {'sub': 'alice@example.com', 'iat': 1234567890}
-        >>> admin.get_user_email(user_dict)
-        'alice@example.com'
-
-        Test with dictionary user with 'email' field:
-        >>> user_dict = {'email': 'bob@company.com', 'role': 'admin'}
-        >>> admin.get_user_email(user_dict)
-        'bob@company.com'
-
-        Test with dictionary user with both 'sub' and 'email' (sub takes precedence):
-        >>> user_dict = {'sub': 'charlie@primary.com', 'email': 'charlie@secondary.com'}
-        >>> admin.get_user_email(user_dict)
-        'charlie@primary.com'
-
-        Test with dictionary user with no email fields:
-        >>> user_dict = {'username': 'dave', 'role': 'user'}
-        >>> admin.get_user_email(user_dict)
-        'unknown'
-
-        Test with user object having email attribute:
-        >>> class MockUser:
-        ...     def __init__(self, email):
-        ...         self.email = email
-        >>> user_obj = MockUser('eve@test.com')
-        >>> admin.get_user_email(user_obj)
-        'eve@test.com'
-
-        Test with user object without email attribute:
-        >>> class BasicUser:
-        ...     def __init__(self, name):
-        ...         self.name = name
-        ...     def __str__(self):
-        ...         return self.name
-        >>> user_obj = BasicUser('frank')
-        >>> admin.get_user_email(user_obj)
-        'frank'
-
-        Test with None user:
-        >>> admin.get_user_email(None)
-        'unknown'
-
-        Test with string user:
-        >>> admin.get_user_email('grace@example.org')
-        'grace@example.org'
-
-        Test with empty dictionary:
-        >>> admin.get_user_email({})
-        'unknown'
-
-        Test with non-string, non-dict, non-object values:
-        >>> admin.get_user_email(12345)
-        '12345'
-    """
-    if isinstance(user, dict):
-        # Standard JWT format - try 'sub' first, then 'email'
-        return user.get("sub") or user.get("email", "unknown")
-    if hasattr(user, "email"):
-        # User object with email attribute
-        return user.email
-    # Fallback to string representation
-    return str(user) if user else "unknown"
-
-
-def serialize_datetime(obj):
-    """Convert datetime objects to ISO format strings for JSON serialization.
-
-    Args:
-        obj: Object to serialize, potentially a datetime
-
-    Returns:
-        str: ISO format string if obj is datetime, otherwise returns obj unchanged
-
-    Examples:
-        Test with datetime object:
-        >>> from mcpgateway import admin
-        >>> from datetime import datetime, timezone
-        >>> dt = datetime(2025, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
-        >>> admin.serialize_datetime(dt)
-        '2025-01-15T10:30:45+00:00'
-
-        Test with naive datetime:
-        >>> dt_naive = datetime(2025, 3, 20, 14, 15, 30)
-        >>> result = admin.serialize_datetime(dt_naive)
-        >>> '2025-03-20T14:15:30' in result
-        True
-
-        Test with datetime with microseconds:
-        >>> dt_micro = datetime(2025, 6, 10, 9, 25, 12, 500000)
-        >>> result = admin.serialize_datetime(dt_micro)
-        >>> '2025-06-10T09:25:12.500000' in result
-        True
-
-        Test with non-datetime objects (should return unchanged):
-        >>> admin.serialize_datetime("2025-01-15T10:30:45")
-        '2025-01-15T10:30:45'
-        >>> admin.serialize_datetime(12345)
-        12345
-        >>> admin.serialize_datetime(['a', 'list'])
-        ['a', 'list']
-        >>> admin.serialize_datetime({'key': 'value'})
-        {'key': 'value'}
-        >>> admin.serialize_datetime(None)
-        >>> admin.serialize_datetime(True)
-        True
-
-        Test with current datetime:
-        >>> import datetime as dt_module
-        >>> now = dt_module.datetime.now()
-        >>> result = admin.serialize_datetime(now)
-        >>> isinstance(result, str)
-        True
-        >>> 'T' in result  # ISO format contains 'T' separator
-        True
-
-        Test edge case with datetime min/max:
-        >>> dt_min = datetime.min
-        >>> result = admin.serialize_datetime(dt_min)
-        >>> result.startswith('0001-01-01T')
-        True
-    """
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    return obj
-
-
 admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
 ####################
@@ -420,7 +227,7 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 @rate_limit(requests_per_minute=30)  # Lower limit for config endpoints
 async def get_global_passthrough_headers(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    _user: Union[str, Dict[str, Any]] = Depends(require_auth),
 ) -> GlobalConfigRead:
     """Get the global passthrough headers configuration.
 
@@ -455,7 +262,7 @@ async def update_global_passthrough_headers(
     request: Request,  # pylint: disable=unused-argument
     config_update: GlobalConfigUpdate,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    _user: Union[str, Dict[str, Any]] = Depends(require_auth),
 ) -> GlobalConfigRead:
     """Update the global passthrough headers configuration.
 
@@ -490,22 +297,21 @@ async def update_global_passthrough_headers(
             config.passthrough_headers = config_update.passthrough_headers
         db.commit()
         return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
-    except (IntegrityError, ValidationError, PassthroughHeadersError) as e:
+    except Exception as e:
         db.rollback()
         if isinstance(e, IntegrityError):
             raise HTTPException(status_code=409, detail="Passthrough headers conflict")
-        if isinstance(e, ValidationError):
+        elif isinstance(e, ValidationError):
             raise HTTPException(status_code=422, detail="Invalid passthrough headers format")
-        if isinstance(e, PassthroughHeadersError):
+        else:
             raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail="Unknown error occurred")
 
 
 @admin_router.get("/servers", response_model=List[ServerRead])
 async def admin_list_servers(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> List[Dict[str, Any]]:
     """
     List servers for the admin UI with an option to include inactive servers.
@@ -525,7 +331,7 @@ async def admin_list_servers(
         >>>
         >>> # Mock dependencies
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>>
         >>> # Mock server service
         >>> from datetime import datetime, timezone
@@ -553,9 +359,9 @@ async def admin_list_servers(
         ...     metrics=mock_metrics
         ... )
         >>>
-        >>> # Mock the server_service.list_servers_for_user method
-        >>> original_list_servers_for_user = server_service.list_servers_for_user
-        >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
+        >>> # Mock the server_service.list_servers method
+        >>> original_list_servers = server_service.list_servers
+        >>> server_service.list_servers = AsyncMock(return_value=[mock_server])
         >>>
         >>> # Test the function
         >>> async def test_admin_list_servers():
@@ -571,10 +377,10 @@ async def admin_list_servers(
         True
         >>>
         >>> # Restore original method
-        >>> server_service.list_servers_for_user = original_list_servers_for_user
+        >>> server_service.list_servers = original_list_servers
         >>>
         >>> # Additional test for empty server list
-        >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
+        >>> server_service.list_servers = AsyncMock(return_value=[])
         >>> async def test_admin_list_servers_empty():
         ...     result = await admin_list_servers(
         ...         include_inactive=True,
@@ -584,13 +390,13 @@ async def admin_list_servers(
         ...     return result == []
         >>> asyncio.run(test_admin_list_servers_empty())
         True
-        >>> server_service.list_servers_for_user = original_list_servers_for_user
+        >>> server_service.list_servers = original_list_servers
         >>>
         >>> # Additional test for exception handling
         >>> import pytest
         >>> from fastapi import HTTPException
         >>> async def test_admin_list_servers_exception():
-        ...     server_service.list_servers_for_user = AsyncMock(side_effect=Exception("Test error"))
+        ...     server_service.list_servers = AsyncMock(side_effect=Exception("Test error"))
         ...     try:
         ...         await admin_list_servers(False, mock_db, mock_user)
         ...     except Exception as e:
@@ -598,14 +404,13 @@ async def admin_list_servers(
         >>> asyncio.run(test_admin_list_servers_exception())
         True
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested server list")
-    user_email = get_user_email(user)
-    servers = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive)
+    if logger: logger.debug(f"User {user} requested server list")
+    servers = await server_service.list_servers(db, include_inactive=include_inactive)
     return [server.model_dump(by_alias=True) for server in servers]
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
-async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_server(server_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
 
@@ -630,7 +435,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         >>>
         >>> # Mock dependencies
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> server_id = "test-server-1"
         >>>
         >>> # Mock server response
@@ -698,18 +503,18 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         >>> server_service.get_server = original_get_server
     """
     try:
-        LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
+        if logger: logger.debug(f"User {user} requested details for server ID {server_id}")
         server = await server_service.get_server(db, server_id)
         return server.model_dump(by_alias=True)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting gateway {server_id}: {e}")
+        if logger: logger.error(f"Error getting gateway {server_id}: {e}")
         raise e
 
 
 @admin_router.post("/servers", response_model=ServerRead)
-async def admin_add_server(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_server(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """
     Add a new server via the admin UI.
 
@@ -721,9 +526,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
       - name (required): The name of the server
       - description (optional): A description of the server's purpose
       - icon (optional): URL or path to the server's icon
-      - associatedTools (optional, multiple values): Tools associated with this server
-      - associatedResources (optional, multiple values): Resources associated with this server
-      - associatedPrompts (optional, multiple values): Prompts associated with this server
+      - associatedTools (optional, comma-separated): Tools associated with this server
+      - associatedResources (optional, comma-separated): Resources associated with this server
+      - associatedPrompts (optional, comma-separated): Prompts associated with this server
 
     Args:
         request (Request): FastAPI request containing form data.
@@ -747,7 +552,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         >>> timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         >>> short_uuid = str(uuid.uuid4())[:8]
         >>> unq_ext = f"{timestamp}-{short_uuid}"
-        >>> mock_user = {"email": "test_user_" + unq_ext, "db": mock_db}
+        >>> mock_user = "test_user_" + unq_ext
         >>> # Mock form data for successful server creation
         >>> form_data = FormData([
         ...     ("name", "Test-Server-"+unq_ext ),
@@ -756,9 +561,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         ...     ("associatedTools", "tool1"),
         ...     ("associatedTools", "tool2"),
         ...     ("associatedResources", "resource1"),
-        ...     ("associatedResources", "resource2"),
         ...     ("associatedPrompts", "prompt1"),
-        ...     ("associatedPrompts", "prompt2"),
         ...     ("is_inactive_checked", "false")
         ... ])
         >>>
@@ -834,48 +637,26 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
-        LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
-        server_id = form.get("id")
-        visibility = str(form.get("visibility", "private"))
-        LOGGER.info(f" user input id::{server_id}")
+        if logger: logger.debug(f"User {user} is adding a new server with name: {form['name']}")
         server = ServerCreate(
-            id=form.get("id") or None,
-            name=form.get("name"),
-            description=form.get("description"),
-            icon=form.get("icon"),
-            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            id=None,
+            name=str(form.get("name") or ""),
+            description=str(form.get("description") or "") if form.get("description") else None, # nullable
+            icon=str(form.get("icon") or "") if form.get("icon") else None,
+            associated_tools=[str(x) for x in form.getlist("associatedTools") if isinstance(x, str)],
+            associated_resources=str(form.get("associatedResources") or "").split(",") if form.get("associatedResources") else None,
+            associated_prompts=str(form.get("associatedPrompts") or "").split(",") if form.get("associatedPrompts") else None,
+            associated_a2a_agents=str(form.get("associatedA2AAgents") or "").split(",") if form.get("associatedA2AAgents") else None,
             tags=tags,
-            visibility=visibility,
+            team_id=None,
+            owner_email=None,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
         return JSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
+
     try:
-        user_email = get_user_email(user)
-        # Determine personal team for default assignment
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
-
-        # Extract metadata for server creation
-        creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
-
-        # Ensure default visibility is private and assign to personal team when available
-        team_id_cast = cast(Optional[str], team_id)
-        await server_service.register_server(
-            db,
-            server,
-            created_by=user_email,  # Use the consistent user_email
-            created_from_ip=creation_metadata["created_from_ip"],
-            created_via=creation_metadata["created_via"],
-            created_user_agent=creation_metadata["created_user_agent"],
-            team_id=team_id_cast,
-            visibility=visibility,
-        )
+        await server_service.register_server(db, server)
         return JSONResponse(
             content={"message": "Server created successfully!", "success": True},
             status_code=200,
@@ -883,14 +664,10 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
     except CoreValidationError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
-    except ServerNameConflictError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValueError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-    except ValidationError as ex:
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
         return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -902,7 +679,7 @@ async def admin_edit_server(
     server_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> JSONResponse:
     """
     Edit an existing server via the admin UI.
@@ -912,13 +689,12 @@ async def admin_edit_server(
     update operation.
 
     Expects form fields:
-      - id (optional): Updated UUID for the server
       - name (optional): The updated name of the server
       - description (optional): An updated description of the server's purpose
       - icon (optional): Updated URL or path to the server's icon
-      - associatedTools (optional, multiple values): Updated list of tools associated with this server
-      - associatedResources (optional, multiple values): Updated list of resources associated with this server
-      - associatedPrompts (optional, multiple values): Updated list of prompts associated with this server
+      - associatedTools (optional, comma-separated): Updated list of tools associated with this server
+      - associatedResources (optional, comma-separated): Updated list of resources associated with this server
+      - associatedPrompts (optional, comma-separated): Updated list of prompts associated with this server
 
     Args:
         server_id (str): The ID of the server to edit
@@ -937,7 +713,7 @@ async def admin_edit_server(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> server_id = "server-to-edit"
         >>>
         >>> # Happy path: Edit server with new name
@@ -1019,41 +795,23 @@ async def admin_edit_server(
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
-        LOGGER.debug(f"User {get_user_email(user)} is editing server ID {server_id} with name: {form.get('name')}")
-        visibility = str(form.get("visibility", "private"))
-        user_email = get_user_email(user)
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
-
-        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
-
+        if logger: logger.debug(f"User {user} is editing server ID {server_id} with name: {form.get('name')}")
         server = ServerUpdate(
-            id=form.get("id"),
-            name=form.get("name"),
-            description=form.get("description"),
-            icon=form.get("icon"),
-            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            id=None,
+            name=str(form.get("name") or "") if form.get("name") else None,
+            description=str(form.get("description") or "") if form.get("description") else None,
+            icon=str(form.get("icon") or "") if form.get("icon") else None,
+            associated_tools=[str(x) for x in form.getlist("associatedTools") if isinstance(x, str)],
+            associated_resources=str(form.get("associatedResources") or "").split(",") if form.get("associatedResources") else None,
+            associated_prompts=str(form.get("associatedPrompts") or "").split(",") if form.get("associatedPrompts") else None,
+            associated_a2a_agents=str(form.get("associatedA2AAgents") or "").split(",") if form.get("associatedA2AAgents") else None,
             tags=tags,
-            visibility=visibility,
-            team_id=team_id,
-            owner_email=user_email,
+            team_id=None,
+            owner_email=None,
+            visibility=None,
         )
-
-        await server_service.update_server(
-            db,
-            server_id,
-            server,
-            user_email,
-            modified_by=mod_metadata["modified_by"],
-            modified_from_ip=mod_metadata["modified_from_ip"],
-            modified_via=mod_metadata["modified_via"],
-            modified_user_agent=mod_metadata["modified_user_agent"],
-        )
+        user_email = extract_user_email(user)
+        await server_service.update_server(db, server_id, server, user_email)
 
         return JSONResponse(
             content={"message": "Server updated successfully!", "success": True},
@@ -1081,8 +839,8 @@ async def admin_toggle_server(
     server_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Response:
+    user: str = Depends(require_auth),
+) -> RedirectResponse:
     """
     Toggle a server's active status via the admin UI.
 
@@ -1098,7 +856,7 @@ async def admin_toggle_server(
         user (str): Authenticated user dependency.
 
     Returns:
-        Response: A redirect to the admin dashboard catalog section with a
+        RedirectResponse: A redirect to the admin dashboard catalog section with a
         status code of 303 (See Other).
 
     Examples:
@@ -1109,7 +867,7 @@ async def admin_toggle_server(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> server_id = "server-to-toggle"
         >>>
         >>> # Happy path: Activate server
@@ -1167,13 +925,14 @@ async def admin_toggle_server(
         >>> server_service.toggle_server_status = original_toggle_server_status
     """
     form = await request.form()
-    LOGGER.debug(f"User {get_user_email(user)} is toggling server ID {server_id} with activate: {form.get('activate')}")
+    if logger: logger.debug(f"User {user} is toggling server ID {server_id} with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await server_service.toggle_server_status(db, server_id, activate)
     except Exception as e:
-        LOGGER.error(f"Error toggling server status: {e}")
+        if logger:
+            logger.error(f"Error toggling server status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -1182,7 +941,7 @@ async def admin_toggle_server(
 
 
 @admin_router.post("/servers/{server_id}/delete")
-async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a server via the admin UI.
 
@@ -1207,7 +966,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> server_id = "server-to-delete"
         >>>
         >>> # Happy path: Delete server
@@ -1253,10 +1012,10 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>> server_service.delete_server = original_delete_server
     """
     try:
-        LOGGER.debug(f"User {get_user_email(user)} is deleting server ID {server_id}")
+        if logger: logger.debug(f"User {user} is deleting server ID {server_id}")
         await server_service.delete_server(db, server_id)
     except Exception as e:
-        LOGGER.error(f"Error deleting server: {e}")
+        if logger: logger.error(f"Error deleting server: {e}")
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -1271,7 +1030,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 async def admin_list_resources(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> List[Dict[str, Any]]:
     """
     List resources for the admin UI with an option to include inactive resources.
@@ -1295,7 +1054,7 @@ async def admin_list_resources(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
@@ -1316,9 +1075,9 @@ async def admin_list_resources(
         ...     tags=[]
         ... )
         >>>
-        >>> # Mock the resource_service.list_resources_for_user method
-        >>> original_list_resources_for_user = resource_service.list_resources_for_user
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource])
+        >>> # Mock the resource_service.list_resources method
+        >>> original_list_resources = resource_service.list_resources
+        >>> resource_service.list_resources = AsyncMock(return_value=[mock_resource])
         >>>
         >>> # Test listing active resources
         >>> async def test_admin_list_resources_active():
@@ -1339,7 +1098,7 @@ async def admin_list_resources(
         ...         avg_response_time=0.0, last_execution_time=None),
         ...     tags=[]
         ... )
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
+        >>> resource_service.list_resources = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
         >>> async def test_admin_list_resources_all():
         ...     result = await admin_list_resources(include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['isActive']
@@ -1348,7 +1107,7 @@ async def admin_list_resources(
         True
         >>>
         >>> # Test empty list
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
+        >>> resource_service.list_resources = AsyncMock(return_value=[])
         >>> async def test_admin_list_resources_empty():
         ...     result = await admin_list_resources(include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
@@ -1357,7 +1116,7 @@ async def admin_list_resources(
         True
         >>>
         >>> # Test exception handling
-        >>> resource_service.list_resources_for_user = AsyncMock(side_effect=Exception("Resource list error"))
+        >>> resource_service.list_resources = AsyncMock(side_effect=Exception("Resource list error"))
         >>> async def test_admin_list_resources_exception():
         ...     try:
         ...         await admin_list_resources(False, mock_db, mock_user)
@@ -1369,11 +1128,10 @@ async def admin_list_resources(
         True
         >>>
         >>> # Restore original method
-        >>> resource_service.list_resources_for_user = original_list_resources_for_user
+        >>> resource_service.list_resources = original_list_resources
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested resource list")
-    user_email = get_user_email(user)
-    resources = await resource_service.list_resources_for_user(db, user_email, include_inactive=include_inactive)
+    if logger: logger.debug(f"User {user} requested resource list")
+    resources = await resource_service.list_resources(db, include_inactive=include_inactive)
     return [resource.model_dump(by_alias=True) for resource in resources]
 
 
@@ -1381,7 +1139,7 @@ async def admin_list_resources(
 async def admin_list_prompts(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> List[Dict[str, Any]]:
     """
     List prompts for the admin UI with an option to include inactive prompts.
@@ -1405,7 +1163,7 @@ async def admin_list_prompts(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>>
         >>> # Mock prompt data
         >>> mock_prompt = PromptRead(
@@ -1425,9 +1183,9 @@ async def admin_list_prompts(
         ...     tags=[]
         ... )
         >>>
-        >>> # Mock the prompt_service.list_prompts_for_user method
-        >>> original_list_prompts_for_user = prompt_service.list_prompts_for_user
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[mock_prompt])
+        >>> # Mock the prompt_service.list_prompts method
+        >>> original_list_prompts = prompt_service.list_prompts
+        >>> prompt_service.list_prompts = AsyncMock(return_value=[mock_prompt])
         >>>
         >>> # Test listing active prompts
         >>> async def test_admin_list_prompts_active():
@@ -1448,7 +1206,7 @@ async def admin_list_prompts(
         ...     ),
         ...     tags=[]
         ... )
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[mock_prompt, mock_inactive_prompt])
+        >>> prompt_service.list_prompts = AsyncMock(return_value=[mock_prompt, mock_inactive_prompt])
         >>> async def test_admin_list_prompts_all():
         ...     result = await admin_list_prompts(include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['isActive']
@@ -1457,7 +1215,7 @@ async def admin_list_prompts(
         True
         >>>
         >>> # Test empty list
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[])
+        >>> prompt_service.list_prompts = AsyncMock(return_value=[])
         >>> async def test_admin_list_prompts_empty():
         ...     result = await admin_list_prompts(include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
@@ -1466,7 +1224,7 @@ async def admin_list_prompts(
         True
         >>>
         >>> # Test exception handling
-        >>> prompt_service.list_prompts_for_user = AsyncMock(side_effect=Exception("Prompt list error"))
+        >>> prompt_service.list_prompts = AsyncMock(side_effect=Exception("Prompt list error"))
         >>> async def test_admin_list_prompts_exception():
         ...     try:
         ...         await admin_list_prompts(False, mock_db, mock_user)
@@ -1478,11 +1236,10 @@ async def admin_list_prompts(
         True
         >>>
         >>> # Restore original method
-        >>> prompt_service.list_prompts_for_user = original_list_prompts_for_user
+        >>> prompt_service.list_prompts = original_list_prompts
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompt list")
-    user_email = get_user_email(user)
-    prompts = await prompt_service.list_prompts_for_user(db, user_email, include_inactive=include_inactive)
+    if logger: logger.debug(f"User {user} requested prompt list")
+    prompts = await prompt_service.list_prompts(db, include_inactive=include_inactive)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
 
@@ -1490,7 +1247,7 @@ async def admin_list_prompts(
 async def admin_list_gateways(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> List[Dict[str, Any]]:
     """
     List gateways for the admin UI with an option to include inactive gateways.
@@ -1514,7 +1271,7 @@ async def admin_list_gateways(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>>
         >>> # Mock gateway data
         >>> mock_gateway = GatewayRead(
@@ -1587,7 +1344,7 @@ async def admin_list_gateways(
         >>> # Restore original method
         >>> gateway_service.list_gateways = original_list_gateways
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested gateway list")
+    if logger: logger.debug(f"User {user} requested gateway list")
     gateways = await gateway_service.list_gateways(db, include_inactive=include_inactive)
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
@@ -1597,7 +1354,7 @@ async def admin_toggle_gateway(
     gateway_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> RedirectResponse:
     """
     Toggle the active status of a gateway via the admin UI.
@@ -1624,7 +1381,7 @@ async def admin_toggle_gateway(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> gateway_id = "gateway-to-toggle"
         >>>
         >>> # Happy path: Activate gateway
@@ -1681,7 +1438,7 @@ async def admin_toggle_gateway(
         >>> # Restore original method
         >>> gateway_service.toggle_gateway_status = original_toggle_gateway_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling gateway ID {gateway_id}")
+    if logger: logger.debug(f"User {user} is toggling gateway ID {gateway_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -1689,7 +1446,7 @@ async def admin_toggle_gateway(
     try:
         await gateway_service.toggle_gateway_status(db, gateway_id, activate)
     except Exception as e:
-        LOGGER.error(f"Error toggling gateway status: {e}")
+        if logger: logger.error(f"Error toggling gateway status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -1700,11 +1457,10 @@ async def admin_toggle_gateway(
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
 async def admin_ui(
     request: Request,
-    team_id: Optional[str] = Query(None),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-    _jwt_token: str = Depends(get_jwt_token),
+    user: str = Depends(require_basic_auth),
+    jwt_token: str = Depends(get_jwt_token),
 ) -> Any:
     """
     Render the admin dashboard HTML page.
@@ -1713,21 +1469,15 @@ async def admin_ui(
     servers, tools, resources, prompts, gateways, and roots from their respective
     services, then renders the admin dashboard template with this data.
 
-    Supports optional `team_id` query param to scope the returned data to a team.
-    If `team_id` is provided and email-based team management is enabled, we
-    validate the user is a member of that team. We attempt to pass team_id into
-    service listing functions (preferred). If the service API does not accept a
-    team_id parameter we fall back to post-filtering the returned items.
-
     The endpoint also sets a JWT token as a cookie for authentication in subsequent
     requests. This token is HTTP-only for security reasons.
 
     Args:
         request (Request): FastAPI request object.
-        team_id (Optional[str]): Optional team ID to filter data by team.
         include_inactive (bool): Whether to include inactive items in all listings.
         db (Session): Database session dependency.
-        user (dict): Authenticated user context with permissions.
+        user (str): Authenticated user from basic auth dependency.
+        jwt_token (str): JWT token for authentication.
 
     Returns:
         Any: Rendered HTML template for the admin dashboard.
@@ -1741,20 +1491,21 @@ async def admin_ui(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "admin_user", "db": mock_db}
+        >>> mock_user = "admin_user"
+        >>> mock_jwt = "fake.jwt.token"
         >>>
         >>> # Mock services to return empty lists for simplicity in doctest
-        >>> original_list_servers_for_user = server_service.list_servers_for_user
-        >>> original_list_tools_for_user = tool_service.list_tools_for_user
-        >>> original_list_resources_for_user = resource_service.list_resources_for_user
-        >>> original_list_prompts_for_user = prompt_service.list_prompts_for_user
+        >>> original_list_servers = server_service.list_servers
+        >>> original_list_tools = tool_service.list_tools
+        >>> original_list_resources = resource_service.list_resources
+        >>> original_list_prompts = prompt_service.list_prompts
         >>> original_list_gateways = gateway_service.list_gateways
         >>> original_list_roots = root_service.list_roots
         >>>
-        >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[])
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
-        >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[])
+        >>> server_service.list_servers = AsyncMock(return_value=[])
+        >>> tool_service.list_tools = AsyncMock(return_value=[])
+        >>> resource_service.list_resources = AsyncMock(return_value=[])
+        >>> prompt_service.list_prompts = AsyncMock(return_value=[])
         >>> gateway_service.list_gateways = AsyncMock(return_value=[])
         >>> root_service.list_roots = AsyncMock(return_value=[])
         >>>
@@ -1766,17 +1517,17 @@ async def admin_ui(
         >>>
         >>> # Test basic rendering
         >>> async def test_admin_ui_basic_render():
-        ...     response = await admin_ui(mock_request, None, False, mock_db, mock_user)
-        ...     return isinstance(response, HTMLResponse) and response.status_code == 200
+        ...     response = await admin_ui(mock_request, False, mock_db, mock_user, mock_jwt)
+        ...     return isinstance(response, HTMLResponse) and response.status_code == 200 and "jwt_token" in response.headers.get("set-cookie", "")
         >>>
         >>> asyncio.run(test_admin_ui_basic_render())
         True
         >>>
         >>> # Test with include_inactive=True
         >>> async def test_admin_ui_include_inactive():
-        ...     response = await admin_ui(mock_request, None, True, mock_db, mock_user)
+        ...     response = await admin_ui(mock_request, True, mock_db, mock_user, mock_jwt)
         ...     # Verify list methods were called with include_inactive=True
-        ...     server_service.list_servers_for_user.assert_called_with(mock_db, mock_user["email"], include_inactive=True)
+        ...     server_service.list_servers.assert_called_with(mock_db, include_inactive=True)
         ...     return isinstance(response, HTMLResponse)
         >>>
         >>> asyncio.run(test_admin_ui_include_inactive())
@@ -1799,11 +1550,19 @@ async def admin_ui(
         ...     customName="T1",
         ...     tags=[]
         ... )
+
+        >>> server_service.list_servers = AsyncMock(return_value=[mock_server])
+        >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool])
+        >>>
+        >>> async def test_admin_ui_with_data():
+        ...     response = await admin_ui(mock_request, False, mock_db, mock_user, mock_jwt)
+
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
         >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool])
         >>>
         >>> async def test_admin_ui_with_data():
         ...     response = await admin_ui(mock_request, None, False, mock_db, mock_user)
+
         ...     # Check if template context was populated (indirectly via mock calls)
         ...     assert mock_request.app.state.templates.TemplateResponse.call_count >= 1
         ...     context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
@@ -1812,6 +1571,16 @@ async def admin_ui(
         >>> asyncio.run(test_admin_ui_with_data())
         True
         >>>
+
+        >>> # Test exception handling during data fetching
+        >>> server_service.list_servers = AsyncMock(side_effect=Exception("DB error"))
+        >>> async def test_admin_ui_exception_handled():
+        ...     try:
+        ...         response = await admin_ui(mock_request, False, mock_db, mock_user, mock_jwt)
+        ...         return False  # Should not reach here if exception is properly raised
+        ...     except Exception as e:
+        ...         return str(e) == "DB error"
+
         >>> from unittest.mock import AsyncMock, patch
         >>> import logging
         >>>
@@ -1832,11 +1601,18 @@ async def admin_ui(
         ...         log_called = mock_log.called
         ...         # Optionally, you can even inspect the message if you want
         ...         return ok_response and log_called
+
         >>>
         >>> asyncio.run(test_admin_ui_exception_handled())
         True
         >>>
         >>> # Restore original methods
+        >>> server_service.list_servers = original_list_servers
+        >>> tool_service.list_tools = original_list_tools
+        >>> resource_service.list_resources = original_list_resources
+        >>> prompt_service.list_prompts = original_list_prompts
+        >>> gateway_service.list_gateways = original_list_gateways
+        >>> root_service.list_roots = original_list_roots
         >>> server_service.list_servers_for_user = original_list_servers_for_user
         >>> tool_service.list_tools_for_user = original_list_tools_for_user
         >>> resource_service.list_resources_for_user = original_list_resources_for_user
@@ -4425,45 +4201,58 @@ async def admin_delete_user(
     Returns:
         HTMLResponse: Success/error message
     """
-    if not settings.email_auth_enabled:
-        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+    if logger: logger.debug(f"User {user} accessed the admin UI")
+    tools = [
+        tool.model_dump(by_alias=True) for tool in sorted(await tool_service.list_tools(db, include_inactive=include_inactive), key=lambda t: ((t.url or "").lower(), (t.original_name or "").lower()))
+    ]
+    servers = [server.model_dump(by_alias=True) for server in await server_service.list_servers(db, include_inactive=include_inactive)]
+    resources = [resource.model_dump(by_alias=True) for resource in await resource_service.list_resources(db, include_inactive=include_inactive)]
+    prompts = [prompt.model_dump(by_alias=True) for prompt in await prompt_service.list_prompts(db, include_inactive=include_inactive)]
+    gateways_raw = await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    gateways = [gateway.model_dump(by_alias=True) for gateway in gateways_raw]
 
-    try:
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
+    roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
 
-        auth_service = EmailAuthService(db)
+    # Load A2A agents if enabled
+    a2a_agents = []
+    if a2a_service and settings.mcpgateway_a2a_enabled:
+        a2a_agents_raw = await a2a_service.list_agents(db, include_inactive=include_inactive)
+        a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
 
-        # URL decode the email
+    root_path = settings.app_root_path
+    max_name_length = settings.validation_max_name_length
+    response = request.app.state.templates.TemplateResponse(
+        request,
+        "admin.html",
+        {
+            "request": request,
+            "servers": servers,
+            "tools": tools,
+            "resources": resources,
+            "prompts": prompts,
+            "gateways": gateways,
+            "a2a_agents": a2a_agents,
+            "roots": roots,
+            "include_inactive": include_inactive,
+            "root_path": root_path,
+            "max_name_length": max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
+            "a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
 
-        decoded_email = urllib.parse.unquote(user_email)
-
-        # Get current user email from JWT
-        current_user_email = get_user_email(user)
-
-        # Prevent self-deletion
-        if decoded_email == current_user_email:
-            return HTMLResponse(content='<div class="text-red-500">Cannot delete your own account</div>', status_code=400)
-
-        # Prevent deleting the last active admin user
-        if await auth_service.is_last_active_admin(decoded_email):
-            return HTMLResponse(content='<div class="text-red-500">Cannot delete the last remaining admin user</div>', status_code=400)
-
-        await auth_service.delete_user(decoded_email)
-
-        # Return empty content to remove the user from the list
-        return HTMLResponse(content="", status_code=200)
-
-    except Exception as e:
-        LOGGER.error(f"Error deleting user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {str(e)}</div>', status_code=400)
+    # Use secure cookie utility for proper security attributes
+    set_auth_cookie(response, jwt_token, remember_me=False)
+    return response
 
 
 @admin_router.get("/tools", response_model=List[ToolRead])
 async def admin_list_tools(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> List[Dict[str, Any]]:
     """
     List tools for the admin UI with an option to include inactive tools.
@@ -4487,7 +4276,7 @@ async def admin_list_tools(
         >>> from datetime import datetime, timezone
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>>
         >>> # Mock tool data
     >>> mock_tool = ToolRead(
@@ -4520,9 +4309,9 @@ async def admin_list_tools(
     ...     tags=[]
     ... )  #  Added gateway_id=None
         >>>
-        >>> # Mock the tool_service.list_tools_for_user method
-        >>> original_list_tools_for_user = tool_service.list_tools_for_user
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool])
+        >>> # Mock the tool_service.list_tools method
+        >>> original_list_tools = tool_service.list_tools
+        >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool])
         >>>
         >>> # Test listing active tools
         >>> async def test_admin_list_tools_active():
@@ -4548,7 +4337,7 @@ async def admin_list_tools(
         ...     customName="Inactive Tool",
         ...     tags=[]
         ... )
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool, mock_inactive_tool])
+        >>> tool_service.list_tools = AsyncMock(return_value=[mock_tool, mock_inactive_tool])
         >>> async def test_admin_list_tools_all():
         ...     result = await admin_list_tools(include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['enabled']
@@ -4557,7 +4346,7 @@ async def admin_list_tools(
         True
         >>>
         >>> # Test empty list
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[])
+        >>> tool_service.list_tools = AsyncMock(return_value=[])
         >>> async def test_admin_list_tools_empty():
         ...     result = await admin_list_tools(include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
@@ -4566,7 +4355,7 @@ async def admin_list_tools(
         True
         >>>
         >>> # Test exception handling
-        >>> tool_service.list_tools_for_user = AsyncMock(side_effect=Exception("Tool list error"))
+        >>> tool_service.list_tools = AsyncMock(side_effect=Exception("Tool list error"))
         >>> async def test_admin_list_tools_exception():
         ...     try:
         ...         await admin_list_tools(False, mock_db, mock_user)
@@ -4578,17 +4367,16 @@ async def admin_list_tools(
         True
         >>>
         >>> # Restore original method
-        >>> tool_service.list_tools_for_user = original_list_tools_for_user
+        >>> tool_service.list_tools = original_list_tools
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tool list")
-    user_email = get_user_email(user)
-    tools = await tool_service.list_tools_for_user(db, user_email, include_inactive=include_inactive)
+    if logger: logger.debug(f"User {user} requested tool list")
+    tools = await tool_service.list_tools(db, include_inactive=include_inactive)
 
     return [tool.model_dump(by_alias=True) for tool in tools]
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
-async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -4617,7 +4405,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> tool_id = "test-tool-id"
         >>>
         >>> # Mock tool data
@@ -4676,7 +4464,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         >>> # Restore original method
         >>> tool_service.get_tool = original_get_tool
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    if logger: logger.debug(f"User {user} requested details for tool ID {tool_id}")
     try:
         tool = await tool_service.get_tool(db, tool_id)
         return tool.model_dump(by_alias=True)
@@ -4684,7 +4472,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         # Catch any other unexpected errors and re-raise or log as needed
-        LOGGER.error(f"Error getting tool {tool_id}: {e}")
+        if logger: logger.error(f"Error getting tool {tool_id}: {e}")
         raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
 
 
@@ -4693,7 +4481,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
 async def admin_add_tool(
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> JSONResponse:
     """
     Add a tool via the admin UI with error handling.
@@ -4736,7 +4524,7 @@ async def admin_add_tool(
         >>> import json
 
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
 
         >>> # Happy path: Add a new tool successfully
         >>> form_data_success = FormData([
@@ -4815,13 +4603,14 @@ async def admin_add_tool(
         >>> tool_service.register_tool = original_register_tool
 
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new tool")
+    if logger: logger.debug(f"User {user} is adding a new tool")
     form = await request.form()
-    LOGGER.debug(f"Received form data: {dict(form)}")
+    if logger: logger.debug(f"Received form data: {dict(form)}")
+
     integration_type = form.get("integrationType", "REST")
     request_type = form.get("requestType")
-    visibility = str(form.get("visibility", "private"))
 
+    # Map UI fields to internal defaults if missing (REST -> GET, MCP -> SSE)
     if request_type is None:
         if integration_type == "REST":
             request_type = "GET"  # or any valid REST method default
@@ -4830,28 +4619,19 @@ async def admin_add_tool(
         else:
             request_type = "GET"
 
-    user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-    # Safely parse potential JSON strings from form
-    headers_raw = form.get("headers")
-    input_schema_raw = form.get("input_schema")
-    annotations_raw = form.get("annotations")
+
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
-        "displayName": form.get("displayName"),
         "url": form.get("url"),
         "description": form.get("description"),
         "request_type": request_type,
         "integration_type": integration_type,
-        "headers": json.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
-        "input_schema": json.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "annotations": json.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
+        "headers": json.loads(str(form.get("headers") or "{}")),
+        "input_schema": json.loads(str(form.get("input_schema") or "{}")),
+        "annotations": json.loads(str(form.get("annotations") or "{}")),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth_type": form.get("auth_type", ""),
         "auth_username": form.get("auth_username", ""),
@@ -4860,14 +4640,11 @@ async def admin_add_tool(
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
         "tags": tags,
-        "visibility": visibility,
-        "team_id": team_id,
-        "owner_email": user_email,
     }
-    LOGGER.debug(f"Tool data built: {tool_data}")
+    if logger: logger.debug(f"Tool data built: {tool_data}")
     try:
-        tool = ToolCreate(**tool_data)
-        LOGGER.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
+        tool = ToolCreate(**tool_data) # Pydantic validation happens here; raises ValidationError on bad input
+        if logger: logger.debug(f"Validated tool data: {tool.model_dump(by_alias=True)}")
 
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -4888,18 +4665,15 @@ async def admin_add_tool(
         )
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
-        LOGGER.error(f"IntegrityError in admin_add_tool: {error_message}")
+        if logger: logger.error(f"IntegrityError in admin_add_resource: {error_message}")
         return JSONResponse(status_code=409, content=error_message)
-    except ToolNameConflictError as ex:
-        LOGGER.error(f"ToolNameConflictError in admin_add_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
-        LOGGER.error(f"ValidationError in admin_add_tool: {str(ex)}")
+        if logger: logger.error(f"ValidationError in admin_add_tool: {str(ex)}")
         return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:
-        LOGGER.error(f"Unexpected error in admin_add_tool: {str(ex)}")
+        if logger: logger.error(f"Unexpected error in admin_add_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -4909,14 +4683,13 @@ async def admin_edit_tool(
     tool_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> Response:
     """
     Edit a tool via the admin UI.
 
     Expects form fields:
       - name
-      - displayName (optional)
       - url
       - description (optional)
       - requestType (to be mapped to request_type)
@@ -4959,7 +4732,7 @@ async def admin_edit_tool(
         >>> import json
 
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> tool_id = "tool-to-edit"
 
         >>> # Happy path: Edit tool successfully
@@ -5083,32 +4856,21 @@ async def admin_edit_tool(
         >>> tool_service.update_tool = original_update_tool
 
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing tool ID {tool_id}")
+    if logger: logger.debug(f"User {user} is editing tool ID {tool_id}")
     form = await request.form()
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-    visibility = str(form.get("visibility", "private"))
 
-    user_email = get_user_email(user)
-    # Determine personal team for default assignment
-    team_id = form.get("team_id", None)
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
-
-    headers_raw2 = form.get("headers")
-    input_schema_raw2 = form.get("input_schema")
-    annotations_raw2 = form.get("annotations")
-
+# Assemble snake_case keys expected by Pydantic schemas from form inputs
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
-        "displayName": form.get("displayName"),
         "custom_name": form.get("customName"),
         "url": form.get("url"),
         "description": form.get("description"),
-        "headers": json.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
-        "input_schema": json.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "annotations": json.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
+        "headers": json.loads(str(form.get("headers") or "{}")),
+        "input_schema": json.loads(str(form.get("input_schema") or "{}")),
+        "annotations": json.loads(str(form.get("annotations") or "{}")),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth_type": form.get("auth_type", ""),
         "auth_username": form.get("auth_username", ""),
@@ -5117,9 +4879,6 @@ async def admin_edit_tool(
         "auth_header_key": form.get("auth_header_key", ""),
         "auth_header_value": form.get("auth_header_value", ""),
         "tags": tags,
-        "visibility": visibility,
-        "owner_email": user_email,
-        "team_id": team_id,
     }
     # Only include integration_type if it's provided (not disabled in form)
     if "integrationType" in form:
@@ -5127,9 +4886,9 @@ async def admin_edit_tool(
     # Only include request_type if it's provided (not disabled in form)
     if "requestType" in form:
         tool_data["request_type"] = form.get("requestType")
-    LOGGER.debug(f"Tool update data built: {tool_data}")
+    if logger: logger.debug(f"Tool update data built: {tool_data}")
     try:
-        tool = ToolUpdate(**tool_data)  # Pydantic validation happens here
+        tool = ToolUpdate(**tool_data)  # Pydantic validation happens here; raises ValidationError on bad input
 
         # Get current tool to extract current version
         current_tool = db.get(DbTool, tool_id)
@@ -5150,24 +4909,21 @@ async def admin_edit_tool(
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
-        LOGGER.error(f"IntegrityError in admin_tool_resource: {error_message}")
+        if logger: logger.error(f"IntegrityError in admin_tool_resource: {error_message}")
         return JSONResponse(status_code=409, content=error_message)
-    except ToolNameConflictError as ex:
-        LOGGER.error(f"ToolNameConflictError in admin_edit_tool: {str(ex)}")
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ToolError as ex:
-        LOGGER.error(f"ToolError in admin_edit_tool: {str(ex)}")
+        if logger: logger.error(f"ToolError in admin_edit_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # Catch Pydantic validation errors
-        LOGGER.error(f"ValidationError in admin_edit_tool: {str(ex)}")
+        if logger: logger.error(f"ValidationError in admin_edit_tool: {str(ex)}")
         return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except Exception as ex:  # Generic catch-all for unexpected errors
-        LOGGER.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
+        if logger: logger.error(f"Unexpected error in admin_edit_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/tools/{tool_id}/delete")
-async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a tool via the admin UI.
 
@@ -5193,7 +4949,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> tool_id = "tool-to-delete"
         >>>
         >>> # Happy path: Delete tool
@@ -5238,11 +4994,11 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>> # Restore original method
         >>> tool_service.delete_tool = original_delete_tool
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting tool ID {tool_id}")
+    if logger: logger.debug(f"User {user} is deleting tool ID {tool_id}")
     try:
         await tool_service.delete_tool(db, tool_id)
     except Exception as e:
-        LOGGER.error(f"Error deleting tool: {e}")
+        if logger: logger.error(f"Error deleting tool: {e}")
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -5258,7 +5014,7 @@ async def admin_toggle_tool(
     tool_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> RedirectResponse:
     """
     Toggle a tool's active status via the admin UI.
@@ -5286,7 +5042,7 @@ async def admin_toggle_tool(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> tool_id = "tool-to-toggle"
         >>>
         >>> # Happy path: Activate tool
@@ -5343,14 +5099,14 @@ async def admin_toggle_tool(
         >>> # Restore original method
         >>> tool_service.toggle_tool_status = original_toggle_tool_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling tool ID {tool_id}")
+    if logger: logger.debug(f"User {user} is toggling tool ID {tool_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
     except Exception as e:
-        LOGGER.error(f"Error toggling tool status: {e}")
+        if logger: logger.error(f"Error toggling tool status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -5359,7 +5115,7 @@ async def admin_toggle_tool(
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
     Args:
@@ -5383,7 +5139,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> gateway_id = "test-gateway-id"
         >>>
         >>> # Mock gateway data
@@ -5435,19 +5191,19 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         >>> # Restore original method
         >>> gateway_service.get_gateway = original_get_gateway
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
+    if logger: logger.debug(f"User {user} requested details for gateway ID {gateway_id}")
     try:
         gateway = await gateway_service.get_gateway(db, gateway_id)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting gateway {gateway_id}: {e}")
+        if logger: logger.error(f"Error getting gateway {gateway_id}: {e}")
         raise e
 
 
 @admin_router.post("/gateways")
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
     Expects form fields:
@@ -5477,7 +5233,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>> import json # Added import for json.loads
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>>
         >>> # Happy path: Add a new gateway successfully with basic auth details
         >>> form_data_success = FormData([
@@ -5557,7 +5313,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         >>> # Restore original method
         >>> gateway_service.register_gateway = original_register_gateway
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new gateway")
+    if logger: logger.debug(f"User {user} is adding a new gateway")
     form = await request.form()
     try:
         # Parse tags from comma-separated string
@@ -5584,10 +5340,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     encryption = get_oauth_encryption(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
-                LOGGER.error(f"Failed to parse OAuth config: {e}")
+                if logger: logger.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
-
-        visibility = str(form.get("visibility", "private"))
 
         # Handle passthrough_headers
         passthrough_headers = str(form.get("passthrough_headers"))
@@ -5612,10 +5366,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             auth_token=str(form.get("auth_token", "")),
             auth_header_key=str(form.get("auth_header_key", "")),
             auth_header_value=str(form.get("auth_header_value", "")),
+            auth_value=str(form.get("auth_value", "")),
             auth_headers=auth_headers if auth_headers else None,
             oauth_config=oauth_config,
             passthrough_headers=passthrough_headers,
-            visibility=visibility,
+            team_id=None,
+            owner_email=None,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -5623,20 +5379,13 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
-        error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
+        error_ctx = [str(err.get("ctx", {}).get("error", str(err))) for err in ex.errors()]
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
-
-    user_email = get_user_email(user)
-    team_id = form.get("team_id", None)
-
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
-        team_id_cast = cast(Optional[str], team_id)
         await gateway_service.register_gateway(
             db,
             gateway,
@@ -5644,14 +5393,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             created_from_ip=metadata["created_from_ip"],
             created_via=metadata["created_via"],
             created_user_agent=metadata["created_user_agent"],
-            visibility=visibility,
-            team_id=team_id_cast,
-            owner_email=user_email,
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
         message = "Gateway registered successfully!"
-        if oauth_config and isinstance(oauth_config, dict) and oauth_config.get("grant_type") == "authorization_code":
+        if oauth_config and oauth_config.get("grant_type") == "authorization_code":
             message = (
                 "Gateway registered successfully! 🎉\n\n"
                 "⚠️  IMPORTANT: This gateway uses OAuth Authorization Code flow.\n"
@@ -5669,16 +5415,10 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
     except GatewayConnectionError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-    except GatewayUrlConflictError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-    except GatewayNameConflictError as ex:
-        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ValueError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-    except ValidationError as ex:
-        return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
         return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -5694,7 +5434,7 @@ async def admin_edit_gateway(
     gateway_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> JSONResponse:
     """Edit a gateway via the admin UI.
 
@@ -5722,7 +5462,7 @@ async def admin_edit_gateway(
         >>> from pydantic import ValidationError
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> gateway_id = "gateway-to-edit"
         >>>
         >>> # Happy path: Edit gateway successfully
@@ -5795,14 +5535,12 @@ async def admin_edit_gateway(
         >>> # Restore original method
         >>> gateway_service.update_gateway = original_update_gateway
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing gateway ID {gateway_id}")
+    if logger: logger.debug(f"User {user} is editing gateway ID {gateway_id}")
     form = await request.form()
     try:
         # Parse tags from comma-separated string
         tags_str = str(form.get("tags", ""))
         tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
-
-        visibility = str(form.get("visibility", "private"))
 
         # Parse auth_headers JSON if present
         auth_headers_json = str(form.get("auth_headers"))
@@ -5835,16 +5573,8 @@ async def admin_edit_gateway(
                     encryption = get_oauth_encryption(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
-                LOGGER.error(f"Failed to parse OAuth config: {e}")
+                if logger: logger.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
-
-        user_email = get_user_email(user)
-        # Determine personal team for default assignment
-        team_id_raw = form.get("team_id", None)
-        team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
 
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=str(form.get("name")),
@@ -5862,21 +5592,11 @@ async def admin_edit_gateway(
             auth_headers=auth_headers if auth_headers else None,
             passthrough_headers=passthrough_headers,
             oauth_config=oauth_config,
-            visibility=visibility,
-            owner_email=user_email,
-            team_id=team_id,
+            team_id=None,
+            owner_email=None,
+            visibility=None,
         )
-
-        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
-        await gateway_service.update_gateway(
-            db,
-            gateway_id,
-            gateway,
-            modified_by=mod_metadata["modified_by"],
-            modified_from_ip=mod_metadata["modified_from_ip"],
-            modified_via=mod_metadata["modified_via"],
-            modified_user_agent=mod_metadata["modified_user_agent"],
-        )
+        await gateway_service.update_gateway(db, gateway_id, gateway)
         return JSONResponse(
             content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
@@ -5896,7 +5616,7 @@ async def admin_edit_gateway(
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
-async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a gateway via the admin UI.
 
@@ -5922,7 +5642,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> gateway_id = "gateway-to-delete"
         >>>
         >>> # Happy path: Delete gateway
@@ -5967,11 +5687,11 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>> # Restore original method
         >>> gateway_service.delete_gateway = original_delete_gateway
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting gateway ID {gateway_id}")
+    if logger: logger.debug(f"User {user} is deleting gateway ID {gateway_id}")
     try:
         await gateway_service.delete_gateway(db, gateway_id)
     except Exception as e:
-        LOGGER.error(f"Error deleting gateway: {e}")
+        if logger: logger.error(f"Error deleting gateway: {e}")
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
@@ -5983,7 +5703,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
 
 @admin_router.get("/resources/{uri:path}")
-async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_resource(uri: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
@@ -6007,7 +5727,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> resource_uri = "test://resource/get"
         >>>
         >>> # Mock resource data
@@ -6066,7 +5786,7 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         >>> resource_service.get_resource_by_uri = original_get_resource_by_uri
         >>> resource_service.read_resource = original_read_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for resource URI {uri}")
+    if logger: logger.debug(f"User {user} requested details for resource URI {uri}")
     try:
         resource = await resource_service.get_resource_by_uri(db, uri)
         content = await resource_service.read_resource(db, uri)
@@ -6074,12 +5794,12 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting resource {uri}: {e}")
+        if logger: logger.error(f"Error getting resource {uri}: {e}")
         raise e
 
 
 @admin_router.post("/resources")
-async def admin_add_resource(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Response:
+async def admin_add_resource(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Response:
     """
     Add a resource via the admin UI.
 
@@ -6106,7 +5826,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> form_data = FormData([
         ...     ("uri", "test://resource1"),
         ...     ("name", "Test Resource"),
@@ -6129,7 +5849,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         True
         >>> resource_service.register_resource = original_register_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new resource")
+    if logger: logger.debug(f"User {user} is adding a new resource")
     form = await request.form()
 
     # Parse tags from comma-separated string
@@ -6145,6 +5865,8 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             template=cast(str | None, form.get("template")),
             content=str(form["content"]),
             tags=tags,
+            team_id=None,
+            owner_email=None,
         )
 
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -6165,14 +5887,14 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
+            if logger: logger.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
+            if logger: logger.error(f"IntegrityError in admin_add_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
 
-        LOGGER.error(f"Error in admin_add_resource: {ex}")
+        if logger: logger.error(f"Error in admin_add_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -6181,7 +5903,7 @@ async def admin_edit_resource(
     uri: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> JSONResponse:
     """
     Edit a resource via the admin UI.
@@ -6209,7 +5931,7 @@ async def admin_edit_resource(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> form_data = FormData([
         ...     ("name", "Updated Resource"),
         ...     ("description", "Updated description"),
@@ -6267,7 +5989,7 @@ async def admin_edit_resource(
         >>> # Reset mock
         >>> resource_service.update_resource = original_update_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing resource URI {uri}")
+    if logger: logger.debug(f"User {user} is editing resource URI {uri}")
     form = await request.form()
 
     # Parse tags from comma-separated string
@@ -6275,7 +5997,6 @@ async def admin_edit_resource(
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
     try:
-        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         resource = ResourceUpdate(
             name=str(form["name"]),
             description=str(form.get("description")),
@@ -6283,34 +6004,29 @@ async def admin_edit_resource(
             content=str(form["content"]),
             template=str(form.get("template")),
             tags=tags,
+            team_id=None,
+            owner_email=None,
+            visibility=None,
         )
-        await resource_service.update_resource(
-            db,
-            uri,
-            resource,
-            modified_by=mod_metadata["modified_by"],
-            modified_from_ip=mod_metadata["modified_from_ip"],
-            modified_via=mod_metadata["modified_via"],
-            modified_user_agent=mod_metadata["modified_user_agent"],
-        )
+        await resource_service.update_resource(db, uri, resource)
         return JSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
             status_code=200,
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
+            if logger: logger.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
+            if logger: logger.error(f"IntegrityError in admin_edit_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-        LOGGER.error(f"Error in admin_edit_resource: {ex}")
+        if logger: logger.error(f"Error in admin_edit_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/resources/{uri:path}/delete")
-async def admin_delete_resource(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_resource(uri: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a resource via the admin UI.
 
@@ -6336,7 +6052,7 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([("is_inactive_checked", "false")])
         >>> mock_request.form = AsyncMock(return_value=form_data)
@@ -6357,15 +6073,15 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
         >>> mock_request.form = AsyncMock(return_value=form_data_inactive)
         >>>
         >>> async def test_admin_delete_resource_inactive():
-        ...     response = await admin_delete_resource("test://resource1", mock_request, mock_db, mock_user)
+        ...     response = await admin_delete_resource("test://resource1", mock_request, mock_user)
         ...     return isinstance(response, RedirectResponse) and "include_inactive=true" in response.headers["location"]
         >>>
         >>> asyncio.run(test_admin_delete_resource_inactive())
         True
         >>> resource_service.delete_resource = original_delete_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting resource URI {uri}")
-    await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, uri)
+    if logger: logger.debug(f"User {user} is deleting resource URI {uri}")
+    await resource_service.delete_resource(db, uri)
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
@@ -6379,7 +6095,7 @@ async def admin_toggle_resource(
     resource_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> RedirectResponse:
     """
     Toggle a resource's active status via the admin UI.
@@ -6407,7 +6123,7 @@ async def admin_toggle_resource(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([
         ...     ("activate", "true"),
@@ -6470,14 +6186,14 @@ async def admin_toggle_resource(
         True
         >>> resource_service.toggle_resource_status = original_toggle_resource_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling resource ID {resource_id}")
+    if logger: logger.debug(f"User {user} is toggling resource ID {resource_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         await resource_service.toggle_resource_status(db, resource_id, activate)
     except Exception as e:
-        LOGGER.error(f"Error toggling resource status: {e}")
+        if logger: logger.error(f"Error toggling resource status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -6486,7 +6202,7 @@ async def admin_toggle_resource(
 
 
 @admin_router.get("/prompts/{name}")
-async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_prompt(name: str, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
@@ -6510,7 +6226,7 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depend
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> prompt_name = "test-prompt"
         >>>
         >>> # Mock prompt details
@@ -6573,7 +6289,7 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depend
         >>>
         >>> prompt_service.get_prompt_details = original_get_prompt_details
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for prompt name {name}")
+    if logger: logger.debug(f"User {user} requested details for prompt name {name}")
     try:
         prompt_details = await prompt_service.get_prompt_details(db, name)
         prompt = PromptRead.model_validate(prompt_details)
@@ -6581,12 +6297,12 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depend
     except PromptNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting prompt {name}: {e}")
+        if logger: logger.error(f"Error getting prompt {name}: {e}")
         raise e
 
 
 @admin_router.post("/prompts")
-async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> JSONResponse:
     """Add a prompt via the admin UI.
 
     Expects form fields:
@@ -6611,7 +6327,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> form_data = FormData([
         ...     ("name", "Test Prompt"),
         ...     ("description", "A test prompt"),
@@ -6634,7 +6350,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
 
         >>> prompt_service.register_prompt = original_register_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new prompt")
+    if logger: logger.debug(f"User {user} is adding a new prompt")
     form = await request.form()
 
     # Parse tags from comma-separated string
@@ -6653,6 +6369,8 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             template=str(form["template"]),
             arguments=arguments,
             tags=tags,
+            team_id=None,
+            owner_email=None,
         )
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -6673,13 +6391,13 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            if logger: logger.error(f"ValidationError in admin_add_prompt: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            LOGGER.error(f"IntegrityError in admin_add_prompt: {error_message}")
+            if logger: logger.error(f"IntegrityError in admin_add_prompt: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-        LOGGER.error(f"Error in admin_add_prompt: {ex}")
+        if logger: logger.error(f"Error in admin_add_prompt: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -6688,7 +6406,7 @@ async def admin_edit_prompt(
     name: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> Response:
     """Edit a prompt via the admin UI.
 
@@ -6715,7 +6433,7 @@ async def admin_edit_prompt(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> prompt_name = "test-prompt"
         >>> form_data = FormData([
         ...     ("name", "Updated Prompt"),
@@ -6755,7 +6473,7 @@ async def admin_edit_prompt(
         True
         >>> prompt_service.update_prompt = original_update_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing prompt name {name}")
+    if logger: logger.debug(f"User {user} is editing prompt name {name}")
     form = await request.form()
 
     args_json: str = str(form.get("arguments")) or "[]"
@@ -6764,23 +6482,17 @@ async def admin_edit_prompt(
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
     try:
-        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
             name=str(form["name"]),
             description=str(form.get("description")),
             template=str(form["template"]),
             arguments=arguments,
             tags=tags,
+            team_id=None,
+            owner_email=None,
+            visibility=None,
         )
-        await prompt_service.update_prompt(
-            db,
-            name,
-            prompt,
-            modified_by=mod_metadata["modified_by"],
-            modified_from_ip=mod_metadata["modified_from_ip"],
-            modified_via=mod_metadata["modified_via"],
-            modified_user_agent=mod_metadata["modified_user_agent"],
-        )
+        await prompt_service.update_prompt(db, name, prompt)
 
         root_path = request.scope.get("root_path", "")
         is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
@@ -6793,18 +6505,18 @@ async def admin_edit_prompt(
         )
     except Exception as ex:
         if isinstance(ex, ValidationError):
-            LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
+            if logger: logger.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             error_message = ErrorFormatter.format_database_error(ex)
-            LOGGER.error(f"IntegrityError in admin_edit_prompt: {error_message}")
+            if logger: logger.error(f"IntegrityError in admin_edit_prompt: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-        LOGGER.error(f"Error in admin_edit_prompt: {ex}")
+        if logger: logger.error(f"Error in admin_edit_prompt: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/prompts/{name}/delete")
-async def admin_delete_prompt(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_prompt(name: str, request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a prompt via the admin UI.
 
@@ -6830,7 +6542,7 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([("is_inactive_checked", "false")])
         >>> mock_request.form = AsyncMock(return_value=form_data)
@@ -6858,7 +6570,7 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
         True
         >>> prompt_service.delete_prompt = original_delete_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting prompt name {name}")
+    if logger: logger.debug(f"User {user} is deleting prompt name {name}")
     await prompt_service.delete_prompt(db, name)
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
@@ -6873,7 +6585,7 @@ async def admin_toggle_prompt(
     prompt_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> RedirectResponse:
     """
     Toggle a prompt's active status via the admin UI.
@@ -6901,7 +6613,7 @@ async def admin_toggle_prompt(
         >>> from starlette.datastructures import FormData
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([
         ...     ("activate", "true"),
@@ -6964,14 +6676,14 @@ async def admin_toggle_prompt(
         True
         >>> prompt_service.toggle_prompt_status = original_toggle_prompt_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling prompt ID {prompt_id}")
+    if logger: logger.debug(f"User {user} is toggling prompt ID {prompt_id}")
     form = await request.form()
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
         await prompt_service.toggle_prompt_status(db, prompt_id, activate)
     except Exception as e:
-        LOGGER.error(f"Error toggling prompt status: {e}")
+        if logger: logger.error(f"Error toggling prompt status: {e}")
 
     root_path = request.scope.get("root_path", "")
     if is_inactive_checked.lower() == "true":
@@ -6980,7 +6692,7 @@ async def admin_toggle_prompt(
 
 
 @admin_router.post("/roots")
-async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_add_root(request: Request, user: str = Depends(require_auth)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
@@ -7001,8 +6713,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> from fastapi.responses import RedirectResponse
         >>> from starlette.datastructures import FormData
         >>>
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([
         ...     ("uri", "test://root1"),
@@ -7022,7 +6733,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         True
         >>> root_service.add_root = original_add_root
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new root")
+    if logger: logger.debug(f"User {user} is adding a new root")
     form = await request.form()
     uri = str(form["uri"])
     name_value = form.get("name")
@@ -7035,7 +6746,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 
 @admin_router.post("/roots/{uri:path}/delete")
-async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_delete_root(uri: str, request: Request, user: str = Depends(require_auth)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
 
@@ -7059,8 +6770,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         >>> from fastapi.responses import RedirectResponse
         >>> from starlette.datastructures import FormData
         >>>
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> mock_request = MagicMock(spec=Request)
         >>> form_data = FormData([("is_inactive_checked", "false")])
         >>> mock_request.form = AsyncMock(return_value=form_data)
@@ -7088,7 +6798,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         True
         >>> root_service.remove_root = original_remove_root
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting root URI {uri}")
+    if logger: logger.debug(f"User {user} is deleting root URI {uri}")
     await root_service.remove_root(uri)
     form = await request.form()
     root_path = request.scope.get("root_path", "")
@@ -7101,11 +6811,13 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
 # Metrics
 MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, PromptMetrics]]
 
+# Import the response time formatting function
+from mcpgateway.utils.metrics_common import format_response_time
 
 # @admin_router.get("/metrics", response_model=MetricsDict)
 # async def admin_get_metrics(
 #     db: Session = Depends(get_db),
-#     user=Depends(get_current_user_with_permissions),
+#     user: str = Depends(require_auth),
 # ) -> MetricsDict:
 #     """
 #     Retrieve aggregate metrics for all entity types via the admin UI.
@@ -7125,7 +6837,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 #         resources, servers, and prompts. Each value is a Pydantic model instance
 #         specific to the entity type.
 #     """
-#     LOGGER.debug(f"User {get_user_email(user)} requested aggregate metrics")
+#     if logger: logger.debug(f"User {user} requested aggregate metrics")
 #     tool_metrics = await tool_service.aggregate_metrics(db)
 #     resource_metrics = await resource_service.aggregate_metrics(db)
 #     server_metrics = await server_service.aggregate_metrics(db)
@@ -7143,7 +6855,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 @admin_router.get("/metrics")
 async def get_aggregated_metrics(
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_with_permissions),
+    _user: Union[str, Dict[str, Any]] = Depends(require_auth),
 ) -> Dict[str, Any]:
     """Retrieve aggregated metrics and top performers for all entity types.
 
@@ -7164,23 +6876,336 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
               and servers.
     """
+    # Get ALL entities with metrics for UI display (same logic as CSV export)
+    from sqlalchemy import func, case, Float
+    from sqlalchemy.sql import desc
+    from mcpgateway.db import Tool, ToolMetric, Resource, ResourceMetric, Prompt, PromptMetric, Server, ServerMetric
+    from mcpgateway.utils.metrics_common import build_top_performers
+    
+    # Get ALL tools (including those with 0 metrics)
+    tools_query = (
+        db.query(
+            Tool.id,
+            Tool.name,
+            func.coalesce(func.count(ToolMetric.id), 0).label("execution_count"),
+            func.avg(ToolMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(ToolMetric.id) > 0,
+                    func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(ToolMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(ToolMetric, Tool.id == ToolMetric.tool_id)
+        .group_by(Tool.id, Tool.name)
+        .order_by(desc("execution_count"), Tool.name)  # Order by exec count, then name
+    )
+    all_tools = build_top_performers(tools_query.all())
+    
+    # Get ALL resources
+    resources_query = (
+        db.query(
+            Resource.id,
+            Resource.uri.label("name"),
+            func.coalesce(func.count(ResourceMetric.id), 0).label("execution_count"),
+            func.avg(ResourceMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(ResourceMetric.id) > 0,
+                    func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(ResourceMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(ResourceMetric, Resource.id == ResourceMetric.resource_id)
+        .group_by(Resource.id, Resource.uri)
+        .order_by(desc("execution_count"), Resource.uri)
+    )
+    all_resources = build_top_performers(resources_query.all())
+    
+    # Get ALL prompts
+    prompts_query = (
+        db.query(
+            Prompt.id,
+            Prompt.name,
+            func.coalesce(func.count(PromptMetric.id), 0).label("execution_count"),
+            func.avg(PromptMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(PromptMetric.id) > 0,
+                    func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(PromptMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(PromptMetric, Prompt.id == PromptMetric.prompt_id)
+        .group_by(Prompt.id, Prompt.name)
+        .order_by(desc("execution_count"), Prompt.name)
+    )
+    all_prompts = build_top_performers(prompts_query.all())
+    
+    # Get ALL servers
+    servers_query = (
+        db.query(
+            Server.id,
+            Server.name,
+            func.coalesce(func.count(ServerMetric.id), 0).label("execution_count"),
+            func.avg(ServerMetric.response_time).label("avg_response_time"),
+            case(
+                (
+                    func.count(ServerMetric.id) > 0,
+                    func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,
+                ),
+                else_=None,
+            ).label("success_rate"),
+            func.max(ServerMetric.timestamp).label("last_execution"),
+        )
+        .outerjoin(ServerMetric, Server.id == ServerMetric.server_id)
+        .group_by(Server.id, Server.name)
+        .order_by(desc("execution_count"), Server.name)
+    )
+    all_servers = build_top_performers(servers_query.all())
+    
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
         "prompts": await prompt_service.aggregate_metrics(db),
         "servers": await server_service.aggregate_metrics(db),
         "topPerformers": {
-            "tools": await tool_service.get_top_tools(db, limit=5),
-            "resources": await resource_service.get_top_resources(db, limit=5),
-            "prompts": await prompt_service.get_top_prompts(db, limit=5),
-            "servers": await server_service.get_top_servers(db, limit=5),
+            "tools": all_tools,  # Now includes ALL tools
+            "resources": all_resources,  # Now includes ALL resources  
+            "prompts": all_prompts,  # Now includes ALL prompts
+            "servers": all_servers,  # Now includes ALL servers
         },
     }
     return metrics
 
 
+@admin_router.get("/metrics/export", response_class=Response)
+async def export_metrics_csv(
+    db: Session = Depends(get_db),
+    entity_type: str = Query(..., description="Entity type to export (tools, resources, prompts, servers)"),
+    limit: Optional[int] = Query(None, description="Maximum number of results to return. If not provided, all results are returned."),
+    user: str = Depends(require_auth),
+) -> Response:
+    """Export metrics for a specific entity type to CSV format.
+
+    This endpoint retrieves ALL entities of the specified type from the database and
+    exports them to CSV format with their performance metrics for download. 
+    Entities without metrics will show 0 executions and N/A for response times.
+    Response times are formatted to 3 decimal places.
+
+    Args:
+        db (Session): Database session dependency for querying metrics.
+        entity_type (str): Type of entity to export (tools, resources, prompts, servers).
+        limit (Optional[int]): Maximum number of results to return. If None, all results are returned.
+        user (str): Authenticated user.
+
+    Returns:
+        Response: CSV file download response containing the metrics data for ALL entities.
+        
+    Raises:
+        HTTPException: If the entity type is invalid.
+    """
+    if logger: logger.debug(f"User {user} requested CSV export of {entity_type} metrics")
+    
+    # Validate entity type
+    valid_types = ["tools", "resources", "prompts", "servers"]
+    if entity_type not in valid_types:
+        raise HTTPException(status_code=400, detail=f"Invalid entity type. Must be one of: {', '.join(valid_types)}")
+    
+    # Get ALL entities with their metrics data for CSV export (including those with 0 executions)
+    try:
+        if entity_type == "tools":
+            # Import required SQLAlchemy functions and models
+            from sqlalchemy import func, case, desc, Float
+            from mcpgateway.db import Tool, ToolMetric
+            from mcpgateway.utils.metrics_common import build_top_performers
+            
+            query = (
+                db.query(
+                    Tool.id,
+                    Tool.name,
+                    func.coalesce(func.count(ToolMetric.id), 0).label("execution_count"),
+                    func.avg(ToolMetric.response_time).label("avg_response_time"),
+                    case(
+                        (
+                            func.count(ToolMetric.id) > 0,
+                            func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,
+                        ),
+                        else_=None,
+                    ).label("success_rate"),
+                    func.max(ToolMetric.timestamp).label("last_execution"),
+                )
+                .outerjoin(ToolMetric, Tool.id == ToolMetric.tool_id)
+                .group_by(Tool.id, Tool.name)
+                .order_by(Tool.name)  # Order by name for consistent CSV output
+            )
+            
+            if limit is not None:
+                query = query.limit(limit)
+                
+            results = query.all()
+            performers = build_top_performers(results)
+            
+        elif entity_type == "resources":
+            from sqlalchemy import func, case, Float
+            from mcpgateway.db import Resource, ResourceMetric
+            from mcpgateway.utils.metrics_common import build_top_performers
+            
+            query = (
+                db.query(
+                    Resource.id,
+                    Resource.uri.label("name"),  # Use URI as name for resources
+                    func.coalesce(func.count(ResourceMetric.id), 0).label("execution_count"),
+                    func.avg(ResourceMetric.response_time).label("avg_response_time"),
+                    case(
+                        (
+                            func.count(ResourceMetric.id) > 0,
+                            func.sum(case((ResourceMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ResourceMetric.id) * 100,
+                        ),
+                        else_=None,
+                    ).label("success_rate"),
+                    func.max(ResourceMetric.timestamp).label("last_execution"),
+                )
+                .outerjoin(ResourceMetric, Resource.id == ResourceMetric.resource_id)
+                .group_by(Resource.id, Resource.uri)
+                .order_by(Resource.uri)
+            )
+            
+            if limit is not None:
+                query = query.limit(limit)
+                
+            results = query.all()
+            performers = build_top_performers(results)
+            
+        elif entity_type == "prompts":
+            from sqlalchemy import func, case, Float
+            from mcpgateway.db import Prompt, PromptMetric
+            from mcpgateway.utils.metrics_common import build_top_performers
+            
+            query = (
+                db.query(
+                    Prompt.id,
+                    Prompt.name,
+                    func.coalesce(func.count(PromptMetric.id), 0).label("execution_count"),
+                    func.avg(PromptMetric.response_time).label("avg_response_time"),
+                    case(
+                        (
+                            func.count(PromptMetric.id) > 0,
+                            func.sum(case((PromptMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(PromptMetric.id) * 100,
+                        ),
+                        else_=None,
+                    ).label("success_rate"),
+                    func.max(PromptMetric.timestamp).label("last_execution"),
+                )
+                .outerjoin(PromptMetric, Prompt.id == PromptMetric.prompt_id)
+                .group_by(Prompt.id, Prompt.name)
+                .order_by(Prompt.name)
+            )
+            
+            if limit is not None:
+                query = query.limit(limit)
+                
+            results = query.all()
+            performers = build_top_performers(results)
+            
+        elif entity_type == "servers":
+            from sqlalchemy import func, case, Float
+            from mcpgateway.db import Server, ServerMetric
+            from mcpgateway.utils.metrics_common import build_top_performers
+            
+            query = (
+                db.query(
+                    Server.id,
+                    Server.name,
+                    func.coalesce(func.count(ServerMetric.id), 0).label("execution_count"),
+                    func.avg(ServerMetric.response_time).label("avg_response_time"),
+                    case(
+                        (
+                            func.count(ServerMetric.id) > 0,
+                            func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ServerMetric.id) * 100,
+                        ),
+                        else_=None,
+                    ).label("success_rate"),
+                    func.max(ServerMetric.timestamp).label("last_execution"),
+                )
+                .outerjoin(ServerMetric, Server.id == ServerMetric.server_id)
+                .group_by(Server.id, Server.name)
+                .order_by(Server.name)
+            )
+            
+            if limit is not None:
+                query = query.limit(limit)
+                
+            results = query.all()
+            performers = build_top_performers(results)
+    except Exception as e:
+        if logger: logger.error(f"Error exporting {entity_type} metrics to CSV: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to export metrics: {str(e)}")
+    
+    # Handle empty data case
+    if not performers:
+        # Return empty CSV with headers
+        csv_content = "ID,Name,Execution Count,Average Response Time (s),Success Rate (%),Last Execution\n"
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
+        )
+    
+    # Create CSV content
+    output = StringIO()
+    writer = csv.writer(output)
+    
+    # Write header row
+    writer.writerow([
+        "ID", 
+        "Name", 
+        "Execution Count", 
+        "Average Response Time (s)", 
+        "Success Rate (%)", 
+        "Last Execution"
+    ])
+    
+    # Write data rows with formatted values
+    for performer in performers:
+        # Format response time to 3 decimal places
+        formatted_response_time = format_response_time(performer.avg_response_time) if performer.avg_response_time is not None else "N/A"
+        
+        # Format success rate
+        success_rate = f"{performer.success_rate:.1f}" if performer.success_rate is not None else "N/A"
+        
+        # Format timestamp
+        last_execution = performer.last_execution.isoformat() if performer.last_execution else "N/A"
+        
+        writer.writerow([
+            performer.id,
+            performer.name,
+            performer.execution_count,
+            formatted_response_time,
+            success_rate,
+            last_execution
+        ])
+    
+    # Get the CSV content as a string
+    csv_content = output.getvalue()
+    output.close()
+    
+    # Return CSV response
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={entity_type}_metrics.csv"}
+    )
+
+
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
-async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
+async def admin_reset_metrics(db: Session = Depends(get_db), user: str = Depends(require_auth)) -> Dict[str, object]:
     """
     Reset all metrics for tools, resources, servers, and prompts.
     Each service must implement its own reset_metrics method.
@@ -7197,7 +7222,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
         >>> from unittest.mock import AsyncMock, MagicMock
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>>
         >>> original_reset_metrics_tool = tool_service.reset_metrics
         >>> original_reset_metrics_resource = resource_service.reset_metrics
@@ -7221,7 +7246,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
         >>> server_service.reset_metrics = original_reset_metrics_server
         >>> prompt_service.reset_metrics = original_reset_metrics_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested to reset all metrics")
+    if logger: logger.debug(f"User {user} requested to reset all metrics")
     await tool_service.reset_metrics(db)
     await resource_service.reset_metrics(db)
     await server_service.reset_metrics(db)
@@ -7230,7 +7255,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_current_user_with_permissions)) -> GatewayTestResponse:
+async def admin_test_gateway(request: GatewayTestRequest, user: str = Depends(require_auth)) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
     This endpoint allows administrators to test the connectivity and response
@@ -7249,8 +7274,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_curre
         >>> from fastapi import Request
         >>> import httpx
         >>>
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = "test_user"
         >>> mock_request = GatewayTestRequest(
         ...     base_url="https://api.example.com",
         ...     path="/test",
@@ -7371,9 +7395,9 @@ async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_curre
     """
     full_url = str(request.base_url).rstrip("/") + "/" + request.path.lstrip("/")
     full_url = full_url.rstrip("/")
-    LOGGER.debug(f"User {get_user_email(user)} testing server at {request.base_url}.")
-    start_time: float = time.monotonic()
+    if logger: logger.debug(f"User {user} testing server at {request.base_url}.")
     try:
+        start_time: float = time.monotonic()
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
             response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
         latency_ms = int((time.monotonic() - start_time) * 1000)
@@ -7385,7 +7409,7 @@ async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_curre
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
-        LOGGER.warning(f"Gateway test failed: {e}")
+        if logger: logger.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
@@ -7400,7 +7424,7 @@ async def admin_list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> List[Dict[str, Any]]:
     """
     List all unique tags with statistics for the admin UI.
@@ -7436,7 +7460,7 @@ async def admin_list_tags(
     if entity_types:
         entity_types_list = [et.strip().lower() for et in entity_types.split(",") if et.strip()]
 
-    LOGGER.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
+    if logger: logger.debug(f"Admin user {user} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
         tags = await tag_service.get_all_tags(db, entity_types=entity_types_list, include_entities=include_entities)
@@ -7470,7 +7494,7 @@ async def admin_list_tags(
 
         return result
     except Exception as e:
-        LOGGER.error(f"Failed to retrieve tags for admin: {str(e)}")
+        if logger: logger.error(f"Failed to retrieve tags for admin: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve tags: {str(e)}")
 
 
@@ -7480,7 +7504,7 @@ async def admin_list_tags(
 async def admin_import_tools(
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> JSONResponse:
     """Bulk import multiple tools in a single request.
 
@@ -7500,10 +7524,10 @@ async def admin_import_tools(
     """
     # Check if bulk import is enabled
     if not settings.mcpgateway_bulk_import_enabled:
-        LOGGER.warning("Bulk import attempted but feature is disabled")
+        if logger: logger.warning("Bulk import attempted but feature is disabled")
         raise HTTPException(status_code=403, detail="Bulk import feature is disabled. Enable MCPGATEWAY_BULK_IMPORT_ENABLED to use this endpoint.")
 
-    LOGGER.debug("bulk tool import: user=%s", user)
+    if logger: logger.debug("bulk tool import: user=%s", user)
     try:
         # ---------- robust payload parsing ----------
         ctype = (request.headers.get("content-type") or "").lower()
@@ -7511,36 +7535,35 @@ async def admin_import_tools(
             try:
                 payload = await request.json()
             except Exception as ex:
-                LOGGER.exception("Invalid JSON body")
+                logger.exception("Invalid JSON body")
                 return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
         else:
             try:
                 form = await request.form()
             except Exception as ex:
-                LOGGER.exception("Invalid form body")
+                logger.exception("Invalid form body")
                 return JSONResponse({"success": False, "message": f"Invalid form data: {ex}"}, status_code=422)
             # Check for file upload first
             if "tools_file" in form:
                 file = form["tools_file"]
-                if isinstance(file, StarletteUploadFile):
+                if hasattr(file, "file"):
                     content = await file.read()
                     try:
                         payload = json.loads(content.decode("utf-8"))
                     except (json.JSONDecodeError, UnicodeDecodeError) as ex:
-                        LOGGER.exception("Invalid JSON file")
+                        logger.exception("Invalid JSON file")
                         return JSONResponse({"success": False, "message": f"Invalid JSON file: {ex}"}, status_code=422)
                 else:
                     return JSONResponse({"success": False, "message": "Invalid file upload"}, status_code=422)
             else:
                 # Check for JSON in form fields
-                raw_val = form.get("tools") or form.get("tools_json") or form.get("json") or form.get("payload")
-                raw = raw_val if isinstance(raw_val, str) else None
+                raw = form.get("tools") or form.get("tools_json") or form.get("json") or form.get("payload")
                 if not raw:
                     return JSONResponse({"success": False, "message": "Missing tools/tools_json/json/payload form field."}, status_code=422)
                 try:
                     payload = json.loads(raw)
                 except Exception as ex:
-                    LOGGER.exception("Invalid JSON in form field")
+                    logger.exception("Invalid JSON in form field")
                     return JSONResponse({"success": False, "message": f"Invalid JSON: {ex}"}, status_code=422)
 
         if not isinstance(payload, list):
@@ -7590,7 +7613,7 @@ async def admin_import_tools(
             except ToolError as ex:
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
             except Exception as ex:
-                LOGGER.exception("Unexpected error importing tool %r at index %d", name, i)
+                logger.exception("Unexpected error importing tool %r at index %d", name, i)
                 errors.append({"index": i, "name": name, "error": {"message": str(ex)}})
 
         # Format response to match both frontend and test expectations
@@ -7612,11 +7635,10 @@ async def admin_import_tools(
             },
         }
 
-        rd = cast(Dict[str, Any], response_data)
         if len(errors) == 0:
-            rd["message"] = f"Successfully imported all {len(created)} tools"
+            response_data["message"] = f"Successfully imported all {len(created)} tools"
         else:
-            rd["message"] = f"Imported {len(created)} of {len(payload)} tools. {len(errors)} failed."
+            response_data["message"] = f"Imported {len(created)} of {len(payload)} tools. {len(errors)} failed."
 
         return JSONResponse(
             response_data,
@@ -7628,7 +7650,7 @@ async def admin_import_tools(
         raise
     except Exception as ex:
         # absolute catch-all: report instead of crashing
-        LOGGER.exception("Fatal error in admin_import_tools")
+        logger.exception("Fatal error in admin_import_tools")
         return JSONResponse({"success": False, "message": str(ex)}, status_code=500)
 
 
@@ -7649,7 +7671,7 @@ async def admin_get_logs(
     limit: int = 100,
     offset: int = 0,
     order: str = "desc",
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> Dict[str, Any]:
     """Get filtered log entries from the in-memory buffer.
 
@@ -7673,7 +7695,7 @@ async def admin_get_logs(
         HTTPException: If validation fails or service unavailable
     """
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = logging_service.get_storage()
     if not storage:
         return {"logs": [], "total": 0, "stats": {}}
 
@@ -7733,7 +7755,7 @@ async def admin_stream_logs(
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ):
     """Stream real-time log updates via Server-Sent Events.
 
@@ -7751,7 +7773,7 @@ async def admin_stream_logs(
         HTTPException: If log level is invalid or service unavailable
     """
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = logging_service.get_storage()
     if not storage:
         raise HTTPException(503, "Log storage not available")
 
@@ -7800,7 +7822,7 @@ async def admin_stream_logs(
                 yield f"data: {json.dumps(event)}\n\n"
 
         except Exception as e:
-            LOGGER.error(f"Error in log streaming: {e}")
+            if logger: logger.error(f"Error in log streaming: {e}")
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
 
     return StreamingResponse(
@@ -7816,7 +7838,7 @@ async def admin_stream_logs(
 @admin_router.get("/logs/file")
 async def admin_get_log_file(
     filename: Optional[str] = None,
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ):
     """Download log file.
 
@@ -7858,21 +7880,12 @@ async def admin_get_log_file(
         if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
             raise HTTPException(403, "Not a log file")
 
-        # Return file for download using Response with file content
-        try:
-            with open(file_path, "rb") as f:
-                file_content = f.read()
-
-            return Response(
-                content=file_content,
-                media_type="application/octet-stream",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{file_path.name}"',
-                },
-            )
-        except Exception as e:
-            LOGGER.error(f"Error reading file for download: {e}")
-            raise HTTPException(500, f"Error reading file for download: {e}")
+        # Return file for download
+        return FileResponse(
+            path=file_path,
+            filename=file_path.name,
+            media_type="application/octet-stream",
+        )
 
     # List available log files
     log_files = []
@@ -7895,7 +7908,7 @@ async def admin_get_log_file(
             if settings.log_rotation_enabled:
                 pattern = f"{Path(settings.log_file).stem}.*"
                 for file in log_dir.glob(pattern):
-                    if file.is_file() and file.name != main_log.name:  # Exclude main log file
+                    if file.is_file():
                         stat = file.stat()
                         log_files.append(
                             {
@@ -7923,7 +7936,7 @@ async def admin_get_log_file(
         log_files.sort(key=lambda x: x["modified"], reverse=True)
 
     except Exception as e:
-        LOGGER.error(f"Error listing log files: {e}")
+        if logger: logger.error(f"Error listing log files: {e}")
         raise HTTPException(500, f"Error listing log files: {e}")
 
     return {
@@ -7935,7 +7948,7 @@ async def admin_get_log_file(
 
 @admin_router.get("/logs/export")
 async def admin_export_logs(
-    export_format: str = Query("json", alias="format"),
+    export_format: str = "json",
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
     level: Optional[str] = None,
@@ -7943,7 +7956,7 @@ async def admin_export_logs(
     end_time: Optional[str] = None,
     request_id: Optional[str] = None,
     search: Optional[str] = None,
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ):
     """Export filtered logs in JSON or CSV format.
 
@@ -7970,7 +7983,7 @@ async def admin_export_logs(
         raise HTTPException(400, f"Invalid format: {export_format}. Use 'json' or 'csv'")
 
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = logging_service.get_storage()
     if not storage:
         raise HTTPException(503, "Log storage not available")
 
@@ -8064,20 +8077,18 @@ async def admin_export_logs(
 
 @admin_router.get("/export/configuration")
 async def admin_export_configuration(
-    request: Request,
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
     tags: Optional[str] = None,
     include_inactive: bool = False,
     include_dependencies: bool = True,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ):
     """
     Export gateway configuration via Admin UI.
 
     Args:
-        request: FastAPI request object for extracting root path
         types: Comma-separated entity types to include
         exclude_types: Comma-separated entity types to exclude
         tags: Comma-separated tags to filter by
@@ -8093,7 +8104,7 @@ async def admin_export_configuration(
         HTTPException: If export fails
     """
     try:
-        LOGGER.info(f"Admin user {user} requested configuration export")
+        if logger: logger.info(f"Admin user {user} requested configuration export")
 
         # Parse parameters
         include_types = None
@@ -8111,19 +8122,9 @@ async def admin_export_configuration(
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
-
         # Perform export
         export_data = await export_service.export_configuration(
-            db=db,
-            include_types=include_types,
-            exclude_types=exclude_types_list,
-            tags=tags_list,
-            include_inactive=include_inactive,
-            include_dependencies=include_dependencies,
-            exported_by=username,
-            root_path=root_path,
+            db=db, include_types=include_types, exclude_types=exclude_types_list, tags=tags_list, include_inactive=include_inactive, include_dependencies=include_dependencies, exported_by=username
         )
 
         # Generate filename
@@ -8141,15 +8142,15 @@ async def admin_export_configuration(
         )
 
     except ExportError as e:
-        LOGGER.error(f"Admin export failed for user {user}: {str(e)}")
+        if logger: logger.error(f"Admin export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Unexpected admin export error for user {user}: {str(e)}")
+        if logger: logger.error(f"Unexpected admin export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
 @admin_router.post("/export/selective")
-async def admin_export_selective(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def admin_export_selective(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
     """
     Export selected entities via Admin UI with entity selection.
 
@@ -8174,7 +8175,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
     }
     """
     try:
-        LOGGER.info(f"Admin user {user} requested selective configuration export")
+        if logger: logger.info(f"Admin user {user} requested selective configuration export")
 
         body = await request.json()
         entity_selections = body.get("entity_selections", {})
@@ -8201,68 +8202,15 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         )
 
     except ExportError as e:
-        LOGGER.error(f"Admin selective export failed for user {user}: {str(e)}")
+        if logger: logger.error(f"Admin selective export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
+        if logger: logger.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
-@admin_router.post("/import/preview")
-async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """
-    Preview import file to show available items for selective import.
-
-    Args:
-        request: FastAPI request object with import file data
-        db: Database session
-        user: Authenticated user
-
-    Returns:
-        JSON response with categorized import preview data
-
-    Raises:
-        HTTPException: 400 for invalid JSON or missing data field, validation errors;
-                      500 for unexpected preview failures
-
-    Expects JSON body:
-    {
-        "data": { ... }  // The import file content
-    }
-    """
-    try:
-        LOGGER.info(f"Admin import preview requested by user: {user}")
-
-        # Parse request data
-        try:
-            data = await request.json()
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-
-        # Extract import data
-        import_data = data.get("data")
-        if not import_data:
-            raise HTTPException(status_code=400, detail="Missing 'data' field with import content")
-
-        # Validate user permissions for import preview
-        username = user if isinstance(user, str) else user.get("username", "unknown")
-        LOGGER.info(f"Processing import preview for user: {username}")
-
-        # Generate preview
-        preview_data = await import_service.preview_import(db=db, import_data=import_data)
-
-        return JSONResponse(content={"success": True, "preview": preview_data, "message": f"Import preview generated. Found {preview_data['summary']['total_items']} total items."})
-
-    except ImportValidationError as e:
-        LOGGER.error(f"Import validation failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Invalid import data: {str(e)}")
-    except Exception as e:
-        LOGGER.error(f"Import preview failed for user {user}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
-
-
 @admin_router.post("/import/configuration")
-async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user: str = Depends(require_auth)):
     """
     Import configuration via Admin UI.
 
@@ -8287,7 +8235,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
     }
     """
     try:
-        LOGGER.info(f"Admin user {user} requested configuration import")
+        if logger: logger.info(f"Admin user {user} requested configuration import")
 
         body = await request.json()
         import_data = body.get("import_data")
@@ -8303,8 +8251,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         try:
             conflict_strategy = ConflictStrategy(conflict_strategy_str.lower())
         except ValueError:
-            allowed = [s.value for s in ConflictStrategy.__members__.values()]
-            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {allowed}")
+            raise HTTPException(status_code=400, detail=f"Invalid conflict strategy. Must be one of: {[s.value for s in ConflictStrategy]}")
 
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
@@ -8317,15 +8264,15 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         return JSONResponse(content=status.to_dict())
 
     except ImportServiceError as e:
-        LOGGER.error(f"Admin import failed for user {user}: {str(e)}")
+        if logger: logger.error(f"Admin import failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Unexpected admin import error for user {user}: {str(e)}")
+        if logger: logger.error(f"Unexpected admin import error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Import failed: {str(e)}")
 
 
 @admin_router.get("/import/status/{import_id}")
-async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)):
+async def admin_get_import_status(import_id: str, user: str = Depends(require_auth)):
     """Get import status via Admin UI.
 
     Args:
@@ -8338,7 +8285,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
     Raises:
         HTTPException: If import not found
     """
-    LOGGER.debug(f"Admin user {user} requested import status for {import_id}")
+    if logger: logger.debug(f"Admin user {user} requested import status for {import_id}")
 
     status = import_service.get_import_status(import_id)
     if not status:
@@ -8348,7 +8295,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
 
 
 @admin_router.get("/import/status")
-async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions)):
+async def admin_list_import_statuses(user: str = Depends(require_auth)):
     """List all import statuses via Admin UI.
 
     Args:
@@ -8357,7 +8304,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
     Returns:
         JSON response with list of import statuses
     """
-    LOGGER.debug(f"Admin user {user} requested all import statuses")
+    if logger: logger.debug(f"Admin user {user} requested all import statuses")
 
     statuses = import_service.list_import_statuses()
     return JSONResponse(content=[status.to_dict() for status in statuses])
@@ -8373,7 +8320,7 @@ async def admin_list_a2a_agents(
     include_inactive: bool = False,
     tags: Optional[str] = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user: str = Depends(require_auth),
 ) -> HTMLResponse:
     """List A2A agents for admin UI.
 
@@ -8396,7 +8343,7 @@ async def admin_list_a2a_agents(
     if tags:
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-    LOGGER.debug(f"Admin user {user} requested A2A agent list with tags={tags_list}")
+    if logger: logger.debug(f"Admin user {user} requested A2A agent list with tags={tags_list}")
     agents = await a2a_service.list_agents(db, include_inactive=include_inactive, tags=tags_list)
 
     # Convert to template format
@@ -8432,7 +8379,7 @@ async def admin_list_a2a_agents(
         # Generate tags HTML separately
         tags_html = ""
         if agent["tags"]:
-            tag_spans: List[Any] = []
+            tag_spans = []
             for tag in agent["tags"]:
                 tag_spans.append(f'<span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">{tag}</span>')
             tags_html = f'<div class="mt-2 flex flex-wrap gap-1">{" ".join(tag_spans)}</div>'
@@ -8506,8 +8453,8 @@ async def admin_list_a2a_agents(
 async def admin_add_a2a_agent(
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> Response:
+    user: str = Depends(require_auth),
+) -> RedirectResponse:
     """Add a new A2A agent via admin UI.
 
     Args:
@@ -8516,24 +8463,23 @@ async def admin_add_a2a_agent(
         user: Authenticated user
 
     Returns:
-        Response with success/error status
+        HTML response with success/error status
 
     Raises:
         HTTPException: If A2A features are disabled
     """
-    LOGGER.info(f"A2A agent creation request from user {user}")
+    if logger: logger.info(f"A2A agent creation request from user {user}")
 
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
+        if logger: logger.warning("A2A agent creation attempted but A2A features are disabled")
         return HTMLResponse(content='<div class="text-red-500">A2A features are disabled</div>', status_code=403)
 
     try:
         form = await request.form()
-        LOGGER.info(f"A2A agent creation form data: {dict(form)}")
+        if logger: logger.info(f"A2A agent creation form data: {dict(form)}")
 
         # Process tags
-        ts_val = form.get("tags", "")
-        tags_str = ts_val if isinstance(ts_val, str) else ""
+        tags_str = form.get("tags", "")
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
         agent_data = A2AAgentCreate(
@@ -8546,7 +8492,7 @@ async def admin_add_a2a_agent(
             tags=tags,
         )
 
-        LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
+        if logger: logger.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
 
         # Extract metadata from request
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -8567,19 +8513,19 @@ async def admin_add_a2a_agent(
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except A2AAgentNameConflictError as e:
-        LOGGER.error(f"A2A agent name conflict: {e}")
+        if logger: logger.error(f"A2A agent name conflict: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
     except A2AAgentError as e:
-        LOGGER.error(f"A2A agent error: {e}")
+        if logger: logger.error(f"A2A agent error: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
     except ValidationError as e:
-        LOGGER.error(f"Validation error while creating A2A agent: {e}")
+        if logger: logger.error(f"Validation error while creating A2A agent: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
     except Exception as e:
-        LOGGER.error(f"Error creating A2A agent: {e}")
+        if logger: logger.error(f"Error creating A2A agent: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
@@ -8589,7 +8535,7 @@ async def admin_toggle_a2a_agent(
     agent_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> RedirectResponse:
     """Toggle A2A agent status via admin UI.
 
@@ -8611,19 +8557,18 @@ async def admin_toggle_a2a_agent(
 
     try:
         form = await request.form()
-        act_val = form.get("activate", "false")
-        activate = act_val.lower() == "true" if isinstance(act_val, str) else False
+        activate = form.get("activate", "false").lower() == "true"
 
         await a2a_service.toggle_agent_status(db, agent_id, activate)
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except A2AAgentNotFoundError as e:
-        LOGGER.error(f"A2A agent toggle failed - not found: {e}")
+        if logger: logger.error(f"A2A agent toggle failed - not found: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
     except Exception as e:
-        LOGGER.error(f"Error toggling A2A agent: {e}")
+        if logger: logger.error(f"Error toggling A2A agent: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
@@ -8633,7 +8578,7 @@ async def admin_delete_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> RedirectResponse:
     """Delete A2A agent via admin UI.
 
@@ -8659,11 +8604,11 @@ async def admin_delete_a2a_agent(
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except A2AAgentNotFoundError as e:
-        LOGGER.error(f"A2A agent delete failed - not found: {e}")
+        if logger: logger.error(f"A2A agent delete failed - not found: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
     except Exception as e:
-        LOGGER.error(f"Error deleting A2A agent: {e}")
+        if logger: logger.error(f"Error deleting A2A agent: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
@@ -8673,7 +8618,7 @@ async def admin_test_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+    user: str = Depends(require_auth),  # pylint: disable=unused-argument
 ) -> JSONResponse:
     """Test A2A agent via admin UI.
 
@@ -8713,280 +8658,5 @@ async def admin_test_a2a_agent(
         return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
     except Exception as e:
-        LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
+        if logger: logger.error(f"Error testing A2A agent {agent_id}: {e}")
         return JSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
-
-
-# Team-scoped resource section endpoints
-@admin_router.get("/sections/tools")
-@require_permission("admin")
-async def get_tools_section(
-    team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Get tools data filtered by team.
-
-    Args:
-        team_id: Optional team ID to filter by
-        db: Database session
-        user: Current authenticated user context
-
-    Returns:
-        JSONResponse: Tools data with team filtering applied
-    """
-    try:
-        local_tool_service = ToolService()
-        user_email = get_user_email(user)
-
-        # Get team-filtered tools
-        tools_list = await local_tool_service.list_tools_for_user(db, user_email, team_id=team_id, include_inactive=True)
-
-        # Convert to JSON-serializable format
-        tools = []
-        for tool in tools_list:
-            tool_dict = (
-                tool.model_dump(by_alias=True)
-                if hasattr(tool, "model_dump")
-                else {
-                    "id": tool.id,
-                    "name": tool.name,
-                    "description": tool.description,
-                    "tags": tool.tags or [],
-                    "isActive": getattr(tool, "enabled", False),
-                    "team_id": getattr(tool, "team_id", None),
-                    "visibility": getattr(tool, "visibility", "private"),
-                }
-            )
-            tools.append(tool_dict)
-
-        return JSONResponse(content=jsonable_encoder({"tools": tools, "team_id": team_id}))
-
-    except Exception as e:
-        LOGGER.error(f"Error loading tools section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-@admin_router.get("/sections/resources")
-@require_permission("admin")
-async def get_resources_section(
-    team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Get resources data filtered by team.
-
-    Args:
-        team_id: Optional team ID to filter by
-        db: Database session
-        user: Current authenticated user context
-
-    Returns:
-        JSONResponse: Resources data with team filtering applied
-    """
-    try:
-        local_resource_service = ResourceService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}")
-
-        # Get all resources and filter by team
-        resources_list = await local_resource_service.list_resources(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            resources_list = [r for r in resources_list if getattr(r, "team_id", None) == team_id]
-
-        # Convert to JSON-serializable format
-        resources = []
-        for resource in resources_list:
-            resource_dict = (
-                resource.model_dump(by_alias=True)
-                if hasattr(resource, "model_dump")
-                else {
-                    "id": resource.id,
-                    "name": resource.name,
-                    "description": resource.description,
-                    "uri": resource.uri,
-                    "tags": resource.tags or [],
-                    "isActive": resource.is_active,
-                    "team_id": getattr(resource, "team_id", None),
-                    "visibility": getattr(resource, "visibility", "private"),
-                }
-            )
-            resources.append(resource_dict)
-
-        return JSONResponse(content={"resources": resources, "team_id": team_id})
-
-    except Exception as e:
-        LOGGER.error(f"Error loading resources section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-@admin_router.get("/sections/prompts")
-@require_permission("admin")
-async def get_prompts_section(
-    team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Get prompts data filtered by team.
-
-    Args:
-        team_id: Optional team ID to filter by
-        db: Database session
-        user: Current authenticated user context
-
-    Returns:
-        JSONResponse: Prompts data with team filtering applied
-    """
-    try:
-        local_prompt_service = PromptService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}")
-
-        # Get all prompts and filter by team
-        prompts_list = await local_prompt_service.list_prompts(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            prompts_list = [p for p in prompts_list if getattr(p, "team_id", None) == team_id]
-
-        # Convert to JSON-serializable format
-        prompts = []
-        for prompt in prompts_list:
-            prompt_dict = (
-                prompt.model_dump(by_alias=True)
-                if hasattr(prompt, "model_dump")
-                else {
-                    "id": prompt.id,
-                    "name": prompt.name,
-                    "description": prompt.description,
-                    "arguments": prompt.arguments or [],
-                    "tags": prompt.tags or [],
-                    "isActive": prompt.is_active,
-                    "team_id": getattr(prompt, "team_id", None),
-                    "visibility": getattr(prompt, "visibility", "private"),
-                }
-            )
-            prompts.append(prompt_dict)
-
-        return JSONResponse(content={"prompts": prompts, "team_id": team_id})
-
-    except Exception as e:
-        LOGGER.error(f"Error loading prompts section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-@admin_router.get("/sections/servers")
-@require_permission("admin")
-async def get_servers_section(
-    team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Get servers data filtered by team.
-
-    Args:
-        team_id: Optional team ID to filter by
-        db: Database session
-        user: Current authenticated user context
-
-    Returns:
-        JSONResponse: Servers data with team filtering applied
-    """
-    try:
-        local_server_service = ServerService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}")
-
-        # Get all servers and filter by team
-        servers_list = await local_server_service.list_servers(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            servers_list = [s for s in servers_list if getattr(s, "team_id", None) == team_id]
-
-        # Convert to JSON-serializable format
-        servers = []
-        for server in servers_list:
-            server_dict = (
-                server.model_dump(by_alias=True)
-                if hasattr(server, "model_dump")
-                else {
-                    "id": server.id,
-                    "name": server.name,
-                    "description": server.description,
-                    "tags": server.tags or [],
-                    "isActive": server.is_active,
-                    "team_id": getattr(server, "team_id", None),
-                    "visibility": getattr(server, "visibility", "private"),
-                }
-            )
-            servers.append(server_dict)
-
-        return JSONResponse(content={"servers": servers, "team_id": team_id})
-
-    except Exception as e:
-        LOGGER.error(f"Error loading servers section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
-
-
-@admin_router.get("/sections/gateways")
-@require_permission("admin")
-async def get_gateways_section(
-    team_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Get gateways data filtered by team.
-
-    Args:
-        team_id: Optional team ID to filter by
-        db: Database session
-        user: Current authenticated user context
-
-    Returns:
-        JSONResponse: Gateways data with team filtering applied
-    """
-    try:
-        local_gateway_service = GatewayService()
-        get_user_email(user)
-
-        # Get all gateways and filter by team
-        gateways_list = await local_gateway_service.list_gateways(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            gateways_list = [g for g in gateways_list if g.team_id == team_id]
-
-        # Convert to JSON-serializable format
-        gateways = []
-        for gateway in gateways_list:
-            if hasattr(gateway, "model_dump"):
-                # Get dict and serialize datetime objects
-                gateway_dict = gateway.model_dump(by_alias=True)
-                # Convert datetime objects to strings
-                for key, value in gateway_dict.items():
-                    gateway_dict[key] = serialize_datetime(value)
-            else:
-                # Parse URL to extract host and port
-                parsed_url = urllib.parse.urlparse(gateway.url) if gateway.url else None
-                gateway_dict = {
-                    "id": gateway.id,
-                    "name": gateway.name,
-                    "host": parsed_url.hostname if parsed_url else "",
-                    "port": parsed_url.port if parsed_url else 80,
-                    "tags": gateway.tags or [],
-                    "isActive": getattr(gateway, "enabled", False),
-                    "team_id": getattr(gateway, "team_id", None),
-                    "visibility": getattr(gateway, "visibility", "private"),
-                    "created_at": serialize_datetime(getattr(gateway, "created_at", None)),
-                    "updated_at": serialize_datetime(getattr(gateway, "updated_at", None)),
-                }
-            gateways.append(gateway_dict)
-
-        return JSONResponse(content={"gateways": gateways, "team_id": team_id})
-
-    except Exception as e:
-        LOGGER.error(f"Error loading gateways section: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)

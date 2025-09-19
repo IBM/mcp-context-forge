@@ -29,7 +29,6 @@ from mcpgateway.plugins.framework import (
     PluginMode,
     PluginResult,
     PluginViolation,
-    PluginViolationError,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ToolPostInvokePayload,
@@ -151,17 +150,6 @@ async def test_manager_exception_handling():
         result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
         # Should continue in permissive mode
-        assert result.continue_processing
-        assert result.violation is None
-
-    plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
-        plugin_ref = PluginRef(error_plugin)
-        mock_get.return_value = [plugin_ref]
-
-        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
-
-        # Should continue in enforce_ignore_error mode
         assert result.continue_processing
         assert result.violation is None
 
@@ -417,12 +405,6 @@ async def test_manager_plugin_blocking():
         assert result.violation.code == "CONTENT_BLOCKED"
         assert result.violation.plugin_name == "BlockingPlugin"
 
-        with pytest.raises(PluginViolationError) as pve:
-            result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context, violations_as_exceptions=True)
-        assert pve.value.violation
-        assert pve.value.message
-        assert pve.value.violation.code == "CONTENT_BLOCKED"
-        assert pve.value.violation.plugin_name == "BlockingPlugin"
     await manager.shutdown()
 
 

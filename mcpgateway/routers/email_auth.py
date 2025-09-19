@@ -19,7 +19,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import Optional
+from typing import Any, Dict, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -104,7 +104,7 @@ def get_user_agent(request: Request) -> str:
     return request.headers.get("User-Agent", "unknown")
 
 
-async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None) -> tuple[str, int]:
+async def create_access_token(user: EmailUser, token_scopes: Optional[Dict[str, Any]] = None, jti: Optional[str] = None) -> tuple[str, int]:
     """Create JWT access token for user with enhanced scoping.
 
     Args:
@@ -584,7 +584,6 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
                 new_password=user_request.password,
                 ip_address="admin_update",
                 user_agent="admin_panel",
-                skip_old_password_check=True,
             )
 
         db.commit()

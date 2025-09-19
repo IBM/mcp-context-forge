@@ -241,7 +241,6 @@ log/
 
 # Certificates and secrets
 certs/
-jwt/
 *.pem
 *.key
 *.crt

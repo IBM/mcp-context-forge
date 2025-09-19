@@ -35,7 +35,7 @@ from typing import Any, Callable, Coroutine, Dict, Generic, Optional, Tuple, Typ
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin, PluginRef
-from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError, PluginViolationError
+from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.models import (
@@ -74,16 +74,7 @@ from mcpgateway.plugins.framework.utils import (
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
 
-T = TypeVar(
-    "T",
-    PromptPosthookPayload,
-    PromptPrehookPayload,
-    ResourcePostFetchPayload,
-    ResourcePreFetchPayload,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-)
-
+T = TypeVar("T")
 
 # Configuration constants
 DEFAULT_PLUGIN_TIMEOUT = 30  # seconds
@@ -140,7 +131,6 @@ class PluginExecutor(Generic[T]):
         plugin_run: Callable[[PluginRef, T, PluginContext], Coroutine[Any, Any, PluginResult[T]]],
         compare: Callable[[T, list[PluginCondition], GlobalContext], bool],
         local_contexts: Optional[PluginContextTable] = None,
-        violations_as_exceptions: bool = False,
     ) -> tuple[PluginResult[T], PluginContextTable | None]:
         """Execute plugins in priority order with timeout protection.
 
@@ -151,7 +141,6 @@ class PluginExecutor(Generic[T]):
             plugin_run: Async function to execute a specific plugin hook.
             compare: Function to check if plugin conditions match the current context.
             local_contexts: Optional existing contexts from previous hook executions.
-            violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
         Returns:
             A tuple containing:
@@ -161,7 +150,6 @@ class PluginExecutor(Generic[T]):
         Raises:
             PayloadSizeError: If the payload exceeds MAX_PAYLOAD_SIZE.
             PluginError: If there is an error inside a plugin.
-            PluginViolationError: If a violation occurs and violation_as_exceptions is set.
 
         Examples:
             >>> # Execute plugins with timeout protection
@@ -200,7 +188,6 @@ class PluginExecutor(Generic[T]):
                 tenant_id=global_context.tenant_id,
                 server_id=global_context.server_id,
                 state={} if not global_context.state else deepcopy(global_context.state),
-                metadata={} if not global_context.metadata else deepcopy(global_context.metadata),
             )
             # Get or create local context for this plugin
             local_context_key = global_context.request_id + pluginref.uuid
@@ -233,16 +220,6 @@ class PluginExecutor(Generic[T]):
                 if not result.continue_processing:
                     if pluginref.plugin.mode == PluginMode.ENFORCE:
                         logger.warning(f"Plugin {pluginref.plugin.name} blocked request in enforce mode")
-                        if violations_as_exceptions:
-                            if result.violation:
-                                plugin_name = result.violation.plugin_name
-                                violation_reason = result.violation.reason
-                                violation_desc = result.violation.description
-                                violation_code = result.violation.code
-                                raise PluginViolationError(
-                                    f"{plugin_run.__name__} blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", violation=result.violation
-                                )
-                            raise PluginViolationError(f"{plugin_run.__name__} blocked by plugin")
                         return (PluginResult[T](continue_processing=False, modified_payload=current_payload, violation=result.violation, metadata=combined_metadata), res_local_contexts)
                     if pluginref.plugin.mode == PluginMode.PERMISSIVE:
                         logger.warning(f"Plugin {pluginref.plugin.name} would block (permissive mode): {result.violation.description if result.violation else 'No description'}")
@@ -253,8 +230,7 @@ class PluginExecutor(Generic[T]):
                     raise PluginError(error=PluginErrorModel(message=f"Plugin {pluginref.name} exceeded {self.timeout}s timeout", plugin_name=pluginref.name))
                 # In permissive or enforce_ignore_error mode, continue with next plugin
                 continue
-            except PluginViolationError:
-                raise
+
             except PluginError as pe:
                 logger.error(f"Plugin {pluginref.name} failed with error: {str(pe)}", exc_info=True)
                 if self.config.plugin_settings.fail_on_plugin_error or pluginref.plugin.mode == PluginMode.ENFORCE:
@@ -680,7 +656,10 @@ class PluginManager:
         self._last_cleanup = current_time
 
     async def prompt_pre_fetch(
-        self, payload: PromptPrehookPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None, violations_as_exceptions: bool = False
+        self,
+        payload: PromptPrehookPayload,
+        global_context: GlobalContext,
+        local_contexts: Optional[PluginContextTable] = None,
     ) -> tuple[PromptPrehookResult, PluginContextTable | None]:
         """Execute pre-fetch hooks before a prompt is retrieved and rendered.
 
@@ -688,7 +667,6 @@ class PluginManager:
             payload: The prompt payload containing name and arguments.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional existing contexts from previous executions.
-            violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
         Returns:
             A tuple containing:
@@ -726,7 +704,7 @@ class PluginManager:
         plugins = self._registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
 
         # Execute plugins
-        result = await self._pre_prompt_executor.execute(plugins, payload, global_context, pre_prompt_fetch, pre_prompt_matches, local_contexts, violations_as_exceptions)
+        result = await self._pre_prompt_executor.execute(plugins, payload, global_context, pre_prompt_fetch, pre_prompt_matches, local_contexts)
 
         # Store contexts for potential reuse
         if result[1]:
@@ -735,7 +713,7 @@ class PluginManager:
         return result
 
     async def prompt_post_fetch(
-        self, payload: PromptPosthookPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None, violations_as_exceptions: bool = False
+        self, payload: PromptPosthookPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None
     ) -> tuple[PromptPosthookResult, PluginContextTable | None]:
         """Execute post-fetch hooks after a prompt is rendered.
 
@@ -743,7 +721,6 @@ class PluginManager:
             payload: The prompt result payload containing rendered messages.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional contexts from pre-fetch hook execution.
-            violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
         Returns:
             A tuple containing:
@@ -787,7 +764,7 @@ class PluginManager:
         plugins = self._registry.get_plugins_for_hook(HookType.PROMPT_POST_FETCH)
 
         # Execute plugins
-        result = await self._post_prompt_executor.execute(plugins, payload, global_context, post_prompt_fetch, post_prompt_matches, local_contexts, violations_as_exceptions)
+        result = await self._post_prompt_executor.execute(plugins, payload, global_context, post_prompt_fetch, post_prompt_matches, local_contexts)
 
         # Clean up stored context after post-fetch
         if global_context.request_id in self._context_store:
@@ -796,7 +773,10 @@ class PluginManager:
         return result
 
     async def tool_pre_invoke(
-        self, payload: ToolPreInvokePayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None, violations_as_exceptions: bool = False
+        self,
+        payload: ToolPreInvokePayload,
+        global_context: GlobalContext,
+        local_contexts: Optional[PluginContextTable] = None,
     ) -> tuple[ToolPreInvokeResult, PluginContextTable | None]:
         """Execute pre-invoke hooks before a tool is invoked.
 
@@ -804,7 +784,6 @@ class PluginManager:
             payload: The tool payload containing name and arguments.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional existing contexts from previous executions.
-            violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
         Returns:
             A tuple containing:
@@ -842,7 +821,7 @@ class PluginManager:
         plugins = self._registry.get_plugins_for_hook(HookType.TOOL_PRE_INVOKE)
 
         # Execute plugins
-        result = await self._pre_tool_executor.execute(plugins, payload, global_context, pre_tool_invoke, pre_tool_matches, local_contexts, violations_as_exceptions)
+        result = await self._pre_tool_executor.execute(plugins, payload, global_context, pre_tool_invoke, pre_tool_matches, local_contexts)
 
         # Store contexts for potential reuse
         if result[1]:
@@ -851,7 +830,7 @@ class PluginManager:
         return result
 
     async def tool_post_invoke(
-        self, payload: ToolPostInvokePayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None, violations_as_exceptions: bool = False
+        self, payload: ToolPostInvokePayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None
     ) -> tuple[ToolPostInvokeResult, PluginContextTable | None]:
         """Execute post-invoke hooks after a tool is invoked.
 
@@ -859,7 +838,6 @@ class PluginManager:
             payload: The tool result payload containing invocation results.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional contexts from pre-invoke hook execution.
-            violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
         Returns:
             A tuple containing:
@@ -895,7 +873,7 @@ class PluginManager:
         plugins = self._registry.get_plugins_for_hook(HookType.TOOL_POST_INVOKE)
 
         # Execute plugins
-        result = await self._post_tool_executor.execute(plugins, payload, global_context, post_tool_invoke, post_tool_matches, local_contexts, violations_as_exceptions)
+        result = await self._post_tool_executor.execute(plugins, payload, global_context, post_tool_invoke, post_tool_matches, local_contexts)
 
         # Clean up stored context after post-invoke
         if global_context.request_id in self._context_store:
@@ -904,7 +882,10 @@ class PluginManager:
         return result
 
     async def resource_pre_fetch(
-        self, payload: ResourcePreFetchPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None, violations_as_exceptions: bool = False
+        self,
+        payload: ResourcePreFetchPayload,
+        global_context: GlobalContext,
+        local_contexts: Optional[PluginContextTable] = None,
     ) -> tuple[ResourcePreFetchResult, PluginContextTable | None]:
         """Execute pre-fetch hooks before a resource is fetched.
 
@@ -912,7 +893,6 @@ class PluginManager:
             payload: The resource payload containing URI and metadata.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional existing contexts from previous hook executions.
-            violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
         Returns:
             A tuple containing:
@@ -934,7 +914,7 @@ class PluginManager:
         plugins = self._registry.get_plugins_for_hook(HookType.RESOURCE_PRE_FETCH)
 
         # Execute plugins
-        result = await self._resource_pre_executor.execute(plugins, payload, global_context, pre_resource_fetch, pre_resource_matches, local_contexts, violations_as_exceptions)
+        result = await self._resource_pre_executor.execute(plugins, payload, global_context, pre_resource_fetch, pre_resource_matches, local_contexts)
 
         # Store context for potential post-fetch
         if result[1]:
@@ -946,7 +926,7 @@ class PluginManager:
         return result
 
     async def resource_post_fetch(
-        self, payload: ResourcePostFetchPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None, violations_as_exceptions: bool = False
+        self, payload: ResourcePostFetchPayload, global_context: GlobalContext, local_contexts: Optional[PluginContextTable] = None
     ) -> tuple[ResourcePostFetchResult, PluginContextTable | None]:
         """Execute post-fetch hooks after a resource is fetched.
 
@@ -954,7 +934,6 @@ class PluginManager:
             payload: The resource content payload containing fetched data.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional contexts from pre-fetch hook execution.
-            violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
         Returns:
             A tuple containing:
@@ -979,7 +958,7 @@ class PluginManager:
         plugins = self._registry.get_plugins_for_hook(HookType.RESOURCE_POST_FETCH)
 
         # Execute plugins
-        result = await self._resource_post_executor.execute(plugins, payload, global_context, post_resource_fetch, post_resource_matches, local_contexts, violations_as_exceptions)
+        result = await self._resource_post_executor.execute(plugins, payload, global_context, post_resource_fetch, post_resource_matches, local_contexts)
 
         # Clean up stored context after post-fetch
         if global_context.request_id in self._context_store:

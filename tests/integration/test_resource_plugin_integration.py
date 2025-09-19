@@ -154,7 +154,7 @@ class TestResourcePluginIntegration:
                     def initialized(self) -> bool:
                         return self._initialized
 
-                    async def resource_pre_fetch(self, payload, global_context, violations_as_exceptions):
+                    async def resource_pre_fetch(self, payload, global_context):
                         # Allow test:// protocol
                         if payload.uri.startswith("test://"):
                             return (
@@ -167,17 +167,21 @@ class TestResourcePluginIntegration:
                         else:
                             # First-Party
                             from mcpgateway.plugins.framework.models import PluginViolation
-                            raise PluginViolationError(
-                                    message="Protocol not allowed",
+
+                            return (
+                                ResourcePreFetchResult(
+                                    continue_processing=False,
                                     violation=PluginViolation(
                                         reason="Protocol not allowed",
                                         description="Protocol is not in the allowed list",
                                         code="PROTOCOL_BLOCKED",
                                         details={"protocol": payload.uri.split(":")[0], "uri": payload.uri}
                                     ),
+                                ),
+                                None,
                             )
 
-                    async def resource_post_fetch(self, payload, global_context, contexts, violations_as_exceptions):
+                    async def resource_post_fetch(self, payload, global_context, contexts):
                         # Filter sensitive content
                         if payload.content and payload.content.text:
                             filtered_text = payload.content.text.replace(
@@ -226,7 +230,7 @@ class TestResourcePluginIntegration:
 
                 # Try to read a blocked protocol
                 # First-Party
-                from mcpgateway.plugins.framework import PluginViolationError
+                from mcpgateway.services.resource_service import ResourceError
 
                 blocked_resource = ResourceCreate(
                     uri="file:///etc/passwd",
@@ -236,7 +240,7 @@ class TestResourcePluginIntegration:
                 )
                 await service.register_resource(test_db, blocked_resource)
 
-                with pytest.raises(PluginViolationError) as exc_info:
+                with pytest.raises(ResourceError) as exc_info:
                     await service.read_resource(test_db, "file:///etc/passwd")
                 assert "Protocol not allowed" in str(exc_info.value)
 
@@ -248,17 +252,17 @@ class TestResourcePluginIntegration:
         # Track context flow
         contexts_from_pre = {"plugin_data": "test_value", "validated": True}
 
-        async def pre_fetch_side_effect(payload, global_context, violations_as_exceptions):
+        def pre_fetch_side_effect(payload, global_context):
             # Verify global context
             assert global_context.request_id == "integration-test-123"
             assert global_context.user == "integration-user"
             assert global_context.server_id == "server-123"
             return (
-                MagicMock(continue_processing=True, modified_payload=None),
+                MagicMock(continue_processing=True),
                 contexts_from_pre,
             )
 
-        async def post_fetch_side_effect(payload, global_context, contexts, violations_as_exceptions):
+        def post_fetch_side_effect(payload, global_context, contexts):
             # Verify contexts from pre-fetch
             assert contexts == contexts_from_pre
             assert contexts["plugin_data"] == "test_value"

@@ -80,7 +80,7 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
       "command": "/path/to/mcp-context-forge/.venv/bin/python",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_AUTH": "Bearer <YOUR_AUTH_TOKEN_HERE>",
+        "MCP_AUTH": "<YOUR_AUTH_TOKEN_HERE>",
         "MCP_SERVER_URL": "http://localhost:4444",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
@@ -320,7 +320,7 @@ In interactive mode, use these commands:
 
 ```bash
 # MCP Context Forge Gateway connection
-export MCP_AUTH="Bearer your-jwt-token"
+export MCP_AUTH="your-jwt-token"
 export MCP_SERVER_URL="http://localhost:4444"
 
 # LLM Provider API keys
@@ -461,7 +461,7 @@ The mcp-cli integrates with MCP Context Forge Gateway through multiple connectio
          "command": "/path/to/mcp-context-forge/.venv/bin/python",
          "args": ["-m", "mcpgateway.wrapper"],
          "env": {
-           "MCP_AUTH": "Bearer <your-jwt-token>",
+           "MCP_AUTH": "your-jwt-token",
            "MCP_SERVER_URL": "http://localhost:4444"
          }
        }

@@ -474,8 +474,8 @@ For command-line integration and desktop client compatibility, use the STDIO wra
 
 ```bash
 # Configure environment variables
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL="http://localhost:4444/servers/your-server-id"
+export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
+export MCP_SERVER_CATALOG_URLS="http://localhost:4444/servers/your-server-id"
 export MCP_TOOL_CALL_TIMEOUT=120
 export MCP_WRAPPER_LOG_LEVEL=INFO
 

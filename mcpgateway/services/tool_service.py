@@ -42,13 +42,9 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.models import Gateway as PydanticGateway
-from mcpgateway.models import TextContent
-from mcpgateway.models import Tool as PydanticTool
-from mcpgateway.models import ToolResult
+from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
-from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -225,7 +221,7 @@ class ToolService:
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -234,7 +230,8 @@ class ToolService:
 
         Args:
             db (Session): Database session for querying tool metrics.
-            limit (int): Maximum number of tools to return. Defaults to 5.
+            limit (Optional[int]): Maximum number of tools to return. Defaults to 5.
+                If None, returns all tools.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -245,7 +242,8 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        results = (
+         # Build query to aggregate tool metrics and rank by execution count
+        query = (
             db.query(
                 DbTool.id,
                 DbTool.name,
@@ -263,9 +261,12 @@ class ToolService:
             .outerjoin(ToolMetric)
             .group_by(DbTool.id, DbTool.name)
             .order_by(desc("execution_count"))
-            .limit(limit)
-            .all()
         )
+        
+        if limit is not None:
+            query = query.limit(limit)
+            
+        results = query.all()
 
         return build_top_performers(results)
 
@@ -346,6 +347,13 @@ class ToolService:
         )
         db.add(metric)
         db.commit()
+        # Ensure the in-memory relationship collection is expired so that
+        # subsequent accesses to tool.metrics / derived properties (execution_count,
+        # metrics_summary, last_execution_time, etc.) reflect the newly added metric.
+        try:  # pragma: no cover - defensive; expire won't raise in normal conditions
+            db.expire(tool, ["metrics"])
+        except Exception:  # noqa: BLE001
+            pass
 
     async def register_tool(
         self,
@@ -787,7 +795,6 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
             PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -828,6 +835,33 @@ class ToolService:
         server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
         global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None)
 
+        if self._plugin_manager:
+            try:
+                pre_result, context_table = await self._plugin_manager.tool_pre_invoke(payload=ToolPreInvokePayload(name=name, args=arguments), global_context=global_context, local_contexts=None)
+
+                if not pre_result.continue_processing:
+                    # Plugin blocked the request
+                    if pre_result.violation:
+                        plugin_name = pre_result.violation.plugin_name
+                        violation_reason = pre_result.violation.reason
+                        violation_desc = pre_result.violation.description
+                        violation_code = pre_result.violation.code
+                        raise PluginViolationError(f"Tool invocation blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", pre_result.violation)
+                    raise PluginViolationError("Tool invocation blocked by plugin")
+
+                # Use modified payload if provided
+                if pre_result.modified_payload:
+                    payload = pre_result.modified_payload
+                    name = payload.name
+                    arguments = payload.args
+            except PluginViolationError:
+                raise
+            except Exception as e:
+                logger.error(f"Error in pre-tool invoke plugin hook: {e}")
+                # Only fail if configured to do so
+                if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                    raise
+
         start_time = time.monotonic()
         success = False
         error_message = None
@@ -866,22 +900,6 @@ class ToolService:
                     # Only call get_passthrough_headers if we actually have request headers to pass through
                     if request_headers:
                         headers = get_passthrough_headers(request_headers, headers, db)
-
-                    if self._plugin_manager:
-                        tool_metadata = PydanticTool.model_validate(tool)
-                        global_context.metadata[TOOL_METADATA] = tool_metadata
-                        pre_result, context_table = await self._plugin_manager.tool_pre_invoke(
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
-                            global_context=global_context,
-                            local_contexts=None,
-                            violations_as_exceptions=True,
-                        )
-                        if pre_result.modified_payload:
-                            payload = pre_result.modified_payload
-                            name = payload.name
-                            arguments = payload.args
-                            if payload.headers is not None:
-                                headers = payload.headers.model_dump()
 
                     # Build the payload based on integration type
                     payload = arguments.copy()
@@ -1011,25 +1029,6 @@ class ToolService:
                     tool_gateway_id = tool.gateway_id
                     tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
 
-                    if self._plugin_manager:
-                        tool_metadata = PydanticTool.model_validate(tool)
-                        global_context.metadata[TOOL_METADATA] = tool_metadata
-                        if tool_gateway:
-                            gateway_metadata = PydanticGateway.model_validate(tool_gateway)
-                            global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-                        pre_result, context_table = await self._plugin_manager.tool_pre_invoke(
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
-                            global_context=global_context,
-                            local_contexts=None,
-                            violations_as_exceptions=True,
-                        )
-                        if pre_result.modified_payload:
-                            payload = pre_result.modified_payload
-                            name = payload.name
-                            arguments = payload.args
-                            if payload.headers is not None:
-                                headers = payload.headers.model_dump()
-
                     tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
                     if transport == "sse":
                         tool_call_result = await connect_to_sse_server(tool_gateway.url)
@@ -1046,25 +1045,39 @@ class ToolService:
 
                 # Plugin hook: tool post-invoke
                 if self._plugin_manager:
-                    post_result, _ = await self._plugin_manager.tool_post_invoke(
-                        payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
-                        global_context=global_context,
-                        local_contexts=context_table,
-                        violations_as_exceptions=True,
-                    )
-                    # Use modified payload if provided
-                    if post_result.modified_payload:
-                        # Reconstruct ToolResult from modified result
-                        modified_result = post_result.modified_payload.result
-                        if isinstance(modified_result, dict) and "content" in modified_result:
-                            tool_result = ToolResult(content=modified_result["content"])
-                        else:
-                            # If result is not in expected format, convert it to text content
-                            tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+                    try:
+                        post_result, _ = await self._plugin_manager.tool_post_invoke(
+                            payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)), global_context=global_context, local_contexts=context_table
+                        )
+                        if not post_result.continue_processing:
+                            # Plugin blocked the request
+                            if post_result.violation:
+                                plugin_name = post_result.violation.plugin_name
+                                violation_reason = post_result.violation.reason
+                                violation_desc = post_result.violation.description
+                                violation_code = post_result.violation.code
+                                raise PluginViolationError(f"Tool result blocked by plugin {plugin_name}: {violation_code} - {violation_reason} ({violation_desc})", post_result.violation)
+                            raise PluginViolationError("Tool result blocked by plugin")
+
+                        # Use modified payload if provided
+                        if post_result.modified_payload:
+                            # Reconstruct ToolResult from modified result
+                            modified_result = post_result.modified_payload.result
+                            if isinstance(modified_result, dict) and "content" in modified_result:
+                                tool_result = ToolResult(content=modified_result["content"])
+                            else:
+                                # If result is not in expected format, convert it to text content
+                                tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+
+                    except PluginViolationError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Error in post-tool invoke plugin hook: {e}")
+                        # Only fail if configured to do so
+                        if self._plugin_manager.config and self._plugin_manager.config.plugin_settings.fail_on_plugin_error:
+                            raise
 
                 return tool_result
-            except (PluginError, PluginViolationError):
-                raise
             except Exception as e:
                 error_message = str(e)
                 # Set span error status
@@ -1585,6 +1598,10 @@ class ToolService:
             )
             db.add(metric)
             db.commit()
+            try:  # Ensure subsequent accesses see fresh metrics
+                db.expire(tool, ["metrics"])
+            except Exception:  # noqa: BLE001
+                pass
 
         return result
 

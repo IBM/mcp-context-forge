@@ -27,8 +27,3 @@ RESULT = "result"
 ERROR = "error"
 GET_PLUGIN_CONFIG = "get_plugin_config"
 IGNORE_CONFIG_EXTERNAL = "ignore_config_external"
-
-# Global Context Metadata fields
-
-TOOL_METADATA = "tool"
-GATEWAY_METADATA = "gateway"
