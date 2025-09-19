@@ -1,5 +1,7 @@
 # Mermaid MCP Server
 
+> Author: Mihai Criveti
+
 Comprehensive server for creating, editing, and rendering Mermaid diagrams. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

@@ -1,5 +1,7 @@
 # URL-to-Markdown MCP Server
 
+> Author: Mihai Criveti
+
 The ultimate MCP server for retrieving web content and files, then converting them to high-quality markdown format. Supports multiple content types, conversion engines, and processing options.
 
 **Now with FastMCP implementation!** Choose between the original MCP server or the new FastMCP-powered version with enhanced type safety and automatic validation.

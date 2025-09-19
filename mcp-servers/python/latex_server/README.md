@@ -1,5 +1,7 @@
 # LaTeX MCP Server
 
+> Author: Mihai Criveti
+
 A comprehensive MCP server for LaTeX document creation, editing, and compilation. Supports creating documents from templates, adding content, and compiling to various formats. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

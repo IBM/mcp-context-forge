@@ -1,5 +1,7 @@
 # Chunker MCP Server
 
+> Author: Mihai Criveti
+
 Advanced text chunking server with multiple strategies and configurable options. Now with **FastMCP implementation** for enhanced type safety and automatic validation!
 
 ## Features

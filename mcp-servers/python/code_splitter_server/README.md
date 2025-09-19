@@ -1,5 +1,7 @@
 # Code Splitter MCP Server
 
+> Author: Mihai Criveti
+
 AST-based code analysis and splitting for intelligent code segmentation. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

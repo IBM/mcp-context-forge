@@ -1,5 +1,7 @@
 # Pandoc Server
 
+> Author: Mihai Criveti
+
 An MCP server that provides pandoc document conversion capabilities. This server enables text conversion between various formats using the powerful pandoc tool.
 
 ## Features

@@ -1,5 +1,7 @@
 # Plotly MCP Server
 
+> Author: Mihai Criveti
+
 Advanced data visualization server using Plotly for creating interactive charts and graphs. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

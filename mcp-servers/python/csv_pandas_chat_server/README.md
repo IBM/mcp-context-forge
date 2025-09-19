@@ -1,5 +1,7 @@
 # CSV Pandas Chat MCP Server
 
+> Author: Mihai Criveti
+
 A secure MCP server for analyzing CSV data using natural language queries. Integrates with OpenAI models to generate and execute safe pandas code for data analysis. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

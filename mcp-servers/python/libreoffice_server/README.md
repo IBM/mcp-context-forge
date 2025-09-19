@@ -1,5 +1,7 @@
 # LibreOffice MCP Server
 
+> Author: Mihai Criveti
+
 A comprehensive MCP server for document conversion using LibreOffice in headless mode. Supports conversion between various document formats including PDF, DOCX, ODT, HTML, and more. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

@@ -1,5 +1,7 @@
 # DOCX MCP Server
 
+> Author: Mihai Criveti
+
 A comprehensive MCP server for creating, editing, and analyzing Microsoft Word (.docx) documents. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

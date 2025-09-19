@@ -1,5 +1,7 @@
 # Graphviz MCP Server
 
+> Author: Mihai Criveti
+
 A comprehensive MCP server for creating, editing, and rendering Graphviz graphs. Supports DOT language manipulation, graph rendering with multiple layouts, and visualization analysis. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features

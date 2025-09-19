@@ -1,5 +1,7 @@
 # XLSX MCP Server
 
+> Author: Mihai Criveti
+
 A comprehensive MCP server for creating, editing, and analyzing Microsoft Excel (.xlsx) spreadsheets. Now powered by **FastMCP** for enhanced type safety and automatic validation!
 
 ## Features
