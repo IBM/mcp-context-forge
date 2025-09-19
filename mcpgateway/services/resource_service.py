@@ -271,7 +271,7 @@ class ResourceService:
         federation_source: Optional[str] = None,
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
-        visibility: str = "private",
+        visibility: Optional[str] = "public",
     ) -> ResourceRead:
         """Register a new resource.
 
@@ -925,6 +925,8 @@ class ResourceService:
                 resource.mime_type = resource_update.mime_type
             if resource_update.template is not None:
                 resource.template = resource_update.template
+            if resource_update.visibility is not None:
+                resource.visibility = resource_update.visibility
 
             # Update content if provided
             if resource_update.content is not None:
