@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""RBAC API Router.
+"""Location: ./mcpgateway/routers/rbac.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+RBAC API Router.
 
 This module provides REST API endpoints for Role-Based Access Control (RBAC)
 management including roles, user role assignments, and permission checking.

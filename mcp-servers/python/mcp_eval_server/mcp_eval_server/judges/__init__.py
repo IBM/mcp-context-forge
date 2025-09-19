@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Judge implementations for LLM-as-a-judge evaluation."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/judges/__init__.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Judge implementations for LLM-as-a-judge evaluation.
+"""
 
 from .base_judge import BaseJudge, EvaluationCriteria, EvaluationResult, EvaluationRubric
 from .openai_judge import OpenAIJudge

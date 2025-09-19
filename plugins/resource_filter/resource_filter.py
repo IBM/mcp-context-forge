@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Resource Filter Plugin - Demonstrates resource hook functionality.
-
+"""Location: ./plugins/resource_filter/resource_filter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Resource Filter Plugin - Demonstrates resource hook functionality.
 This plugin demonstrates how to use resource_pre_fetch and resource_post_fetch hooks
 to filter and modify resource content. It can:
 - Block resources based on URI patterns or protocols

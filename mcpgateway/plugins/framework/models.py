@@ -287,7 +287,7 @@ class MCPConfig(BaseModel):
             script: the script to be validated.
 
         Raises:
-            ValueError: if the script doesn't exist or doesn't have a .py suffix.
+            ValueError: if the script doesn't exist or doesn't have a valid suffix.
 
         Returns:
             The validated string or None if none is set.
@@ -296,8 +296,10 @@ class MCPConfig(BaseModel):
             file_path = Path(script)
             if not file_path.is_file():
                 raise ValueError(f"MCP server script {script} does not exist.")
-            if file_path.suffix != PYTHON_SUFFIX:
-                raise ValueError(f"MCP server script {script} does not have a .py suffix.")
+            # Allow both Python (.py) and shell scripts (.sh)
+            allowed_suffixes = {PYTHON_SUFFIX, ".sh"}
+            if file_path.suffix not in allowed_suffixes:
+                raise ValueError(f"MCP server script {script} must have a .py or .sh suffix.")
         return script
 
 

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive unit tests for bootstrap_db module."""
+"""Location: ./tests/unit/mcpgateway/test_bootstrap_db.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Comprehensive unit tests for bootstrap_db module.
+"""
 
 # Standard
 import asyncio

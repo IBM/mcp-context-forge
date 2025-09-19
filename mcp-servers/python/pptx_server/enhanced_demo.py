@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/pptx_server/enhanced_demo.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Enhanced PowerPoint MCP Server Demo Script
 
 This script demonstrates all the enhanced capabilities including templates,

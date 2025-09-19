@@ -1,447 +1,293 @@
-# GitHub Copilot MCP Server
+# GitHub MCP Server
 
 ## Overview
 
-The GitHub Copilot MCP Server provides integration with GitHub's AI-powered development tools through the Model Context Protocol. This server enables access to GitHub Copilot features including code suggestions, repository analysis, and development assistance through a standardized MCP interface.
+The GitHub MCP Server connects AI tools directly to GitHub's platform, giving AI agents the ability to read repositories and code files, manage issues and PRs, analyze code, and automate workflows through natural language interactions.
 
-**Endpoint:** `https://api.githubcopilot.com/mcp`
+**Remote Server Endpoint:** `https://api.githubcopilot.com/mcp/`
 
-**Authentication:** OAuth 2.1
+**Authentication:** OAuth or Personal Access Token
 
-## Features
+## Use Cases
 
-- 🚀 Code completion and suggestions
-- 📝 Code explanation and documentation
-- 🔍 Repository search and analysis
-- 🐛 Bug detection and fixes
-- 🔄 Code refactoring suggestions
-- 💡 Best practices recommendations
-- 🧪 Test generation
-- 📊 Code review assistance
-
-## Authentication Setup
-
-The GitHub Copilot MCP server uses OAuth 2.1 for secure authentication. This provides enhanced security features including PKCE (Proof Key for Code Exchange) and improved token handling.
-
-### OAuth 2.1 Configuration
-
-#### Step 1: Register Your Application
-
-1. Go to [GitHub Settings > Developer settings > OAuth Apps](https://github.com/settings/developers)
-2. Click "New OAuth App"
-3. Fill in the application details:
-   ```
-   Application name: Your MCP Client
-   Homepage URL: https://your-app.com
-   Authorization callback URL: http://localhost:8080/callback
-   ```
-4. Save your `Client ID` and `Client Secret`
-
-#### Step 2: Configure OAuth 2.1 Flow
-
-```python
-import requests
-import secrets
-import hashlib
-import base64
-from urllib.parse import urlencode
-
-class GitHubCopilotOAuth:
-    def __init__(self, client_id, client_secret):
-        self.client_id = client_id
-        self.client_secret = client_secret
-        self.auth_endpoint = "https://github.com/login/oauth/authorize"
-        self.token_endpoint = "https://github.com/login/oauth/access_token"
-        self.mcp_endpoint = "https://api.githubcopilot.com/mcp"
-
-    def generate_pkce_challenge(self):
-        """Generate PKCE code verifier and challenge for OAuth 2.1"""
-        # Generate code verifier (43-128 characters)
-        code_verifier = base64.urlsafe_b64encode(
-            secrets.token_bytes(32)
-        ).decode('utf-8').rstrip('=')
-
-        # Generate code challenge
-        challenge = hashlib.sha256(code_verifier.encode()).digest()
-        code_challenge = base64.urlsafe_b64encode(challenge).decode('utf-8').rstrip('=')
-
-        return code_verifier, code_challenge
-
-    def get_authorization_url(self, redirect_uri, state=None):
-        """Generate OAuth 2.1 authorization URL with PKCE"""
-        code_verifier, code_challenge = self.generate_pkce_challenge()
-
-        # Store code_verifier for later use in token exchange
-        self.code_verifier = code_verifier
-
-        params = {
-            'client_id': self.client_id,
-            'redirect_uri': redirect_uri,
-            'scope': 'copilot:read copilot:write repo user',
-            'response_type': 'code',
-            'code_challenge': code_challenge,
-            'code_challenge_method': 'S256',
-            'state': state or secrets.token_urlsafe(16)
-        }
-
-        return f"{self.auth_endpoint}?{urlencode(params)}"
-
-    def exchange_code_for_token(self, code, redirect_uri):
-        """Exchange authorization code for access token (OAuth 2.1)"""
-        data = {
-            'client_id': self.client_id,
-            'client_secret': self.client_secret,
-            'code': code,
-            'redirect_uri': redirect_uri,
-            'grant_type': 'authorization_code',
-            'code_verifier': self.code_verifier  # PKCE verification
-        }
-
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/x-www-form-urlencoded'
-        }
-
-        response = requests.post(self.token_endpoint, data=data, headers=headers)
-        return response.json()
-```
-
-#### Step 3: MCP Gateway Configuration
-
-Configure the GitHub Copilot server in your MCP Gateway:
-
-```yaml
-# config.yaml
-external_servers:
-  github_copilot:
-    name: "GitHub Copilot"
-    url: "https://api.githubcopilot.com/mcp"
-    transport: "http"
-    auth:
-      type: "oauth2.1"
-      client_id: "${GITHUB_CLIENT_ID}"
-      client_secret: "${GITHUB_CLIENT_SECRET}"
-      auth_url: "https://github.com/login/oauth/authorize"
-      token_url: "https://github.com/login/oauth/access_token"
-      scopes:
-        - "copilot:read"
-        - "copilot:write"
-        - "repo"
-        - "user"
-      pkce_required: true
-```
-
-### Environment Variables
-
-```bash
-# .env file
-GITHUB_CLIENT_ID=your_client_id_here
-GITHUB_CLIENT_SECRET=your_client_secret_here
-GITHUB_REDIRECT_URI=http://localhost:8080/callback
-```
+- **Repository Management:** Browse and query code, search files, analyze commits, and understand project structure
+- **Issue & PR Automation:** Create, update, and manage issues and pull requests, triage bugs, review code changes
+- **CI/CD & Workflow Intelligence:** Monitor GitHub Actions workflow runs, analyze build failures, manage releases
+- **Code Analysis:** Examine security findings, review Dependabot alerts, understand code patterns
+- **Team Collaboration:** Access discussions, manage notifications, analyze team activity
 
 ## Integration with MCP Gateway
 
-### Register with MCP Gateway
+There are two ways to use the GitHub MCP Server with MCP Gateway:
+
+### Option 1: Remote GitHub MCP Server (Recommended)
+
+The remote server is hosted by GitHub at `https://api.githubcopilot.com/mcp/` and provides the easiest setup method.
+
+#### Using OAuth Authentication
+
+```bash
+# Register the GitHub MCP server with MCP Gateway
+curl -X POST http://localhost:4444/gateways \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  -d '{
+    "name": "github-remote",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "transport": "http",
+    "description": "Remote GitHub MCP Server (OAuth)"
+  }'
+```
+
+#### Using Personal Access Token
+
+1. Create a GitHub Personal Access Token at [GitHub Settings > Developer settings > Personal access tokens](https://github.com/settings/tokens)
+2. Select the appropriate scopes for your needs
+
+```bash
+# Register with PAT authentication
+curl -X POST http://localhost:4444/gateways \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  -d '{
+    "name": "github-remote",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "transport": "http",
+    "auth_config": {
+      "type": "bearer",
+      "token": "'${GITHUB_PAT}'"
+    },
+    "description": "Remote GitHub MCP Server (PAT)"
+  }'
+```
+
+### Option 2: Local GitHub MCP Server (Docker)
+
+Run the GitHub MCP server locally using Docker and expose it through MCP Gateway.
+
+#### Prerequisites
+
+- Docker installed and running
+- GitHub Personal Access Token
+
+#### Setup
+
+1. **Start the local server with translate:**
+
+```bash
+# Using mcpgateway.translate to expose the Docker container
+python3 -m mcpgateway.translate --stdio \
+  "docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PAT} ghcr.io/github/github-mcp-server" \
+  --port 9001
+```
+
+2. **Register with MCP Gateway:**
 
 ```bash
 curl -X POST http://localhost:4444/gateways \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer ${MCP_GATEWAY_TOKEN}" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
   -d '{
-    "name": "github-copilot",
-    "url": "https://api.githubcopilot.com/mcp",
-    "transport": "http",
-    "auth_config": {
-      "type": "oauth2.1",
-      "client_id": "'${GITHUB_CLIENT_ID}'",
-      "token_endpoint": "https://github.com/login/oauth/access_token",
-      "pkce_enabled": true
-    },
-    "description": "GitHub Copilot AI development assistant"
+    "name": "github-local",
+    "url": "http://localhost:9001",
+    "transport": "sse",
+    "description": "Local GitHub MCP Server"
   }'
 ```
 
-### Complete OAuth Flow
+## Tool Configuration
 
-```python
-# Example OAuth 2.1 flow implementation
-import asyncio
-from aiohttp import web
-import aiohttp
+The GitHub MCP Server supports enabling or disabling specific groups of tools via environment variables or command-line flags.
 
-class GitHubCopilotMCPClient:
-    def __init__(self, gateway_url="http://localhost:4444"):
-        self.gateway_url = gateway_url
-        self.oauth = GitHubCopilotOAuth(
-            client_id=os.getenv("GITHUB_CLIENT_ID"),
-            client_secret=os.getenv("GITHUB_CLIENT_SECRET")
-        )
-        self.access_token = None
+### Available Toolsets
 
-    async def authenticate(self):
-        """Complete OAuth 2.1 authentication flow"""
-        # Step 1: Get authorization URL
-        auth_url = self.oauth.get_authorization_url(
-            redirect_uri="http://localhost:8080/callback"
-        )
+| Toolset | Description |
+|---------|-------------|
+| `context` | **Strongly recommended:** Tools that provide context about current user and GitHub environment |
+| `actions` | GitHub Actions workflows and CI/CD operations |
+| `code_security` | Code security related tools (Code Scanning) |
+| `dependabot` | Dependabot tools |
+| `discussions` | GitHub Discussions |
+| `experiments` | Experimental features (not stable) |
+| `gists` | GitHub Gist operations |
+| `issues` | GitHub Issues |
+| `notifications` | GitHub Notifications |
+| `orgs` | GitHub Organization tools |
+| `pull_requests` | GitHub Pull Request operations |
+| `repos` | GitHub Repository tools |
+| `secret_protection` | Secret scanning and protection |
+| `security_advisories` | Security advisories |
+| `users` | GitHub User tools |
 
-        print(f"Please visit: {auth_url}")
+### Configuring Toolsets
 
-        # Step 2: Start local server to receive callback
-        app = web.Application()
-        app.router.add_get('/callback', self.handle_callback)
+#### For Local Docker Server
 
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, 'localhost', 8080)
-        await site.start()
+```bash
+# Enable specific toolsets
+docker run -i --rm \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PAT} \
+  -e GITHUB_TOOLSETS="repos,issues,pull_requests,actions,code_security" \
+  ghcr.io/github/github-mcp-server
 
-        # Wait for callback
-        while not self.access_token:
-            await asyncio.sleep(1)
+# Or use all toolsets
+docker run -i --rm \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PAT} \
+  -e GITHUB_TOOLSETS="all" \
+  ghcr.io/github/github-mcp-server
 
-        await runner.cleanup()
-
-    async def handle_callback(self, request):
-        """Handle OAuth callback"""
-        code = request.query.get('code')
-        state = request.query.get('state')
-
-        if code:
-            # Exchange code for token
-            token_response = self.oauth.exchange_code_for_token(
-                code=code,
-                redirect_uri="http://localhost:8080/callback"
-            )
-
-            self.access_token = token_response['access_token']
-
-            # Register token with MCP Gateway
-            await self.register_token_with_gateway()
-
-            return web.Response(text="Authentication successful! You can close this window.")
-
-        return web.Response(text="Authentication failed", status=400)
-
-    async def register_token_with_gateway(self):
-        """Register OAuth token with MCP Gateway"""
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.gateway_url}/gateways/github-copilot/auth",
-                json={
-                    "access_token": self.access_token,
-                    "token_type": "Bearer"
-                }
-            ) as response:
-                return await response.json()
+# Run in read-only mode
+docker run -i --rm \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PAT} \
+  -e GITHUB_READ_ONLY=1 \
+  ghcr.io/github/github-mcp-server
 ```
 
-## Available Tools
+### Dynamic Tool Discovery (Beta)
 
-### Code Completion
+Enable dynamic toolset discovery to have tools enabled on-demand based on user prompts:
 
-```json
-{
-  "tool": "complete_code",
-  "arguments": {
-    "file_path": "main.py",
-    "cursor_position": {"line": 10, "column": 15},
-    "context_files": ["utils.py", "config.py"],
-    "language": "python"
-  }
-}
+```bash
+docker run -i --rm \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PAT} \
+  -e GITHUB_DYNAMIC_TOOLSETS=1 \
+  ghcr.io/github/github-mcp-server
 ```
 
-### Code Explanation
+## Creating a Virtual Server
 
-```json
-{
-  "tool": "explain_code",
-  "arguments": {
-    "code": "def fibonacci(n):\n    return n if n <= 1 else fibonacci(n-1) + fibonacci(n-2)",
-    "language": "python",
-    "detail_level": "detailed"
-  }
-}
+After registering the gateway peer, create a virtual server to expose the GitHub tools:
+
+```bash
+# Create virtual server
+curl -X POST http://localhost:4444/servers \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  -d '{
+    "name": "github-server",
+    "description": "GitHub MCP Server with repository and issue management",
+    "gateway_ids": ["github-remote"],
+    "tool_choice": "auto"
+  }'
 ```
 
-### Generate Tests
+## Using GitHub Tools
 
-```json
-{
-  "tool": "generate_tests",
-  "arguments": {
-    "code": "class Calculator:\n    def add(self, a, b):\n        return a + b",
-    "framework": "pytest",
-    "coverage_target": 100
-  }
-}
+Once configured, you can access GitHub tools through the MCP Gateway:
+
+### List Available Tools
+
+```bash
+curl -X GET "http://localhost:4444/servers/{server_id}/tools" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}"
 ```
 
-### Code Review
+### Example Tool Invocations
 
-```json
-{
-  "tool": "review_code",
-  "arguments": {
-    "repository": "owner/repo",
-    "pull_request": 123,
-    "focus_areas": ["security", "performance", "best_practices"]
-  }
-}
+#### Search Repositories
+```bash
+curl -X POST "http://localhost:4444/tools/invoke" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  -d '{
+    "server_id": "github-server",
+    "tool_name": "search_repositories",
+    "arguments": {
+      "query": "language:python stars:>1000"
+    }
+  }'
 ```
 
-## Security Best Practices
-
-### Token Storage
-
-```python
-import keyring
-
-class SecureTokenStorage:
-    SERVICE_NAME = "github_copilot_mcp"
-
-    @staticmethod
-    def store_token(username, token):
-        """Securely store OAuth token"""
-        keyring.set_password(
-            SecureTokenStorage.SERVICE_NAME,
-            username,
-            token
-        )
-
-    @staticmethod
-    def get_token(username):
-        """Retrieve stored token"""
-        return keyring.get_password(
-            SecureTokenStorage.SERVICE_NAME,
-            username
-        )
-
-    @staticmethod
-    def delete_token(username):
-        """Remove stored token"""
-        keyring.delete_password(
-            SecureTokenStorage.SERVICE_NAME,
-            username
-        )
+#### Create Issue
+```bash
+curl -X POST "http://localhost:4444/tools/invoke" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  -d '{
+    "server_id": "github-server",
+    "tool_name": "create_issue",
+    "arguments": {
+      "owner": "your-org",
+      "repo": "your-repo",
+      "title": "Bug: Application crashes on startup",
+      "body": "## Description\nThe application fails to start..."
+    }
+  }'
 ```
 
-### Token Refresh
-
-```python
-async def refresh_token(refresh_token):
-    """Refresh expired OAuth 2.1 token"""
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://github.com/login/oauth/access_token",
-            data={
-                "client_id": os.getenv("GITHUB_CLIENT_ID"),
-                "client_secret": os.getenv("GITHUB_CLIENT_SECRET"),
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token"
-            },
-            headers={"Accept": "application/json"}
-        ) as response:
-            return await response.json()
+#### List Workflow Runs
+```bash
+curl -X POST "http://localhost:4444/tools/invoke" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  -d '{
+    "server_id": "github-server",
+    "tool_name": "list_workflow_runs",
+    "arguments": {
+      "owner": "your-org",
+      "repo": "your-repo"
+    }
+  }'
 ```
 
-## Rate Limiting
+## GitHub Enterprise Support
 
-GitHub Copilot API has rate limits:
+For GitHub Enterprise Server or Enterprise Cloud with data residency:
 
-- **Authenticated requests:** 5,000 requests per hour
-- **Code completions:** 100 requests per minute
-- **Analysis operations:** 30 requests per minute
-
-### Handle Rate Limits
-
-```python
-class RateLimitHandler:
-    def __init__(self):
-        self.remaining = None
-        self.reset_time = None
-
-    async def make_request(self, session, url, **kwargs):
-        """Make request with rate limit handling"""
-        async with session.request(url=url, **kwargs) as response:
-            # Check rate limit headers
-            self.remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
-            self.reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
-
-            if response.status == 429:  # Too Many Requests
-                retry_after = int(response.headers.get('Retry-After', 60))
-                await asyncio.sleep(retry_after)
-                return await self.make_request(session, url, **kwargs)
-
-            return await response.json()
+### Enterprise Server
+```bash
+docker run -i --rm \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PAT} \
+  -e GITHUB_HOST="https://your-github-enterprise.com" \
+  ghcr.io/github/github-mcp-server
 ```
+
+### Enterprise Cloud with Data Residency
+```bash
+docker run -i --rm \
+  -e GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PAT} \
+  -e GITHUB_HOST="https://yoursubdomain.ghe.com" \
+  ghcr.io/github/github-mcp-server
+```
+
+## Security Considerations
+
+1. **Token Management**: Store GitHub PATs securely using environment variables or secret management systems
+2. **Scope Limitation**: Only grant the minimum required permissions for your use case
+3. **Rate Limiting**: The GitHub API has rate limits - monitor usage and implement appropriate caching
+4. **Audit Logging**: Enable MCP Gateway audit logging to track all GitHub operations
 
 ## Troubleshooting
 
-### Common Issues
+### Connection Issues
 
-**OAuth Authentication Fails:**
 ```bash
-# Check client credentials
-echo $GITHUB_CLIENT_ID
-echo $GITHUB_CLIENT_SECRET
-
-# Verify redirect URI matches exactly
-# Must be exactly as registered in GitHub OAuth App
+# Test direct connection to GitHub MCP server
+curl -X POST https://api.githubcopilot.com/mcp/ \
+  -H "Authorization: Bearer ${GITHUB_PAT}" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": 1}'
 ```
 
-**Token Expired:**
-```python
-# Automatic token refresh
-if token_is_expired():
-    new_token = await refresh_token(stored_refresh_token)
-    update_stored_token(new_token)
+### Docker Container Issues
+
+```bash
+# Check if container is running
+docker ps | grep github-mcp-server
+
+# View container logs
+docker logs $(docker ps -q -f ancestor=ghcr.io/github/github-mcp-server)
 ```
 
-**PKCE Challenge Failed:**
-```python
-# Ensure code_verifier is stored between auth request and token exchange
-# Use session storage or secure temporary storage
-session['code_verifier'] = code_verifier
-```
+### Authentication Errors
 
-## Example Integration
+- Verify PAT has correct scopes
+- Check token expiration
+- Ensure proper header format: `Authorization: Bearer YOUR_TOKEN`
 
-```python
-# Complete example of using GitHub Copilot MCP
-import asyncio
-from mcp_gateway_client import MCPGatewayClient
+## Additional Resources
 
-async def main():
-    # Initialize client
-    client = MCPGatewayClient("http://localhost:4444")
-
-    # Authenticate with GitHub
-    copilot_client = GitHubCopilotMCPClient()
-    await copilot_client.authenticate()
-
-    # Use GitHub Copilot tools via MCP
-    result = await client.call_tool(
-        server="github-copilot",
-        tool="complete_code",
-        arguments={
-            "file_path": "app.py",
-            "cursor_position": {"line": 25, "column": 10},
-            "language": "python"
-        }
-    )
-
-    print(f"Code suggestion: {result['suggestion']}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## Related Resources
-
-- [GitHub OAuth Documentation](https://docs.github.com/en/apps/oauth-apps)
-- [OAuth 2.1 Specification](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-07)
-- [GitHub Copilot API Reference](https://docs.github.com/en/copilot)
-- [MCP Protocol Specification](https://modelcontextprotocol.io/)
+- [GitHub MCP Server Repository](https://github.com/github/github-mcp-server)
+- [GitHub Personal Access Tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+- [GitHub API Documentation](https://docs.github.com/en/rest)
+- [MCP Gateway Documentation](../../../index.md)

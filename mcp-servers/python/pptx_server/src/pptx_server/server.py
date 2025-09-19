@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive PowerPoint MCP Server with full PPTX editing capabilities."""
+"""Location: ./mcp-servers/python/pptx_server/src/pptx_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Comprehensive PowerPoint MCP Server with full PPTX editing capabilities.
+"""
 
 # Standard
 import asyncio

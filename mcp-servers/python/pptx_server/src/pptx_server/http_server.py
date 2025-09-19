@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""HTTP file serving for PowerPoint MCP Server downloads."""
+"""Location: ./mcp-servers/python/pptx_server/src/pptx_server/http_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+HTTP file serving for PowerPoint MCP Server downloads.
+"""
 
 # Standard
 from datetime import datetime

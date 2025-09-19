@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Schema validation utilities for migration testing.
+"""Location: ./tests/migration/utils/schema_validator.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Schema validation utilities for migration testing.
 
 This module provides comprehensive database schema comparison and validation
 capabilities for ensuring migration integrity across MCP Gateway versions.

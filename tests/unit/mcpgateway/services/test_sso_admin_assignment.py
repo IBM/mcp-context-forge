@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test SSO admin privilege assignment functionality."""
+"""Location: ./tests/unit/mcpgateway/services/test_sso_admin_assignment.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test SSO admin privilege assignment functionality.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch

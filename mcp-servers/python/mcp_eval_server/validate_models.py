@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Model validation and connectivity testing script."""
+"""Location: ./mcp-servers/python/mcp_eval_server/validate_models.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Model validation and connectivity testing script.
+"""
 
 # Standard
 import asyncio

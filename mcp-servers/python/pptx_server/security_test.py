@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/pptx_server/security_test.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Security Vulnerability Test & Secure Solution Demo
 
 Demonstrates the multi-agent security issue and shows the proper secure usage pattern.

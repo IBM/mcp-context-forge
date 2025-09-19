@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""OLLAMA judge implementation for LLM-as-a-judge evaluation."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/judges/ollama_judge.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OLLAMA judge implementation for LLM-as-a-judge evaluation.
+"""
 
 # Standard
 import asyncio

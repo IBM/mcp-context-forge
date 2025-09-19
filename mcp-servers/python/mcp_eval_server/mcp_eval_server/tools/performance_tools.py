@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""MCP tools for performance monitoring and evaluation."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/tools/performance_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP tools for performance monitoring and evaluation.
+"""
 
 # Standard
 import asyncio

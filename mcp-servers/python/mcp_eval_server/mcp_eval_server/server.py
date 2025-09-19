@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""MCP Evaluation Server - Main entry point."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP Evaluation Server - Main entry point.
+"""
 
 # Standard
 import asyncio

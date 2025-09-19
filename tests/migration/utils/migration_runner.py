@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Migration test runner for comprehensive database migration testing.
+"""Location: ./tests/migration/utils/migration_runner.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Migration test runner for comprehensive database migration testing.
 
 This module orchestrates migration testing scenarios across different
 MCP Gateway versions with detailed logging and validation.
