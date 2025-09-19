@@ -9,4 +9,3 @@ default_configs:
   backoff_base_ms: 200
   max_backoff_ms: 5000
   retry_on_status: [429, 500, 502, 503, 504]
-

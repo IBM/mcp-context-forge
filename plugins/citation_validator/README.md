@@ -26,4 +26,3 @@ Configuration (example)
 Notes
 - Adds `citation_results` with per-URL `{ ok, status }` metadata when not blocking.
 - To block on any failures set `block_on_any_fail: true`; to block only when all links fail set `block_on_all_fail: true`.
-

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """URL-to-Markdown MCP Server - Ultimate web content and file conversion to markdown."""
 
 __version__ = "0.1.0"

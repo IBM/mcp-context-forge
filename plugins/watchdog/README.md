@@ -21,4 +21,3 @@ Configuration (example)
 
 Notes
 - Adds `watchdog_elapsed_ms` and `watchdog_limit_ms` to metadata; sets `watchdog_violation` on warn.
-

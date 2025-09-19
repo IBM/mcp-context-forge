@@ -33,4 +33,3 @@ Configuration (example)
 Notes
 - Emits metadata (`secrets_findings`, `count`) when not blocking; includes up to 5 example types.
 - Uses conservative regexes; combine with PII filter for broader coverage.
-

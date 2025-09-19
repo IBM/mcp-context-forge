@@ -24,4 +24,3 @@ Configuration (example)
 Notes
 - Looks for `<meta name="robots" ...>`, `x-robots-tag`, `genai`, and `license` tags.
 - Blocks when `noai|noimageai|nofollow|noindex` are encountered (if enabled), unless `allow_overrides` matches the URI.
-

@@ -126,4 +126,3 @@ class CodeFormatterPlugin(Plugin):
                 new_payload = ResourcePostFetchPayload(uri=payload.uri, content=type(content)(**{**content.model_dump(), "text": new_text}))
                 return ResourcePostFetchResult(modified_payload=new_payload)
         return ResourcePostFetchResult(continue_processing=True)
-

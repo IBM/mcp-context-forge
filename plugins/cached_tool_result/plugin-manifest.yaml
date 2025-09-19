@@ -8,4 +8,3 @@ default_configs:
   cacheable_tools: []
   ttl: 300
   key_fields: {}
-

@@ -24,4 +24,3 @@ Configuration (example)
     threshold: 0.9
     max_entries: 2000
 ```
-

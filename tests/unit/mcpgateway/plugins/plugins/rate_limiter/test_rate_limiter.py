@@ -37,4 +37,3 @@ async def test_rate_limit_blocks_on_third_call():
     assert r2.violation is None
     r3 = await plugin.prompt_pre_fetch(payload, ctx)
     assert r3.violation is not None
-

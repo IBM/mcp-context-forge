@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Chunker MCP Server - Advanced text chunking and splitting."""
 
 __version__ = "0.1.0"

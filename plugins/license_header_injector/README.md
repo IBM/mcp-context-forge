@@ -25,4 +25,3 @@ Configuration (example)
 Notes
 - Uses simple comment prefixes/suffixes per language; defaults to `#` style if unknown.
 - Skips if `dedupe_marker` already exists in the text.
-

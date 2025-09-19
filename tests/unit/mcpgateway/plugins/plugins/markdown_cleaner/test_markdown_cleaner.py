@@ -34,4 +34,3 @@ async def test_cleans_markdown_prompt():
     out = res.modified_payload.result.messages[0].content.text
     assert out.startswith("# Heading")
     assert "\n\n\n" not in out
-

@@ -25,4 +25,3 @@ Configuration (example)
 Notes
 - Error detection uses ToolResult.is_error when available, or a dict key "is_error".
 - Exposes metadata: failure rate, counts, open_until.
-

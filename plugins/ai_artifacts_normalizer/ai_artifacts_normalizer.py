@@ -29,29 +29,29 @@ from mcpgateway.plugins.framework import (
 
 
 SMART_MAP = {
-    "“": '"',
-    "”": '"',
+    """: '"',
+    """: '"',
     "„": '"',
-    "‟": '"',
-    "‘": "'",
-    "’": "'",
+    """: '"',
+    "'": "'",
+    "'": "'",
     "‚": "'",
-    "‛": "'",
+    "'": "'",
     "—": "-",
     "–": "-",
     "−": "-",
     "…": "...",
     "•": "-",
     "·": "-",
-    " ": " ",  # nbsp to space
+    " ": " ",  # nbsp to space
 }
 
 LIGATURE_MAP = {
-    "ﬁ": "fi",
-    "ﬂ": "fl",
-    "ﬃ": "ffi",
-    "ﬄ": "ffl",
-    "ﬀ": "ff",
+    "fi": "fi",
+    "fl": "fl",
+    "ffi": "ffi",
+    "ffl": "ffl",
+    "ff": "ff",
 }
 
 BIDI_AND_ZERO_WIDTH = re.compile(
@@ -121,4 +121,3 @@ class AIArtifactsNormalizerPlugin(Plugin):
             if nt != payload.result:
                 return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=nt))
         return ToolPostInvokeResult(continue_processing=True)
-

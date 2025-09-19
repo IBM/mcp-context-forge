@@ -29,7 +29,6 @@ Configuration (example)
 ```
 
 Notes
-- No external formatters are invoked; it’s safe and fast.
+- No external formatters are invoked; it's safe and fast.
 - For JSON, the plugin attempts to parse then pretty-print; on failure it falls back to generic normalization.
 - The plugin respects `max_size_kb` to avoid large payload overhead.
-

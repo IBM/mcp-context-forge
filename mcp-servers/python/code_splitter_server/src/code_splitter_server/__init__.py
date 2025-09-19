@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Code Splitter MCP Server - AST-based code analysis and splitting."""
 
 __version__ = "0.1.0"

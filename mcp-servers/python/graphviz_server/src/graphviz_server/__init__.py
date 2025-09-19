@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Graphviz MCP Server - Graph visualization and DOT language processing."""
 
 __version__ = "0.1.0"

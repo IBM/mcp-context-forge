@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Mermaid MCP Server - Mermaid diagram generation and rendering."""
 
 __version__ = "0.1.0"

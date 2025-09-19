@@ -31,4 +31,3 @@ async def test_repairs_trailing_commas_and_single_quotes():
     assert res.modified_payload is not None
     fixed = res.modified_payload.result
     json.loads(fixed)
-

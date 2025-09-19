@@ -25,4 +25,3 @@ Configuration (example)
 
 Notes
 - Complements ArgumentNormalizer (Unicode NFC, whitespace) with safety-oriented cleanup (bidi controls, ligatures, smart punctuation).
-

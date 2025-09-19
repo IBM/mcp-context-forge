@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for Python Sandbox MCP Server."""
 
 import json

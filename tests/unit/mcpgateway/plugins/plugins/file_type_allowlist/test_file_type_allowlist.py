@@ -35,4 +35,3 @@ async def test_blocks_disallowed_extension_and_mime():
     content = ResourceContent(type="resource", uri="https://ex.com/file.md", mime_type="text/html", text="<p>x</p>")
     post = await plugin.resource_post_fetch(ResourcePostFetchPayload(uri=content.uri, content=content), ctx)
     assert post.violation is not None
-

@@ -36,4 +36,3 @@ async def test_cache_store_and_hit():
     ctx2 = PluginContext(global_context=GlobalContext(request_id="r2"))
     pre2 = await plugin.tool_pre_invoke(ToolPreInvokePayload(name="echo", args={"x": 1}), ctx2)
     assert pre2.metadata and pre2.metadata.get("cache_hit") is True
-

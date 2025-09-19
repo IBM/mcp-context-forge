@@ -64,4 +64,3 @@ class WatchdogPlugin(Plugin):
                 )
             return ToolPostInvokeResult(metadata={**meta, "watchdog_violation": True})
         return ToolPostInvokeResult(metadata=meta)
-

@@ -80,4 +80,3 @@ class PrivacyNoticeInjectorPlugin(Plugin):
         new_messages = [*result.messages, msg]
         new_payload = PromptPosthookPayload(name=payload.name, result=type(result)(messages=new_messages, description=result.description))
         return PromptPosthookResult(modified_payload=new_payload)
-

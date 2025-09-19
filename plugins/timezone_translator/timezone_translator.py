@@ -97,4 +97,3 @@ class TimezoneTranslatorPlugin(Plugin):
         if new_result != payload.result:
             return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=new_result))
         return ToolPostInvokeResult(continue_processing=True)
-

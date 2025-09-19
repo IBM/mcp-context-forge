@@ -10,4 +10,3 @@ default_configs:
     - "\\bos\\.system\\s*\\("
     - "\\bsubprocess\\.(Popen|call|run)\\s*\\("
     - "\\brm\\s+-rf\\b"
-

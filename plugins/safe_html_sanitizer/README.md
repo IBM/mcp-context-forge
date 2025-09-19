@@ -35,4 +35,3 @@ Configuration (example)
 Notes
 - For maximum safety, keep `allow_data_images: false` unless images are necessary.
 - The sanitizer uses Python's stdlib HTMLParser to rebuild allowed HTML; it avoids regex-only sanitization.
-

@@ -163,4 +163,3 @@ class SecretsDetectionPlugin(Plugin):
                 return ResourcePostFetchResult(modified_payload=new_payload, metadata={"secrets_redacted": True, "count": count})
             return ResourcePostFetchResult(metadata={"secrets_findings": findings, "count": count} if count else {})
         return ResourcePostFetchResult(continue_processing=True)
-

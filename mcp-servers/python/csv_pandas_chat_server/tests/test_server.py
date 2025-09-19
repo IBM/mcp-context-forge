@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for CSV Pandas Chat MCP Server."""
 
 import json

@@ -138,4 +138,3 @@ class CitationValidatorPlugin(Plugin):
                 ),
             )
         return ToolPostInvokeResult(metadata={"citation_results": results})
-

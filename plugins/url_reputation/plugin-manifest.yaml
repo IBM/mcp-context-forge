@@ -6,4 +6,3 @@ available_hooks:
 default_configs:
   blocked_domains: []
   blocked_patterns: []
-

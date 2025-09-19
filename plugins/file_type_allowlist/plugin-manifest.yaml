@@ -7,4 +7,3 @@ available_hooks:
 default_configs:
   allowed_mime_types: ["text/plain", "text/markdown", "text/html", "application/json"]
   allowed_extensions: [".md", ".txt", ".html", ".json"]
-

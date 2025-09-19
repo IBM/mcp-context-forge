@@ -50,4 +50,3 @@ async def test_schema_guard_valid_and_invalid():
     assert res_ok.violation is None
     res_bad = await plugin.tool_post_invoke(ToolPostInvokePayload(name="calc", result={}), ctx)
     assert res_bad.violation is not None
-

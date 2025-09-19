@@ -93,4 +93,3 @@ class RobotsLicenseGuardPlugin(Plugin):
                 ),
             )
         return ResourcePostFetchResult(metadata={"robots_meta": meta, "robots_violation": bool(violation_reasons)})
-

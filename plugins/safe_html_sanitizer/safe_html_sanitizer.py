@@ -231,4 +231,3 @@ class SafeHTMLSanitizerPlugin(Plugin):
             new_payload = ResourcePostFetchPayload(uri=payload.uri, content=type(content)(**{**content.model_dump(), "text": new_text}))
             return ResourcePostFetchResult(modified_payload=new_payload, metadata={"html_sanitized": True})
         return ResourcePostFetchResult(metadata={"html_sanitized": False})
-

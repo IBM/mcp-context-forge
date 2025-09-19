@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Python Sandbox MCP Server - Secure Python code execution sandbox."""
 
 __version__ = "0.1.0"

@@ -22,4 +22,3 @@ Configuration (example)
 
 Notes
 - Matches ISO-like timestamps only; non-ISO formats pass through unchanged.
-

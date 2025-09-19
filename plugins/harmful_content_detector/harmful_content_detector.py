@@ -118,4 +118,3 @@ class HarmfulContentDetectorPlugin(Plugin):
                 ),
             )
         return ToolPostInvokeResult(metadata={"harmful_categories": cats} if cats else {})
-

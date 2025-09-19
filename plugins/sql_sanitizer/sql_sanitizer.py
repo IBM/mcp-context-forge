@@ -143,4 +143,3 @@ class SQLSanitizerPlugin(Plugin):
             new_args = {**(payload.args or {}), **scanned}
             return ToolPreInvokeResult(modified_payload=ToolPreInvokePayload(name=payload.name, args=new_args), metadata={"sql_sanitized": True})
         return ToolPreInvokeResult(metadata={"sql_issues": issues} if issues else {})
-

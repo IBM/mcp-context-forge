@@ -87,4 +87,3 @@ async def test_list_of_strings():
     res = await plugin.tool_post_invoke(payload, ctx)
     assert res.modified_payload is not None
     assert res.modified_payload.result == ["abc", "ef", "ghi"]
-

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """LaTeX MCP Server - LaTeX document processing and compilation."""
 
 __version__ = "0.1.0"

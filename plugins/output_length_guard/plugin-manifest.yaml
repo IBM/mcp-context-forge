@@ -8,4 +8,3 @@ default_configs:
   max_chars: 15000
   strategy: "truncate"
   ellipsis: "…"
-

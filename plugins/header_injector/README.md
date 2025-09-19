@@ -20,5 +20,4 @@ Configuration (example)
 ```
 
 Notes
-- The gateway’s resource fetcher should honor `metadata.headers`; this plugin only prepares the metadata.
-
+- The gateway's resource fetcher should honor `metadata.headers`; this plugin only prepares the metadata.

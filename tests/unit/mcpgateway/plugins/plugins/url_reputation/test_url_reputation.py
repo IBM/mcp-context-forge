@@ -28,4 +28,3 @@ async def test_blocks_blocklisted_domain():
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
     res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://api.bad.example/v1"), ctx)
     assert res.violation is not None
-

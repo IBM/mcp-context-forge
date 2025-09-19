@@ -32,4 +32,3 @@ Configuration (example)
 Notes
 - This plugin uses simple, safe heuristics (no SQL parsing). For strict enforcement, use alongside SchemaGuard and policy engines.
 - When `block_on_violation` is false, issues are reported via metadata while allowing execution.
-

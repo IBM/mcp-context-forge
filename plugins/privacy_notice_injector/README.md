@@ -21,4 +21,3 @@ Configuration (example)
 Notes
 - Uses `Role.USER` messages; when none exist, appends a new user message with the notice.
 - If any message already contains the `marker`, it skips injection to avoid duplicates.
-

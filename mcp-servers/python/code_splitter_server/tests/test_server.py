@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for Code Splitter MCP Server."""
 
 import json

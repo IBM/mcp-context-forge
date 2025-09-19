@@ -5,4 +5,3 @@ available_hooks:
   - "prompt_post_fetch"
   - "resource_post_fetch"
 default_configs: {}
-

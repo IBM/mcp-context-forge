@@ -47,4 +47,3 @@ class HeaderInjectorPlugin(Plugin):
         md["headers"] = hdrs
         new_payload = ResourcePreFetchPayload(uri=payload.uri, metadata=md)
         return ResourcePreFetchResult(modified_payload=new_payload, metadata={"headers_injected": True, "count": len(self._cfg.headers)})
-

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """LibreOffice MCP Server - Document conversion using LibreOffice."""
 
 __version__ = "0.1.0"

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Tests for URL-to-Markdown MCP Server."""
 
 import json

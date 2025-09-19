@@ -8,4 +8,3 @@ default_configs:
   by_user: "60/m"
   by_tenant: "600/m"
   by_tool: {}
-

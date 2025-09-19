@@ -149,4 +149,3 @@ class CircuitBreakerPlugin(Plugin):
             "circuit_consecutive_failures": st.consecutive_failures,
             "circuit_open_until": st.open_until or 0.0,
         })
-

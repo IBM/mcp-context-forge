@@ -27,4 +27,3 @@ async def test_detects_eval_pattern():
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
     res = await plugin.tool_post_invoke(ToolPostInvokePayload(name="x", result="eval('2+2')"), ctx)
     assert res.violation is not None
-

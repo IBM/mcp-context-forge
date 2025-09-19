@@ -8,4 +8,3 @@ default_configs:
   arg_schemas: {}
   result_schemas: {}
   block_on_violation: true
-
