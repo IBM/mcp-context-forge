@@ -1,0 +1,25 @@
+async_linting:
+  ruff_rules: ["F", "E", "B", "ASYNC"]
+  flake8_plugins: ["flake8-bugbear", "flake8-async"]
+  mypy_config:
+    warn_unused_coroutine: true
+    strict: true
+
+profiling:
+  output_dir: "tests/async/profiles"
+  snakeviz_port: 8080
+  profile_scenarios:
+    - "websocket_stress_test"
+    - "database_query_performance"
+    - "concurrent_mcp_calls"
+
+monitoring:
+  aiomonitor_port: 50101
+  debug_mode: true
+  task_tracking: true
+
+performance_thresholds:
+  websocket_connection: 100  # ms
+  database_query: 50         # ms
+  mcp_rpc_call: 100          # ms
+  concurrent_users: 100      # simultaneous connections

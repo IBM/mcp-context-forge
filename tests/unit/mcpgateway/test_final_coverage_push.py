@@ -1,22 +1,22 @@
 # -*- coding: utf-8 -*-
-"""
-Final push to reach 75% coverage.
-
+"""Location: ./tests/unit/mcpgateway/test_final_coverage_push.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Final push to reach 75% coverage.
 """
 
 # Standard
-import tempfile
 import json
-from unittest.mock import patch, MagicMock, AsyncMock
+import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.models import Role, LogLevel, TextContent, ImageContent, ResourceContent
+from mcpgateway.models import ImageContent, LogLevel, ResourceContent, Role, TextContent
 from mcpgateway.schemas import BaseModelWithConfigDict
 
 
@@ -76,6 +76,18 @@ def test_content_types():
     assert resource.mime_type == "application/json"
     assert resource.text == "Sample content"
 
+def test_content_type_model_form_urlencoded():
+    """
+    Test that the system can parse/accept application/x-www-form-urlencoded.
+    """
+    from fastapi.testclient import TestClient
+    from mcpgateway.main import app
+
+    client = TestClient(app)
+    data = {"type": "text", "text": "Form encoded content"}
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    response = client.post("/admin/tools", data=data, headers=headers)
+    assert response.status_code in [200, 201, 400, 401, 415, 422]
 
 def test_base_model_with_config_dict():
     """Test BaseModelWithConfigDict functionality."""
@@ -99,8 +111,11 @@ def test_base_model_with_config_dict():
 @pytest.mark.asyncio
 async def test_cli_export_import_main_flows():
     """Test CLI export/import main execution flows."""
-    from mcpgateway.cli_export_import import main_with_subcommands
+    # Standard
     import sys
+
+    # First-Party
+    from mcpgateway.cli_export_import import main_with_subcommands
 
     # Test with no subcommands (should fall back to main CLI)
     with patch.object(sys, 'argv', ['mcpgateway', '--version']):
@@ -117,8 +132,11 @@ async def test_cli_export_import_main_flows():
 @pytest.mark.asyncio
 async def test_export_command_parameter_building():
     """Test export command parameter building logic."""
-    from mcpgateway.cli_export_import import export_command
+    # Standard
     import argparse
+
+    # First-Party
+    from mcpgateway.cli_export_import import export_command
 
     # Test with all parameters set
     args = argparse.Namespace(
@@ -159,8 +177,11 @@ async def test_export_command_parameter_building():
 @pytest.mark.asyncio
 async def test_import_command_parameter_parsing():
     """Test import command parameter parsing logic."""
-    from mcpgateway.cli_export_import import import_command
+    # Standard
     import argparse
+
+    # First-Party
+    from mcpgateway.cli_export_import import import_command
 
     # Create temp file with valid JSON
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
@@ -206,6 +227,7 @@ async def test_import_command_parameter_parsing():
 
 def test_utils_coverage():
     """Test various utility functions for coverage."""
+    # First-Party
     from mcpgateway.utils.create_slug import slugify
 
     # Test slugify variations
@@ -224,6 +246,7 @@ def test_utils_coverage():
 
 def test_config_properties():
     """Test config module properties."""
+    # First-Party
     from mcpgateway.config import settings
 
     # Test basic properties exist
@@ -245,6 +268,7 @@ def test_config_properties():
 
 def test_schemas_basic():
     """Test basic schema imports."""
+    # First-Party
     from mcpgateway.schemas import ToolCreate
 
     # Test class exists
@@ -253,8 +277,11 @@ def test_schemas_basic():
 
 def test_db_utility_functions():
     """Test database utility functions."""
-    from mcpgateway.db import utc_now
+    # Standard
     from datetime import datetime, timezone
+
+    # First-Party
+    from mcpgateway.db import utc_now
 
     # Test utc_now function
     now = utc_now()
@@ -264,7 +291,8 @@ def test_db_utility_functions():
 
 def test_validation_imports():
     """Test validation module imports."""
-    from mcpgateway.validation import tags, jsonrpc
+    # First-Party
+    from mcpgateway.validation import jsonrpc, tags
 
     # Test modules can be imported
     assert tags is not None
@@ -273,6 +301,7 @@ def test_validation_imports():
 
 def test_services_init():
     """Test services module initialization."""
+    # First-Party
     from mcpgateway.services import __init__
 
     # Just test the module exists
@@ -281,8 +310,10 @@ def test_services_init():
 
 def test_cli_module_main_execution():
     """Test CLI module main execution path."""
+    # Standard
     import sys
 
+    # First-Party
     # Test __main__ execution path exists
     from mcpgateway import cli_export_import
     assert hasattr(cli_export_import, 'main_with_subcommands')

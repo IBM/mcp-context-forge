@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""db_isready - Wait until the configured database is ready
+"""Location: ./mcpgateway/utils/db_isready.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+db_isready - Wait until the configured database is ready
 ==========================================================
 This helper blocks until the given database (defined by an **SQLAlchemy** URL)
 successfully answers a trivial round-trip - ``SELECT 1`` - and then returns.
@@ -271,13 +276,21 @@ def wait_for_db_ready(
         # Most drivers honour this parameter - harmless for others.
         connect_args["connect_timeout"] = timeout
 
-    engine: Engine = create_engine(
-        database_url,
-        pool_pre_ping=True,
-        pool_size=1,
-        max_overflow=0,
-        connect_args=connect_args,
-    )
+    if backend == "sqlite":
+        # SQLite doesn't support pool overflow/timeout parameters
+        engine: Engine = create_engine(
+            database_url,
+            connect_args=connect_args,
+        )
+    else:
+        # Other databases support full pooling configuration
+        engine: Engine = create_engine(
+            database_url,
+            pool_pre_ping=True,
+            pool_size=1,
+            max_overflow=0,
+            connect_args=connect_args,
+        )
 
     def _probe() -> None:  # noqa: D401 - internal helper
         """Inner synchronous probe running in either the current or a thread.

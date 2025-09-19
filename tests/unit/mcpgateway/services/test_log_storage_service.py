@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for LogStorageService."""
+"""Location: ./tests/unit/mcpgateway/services/test_log_storage_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for LogStorageService.
+"""
 
 # Standard
 import asyncio
@@ -7,6 +13,8 @@ from datetime import datetime, timezone
 import json
 import sys
 from unittest.mock import patch
+
+# Third-Party
 import pytest
 
 # First-Party
@@ -716,6 +724,7 @@ async def test_notify_subscribers_dead_queue():
         service = LogStorageService()
 
         # Create a mock queue that raises an exception
+        # Standard
         from unittest.mock import MagicMock
         mock_queue = MagicMock()
         mock_queue.put_nowait.side_effect = Exception("Queue is broken")

@@ -360,7 +360,7 @@ class MonitoredReverseProxy(ReverseProxyClient):
 
 ## Related Documentation
 
-- [MCP Gateway Documentation](./README.md)
+- [MCP Gateway Documentation](../index.md)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
-- [Transport Protocols](./transports.md)
-- [Authentication Guide](./auth.md)
+- [Transport Protocols](../architecture/index.md)
+- [Authentication Guide](../manage/securing.md)

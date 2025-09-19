@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""OAuth 2.0 Manager for MCP Gateway.
+"""Location: ./mcpgateway/services/oauth_manager.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OAuth 2.0 Manager for MCP Gateway.
 
 This module handles OAuth 2.0 authentication flows including:
 - Client Credentials (Machine-to-Machine)
@@ -24,7 +29,41 @@ logger = logging.getLogger(__name__)
 
 
 class OAuthManager:
-    """Manages OAuth 2.0 authentication flows."""
+    """Manages OAuth 2.0 authentication flows.
+
+    Examples:
+        >>> manager = OAuthManager(request_timeout=30, max_retries=3)
+        >>> manager.request_timeout
+        30
+        >>> manager.max_retries
+        3
+        >>> manager.token_storage is None
+        True
+        >>>
+        >>> # Test grant type validation
+        >>> grant_type = "client_credentials"
+        >>> grant_type in ["client_credentials", "authorization_code"]
+        True
+        >>> grant_type = "invalid_grant"
+        >>> grant_type in ["client_credentials", "authorization_code"]
+        False
+        >>>
+        >>> # Test encrypted secret detection heuristic
+        >>> short_secret = "secret123"
+        >>> len(short_secret) > 50
+        False
+        >>> encrypted_secret = "gAAAAABh" + "x" * 60  # Simulated encrypted secret
+        >>> len(encrypted_secret) > 50
+        True
+        >>>
+        >>> # Test scope list handling
+        >>> scopes = ["read", "write"]
+        >>> " ".join(scopes)
+        'read write'
+        >>> empty_scopes = []
+        >>> " ".join(empty_scopes)
+        ''
+    """
 
     def __init__(self, request_timeout: int = 30, max_retries: int = 3, token_storage: Optional[Any] = None):
         """Initialize OAuth Manager.
@@ -50,6 +89,29 @@ class OAuthManager:
         Raises:
             ValueError: If grant type is unsupported
             OAuthError: If token acquisition fails
+
+        Examples:
+            Client credentials flow:
+            >>> import asyncio
+            >>> class TestMgr(OAuthManager):
+            ...     async def _client_credentials_flow(self, credentials):
+            ...         return 'tok'
+            >>> mgr = TestMgr()
+            >>> asyncio.run(mgr.get_access_token({'grant_type': 'client_credentials'}))
+            'tok'
+
+            Authorization code fallback to client credentials:
+            >>> asyncio.run(mgr.get_access_token({'grant_type': 'authorization_code'}))
+            'tok'
+
+            Unsupported grant type raises ValueError:
+            >>> def _unsupported():
+            ...     try:
+            ...         asyncio.run(mgr.get_access_token({'grant_type': 'bad'}))
+            ...     except ValueError:
+            ...         return True
+            >>> _unsupported()
+            True
         """
         grant_type = credentials.get("grant_type")
         logger.debug(f"Getting access token for grant type: {grant_type}")
@@ -486,7 +548,7 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
-    def _extract_user_id(self, token_response: Dict[str, Any], credentials: Dict[str, Any]) -> str:  # pylint: disable=unused-argument
+    def _extract_user_id(self, token_response: Dict[str, Any], credentials: Dict[str, Any]) -> str:
         """Extract user ID from token response.
 
         Args:
@@ -496,16 +558,41 @@ class OAuthManager:
         Returns:
             User ID string
         """
-        # This is a placeholder implementation
-        # In a real implementation, you might:
-        # 1. Extract user_id from the token response if provided
-        # 2. Make a request to the OAuth provider's user info endpoint
-        # 3. Use a default identifier based on the gateway
+        # Try to extract user ID from various common fields in token response
+        # Different OAuth providers use different field names
 
-        # For now, use a placeholder user ID
-        # In production, you should implement proper user ID extraction
-        return f"user_{credentials.get('client_id', 'unknown')}"
+        # Check for 'sub' (subject) - JWT standard
+        if "sub" in token_response:
+            return token_response["sub"]
+
+        # Check for 'user_id' - common in some OAuth responses
+        if "user_id" in token_response:
+            return token_response["user_id"]
+
+        # Check for 'id' - also common
+        if "id" in token_response:
+            return token_response["id"]
+
+        # Fallback to client_id if no user info is available
+        if credentials.get("client_id"):
+            return credentials["client_id"]
+
+        # Final fallback
+        return "unknown_user"
 
 
 class OAuthError(Exception):
-    """OAuth-related errors."""
+    """OAuth-related errors.
+
+    Examples:
+        >>> try:
+        ...     raise OAuthError("Token acquisition failed")
+        ... except OAuthError as e:
+        ...     str(e)
+        'Token acquisition failed'
+        >>> try:
+        ...     raise OAuthError("Invalid grant type")
+        ... except Exception as e:
+        ...     isinstance(e, OAuthError)
+        True
+    """

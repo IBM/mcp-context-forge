@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""jwt_cli.py - generate, inspect, **and be imported** for token helpers.
-
+"""Location: ./mcpgateway/utils/create_jwt_token.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+jwt_cli.py - generate, inspect, **and be imported** for token helpers.
 * **Run as a script** - friendly CLI (works with *no* flags).
 * **Import as a library** - drop-in async functions `create_jwt_token` & `get_jwt_token`
   kept for backward-compatibility, now delegating to the shared core helper.
@@ -28,11 +28,11 @@ Doctest examples
 >>> jwt_util.settings.jwt_algorithm = 'HS256'
 >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
 >>> import jwt
->>> jwt.decode(token, 'secret', algorithms=['HS256'])['sub'] == 'alice'
+>>> jwt.decode(token, 'secret', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'alice'
 True
 >>> import asyncio
 >>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='secret', algorithm='HS256'))
->>> jwt.decode(t, 'secret', algorithms=['HS256'])['sub'] == 'bob'
+>>> jwt.decode(t, 'secret', algorithms=['HS256'], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'bob'
 True
 """
 
@@ -62,9 +62,9 @@ __all__: Sequence[str] = (
 # ---------------------------------------------------------------------------
 # Defaults & constants
 # ---------------------------------------------------------------------------
-DEFAULT_SECRET: str = settings.jwt_secret_key
+# Note: DEFAULT_SECRET is retrieved at runtime to support dynamic configuration changes
 DEFAULT_ALGO: str = settings.jwt_algorithm
-DEFAULT_EXP_MINUTES: int = settings.token_expiry  # 7 days (in minutes)
+DEFAULT_EXP_MINUTES: int = settings.token_expiry
 DEFAULT_USERNAME: str = settings.basic_auth_user
 
 
@@ -76,34 +76,57 @@ DEFAULT_USERNAME: str = settings.basic_auth_user
 def _create_jwt_token(
     data: Dict[str, Any],
     expires_in_minutes: int = DEFAULT_EXP_MINUTES,
-    secret: str = DEFAULT_SECRET,
+    secret: str = "",  # nosec B107 - Legacy parameter, not used for authentication
     algorithm: str = DEFAULT_ALGO,
 ) -> str:
-    """
-    Return a signed JWT string (synchronous, timezone-aware).
+    """Create a signed JWT token with automatic key selection and validation.
+
+    This internal function handles JWT token creation with both symmetric (HMAC) and
+    asymmetric (RSA/ECDSA) algorithms. It automatically validates the JWT configuration,
+    selects the appropriate signing key based on the configured algorithm, and creates
+    a properly formatted JWT token with standard claims.
 
     Args:
         data: Dictionary containing payload data to encode in the token.
-        expires_in_minutes: Token expiration time in minutes. Default is 7 days.
-            Set to 0 to disable expiration.
-        secret: Secret key used for signing the token.
-        algorithm: Signing algorithm to use.
+        expires_in_minutes: Token expiration time in minutes. Set to 0 to disable expiration.
+        secret: Legacy parameter (ignored - uses configuration-based key selection).
+        algorithm: Legacy parameter (ignored - uses configured JWT_ALGORITHM).
 
     Returns:
-        The JWT token string.
+        str: The signed JWT token string.
 
-    Doctest:
-    >>> from mcpgateway.utils import create_jwt_token as jwt_util
-    >>> jwt_util.settings.jwt_secret_key = 'secret'
-    >>> jwt_util.settings.jwt_algorithm = 'HS256'
-    >>> token = jwt_util._create_jwt_token({'sub': 'alice'}, expires_in_minutes=1, secret='secret', algorithm='HS256')
-    >>> import jwt
-    >>> jwt.decode(token, 'secret', algorithms=['HS256'])['sub'] == 'alice'
-    True
+    Raises:
+        JWTConfigurationError: If JWT configuration is invalid or keys are missing.
+        FileNotFoundError: If asymmetric key files don't exist.
+
+    Note:
+        This is an internal function. Use create_jwt_token() for the async interface.
+        The function automatically determines the signing key and algorithm from
+        configuration settings, ignoring the legacy secret and algorithm parameters.
     """
+    # Validate JWT configuration before creating token
+    # First-Party
+    from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret, validate_jwt_algo_and_keys
+
+    validate_jwt_algo_and_keys()
+    secret = get_jwt_private_key_or_secret()
+    # Use the configured algorithm, not the passed parameter
+    algorithm = settings.jwt_algorithm
+
     payload = data.copy()
+    now = _dt.datetime.now(_dt.timezone.utc)
+
+    # Add standard JWT claims
+    payload["iat"] = int(now.timestamp())  # Issued at
+    payload["iss"] = settings.jwt_issuer  # Issuer
+    payload["aud"] = settings.jwt_audience  # Audience
+
+    # Handle legacy username format - convert to sub for consistency
+    if "username" in payload and "sub" not in payload:
+        payload["sub"] = payload["username"]
+
     if expires_in_minutes > 0:
-        expire = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=expires_in_minutes)
+        expire = now + _dt.timedelta(minutes=expires_in_minutes)
         payload["exp"] = int(expire.timestamp())
     else:
         # Warn about non-expiring token
@@ -113,6 +136,7 @@ def _create_jwt_token(
             "   Once JWT API (#425) is available, use it for automatic token renewal.",
             file=sys.stderr,
         )
+
     return jwt.encode(payload, secret, algorithm=algorithm)
 
 
@@ -125,8 +149,8 @@ async def create_jwt_token(
     data: Dict[str, Any],
     expires_in_minutes: int = DEFAULT_EXP_MINUTES,
     *,
-    secret: str = DEFAULT_SECRET,
-    algorithm: str = DEFAULT_ALGO,
+    secret: str = None,
+    algorithm: str = None,
 ) -> str:
     """
     Async facade for historic code. Internally synchronous-almost instant.
@@ -135,8 +159,8 @@ async def create_jwt_token(
         data: Dictionary containing payload data to encode in the token.
         expires_in_minutes: Token expiration time in minutes. Default is 7 days.
             Set to 0 to disable expiration.
-        secret: Secret key used for signing the token.
-        algorithm: Signing algorithm to use.
+        secret: Secret key used for signing the token (deprecated, will use configuration-based keys).
+        algorithm: Signing algorithm to use (deprecated, will use configured algorithm).
 
     Returns:
         The JWT token string.
@@ -146,12 +170,13 @@ async def create_jwt_token(
     >>> jwt_util.settings.jwt_secret_key = 'secret'
     >>> jwt_util.settings.jwt_algorithm = 'HS256'
     >>> import asyncio
-    >>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1, secret='secret', algorithm='HS256'))
+    >>> t = asyncio.run(jwt_util.create_jwt_token({'sub': 'bob'}, expires_in_minutes=1))
     >>> import jwt
-    >>> jwt.decode(t, 'secret', algorithms=['HS256'])['sub'] == 'bob'
+    >>> jwt.decode(t, jwt_util.settings.jwt_secret_key, algorithms=[jwt_util.settings.jwt_algorithm], audience=jwt_util.settings.jwt_audience, issuer=jwt_util.settings.jwt_issuer)['sub'] == 'bob'
     True
     """
-    return _create_jwt_token(data, expires_in_minutes, secret, algorithm)
+    # Use configured values instead of parameters for consistency - secret is retrieved at runtime
+    return _create_jwt_token(data, expires_in_minutes, "", DEFAULT_ALGO)
 
 
 async def get_jwt_token() -> str:
@@ -170,7 +195,7 @@ async def get_jwt_token() -> str:
 
 
 def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[str, Any]:
-    """Decode *without* signature verification-handy for inspection.
+    """Decode with proper audience and issuer verification.
 
     Args:
         token: JWT token string to decode.
@@ -178,11 +203,25 @@ def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[s
 
     Returns:
         Dictionary containing the decoded payload.
+
+    Examples:
+        >>> # Test algorithm parameter handling
+        >>> algs = ['HS256', 'HS512']
+        >>> len(algs)
+        2
+        >>> 'HS256' in algs
+        True
+        >>> # Test None algorithms handling
+        >>> default_algo = [DEFAULT_ALGO]
+        >>> isinstance(default_algo, list)
+        True
     """
     return jwt.decode(
         token,
         settings.jwt_secret_key,
         algorithms=algorithms or [DEFAULT_ALGO],
+        audience=settings.jwt_audience,
+        issuer=settings.jwt_issuer,
         # options={"require": ["exp"]},  # Require expiration
     )
 
@@ -239,7 +278,7 @@ def _parse_args():
         default=DEFAULT_EXP_MINUTES,
         help="Expiration in minutes (0 disables the exp claim).",
     )
-    p.add_argument("-s", "--secret", default=DEFAULT_SECRET, help="Secret key for signing.")
+    p.add_argument("-s", "--secret", default="", help="Secret key for signing (will use configuration-based key if not provided).")
     p.add_argument("--algo", default=DEFAULT_ALGO, help="Signing algorithm to use.")
     p.add_argument("--pretty", action="store_true", help="Pretty-print payload before encoding.")
 

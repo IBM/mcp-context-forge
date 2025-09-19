@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive security tests for MCP Gateway input validation.
-
+"""Location: ./tests/security/test_input_validation.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Comprehensive security tests for MCP Gateway input validation.
 This module tests all input validation functions across the gateway schemas
 to ensure proper security measures are in place against various attack vectors.
 
@@ -403,7 +403,7 @@ class TestSecurityValidation:
             "Description with special chars: !@#$%",
             "Multi-line\ndescription",
             "Unicode: 你好世界 مرحبا بالعالم",
-            "a" * 4096,  # At limit (changed from 4999)
+            "a" * 8192,  # At limit (changed from 4999)
         ]
 
         for desc in valid_descriptions:
@@ -421,9 +421,15 @@ class TestSecurityValidation:
             logger.debug(f"Testing XSS payload in description: {payload[:50]}...")
             must_fail(payload, "XSS description")
 
-        # Invalid descriptions - too long
+        # ✂️ Long descriptions (should be truncated, not rejected)
         logger.debug("Testing description that exceeds max length")
-        must_fail("x" * 4097, "Too long description")
+        long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 100)
+        tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, description=long_desc)
+
+        assert tool.description is not None
+        assert len(tool.description) == SecurityValidator.MAX_DESCRIPTION_LENGTH
+        assert tool.description == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]
+        print(f"✅ Long description truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} chars")
 
     def test_tool_create_headers_validation(self):
         """Test headers validation for depth and structure."""

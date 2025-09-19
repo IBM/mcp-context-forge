@@ -66,13 +66,13 @@ jobs:
       # 0️⃣  Checkout source
       # -------------------------------------------------------------
       - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -------------------------------------------------------------
       # 1️⃣  Setup Python environment
       # -------------------------------------------------------------
       - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: 'pip'
@@ -96,7 +96,7 @@ jobs:
       # -------------------------------------------------------------
       - name: 📤 Upload dependency results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: snyk-dependency-results
           path: snyk-deps-results.json
@@ -114,7 +114,7 @@ jobs:
       # 0️⃣  Checkout source
       # -------------------------------------------------------------
       - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -------------------------------------------------------------
       # 1️⃣  Setup Snyk CLI
@@ -149,7 +149,7 @@ jobs:
       # -------------------------------------------------------------
       - name: 📤 Upload code scan results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: snyk-code-results
           path: |
@@ -169,7 +169,7 @@ jobs:
       # 0️⃣  Checkout source
       # -------------------------------------------------------------
       - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -------------------------------------------------------------
       # 1️⃣  Build container image
@@ -209,7 +209,7 @@ jobs:
       # -------------------------------------------------------------
       - name: 📤 Upload container scan results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: snyk-container-results
           path: |
@@ -229,7 +229,7 @@ jobs:
       # 0️⃣  Checkout source
       # -------------------------------------------------------------
       - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -------------------------------------------------------------
       # 1️⃣  Setup Snyk CLI
@@ -292,7 +292,7 @@ jobs:
       # -------------------------------------------------------------
       - name: 📤 Upload IaC scan results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: snyk-iac-results
           path: |
@@ -314,13 +314,13 @@ jobs:
       # 0️⃣  Checkout source
       # -------------------------------------------------------------
       - name: ⬇️ Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # -------------------------------------------------------------
       # 1️⃣  Setup Python and Snyk
       # -------------------------------------------------------------
       - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: 'pip'
@@ -360,7 +360,7 @@ jobs:
       # -------------------------------------------------------------
       - name: 📤 Upload SBOMs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: sbom-artifacts
           path: |

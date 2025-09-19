@@ -1,27 +1,28 @@
 # -*- coding: utf-8 -*-
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-import json
-import time
-import uuid
-from typing import List, Dict, Any, Optional, AsyncGenerator
-from datetime import datetime
+# Standard
 import asyncio
+from datetime import datetime, timezone
+import json
 import logging
+import time
+from typing import Any, AsyncGenerator, Dict, List, Optional
+import uuid
 
-from .models import (
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionChoice,
-    ChatMessage,
-    Usage,
-    HealthResponse,
-    ReadyResponse,
-    ToolListResponse
-)
-from .agent_langchain import LangchainMCPAgent
-from .config import get_settings
+# Third-Party
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
+try:
+    # Local
+    from .agent_langchain import LangchainMCPAgent
+    from .config import get_settings
+    from .models import ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, HealthResponse, ReadyResponse, ToolListResponse, Usage
+except ImportError:
+    # Third-Party
+    from agent_langchain import LangchainMCPAgent
+    from config import get_settings
+    from models import ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, HealthResponse, ReadyResponse, ToolListResponse, Usage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -65,7 +66,7 @@ async def health_check():
         tools_count = len(agent.get_available_tools())
         return HealthResponse(
             status="healthy",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(tz=timezone.utc).isoformat(),
             details={
                 "agent_initialized": agent.is_initialized(),
                 "tools_loaded": tools_count,
@@ -87,7 +88,7 @@ async def readiness_check():
 
         return ReadyResponse(
             ready=True,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(tz=timezone.utc).isoformat(),
             details={
                 "gateway_connection": await agent.test_gateway_connection(),
                 "tools_available": (len(agent.tools) > 0) or (len(agent.get_available_tools()) > 0),
@@ -293,5 +294,6 @@ async def agent_to_agent(request: Dict[str, Any]):
         }
 
 if __name__ == "__main__":
+    # Third-Party
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

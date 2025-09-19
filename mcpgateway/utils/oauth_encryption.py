@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""OAuth Encryption Utilities.
+"""Location: ./mcpgateway/utils/oauth_encryption.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+OAuth Encryption Utilities.
 
 This module provides encryption and decryption functions for OAuth client secrets
 using the AUTH_ENCRYPTION_SECRET from configuration.
@@ -19,7 +24,21 @@ logger = logging.getLogger(__name__)
 
 
 class OAuthEncryption:
-    """Handles encryption and decryption of OAuth client secrets."""
+    """Handles encryption and decryption of OAuth client secrets.
+
+    Examples:
+        Basic roundtrip:
+        >>> enc = OAuthEncryption('very-secret-key')
+        >>> cipher = enc.encrypt_secret('hello')
+        >>> isinstance(cipher, str) and enc.is_encrypted(cipher)
+        True
+        >>> enc.decrypt_secret(cipher)
+        'hello'
+
+        Non-encrypted text detection:
+        >>> enc.is_encrypted('plain-text')
+        False
+    """
 
     def __init__(self, encryption_secret: str):
         """Initialize the encryption handler.
@@ -112,5 +131,10 @@ def get_oauth_encryption(encryption_secret: str) -> OAuthEncryption:
 
     Returns:
         OAuthEncryption instance
+
+    Examples:
+        >>> enc = get_oauth_encryption('k')
+        >>> isinstance(enc, OAuthEncryption)
+        True
     """
     return OAuthEncryption(encryption_secret)

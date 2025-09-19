@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Memory-backend unit tests for ``session_registry.py``.
-
+"""Location: ./tests/unit/mcpgateway/cache/test_session_registry.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Memory-backend unit tests for ``session_registry.py``.
 This suite exercises the in-memory implementation of
 :pyfile:`mcpgateway/cache/session_registry.py`.
 
@@ -1588,6 +1588,7 @@ async def test_generate_response_jsonrpc_error(registry: SessionRegistry):
     message = {"method": "test_method", "id": 1, "params": {}}
 
     # Mock ResilientHttpClient to raise JSONRPCError
+    # First-Party
     from mcpgateway.validation.jsonrpc import JSONRPCError
 
     class MockAsyncClient:
@@ -1657,6 +1658,7 @@ async def test_generate_response_general_exception(registry: SessionRegistry):
 @pytest.mark.asyncio
 async def test_session_backend_docstring_examples():
     """Test the docstring examples in SessionBackend."""
+    # First-Party
     from mcpgateway.cache.session_registry import SessionBackend
 
     # Test memory backend example

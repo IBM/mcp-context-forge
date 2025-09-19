@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Integration tests for mcpgateway.translate stdio↔SSE echo loop.
-
+"""Location: ./tests/integration/test_translate_echo.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Integration tests for mcpgateway.translate stdio↔SSE echo loop.
 This module contains integration tests for the translate module's
 bidirectional stdio↔SSE communication, testing real echo scenarios
 and message flow patterns.
@@ -27,7 +27,6 @@ import pytest
 
 # First-Party
 from mcpgateway.translate import _build_fastapi, _PubSub, _run_stdio_to_sse, StdIOEndpoint
-
 
 # Test configuration
 TEST_PORT = 19999  # Use high port to avoid conflicts
@@ -90,6 +89,7 @@ while True:
 """
 
     # Write script to temp file
+    # Standard
     import tempfile
     with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
         f.write(echo_script)
@@ -98,6 +98,7 @@ while True:
     yield f"{sys.executable} {script_path}"
 
     # Cleanup
+    # Standard
     import os
     os.unlink(script_path)
 

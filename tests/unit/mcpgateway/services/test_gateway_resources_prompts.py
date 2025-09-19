@@ -1,10 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Tests for gateway service resource and prompt fetching functionality."""
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_resources_prompts.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
-import pytest
+Tests for gateway service resource and prompt fetching functionality.
+"""
+
+# Standard
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+
+# Third-Party
+import pytest
+
+# First-Party
+from mcpgateway.schemas import GatewayCreate, PromptCreate, ResourceCreate, ToolCreate
 from mcpgateway.services.gateway_service import GatewayService
-from mcpgateway.schemas import GatewayCreate, ResourceCreate, PromptCreate, ToolCreate
 
 
 class TestGatewayResourcesPrompts:

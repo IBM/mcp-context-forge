@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Well-Known URI Handler Router.
-
+"""Location: ./mcpgateway/routers/well_known.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Well-Known URI Handler Router.
 This module implements a flexible /.well-known/* endpoint handler that supports
 standard well-known URIs like security.txt and robots.txt with user-configurable content.
 Defaults assume private API deployment with crawling disabled.
@@ -94,6 +95,11 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
 
     Raises:
         HTTPException: 404 if file not found or well-known disabled
+
+    Examples:
+        >>> import asyncio
+        >>> asyncio.iscoroutinefunction(get_well_known_file)
+        True
     """
     if not settings.well_known_enabled:
         raise HTTPException(status_code=404, detail="Not found")

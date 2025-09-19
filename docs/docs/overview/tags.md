@@ -13,6 +13,7 @@ Tags are metadata labels that can be attached to any entity in MCP Gateway:
 - **Prompts** - Organize by purpose (e.g., `coding`, `analysis`, `creative`)
 - **Servers** - Tag by environment (e.g., `production`, `development`, `testing`)
 - **Gateways** - Label federated gateways (e.g., `cloud`, `on-premise`, `partner`)
+- **A2A Agents** - Classify AI agents (e.g., `openai`, `anthropic`, `assistant`, `custom`)
 
 !!! info "Tag Format"
     - Tags are automatically normalized to lowercase
@@ -733,7 +734,7 @@ async def discover_related(
 
 ## 🔗 Related Documentation
 
-- [REST API Reference](/api/) - Complete API documentation
-- [Admin UI Guide](/overview/ui/) - Using the web interface
-- [Virtual Servers](/concepts/virtual-servers/) - Composing servers with tags
-- [Federation](/concepts/federation/) - Tag-based gateway discovery
+- [REST API Reference](https://ibm.github.io/mcp-context-forge/api/) - Complete API documentation
+- [Admin UI Guide](./ui.md) - Using the web interface
+- [Virtual Servers](../architecture/index.md) - Composing servers with tags
+- [Federation](../architecture/index.md) - Tag-based gateway discovery

@@ -1,3 +1,9 @@
+stats/
+.env.bak
+*cookies*txt
+cookies*
+cookies.txt
+.claude
 mcpgateway-export*
 mutants
 .mutmut-cache
@@ -41,6 +47,7 @@ node_modules/
 .tmp*
 mcp.db-journal
 certs/
+jwt/
 FIXMEs
 *.old
 logs/
@@ -91,6 +98,7 @@ certs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *$py.class
 mcpgateway-wrapper/src/mcp_gateway_wrapper/__pycache__/

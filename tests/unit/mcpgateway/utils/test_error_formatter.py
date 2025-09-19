@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
-"""
-Full-coverage unit tests for **mcpgateway.utils.error_formatter**
-
-Running:
-
-    pytest -q --cov=mcpgateway.utils.error_formatter --cov-report=term-missing
-
-Should show **100 %** statement coverage for the target module.
-
+"""Location: ./tests/unit/mcpgateway/utils/test_error_formatter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Full-coverage unit tests for **mcpgateway.utils.error_formatter**
+Running:
+    pytest -q --cov=mcpgateway.utils.error_formatter --cov-report=term-missing
+Should show **100 %** statement coverage for the target module.
 Author: Mihai Criveti
 """
 
@@ -166,7 +164,7 @@ def make_mock_integrity_error(msg):
     "msg,expected",
     [
         ("UNIQUE constraint failed: gateways.url", "A gateway with this URL already exists"),
-        ("UNIQUE constraint failed: gateways.name", "A gateway with this name already exists"),
+        ("UNIQUE constraint failed: gateways.slug", "A gateway with this name already exists"),
         ("UNIQUE constraint failed: tools.name", "A tool with this name already exists"),
         ("UNIQUE constraint failed: resources.uri", "A resource with this URI already exists"),
         ("UNIQUE constraint failed: servers.name", "A server with this name already exists"),

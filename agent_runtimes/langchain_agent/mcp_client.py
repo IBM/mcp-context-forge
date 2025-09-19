@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
+# Future
 from __future__ import annotations
 
+# Standard
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
 import os
+from typing import Any, Dict, List, Optional
 
+# Third-Party
 import httpx
 
 
@@ -31,7 +34,7 @@ class MCPClient:
     @classmethod
     def from_env(cls, base_url: str | None = None) -> "MCPClient":
         url = base_url or os.getenv("MCP_GATEWAY_URL", "http://localhost:4444")
-        token = os.getenv("GATEWAY_BEARER_TOKEN")
+        token = os.getenv("MCPGATEWAY_BEARER_TOKEN") or os.getenv("GATEWAY_BEARER_TOKEN")  # Support both names
         return cls(url, token)
 
     def _headers(self) -> Dict[str, str]:

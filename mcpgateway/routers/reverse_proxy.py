@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcpgateway/routers/reverse_proxy.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 FastAPI router for handling reverse proxy connections.
 
 This module provides WebSocket and SSE endpoints for reverse proxy clients
@@ -8,7 +12,7 @@ to connect and tunnel their local MCP servers through the gateway.
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from typing import Any, Dict, Optional
 import uuid
@@ -45,8 +49,8 @@ class ReverseProxySession:
         self.websocket = websocket
         self.user = user
         self.server_info: Dict[str, Any] = {}
-        self.connected_at = datetime.utcnow()
-        self.last_activity = datetime.utcnow()
+        self.connected_at = datetime.now(tz=timezone.utc)
+        self.last_activity = datetime.now(tz=timezone.utc)
         self.message_count = 0
         self.bytes_transferred = 0
 
@@ -59,7 +63,7 @@ class ReverseProxySession:
         data = json.dumps(message)
         await self.websocket.send_text(data)
         self.bytes_transferred += len(data)
-        self.last_activity = datetime.utcnow()
+        self.last_activity = datetime.now(tz=timezone.utc)
 
     async def receive_message(self) -> Dict[str, Any]:
         """Receive message from the client.
@@ -70,7 +74,7 @@ class ReverseProxySession:
         data = await self.websocket.receive_text()
         self.bytes_transferred += len(data)
         self.message_count += 1
-        self.last_activity = datetime.utcnow()
+        self.last_activity = datetime.now(tz=timezone.utc)
         return json.loads(data)
 
 
@@ -203,7 +207,7 @@ async def websocket_endpoint(
 
                 elif msg_type == "heartbeat":
                     # Respond to heartbeat
-                    await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.utcnow().isoformat()})
+                    await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.now(tz=timezone.utc).isoformat()})
 
                 elif msg_type in ("response", "notification"):
                     # Handle MCP response/notification from the proxied server
@@ -344,7 +348,7 @@ async def sse_endpoint(
             # TODO: Implement message queue for SSE delivery
             while not await request.is_disconnected():
                 await asyncio.sleep(30)  # Keepalive
-                yield {"event": "keepalive", "data": json.dumps({"timestamp": datetime.utcnow().isoformat()})}
+                yield {"event": "keepalive", "data": json.dumps({"timestamp": datetime.now(tz=timezone.utc).isoformat()})}
 
         except asyncio.CancelledError:
             pass

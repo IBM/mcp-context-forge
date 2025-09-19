@@ -4,8 +4,8 @@
 # MCP Gateway (lite) - OCI-compliant container build
 #
 # This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
-# image that automatically tracks the latest Python 3.11.x patch release
-# from the RHEL 9 repositories and is fully patched on each rebuild.
+# image that automatically tracks the latest Python 3.12.x patch release
+# from the RHEL 10 repositories and is fully patched on each rebuild.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
@@ -21,12 +21,12 @@
 # Temporary dir for assembling the scratch rootfs
 ARG ROOTFS_PATH=/tmp/rootfs
 # Python major.minor series to track
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi:9.6-1753978585 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.0-1756805986 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -68,7 +68,7 @@ COPY pyproject.toml /app/
 RUN set -euo pipefail \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
-    && /app/.venv/bin/uv pip install ".[redis,postgres,observability]" \
+    && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability]" \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
     && rm -rf /root/.cache /var/cache/dnf \
     && find /app/.venv -name "*.dist-info" -type d \
@@ -111,18 +111,19 @@ RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
     && mkdir -p "${ROOTFS_PATH:?}" \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 upgrade -y \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 install -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 upgrade -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
          --setopt=install_weak_deps=0 \
          --setopt=tsflags=nodocs \
          python${PYTHON_VERSION} \
          ca-certificates \
+         procps-ng \
     && dnf clean all --installroot="${ROOTFS_PATH:?}"
 
 # ----------------------------------------------------------------------------
 # Create `python3` symlink in the rootfs for compatibility
 # ----------------------------------------------------------------------------
-RUN ln -s /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
 
 # ----------------------------------------------------------------------------
 # Clean up unnecessary files from rootfs (if they exist)
@@ -217,7 +218,7 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.title="mcp/mcpgateway" \
       org.opencontainers.image.description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="0.5.0"
+      org.opencontainers.image.version="0.7.0"
 
 # ----------------------------------------------------------------------------
 # Copy the entire prepared root filesystem from the builder stage

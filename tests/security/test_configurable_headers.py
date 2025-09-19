@@ -1,20 +1,25 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/security/test_configurable_headers.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Configurable Security Headers Testing.
 
 This module tests the configurable security headers implementation for issue #533.
 """
 
-import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+# Standard
 from unittest.mock import patch
 
-from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
+# Third-Party
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.config import settings
+from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
 
 def test_security_headers_can_be_disabled():

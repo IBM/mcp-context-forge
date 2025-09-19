@@ -17,7 +17,7 @@ The **MCP Context Forge Gateway** includes a collection of **high-performance sa
 - **Tools:** `get_system_time`, timezone conversions with DST support
 - **Container:** `ghcr.io/ibm/fast-time-server:latest`
 
-**[📖 Full Documentation →](go-fast-time-server.md)**
+**[📖 Full Documentation →](go/fast-time-server.md)**
 
 #### Quick Start
 ```bash
@@ -33,7 +33,7 @@ make build && make run
 
 ---
 
-## 🚀 Coming Soon
+## 🚀 Planned Samples
 
 ### 🐍 Python Samples
 - **Fast Calculator Server** - Mathematical operations and conversions
@@ -101,8 +101,8 @@ python3 -m mcpgateway.translate \
 ### **Testing with Wrapper**
 ```bash
 # Test through mcpgateway.wrapper
-export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS='http://localhost:4444/servers/UUID_OF_SERVER_1'
+export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN
+export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1'
 python3 -m mcpgateway.wrapper
 ```
 
@@ -158,10 +158,10 @@ mcp-servers/
 | Server | Language | Response Time | Memory | Binary Size | Cold Start |
 |--------|----------|---------------|---------|-------------|------------|
 | fast-time-server | Go | **0.5ms** | 8MB | 12MB | 100ms |
-| *coming soon* | Python | ~2ms | 25MB | N/A | 300ms |
-| *coming soon* | TypeScript | ~3ms | 35MB | N/A | 400ms |
-| *coming soon* | Rust | **0.3ms** | 4MB | 8MB | 50ms |
-| *coming soon* | Java | ~5ms | 45MB | 25MB | 800ms |
+| (planned) | Python | ~2ms | 25MB | N/A | 300ms |
+| (planned) | TypeScript | ~3ms | 35MB | N/A | 400ms |
+| (planned) | Rust | **0.3ms** | 4MB | 8MB | 50ms |
+| (planned) | Java | ~5ms | 45MB | 25MB | 800ms |
 
 *Benchmarks measured on standard GitHub Actions runners*
 
@@ -196,7 +196,7 @@ We're particularly interested in:
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 
 ### **Gateway Documentation**
-- [MCP Context Forge Gateway](../README.md)
+- [MCP Context Forge Gateway](../../index.md)
 - [mcpgateway.wrapper Usage](../mcpgateway-wrapper.md)
 - [mcpgateway.translate Bridge](../mcpgateway-translate.md)
 
@@ -209,7 +209,7 @@ We're particularly interested in:
 
 ## 🔗 Quick Links
 
-- [🦫 **Fast Time Server (Go)** →](go-fast-time-server.md)
+- [🦫 **Fast Time Server (Go)** →](go/fast-time-server.md)
 
 ---
 

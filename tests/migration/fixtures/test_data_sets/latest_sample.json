@@ -1,0 +1,471 @@
+{
+  "metadata": {
+    "version": "latest",
+    "description": "Sample test data for MCP Gateway latest version with all features",
+    "created_by": "migration_test_suite",
+    "total_records": 20
+  },
+  "data": {
+    "tools": [
+      {
+        "name": "next_gen_file_processor_latest",
+        "description": "Next-generation file processing tool with AI capabilities",
+        "display_name": "Next-Gen File Processor",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path to process"
+            },
+            "processing_mode": {
+              "type": "string",
+              "enum": ["basic", "enhanced", "ai_powered"],
+              "default": "enhanced"
+            },
+            "ai_features": {
+              "type": "object",
+              "properties": {
+                "content_analysis": {"type": "boolean", "default": true},
+                "auto_categorization": {"type": "boolean", "default": false},
+                "sentiment_analysis": {"type": "boolean", "default": false},
+                "language_detection": {"type": "boolean", "default": true}
+              }
+            },
+            "output_options": {
+              "type": "object",
+              "properties": {
+                "format": {"type": "string", "enum": ["json", "xml", "yaml", "csv"]},
+                "compression": {"type": "string", "enum": ["none", "gzip", "brotli"]},
+                "encryption": {"type": "boolean", "default": false}
+              }
+            }
+          },
+          "required": ["path"]
+        },
+        "annotations": {
+          "category": "filesystem",
+          "version": "latest",
+          "ai_enabled": "true",
+          "created_by": "migration_test",
+          "features": "next_generation,ai_powered,multi_format"
+        }
+      },
+      {
+        "name": "quantum_data_analyzer_latest",
+        "description": "Quantum-inspired data analysis tool",
+        "display_name": "Quantum Data Analyzer",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "dataset": {
+              "type": "object",
+              "properties": {
+                "data": {"type": "array", "items": {"type": "object"}},
+                "metadata": {"type": "object"},
+                "schema_version": {"type": "string"}
+              },
+              "required": ["data"]
+            },
+            "analysis_algorithms": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["quantum_clustering", "probabilistic_inference", "neural_optimization", "traditional_ml"]
+              }
+            },
+            "quantum_parameters": {
+              "type": "object",
+              "properties": {
+                "qubits": {"type": "integer", "minimum": 1, "maximum": 64},
+                "entanglement_depth": {"type": "integer", "minimum": 1, "maximum": 10},
+                "measurement_basis": {"type": "string", "enum": ["computational", "hadamard", "bell"]}
+              }
+            },
+            "classical_fallback": {"type": "boolean", "default": true}
+          },
+          "required": ["dataset", "analysis_algorithms"]
+        },
+        "annotations": {
+          "category": "ai",
+          "subcategory": "quantum",
+          "complexity": "experimental",
+          "version": "latest",
+          "requires_quantum_backend": "optional"
+        }
+      },
+      {
+        "name": "autonomous_system_orchestrator_latest",
+        "description": "Autonomous system orchestration and self-healing",
+        "display_name": "Autonomous System Orchestrator",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "target_systems": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {"type": "string"},
+                  "type": {"type": "string"},
+                  "endpoint": {"type": "string"},
+                  "health_check": {"type": "string"}
+                }
+              }
+            },
+            "orchestration_policies": {
+              "type": "object",
+              "properties": {
+                "auto_scaling": {"type": "boolean", "default": true},
+                "self_healing": {"type": "boolean", "default": true},
+                "load_balancing": {"type": "string", "enum": ["round_robin", "least_connections", "ai_optimized"]},
+                "failover_strategy": {"type": "string", "enum": ["immediate", "gradual", "intelligent"]}
+              }
+            },
+            "ai_decision_engine": {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean", "default": true},
+                "learning_mode": {"type": "string", "enum": ["supervised", "unsupervised", "reinforcement"]},
+                "confidence_threshold": {"type": "number", "minimum": 0, "maximum": 1}
+              }
+            }
+          },
+          "required": ["target_systems"]
+        },
+        "annotations": {
+          "category": "orchestration",
+          "subcategory": "autonomous",
+          "priority": "critical",
+          "version": "latest",
+          "ai_driven": "true"
+        }
+      },
+      {
+        "name": "blockchain_validator_latest",
+        "description": "Blockchain transaction validation and smart contract analysis",
+        "display_name": "Blockchain Validator",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "blockchain": {"type": "string", "enum": ["ethereum", "bitcoin", "polygon", "arbitrum", "optimism"]},
+            "transaction_hash": {"type": "string", "pattern": "^0x[a-fA-F0-9]{64}$"},
+            "validation_level": {"type": "string", "enum": ["basic", "comprehensive", "forensic"]},
+            "smart_contract_analysis": {
+              "type": "object",
+              "properties": {
+                "static_analysis": {"type": "boolean", "default": true},
+                "vulnerability_scan": {"type": "boolean", "default": true},
+                "gas_optimization": {"type": "boolean", "default": false},
+                "formal_verification": {"type": "boolean", "default": false}
+              }
+            }
+          },
+          "required": ["blockchain", "transaction_hash"]
+        },
+        "annotations": {
+          "category": "blockchain",
+          "security_level": "high",
+          "version": "latest",
+          "requires_node_access": "true"
+        }
+      },
+      {
+        "name": "multimodal_ai_processor_latest",
+        "description": "Multimodal AI processing (text, image, audio, video)",
+        "display_name": "Multimodal AI Processor",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "input_modalities": {
+              "type": "array",
+              "items": {"type": "string", "enum": ["text", "image", "audio", "video", "3d_model"]}
+            },
+            "processing_tasks": {
+              "type": "array",
+              "items": {"type": "string", "enum": ["analysis", "generation", "translation", "summarization", "classification"]}
+            },
+            "ai_models": {
+              "type": "object",
+              "properties": {
+                "text_model": {"type": "string", "default": "gpt-4"},
+                "image_model": {"type": "string", "default": "dall-e-3"},
+                "audio_model": {"type": "string", "default": "whisper-v3"},
+                "video_model": {"type": "string", "default": "video-llama"}
+              }
+            },
+            "output_format": {"type": "string", "enum": ["unified_json", "separate_files", "streaming"]},
+            "quality_settings": {
+              "type": "object",
+              "properties": {
+                "resolution": {"type": "string", "enum": ["low", "medium", "high", "ultra"]},
+                "processing_time": {"type": "string", "enum": ["fast", "balanced", "quality"]}
+              }
+            }
+          },
+          "required": ["input_modalities", "processing_tasks"]
+        },
+        "annotations": {
+          "category": "ai",
+          "subcategory": "multimodal",
+          "compute_requirements": "high",
+          "version": "latest"
+        }
+      }
+    ],
+    "servers": [
+      {
+        "name": "next_gen_sse_server_latest",
+        "description": "Next-generation SSE server with advanced streaming",
+        "display_name": "Next-Gen SSE Server",
+        "transport": "sse",
+        "connection_string": "https://next-gen-sse.example.com:8080/v2/sse",
+        "annotations": {
+          "environment": "production",
+          "transport": "sse",
+          "version": "latest",
+          "features": "advanced_streaming,compression,multiplexing",
+          "api_version": "v2"
+        }
+      },
+      {
+        "name": "quantum_ws_server_latest",
+        "description": "Quantum-secured WebSocket server",
+        "display_name": "Quantum WebSocket Server",
+        "transport": "websocket",
+        "connection_string": "wss://quantum-ws.example.com:8443/quantum/ws",
+        "annotations": {
+          "environment": "production",
+          "transport": "websocket",
+          "version": "latest",
+          "security": "quantum_encryption",
+          "features": "post_quantum_cryptography"
+        }
+      },
+      {
+        "name": "grpc_server_latest",
+        "description": "High-performance gRPC server",
+        "display_name": "gRPC Server",
+        "transport": "grpc",
+        "connection_string": "grpcs://grpc.example.com:9090",
+        "annotations": {
+          "environment": "production",
+          "transport": "grpc",
+          "version": "latest",
+          "performance": "high",
+          "features": "streaming_rpc,load_balancing"
+        }
+      },
+      {
+        "name": "edge_compute_server_latest",
+        "description": "Edge computing server for low-latency processing",
+        "display_name": "Edge Compute Server",
+        "transport": "http",
+        "connection_string": "https://edge-compute.example.com:8443/api/v1",
+        "annotations": {
+          "environment": "edge",
+          "transport": "http",
+          "version": "latest",
+          "latency": "ultra_low",
+          "deployment": "edge_nodes"
+        }
+      }
+    ],
+    "gateways": [
+      {
+        "name": "global_gateway_latest",
+        "base_url": "https://global-gateway.example.com:4444",
+        "description": "Global gateway with worldwide distribution",
+        "display_name": "Global Gateway",
+        "health_check_url": "https://global-gateway.example.com:4444/health/v2",
+        "health_check_interval": 15,
+        "annotations": {
+          "type": "global",
+          "version": "latest",
+          "regions": "global",
+          "features": "geo_routing,auto_scaling,ai_optimization",
+          "sla": "99.99"
+        }
+      },
+      {
+        "name": "ai_gateway_latest",
+        "base_url": "https://ai-gateway.example.com:4444",
+        "description": "AI-powered intelligent gateway",
+        "display_name": "AI Gateway",
+        "health_check_url": "https://ai-gateway.example.com:4444/health/ai",
+        "health_check_interval": 20,
+        "annotations": {
+          "type": "ai_powered",
+          "version": "latest",
+          "ai_features": "predictive_routing,intelligent_caching,auto_optimization",
+          "capabilities": "self_learning"
+        }
+      },
+      {
+        "name": "quantum_gateway_latest",
+        "base_url": "https://quantum-gateway.example.com:4444",
+        "description": "Quantum-secured gateway for ultra-secure communications",
+        "display_name": "Quantum Gateway",
+        "health_check_url": "https://quantum-gateway.example.com:4444/quantum/health",
+        "health_check_interval": 30,
+        "annotations": {
+          "type": "quantum_secured",
+          "version": "latest",
+          "security": "quantum_encryption,post_quantum_signatures",
+          "compliance": "quantum_safe"
+        }
+      }
+    ],
+    "resources": [
+      {
+        "name": "ai_model_config_latest",
+        "uri": "https://models.example.com/latest/ai_config.yaml",
+        "description": "AI model configuration for latest version",
+        "display_name": "AI Model Configuration",
+        "mimeType": "application/yaml",
+        "annotations": {
+          "category": "config",
+          "type": "ai_models",
+          "version": "latest",
+          "models": "gpt-4,claude-3,llama-2"
+        }
+      },
+      {
+        "name": "quantum_algorithms_lib_latest",
+        "uri": "https://quantum-lib.example.com/latest/algorithms.wasm",
+        "description": "Quantum algorithms WebAssembly library",
+        "display_name": "Quantum Algorithms Library",
+        "mimeType": "application/wasm",
+        "annotations": {
+          "category": "library",
+          "type": "quantum_algorithms",
+          "version": "latest",
+          "runtime": "wasm"
+        }
+      },
+      {
+        "name": "global_dataset_latest",
+        "uri": "https://data.example.com/latest/global_dataset.parquet",
+        "description": "Global dataset in optimized format",
+        "display_name": "Global Dataset",
+        "mimeType": "application/parquet",
+        "annotations": {
+          "category": "data",
+          "type": "global_dataset",
+          "version": "latest",
+          "size": "10GB",
+          "format": "parquet",
+          "compression": "snappy"
+        }
+      },
+      {
+        "name": "ml_pipeline_config_latest",
+        "uri": "https://pipelines.example.com/latest/ml_pipeline.json",
+        "description": "Machine learning pipeline configuration",
+        "display_name": "ML Pipeline Configuration",
+        "mimeType": "application/json",
+        "annotations": {
+          "category": "config",
+          "type": "ml_pipeline",
+          "version": "latest",
+          "stages": "preprocessing,training,validation,deployment"
+        }
+      }
+    ],
+    "prompts": [
+      {
+        "name": "advanced_ai_prompt_latest",
+        "description": "Advanced AI interaction prompt with dynamic adaptation",
+        "display_name": "Advanced AI Prompt",
+        "template": "🤖 **AI Assistant v{{version}}** - {{current_time}}\n\n**User**: {{name}} ({{role}})\n**Context**: {{context}}\n**Task**: {{task}}\n\n**Available Capabilities**:\n{{#each capabilities}}\n- {{this}}\n{{/each}}\n\n**Instructions**: {{instructions}}\n\n**Constraints**:\n- Max Response Length: {{max_length}}\n- Format: {{format}}\n- Tone: {{tone}}\n- Technical Level: {{technical_level}}\n\n**Previous Context**: {{#if has_context}}{{previous_context}}{{else}}None{{/if}}\n\nHow can I assist you today?",
+        "annotations": {
+          "category": "ai_interaction",
+          "complexity": "advanced",
+          "variables": "12",
+          "version": "latest",
+          "templating_engine": "handlebars",
+          "dynamic_adaptation": "true"
+        }
+      },
+      {
+        "name": "quantum_analysis_prompt_latest",
+        "description": "Quantum computing analysis prompt",
+        "display_name": "Quantum Analysis Prompt",
+        "template": "⚛️ **Quantum Analysis Engine**\n\n**Problem Statement**: {{problem}}\n**Quantum Algorithm**: {{algorithm}}\n**Qubit Requirements**: {{qubits}}\n\n**Classical Preprocessing**:\n{{classical_steps}}\n\n**Quantum Circuit Design**:\n```quantum\n{{quantum_circuit}}\n```\n\n**Expected Outcomes**:\n- Quantum Advantage: {{quantum_advantage}}\n- Accuracy: {{expected_accuracy}}\n- Runtime: {{estimated_runtime}}\n\n**Fallback Strategy**: {{fallback_strategy}}\n\nInitiating quantum analysis...",
+        "annotations": {
+          "category": "quantum_computing",
+          "complexity": "experimental",
+          "variables": "8",
+          "version": "latest",
+          "requires_quantum_backend": "true"
+        }
+      },
+      {
+        "name": "multimodal_synthesis_prompt_latest",
+        "description": "Multimodal content synthesis prompt",
+        "display_name": "Multimodal Synthesis Prompt",
+        "template": "🎭 **Multimodal Content Synthesis**\n\n**Input Modalities**: {{input_types}}\n**Output Requirements**: {{output_requirements}}\n\n**Processing Pipeline**:\n1. **Analysis Phase**: {{analysis_instructions}}\n2. **Synthesis Phase**: {{synthesis_instructions}}\n3. **Quality Assurance**: {{qa_instructions}}\n\n**Style Guide**:\n- Visual Style: {{visual_style}}\n- Tone: {{tone}}\n- Target Audience: {{audience}}\n\n**Technical Constraints**:\n- Resolution: {{resolution}}\n- Duration: {{duration}} \n- File Size: < {{max_size}}\n\n**Quality Metrics**:\n- Coherence Score: > {{min_coherence}}\n- Relevance Score: > {{min_relevance}}\n\nBegin multimodal synthesis...",
+        "annotations": {
+          "category": "multimodal_ai",
+          "complexity": "high",
+          "variables": "11",
+          "version": "latest",
+          "output_types": "text,image,audio,video"
+        }
+      }
+    ],
+    "a2a_agents": [
+      {
+        "name": "quantum_ai_agent_latest",
+        "description": "Quantum-enhanced AI agent for complex reasoning",
+        "display_name": "Quantum AI Agent",
+        "provider": "quantum_openai",
+        "model": "qgpt-quantum-1",
+        "endpoint_url": "https://quantum-api.openai.com/v1/quantum/chat",
+        "annotations": {
+          "provider": "quantum_openai",
+          "model_family": "qgpt",
+          "capabilities": "[\"quantum_reasoning\", \"superposition_analysis\", \"entangled_inference\"]",
+          "max_tokens": "8192",
+          "quantum_features": "true",
+          "version": "latest",
+          "created_by": "migration_test"
+        }
+      },
+      {
+        "name": "autonomous_orchestrator_agent_latest",
+        "description": "Autonomous system orchestration agent",
+        "display_name": "Autonomous Orchestrator",
+        "provider": "anthropic",
+        "model": "claude-3-opus-autonomous",
+        "endpoint_url": "https://api.anthropic.com/v1/autonomous/chat",
+        "annotations": {
+          "provider": "anthropic",
+          "model_family": "claude",
+          "capabilities": "[\"system_orchestration\", \"predictive_scaling\", \"autonomous_healing\"]",
+          "max_tokens": "4096",
+          "autonomous_features": "true",
+          "version": "latest",
+          "created_by": "migration_test"
+        }
+      },
+      {
+        "name": "multimodal_fusion_agent_latest",
+        "description": "Multimodal AI fusion agent for complex content processing",
+        "display_name": "Multimodal Fusion Agent",
+        "provider": "google",
+        "model": "gemini-ultra-multimodal",
+        "endpoint_url": "https://generativelanguage.googleapis.com/v1beta/multimodal:generateContent",
+        "annotations": {
+          "provider": "google",
+          "model_family": "gemini",
+          "capabilities": "[\"text_vision_fusion\", \"audio_analysis\", \"video_understanding\", \"3d_reasoning\"]",
+          "max_tokens": "12288",
+          "multimodal_features": "true",
+          "version": "latest",
+          "created_by": "migration_test"
+        }
+      }
+    ]
+  }
+}

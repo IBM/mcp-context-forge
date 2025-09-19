@@ -1,0 +1,57 @@
+project_name:
+  type: str
+  help: What is the server project name? (human-friendly)
+  default: Awesome MCP Server
+
+package_name:
+  type: str
+  help: What is the Python package name? (import path)
+  default: "{{ project_name|lower|replace(' ', '_')|replace('-', '_') }}"
+
+dist_name:
+  type: str
+  help: What is the distribution name? (package on PyPI)
+  default: "{{ project_name|lower|replace(' ', '-') }}"
+
+description:
+  type: str
+  help: Short description for the server
+  default: Example Python MCP server (stdio + optional HTTP bridge)
+
+version:
+  type: str
+  help: Initial version
+  default: 0.1.0
+
+author_name:
+  type: str
+  help: Author name
+  default: "{{ _copier_conf.data.default_author_name }}"
+
+author_email:
+  type: str
+  help: Author email
+  default: "{{ _copier_conf.data.default_author_email }}"
+
+license:
+  type: str
+  help: Project license
+  choices:
+    - Apache-2.0
+    - MIT
+  default: Apache-2.0
+
+python_min:
+  type: str
+  help: Minimum supported Python version
+  default: "3.11"
+
+include_container:
+  type: bool
+  help: Include a Containerfile
+  default: true
+
+include_http_bridge:
+  type: bool
+  help: Include Makefile targets to expose stdio over HTTP via mcpgateway.translate
+  default: true

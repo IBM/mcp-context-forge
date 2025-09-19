@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Metadata capture utilities for comprehensive audit tracking.
-
+"""Location: ./mcpgateway/utils/metadata_capture.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Metadata capture utilities for comprehensive audit tracking.
 This module provides utilities for capturing comprehensive metadata during
 entity creation and modification operations. It extracts request context
 information such as authenticated user, IP address, user agent, and source
@@ -107,12 +107,14 @@ class MetadataCapture:
             'alice'
             >>> MetadataCapture.extract_username({"sub": "bob", "exp": 123})
             'bob'
+            >>> MetadataCapture.extract_username({"email": "user@example.com", "full_name": "User"})
+            'user@example.com'
         """
         if isinstance(user, str):
             return user
         elif isinstance(user, dict):
-            # Try to extract username from JWT payload
-            return user.get("username") or user.get("sub") or "unknown"
+            # Try to extract username from JWT payload or user context
+            return user.get("username") or user.get("sub") or user.get("email") or "unknown"
         else:
             return "unknown"
 

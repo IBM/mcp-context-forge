@@ -21,11 +21,11 @@ jobs:
     steps:
       # 1️⃣  Check out repository so Makefile & sources are available
       - name: Checkout code
-        uses: actions/checkout@v4     # Standard checkout step
+        uses: actions/checkout@v5     # Standard checkout step
 
       # 2️⃣  Set up the requested Python version from the runner tool-cache
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5  # Recommended approach for consistent PATH
+        uses: actions/setup-python@v6  # Recommended approach for consistent PATH
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -61,7 +61,7 @@ jobs:
 
       # 9️⃣  Upload built artifacts so they can be downloaded from the run page
       - name: Upload distributions
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: python-package-${{ matrix.python-version }}
           path: dist/*

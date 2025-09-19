@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/security/test_security_middleware_comprehensive.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 Comprehensive Security Middleware Testing.
 
@@ -9,13 +10,17 @@ This module provides comprehensive test coverage for the SecurityHeadersMiddlewa
 including all configuration combinations, edge cases, and integration scenarios.
 """
 
-import pytest
-from fastapi import FastAPI, Response, Request
-from fastapi.testclient import TestClient
-from unittest.mock import patch, Mock
+# Standard
+from unittest.mock import Mock, patch
 
-from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
+# Third-Party
+from fastapi import FastAPI, Request, Response
+from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.config import settings
+from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
 
 class TestSecurityHeadersConfiguration:
@@ -374,6 +379,7 @@ class TestMiddlewareIntegration:
 
         @app.get("/not-found")
         def not_found_endpoint():
+            # Third-Party
             from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Not found")
 

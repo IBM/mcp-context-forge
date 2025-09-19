@@ -1,0 +1,157 @@
+# MCP Gateway v0.7.0 - Migration Tests
+# Critical post-migration validation tests
+# Focus: Verify old servers are visible and migration successful
+
+worksheet_name: "Migration Tests"
+description: "Critical post-migration validation tests to ensure v0.6.0 → v0.7.0 upgrade successful"
+priority: "CRITICAL"
+estimated_time: "60-90 minutes"
+
+headers:
+  - "Test ID"
+  - "Priority"
+  - "Component"
+  - "Description"
+  - "Detailed Steps"
+  - "Expected Result"
+  - "Actual Output"
+  - "Status"
+  - "Tester"
+  - "Date"
+  - "Comments"
+  - "SQLite"
+  - "PostgreSQL"
+
+tests:
+  - test_id: "MIG-001"
+    priority: "CRITICAL"
+    component: "Admin User Creation"
+    description: "Verify platform admin user was created during migration"
+    steps: |
+      1. Check expected admin email from configuration:
+         python3 -c "from mcpgateway.config import settings; print(f'Expected admin: {settings.platform_admin_email}')"
+      2. Check actual admin user in database:
+         python3 -c "from mcpgateway.db import SessionLocal, EmailUser; db=SessionLocal(); admin=db.query(EmailUser).filter(EmailUser.is_admin==True).first(); print(f'Found admin: {admin.email if admin else None}, is_admin: {admin.is_admin if admin else False}'); db.close()"
+      3. Compare expected vs actual results
+      4. Record both outputs exactly
+    expected: "Expected admin email matches found admin email, is_admin=True"
+    sqlite_support: true
+    postgresql_support: true
+    validation_command: 'python3 -c "from mcpgateway.config import settings; from mcpgateway.db import SessionLocal, EmailUser; db=SessionLocal(); admin=db.query(EmailUser).filter(EmailUser.email==settings.platform_admin_email, EmailUser.is_admin==True).first(); result = \"PASS\" if admin else \"FAIL\"; print(f\"Result: {result}\"); db.close()"'
+
+  - test_id: "MIG-002"
+    priority: "CRITICAL"
+    component: "Personal Team Creation"
+    description: "Verify admin user has personal team created automatically"
+    steps: |
+      1. Run full verification script:
+         python3 scripts/verify_multitenancy_0_7_0_migration.py
+      2. Look for 'PERSONAL TEAM CHECK' section in output
+      3. Record team ID, name, and slug shown
+      4. Verify there are no error messages
+      5. Note team visibility (should be 'private')
+    expected: "✅ Personal team found: <Name> (Team ID: <uuid>, Slug: <slug>, Visibility: private)"
+    sqlite_support: true
+    postgresql_support: true
+
+  - test_id: "MIG-003"
+    priority: "CRITICAL"
+    component: "Server Visibility Fix"
+    description: "OLD SERVERS NOW VISIBLE - This is the main issue being fixed"
+    steps: |
+      1. Open web browser to http://localhost:4444/admin
+      2. Login with admin email and password from .env file
+      3. Click 'Virtual Servers' in navigation menu
+      4. Count total servers displayed in the list
+      5. Identify servers created before migration (older creation dates)
+      6. Click on each server to verify details are accessible
+      7. Take screenshot of server list showing all servers
+      8. Record server names, creation dates, and visibility settings
+    expected: "ALL pre-migration servers visible in admin UI server list, details accessible"
+    sqlite_support: true
+    postgresql_support: true
+    main_test: true
+    screenshot_required: true
+    critical_for_production: true
+
+  - test_id: "MIG-004"
+    priority: "CRITICAL"
+    component: "Resource Team Assignment"
+    description: "All resources assigned to teams (no NULL team_id values)"
+    steps: |
+      1. In admin UI, navigate to Tools section
+      2. Click on any tool to view its details
+      3. Verify 'Team' field shows team name (not empty or NULL)
+      4. Verify 'Owner' field shows admin email address
+      5. Verify 'Visibility' field has value (private/team/public)
+      6. Repeat this check for Resources and Prompts sections
+      7. Run database verification:
+         python3 -c "from mcpgateway.db import SessionLocal, Tool, Resource; db=SessionLocal(); tool_unassigned=db.query(Tool).filter(Tool.team_id==None).count(); resource_unassigned=db.query(Resource).filter(Resource.team_id==None).count(); print(f'Unassigned tools: {tool_unassigned}, resources: {resource_unassigned}'); db.close()"
+    expected: "All resources show Team/Owner/Visibility fields, database query shows 0 unassigned"
+    sqlite_support: true
+    postgresql_support: true
+
+  - test_id: "MIG-005"
+    priority: "CRITICAL"
+    component: "Email Authentication"
+    description: "Email-based authentication functional after migration"
+    steps: |
+      1. Open new private/incognito browser window
+      2. Navigate to http://localhost:4444/admin
+      3. Look for email login form or 'Email Login' option
+      4. Enter admin email from .env file
+      5. Enter admin password from .env file
+      6. Click Login/Submit button
+      7. Verify successful redirect to admin dashboard
+      8. Check user menu/profile shows correct email address
+    expected: "Email authentication successful, dashboard loads, correct email displayed"
+    sqlite_support: true
+    postgresql_support: true
+
+  - test_id: "MIG-006"
+    priority: "HIGH"
+    component: "Basic Auth Compatibility"
+    description: "Basic authentication still works alongside email auth"
+    steps: |
+      1. Open new browser window
+      2. Navigate to http://localhost:4444/admin
+      3. Use browser basic auth popup (username: admin, password: changeme)
+      4. Verify access is granted
+      5. Navigate to different admin sections
+      6. Test admin functionality works
+    expected: "Basic auth continues to work, no conflicts with email auth system"
+    sqlite_support: true
+    postgresql_support: true
+
+  - test_id: "MIG-007"
+    priority: "HIGH"
+    component: "Database Schema Validation"
+    description: "All multitenancy tables created with proper structure"
+    steps: |
+      1. Check multitenancy tables exist:
+         SQLite: sqlite3 mcp.db '.tables' | grep email
+         PostgreSQL: psql -d mcp -c '\dt' | grep email
+      2. Verify required tables: email_users, email_teams, email_team_members, roles, user_roles
+      3. Check table row counts:
+         python3 -c "from mcpgateway.db import SessionLocal, EmailUser, EmailTeam; db=SessionLocal(); users=db.query(EmailUser).count(); teams=db.query(EmailTeam).count(); print(f'Users: {users}, Teams: {teams}'); db.close()"
+      4. Test foreign key relationships work properly
+    expected: "All multitenancy tables exist with proper data and working relationships"
+    sqlite_support: true
+    postgresql_support: true
+
+  - test_id: "MIG-008"
+    priority: "MEDIUM"
+    component: "API Functionality Validation"
+    description: "Core APIs respond correctly after migration"
+    steps: |
+      1. Test health endpoint: curl http://localhost:4444/health
+      2. Get authentication token:
+         curl -X POST http://localhost:4444/auth/login -H 'Content-Type: application/json' -d '{"email":"<admin-email>","password":"<admin-password>"}'
+      3. Test teams API with token:
+         curl -H 'Authorization: Bearer <token>' http://localhost:4444/teams
+      4. Test servers API:
+         curl -H 'Authorization: Bearer <token>' http://localhost:4444/servers
+      5. Record all HTTP status codes and response content
+    expected: "Health=200, Login=200 with JWT token, Teams=200 with team data, Servers=200 with server data"
+    sqlite_support: true
+    postgresql_support: true

@@ -119,7 +119,7 @@ hey -n 10000 -c 200 \
 
 * Set `loglevel = "debug"` in `gunicorn.conf.py` during tests; revert to `info` in prod.
 * Forward `stdout`/`stderr` from the container to your platform's log stack (e.g. `kubectl logs`, `docker logs`).
-* Expose `/metrics` via Prometheus exporter (coming soon) for request timing & queue depth.
+* Expose `/metrics` via a Prometheus exporter (planned) for request timing & queue depth; track enablement in the project roadmap.
 
 ---
 

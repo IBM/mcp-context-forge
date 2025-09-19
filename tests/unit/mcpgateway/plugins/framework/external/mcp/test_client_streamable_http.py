@@ -1,19 +1,24 @@
 # -*- coding: utf-8 -*-
-"""
-Tests for external client on streamable http.
-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/external/mcp/test_client_streamable_http.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for external client on streamable http.
 """
+# Standard
 import os
 import subprocess
 import sys
 import time
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework import ConfigLoader, PluginLoader, PluginContext, PromptPrehookPayload, PromptPosthookPayload
+from mcpgateway.plugins.framework import ConfigLoader, GlobalContext, PluginContext, PluginLoader, PromptPosthookPayload, PromptPrehookPayload
+
 
 @pytest.fixture(autouse=True)
 def server_proc():
@@ -42,7 +47,7 @@ async def test_client_load_streamable_http(server_proc):
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_pre_fetch(prompt, context)
     assert result.modified_payload.args["user"] == "What a yikesshow!"
     config = plugin.config
@@ -90,7 +95,7 @@ async def test_client_load_strhttp_overrides(server_proc1):
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(name="test_prompt", args = {"text": "That was innovative!"})
-    result = await plugin.prompt_pre_fetch(prompt, PluginContext(request_id="1", server_id="2"))
+    result = await plugin.prompt_pre_fetch(prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
     assert result.violation.description == "A deny word was found in the prompt"
@@ -134,7 +139,7 @@ async def test_client_load_strhttp_post_prompt(server_proc2):
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
-    context = PluginContext(request_id="1", server_id="2")
+    context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_pre_fetch(prompt, context)
     assert result.modified_payload.args["user"] == "What a yikesshow!"
     config = plugin.config

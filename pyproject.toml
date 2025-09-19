@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.5.0"
+version = "0.7.0"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -47,22 +47,25 @@ maintainers = [
 # ----------------------------------------------------------------
 dependencies = [
     "aiohttp>=3.12.15",
-    "alembic>=1.16.4",
-    "copier>=9.9.0",
-    "cryptography>=45.0.6",
+    "alembic>=1.16.5",
+    "argon2-cffi>=25.1.0",
+    "copier>=9.10.2",
+    "cryptography>=45.0.7",
     "fastapi>=0.116.1",
     "filelock>=3.19.1",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
     "jinja2>=3.1.6",
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.1",
-    "mcp>=1.13.0",
+    "mcp>=1.14.0",
     "oauthlib>=3.3.1",
     "parse>=1.20.2",
     "psutil>=7.0.0",
-    "pydantic>=2.11.7",
+    "pydantic>=2.11.9",
+    "pydantic[email]>=2.11.9",
     "pydantic-settings>=2.10.1",
     "pyjwt>=2.10.1",
     "python-json-logger>=3.3.0",
@@ -70,12 +73,16 @@ dependencies = [
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.43",
     "sse-starlette>=3.0.2",
-    "starlette>=0.47.2",
-    "typer>=0.16.0",
+    "starlette>=0.47.3,<0.48.0",
+    "typer>=0.17.4",
     "uvicorn>=0.35.0",
+
     "zeroconf>=0.147.0",
     "limits[redis]",
     "coredis>=3.4.0", 
+
+    "zeroconf>=0.147.2",
+
 ]
 
 # ----------------------------------------------------------------
@@ -92,12 +99,16 @@ postgres = [
     "psycopg2-binary>=2.9.10",
 ]
 
+mysql = [
+    "pymysql>=1.1.2",
+]
+
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.138.2",
+    "hypothesis>=6.138.16",
     "pytest-benchmark>=5.1.0",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.1.0",
+    "schemathesis>=4.1.4",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -106,15 +117,15 @@ fuzz-atheris = [
 ]
 
 alembic = [
-    "alembic>=1.16.4",
+    "alembic>=1.16.5",
 ]
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.25.0",
-    "opentelemetry-exporter-otlp>=1.25.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.25.0",
-    "opentelemetry-sdk>=1.25.0",
+    "opentelemetry-api>=1.37.0",
+    "opentelemetry-exporter-otlp>=1.37.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.37.0",
+    "opentelemetry-sdk>=1.37.0",
 ]
 
 # Additional observability backends (optional)
@@ -123,13 +134,13 @@ observability-jaeger = [
 ]
 
 observability-zipkin = [
-    "opentelemetry-exporter-zipkin>=1.36.0",
+    "opentelemetry-exporter-zipkin>=1.37.0",
 ]
 
 observability-all = [
-    "mcp-contextforge-gateway[observability]>=0.5.0",
+    "mcp-contextforge-gateway[observability]>=0.6.0",
     "opentelemetry-exporter-jaeger>=1.21.0",
-    "opentelemetry-exporter-zipkin>=1.36.0",
+    "opentelemetry-exporter-zipkin>=1.37.0",
 ]
 
 # Async SQLite Driver (optional)
@@ -142,7 +153,10 @@ asyncpg = [
     "asyncpg>=0.30.0",
 ]
 
-# Chuck runtime (optional)
+# Chuck/Chuk MCP Runtime (optional) - External plugin server runtime
+# Provides MCP tool decorators, plugin hooks, and multi-transport server support
+# Used by: mcpgateway/plugins/framework/external/mcp/server/runtime.py
+# Required only if you plan to create external MCP plugin servers
 chuck = [
     "chuk-mcp-runtime>=0.6.5",
 ]
@@ -159,7 +173,7 @@ dev = [
     "chuk-mcp-runtime>=0.6.5",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
-    "coverage>=7.10.4",
+    "coverage>=7.10.6",
     "coverage-badge>=1.1.2",
     "darglint>=1.8.1",
     "dlint>=0.16.0",
@@ -170,7 +184,7 @@ dev = [
     "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.0.1",
-    "mypy>=1.17.1",
+    "mypy>=1.18.1",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
     "pip_audit>=2.9.0",
@@ -180,35 +194,36 @@ dev = [
     "pylint>=3.3.8",
     "pylint-pydantic>=0.3.5",
     "pyre-check>=0.9.25",
-    "pyrefly>=0.29.0",
-    "pyright>=1.1.403",
+    "pyrefly>=0.32.0",
+    "pyright>=1.1.405",
     "pyroma>=5.0",
-    "pyspelling>=2.10",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.1.0",
-    "pytest-cov>=6.2.1",
+    "pyspelling>=2.11",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
     "pytest-env>=1.1.5",
     "pytest-examples>=0.0.18",
     "pytest-md-report>=0.7.0",
-    "pytest-rerunfailures>=15.1",
+    "pytest-rerunfailures>=16.0.1",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
     "pytype>=2024.10.11",
     "pyupgrade>=3.20.0",
     "radon>=6.0.1",
     "redis>=6.4.0",
-    "ruff>=0.12.9",
-    "semgrep>=1.132.1",
+    "ruff>=0.13.0",
+    "semgrep>=1.136.0",
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
-    "tox>=4.28.4",
+    "tomlkit>=0.13.3",
+    "tox>=4.30.2",
     "tox-uv>=1.28.0",
-    "twine>=6.1.0",
-    "ty>=0.0.1a18",
+    "twine>=6.2.0",
+    "ty>=0.0.1a20",
     "types-tabulate>=0.9.0.20241207",
     "unimport>=1.2.1",
-    "uv>=0.8.11",
+    "uv>=0.8.17",
     "vulture>=2.14",
     "websockets>=15.0.1",
     "yamllint>=1.37.1",
@@ -216,18 +231,18 @@ dev = [
 
 # UI Testing
 playwright = [
-    "playwright>=1.54.0",
+    "playwright>=1.55.0",
     "pytest-html>=4.1.1",
-    "pytest-playwright>=0.7.0",
+    "pytest-playwright>=0.7.1",
     "pytest-timeout>=2.4.0",
 ]
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=0.5.0",
+    "mcp-contextforge-gateway[redis]>=0.6.0",
 ]
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.5.0",
+    "mcp-contextforge-gateway[redis,dev]>=0.6.0",
 ]
 
 # --------------------------------------------------------------------
@@ -405,7 +420,7 @@ plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic model
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q --cov=mcpgateway --ignore=tests/playwright"
+addopts = "-ra -q --cov=mcpgateway --ignore=tests/playwright --ignore=tests/migration"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -415,7 +430,9 @@ filterwarnings = [
 # Set environment variables for all tests
 env = [
     "MCPGATEWAY_ADMIN_API_ENABLED=true",
-    "MCPGATEWAY_UI_ENABLED=true"
+    "MCPGATEWAY_UI_ENABLED=true",
+    "DATABASE_URL=sqlite:///:memory:",
+    "TEST_DATABASE_URL=sqlite:///:memory:"
 ]
 
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
@@ -427,6 +444,7 @@ markers = [
     "smoke: marks tests as smoke tests for quick validation",
     "e2e: marks tests as end-to-end tests",
     "fuzz: marks tests as fuzz tests (excluded from main test suite)",
+    "benchmark: marks tests as performance benchmarks (migration testing)",
 ]
 
 # Playwright-specific test discovery patterns

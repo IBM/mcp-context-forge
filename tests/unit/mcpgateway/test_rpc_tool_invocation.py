@@ -1,17 +1,26 @@
 # -*- coding: utf-8 -*-
-"""Test RPC tool invocation after PR #746 changes."""
+"""Location: ./tests/unit/mcpgateway/test_rpc_tool_invocation.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Test RPC tool invocation after PR #746 changes.
+"""
+
+# Standard
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+# Third-Party
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy.orm import Session
 
+# First-Party
+from mcpgateway.config import settings
 from mcpgateway.main import app
 from mcpgateway.models import Tool
 from mcpgateway.services.tool_service import ToolService
-from mcpgateway.config import settings
 
 
 @pytest.fixture

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Centralized for Pydantic validation error, SQL exception.
-
+"""Location: ./mcpgateway/utils/error_formatter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Gateway Centralized for Pydantic validation error, SQL exception.
 This module provides centralized error formatting for the MCP Gateway,
 transforming technical Pydantic validation errors and SQLAlchemy database
 exceptions into user-friendly messages suitable for API responses.
@@ -193,6 +193,7 @@ class ErrorFormatter:
             "Tool URL must start with": f"{field.title()} must be a valid HTTP or WebSocket URL",
             "cannot contain directory traversal": f"{field.title()} contains invalid characters",
             "contains HTML tags": f"{field.title()} cannot contain HTML or script tags",
+            "Server ID must be a valid UUID format": f"{field.title()} must be a valid UUID",
         }
 
         for pattern, friendly_msg in mappings.items():
@@ -231,8 +232,8 @@ class ErrorFormatter:
             >>> result['success']
             False
 
-            >>> # Test UNIQUE constraint on gateway name
-            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: gateways.name"
+            >>> # Test UNIQUE constraint on gateway slug
+            >>> mock_error.orig.__str__ = lambda self: "UNIQUE constraint failed: gateways.slug"
             >>> result = ErrorFormatter.format_database_error(mock_error)
             >>> result['message']
             'A gateway with this name already exists'
@@ -298,7 +299,7 @@ class ErrorFormatter:
             if "UNIQUE constraint failed" in error_str:
                 if "gateways.url" in error_str:
                     return {"message": "A gateway with this URL already exists", "success": False}
-                elif "gateways.name" in error_str:
+                elif "gateways.slug" in error_str:
                     return {"message": "A gateway with this name already exists", "success": False}
                 elif "tools.name" in error_str:
                     return {"message": "A tool with this name already exists", "success": False}
@@ -308,6 +309,8 @@ class ErrorFormatter:
                     return {"message": "A server with this name already exists", "success": False}
                 elif "prompts.name" in error_str:
                     return {"message": "A prompt with this name already exists", "success": False}
+                elif "servers.id" in error_str:
+                    return {"message": "A server with this ID already exists", "success": False}
 
             elif "FOREIGN KEY constraint failed" in error_str:
                 return {"message": "Referenced item not found", "success": False}

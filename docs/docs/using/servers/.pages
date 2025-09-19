@@ -1,3 +1,7 @@
+title: MCP Servers
 nav:
-  - index.md
-  - go-fast-time-server.md
+  - Overview: index.md
+  - Go Servers: go
+  - Python Servers: python
+  - External Servers: external
+  - IBM Servers: ibm

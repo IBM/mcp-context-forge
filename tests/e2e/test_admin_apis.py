@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-End-to-end tests for MCP Gateway admin APIs.
-
+"""Location: ./tests/e2e/test_admin_apis.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+End-to-end tests for MCP Gateway admin APIs.
 This module contains comprehensive end-to-end tests for all admin API endpoints.
 These tests are designed to exercise the entire application stack with minimal mocking,
 using only a temporary SQLite database and bypassing authentication.
@@ -33,6 +32,7 @@ import os
 
 os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
 os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
+os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for e2e tests
 
 # Standard
 import logging
@@ -62,9 +62,40 @@ setup_logging()
 # -------------------------
 # Test Configuration
 # -------------------------
-TEST_USER = "testuser"
-TEST_PASSWORD = "testpass"
-TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_USER}:{TEST_PASSWORD}"}
+def create_test_jwt_token():
+    """Create a proper JWT token for testing with required audience and issuer."""
+    # Standard
+    import datetime
+
+    # Third-Party
+    import jwt
+
+    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
+    payload = {
+        'sub': 'admin@example.com',
+        'email': 'admin@example.com',
+        'iat': int(datetime.datetime.now(datetime.timezone.utc).timestamp()),
+        'exp': int(expire.timestamp()),
+        'iss': 'mcpgateway',
+        'aud': 'mcpgateway-api',
+    }
+
+    # Use the test JWT secret key
+    return jwt.encode(payload, 'my-test-key', algorithm='HS256')
+
+TEST_JWT_TOKEN = create_test_jwt_token()
+TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
+
+# Local
+# Test user for the updated authentication system
+from tests.utils.rbac_mocks import create_mock_email_user
+
+TEST_USER = create_mock_email_user(
+    email="admin@example.com",
+    full_name="Test Admin",
+    is_admin=True,
+    is_active=True
+)
 
 
 # -------------------------
@@ -73,10 +104,49 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_USER}:{TEST_PASSWORD}"}
 @pytest_asyncio.fixture
 async def client(app_with_temp_db):
     # First-Party
-    from mcpgateway.utils.verify_credentials import require_auth, require_basic_auth
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.db import get_db
+    from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from mcpgateway.utils.create_jwt_token import get_jwt_token
+    from mcpgateway.utils.verify_credentials import require_admin_auth
 
-    app_with_temp_db.dependency_overrides[require_auth] = lambda: TEST_USER
-    app_with_temp_db.dependency_overrides[require_basic_auth] = lambda: TEST_USER
+    # Local
+    from tests.utils.rbac_mocks import create_mock_user_context
+
+    # Get the actual test database session from the app
+    test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
+
+    def get_test_db_session():
+        """Get the actual test database session."""
+        if callable(test_db_dependency):
+            return next(test_db_dependency())
+        return test_db_dependency
+
+    # Create mock user context with actual test database session
+    test_db_session = get_test_db_session()
+    test_user_context = create_mock_user_context(
+        email="admin@example.com",
+        full_name="Test Admin",
+        is_admin=True
+    )
+    test_user_context["db"] = test_db_session
+
+    # Mock admin authentication function
+    async def mock_require_admin_auth():
+        """Mock admin auth that returns admin email."""
+        return "admin@example.com"
+
+    # Mock JWT token function
+    async def mock_get_jwt_token():
+        """Mock JWT token function."""
+        return TEST_JWT_TOKEN
+
+    # Mock all authentication dependencies
+    app_with_temp_db.dependency_overrides[get_current_user] = lambda: TEST_USER
+    app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = lambda: test_user_context
+    app_with_temp_db.dependency_overrides[require_admin_auth] = mock_require_admin_auth
+    app_with_temp_db.dependency_overrides[get_jwt_token] = mock_get_jwt_token
+    # Keep the existing get_db override from app_with_temp_db
 
     # Third-Party
     from httpx import ASGITransport, AsyncClient
@@ -85,8 +155,11 @@ async def client(app_with_temp_db):
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
-    app_with_temp_db.dependency_overrides.pop(require_auth, None)
-    app_with_temp_db.dependency_overrides.pop(require_basic_auth, None)
+    # Clean up dependency overrides (except get_db which belongs to app_with_temp_db)
+    app_with_temp_db.dependency_overrides.pop(get_current_user, None)
+    app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+    app_with_temp_db.dependency_overrides.pop(require_admin_auth, None)
+    app_with_temp_db.dependency_overrides.pop(get_jwt_token, None)
 
 
 @pytest_asyncio.fixture
@@ -267,26 +340,92 @@ class TestAdminToolAPIs:
     #     assert response.status_code == 303
 
     async def test_admin_tool_name_conflict(self, client: AsyncClient, mock_settings):
-        """Test creating tool with duplicate name via admin UI."""
+        """Test creating tool with duplicate name via admin UI for private, team, and public scopes."""
+        import uuid
         unique_name = f"duplicate_tool_{uuid.uuid4().hex[:8]}"
-
-        form_data = {
+        #create a real team and use its ID
+        from mcpgateway.services.team_management_service import TeamManagementService
+        # Get db session from test fixture context
+        # The client fixture sets test_user_context["db"]
+        db = None
+        if hasattr(client, "_default_params") and "db" in client._default_params:
+            db = client._default_params["db"]
+        else:
+            # Fallback: import get_db and use it directly if available
+            try:
+                from mcpgateway.db import get_db
+                db = next(get_db())
+            except Exception:
+                pass
+        assert db is not None, "Test database session not found. Ensure your test fixture exposes db."
+        team_service = TeamManagementService(db)
+        new_team = await team_service.create_team(
+            name="Test Team",
+            description="A team for testing",
+            created_by="admin@example.com",
+            visibility="private"
+        )
+        # Private scope (owner-level)
+        form_data_private = {
             "name": unique_name,
             "url": "https://example.com",
             "integrationType": "REST",
-            "requestType": "GET",  # Add valid request type
+            "requestType": "GET",
             "headers": "{}",
             "input_schema": "{}",
+            "visibility": "private",
+            "user_email": "admin@example.com",
+            "team_id": new_team.id,
         }
-
-        # Create first tool
-        response = await client.post("/admin/tools/", data=form_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/admin/tools/", data=form_data_private, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["success"] is True
+        # Try to create duplicate private tool (same name, same owner)
+        response = await client.post("/admin/tools/", data=form_data_private, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 409
+        assert response.json()["success"] is False
 
-        # Try to create duplicate
-        response = await client.post("/admin/tools/", data=form_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code in [400, 409, 500]  # Could be either
+        # Team scope:
+        real_team_id = new_team.id
+        form_data_team = {
+            "name": unique_name + "_team",
+            "url": "https://example.com",
+            "integrationType": "REST",
+            "requestType": "GET",
+            "headers": "{}",
+            "input_schema": "{}",
+            "visibility": "team",
+            "team_id": real_team_id,
+            "user_email": "admin@example.com",
+        }
+        print("DEBUG: form_data_team before request:", form_data_team, "team_id type:", type(form_data_team["team_id"]))
+        response = await client.post("/admin/tools/", data=form_data_team, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        # Try to create duplicate team tool (same name, same team)
+        response = await client.post("/admin/tools/", data=form_data_team, headers=TEST_AUTH_HEADER)
+        # If uniqueness is enforced at the application level, expect 409 error
+        assert response.status_code == 409
+        assert response.json()["success"] is False
+
+        # Public scope
+        form_data_public = {
+            "name": unique_name + "_public",
+            "url": "https://example.com",
+            "integrationType": "REST",
+            "requestType": "GET",
+            "headers": "{}",
+            "input_schema": "{}",
+            "visibility": "public",
+            "user_email": "admin@example.com",
+            "team_id": new_team.id,
+        }
+        response = await client.post("/admin/tools/", data=form_data_public, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+        # Try to create duplicate public tool (same name, public)
+        response = await client.post("/admin/tools/", data=form_data_public, headers=TEST_AUTH_HEADER)
+        assert response.status_code == 409
         assert response.json()["success"] is False
 
 

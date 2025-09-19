@@ -1,23 +1,480 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
+> All notable changes to this project will be documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project **adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)**.
 
 ---
 
-## [Unreleased]
+## [0.7.0] - 2025-09-16 - Enterprise Multi-Tenancy, RBAC, Teams, SSO
+
+### Overview
+
+**This major release implements [EPIC #860]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping**, transforming MCP Gateway from a single-tenant system into a **production-ready enterprise multi-tenant platform** with team-based resource scoping, comprehensive authentication, and enterprise SSO integration.
+
+**Impact:** Complete architectural transformation enabling secure team collaboration, enterprise SSO integration, and scalable multi-tenant deployments.
+
+### 🚀 **Migration Guide**
+
+**⚠️ IMPORTANT**: This is a **major architectural change** requiring database migration.
+
+**📖 Complete migration instructions**: See **[MIGRATION-0.7.0.md](./MIGRATION-0.7.0.md)** for detailed upgrade guidance from v0.6.0 to v0.7.0.
+
+**📋 Migration includes**:
+- Automated database schema upgrade
+- Team assignment for existing servers/resources
+- Platform admin user creation
+- Configuration export/import tools
+- Comprehensive verification and troubleshooting
+
+**🔑 Password Management**: After migration, platform admin password must be changed using the API endpoint `/auth/email/change-password`. The `PLATFORM_ADMIN_PASSWORD` environment variable is only used during initial setup.
 
 ### Added
 
-#### **Admin UI Log Viewer** (#138)
-* **Real-time log monitoring** - Built-in log viewer in Admin UI with live streaming via Server-Sent Events
-* **Advanced filtering** - Filter by log level, entity type, time range, and full-text search
-* **Export capabilities** - Export filtered logs to JSON or CSV format
-* **In-memory buffer** - Configurable circular buffer (default 1MB) with automatic size-based eviction
-* **Color-coded severity** - Visual indicators for debug, info, warning, error, and critical levels
-* **API endpoints** - REST API for programmatic access to logs, streaming, and export
-* **Request tracing** - Track logs by request ID for debugging distributed operations
+#### **🔐 Authentication & Authorization System**
+* **Email-based Authentication** (#544) - Complete user authentication system with Argon2id password hashing replacing basic auth
+* **Complete RBAC System** (#283) - Platform Admin, Team Owner, Team Member roles with full multi-tenancy support
+* **Enhanced JWT Tokens** (#87) - JWT tokens with team context, scoped permissions, and per-user expiry
+* **Asymmetric JWT Algorithm Support** - Complete support for RSA (RS256/384/512) and ECDSA (ES256/384/512) algorithms alongside existing HMAC support
+  - **Multiple Algorithm Support**: HS256/384/512 (HMAC), RS256/384/512 (RSA), ES256/384/512 (ECDSA)
+  - **Enterprise Security**: Public/private key separation for distributed architectures
+  - **Configuration Validation**: Runtime validation ensures proper keys exist for chosen algorithm
+  - **Backward Compatibility**: Existing HMAC JWT configurations continue working unchanged
+  - **Key Management Integration**: `make certs-jwt` and `make certs-jwt-ecdsa` for secure key generation
+  - **Container Support**: `make container-run-ssl-jwt` for full TLS + JWT asymmetric deployment
+  - **Dynamic Client Registration**: Configurable audience verification for DCR scenarios
+* **Password Policy Engine** (#426) - Configurable security requirements with password complexity rules
+* **Password Change API** - Secure `/auth/email/change-password` endpoint for changing user passwords with old password verification
+* **Multi-Provider SSO Framework** (#220, #278, #859) - GitHub, Google, and IBM Security Verify integration
+* **Per-Virtual-Server API Keys** (#282) - Scoped access tokens for individual virtual servers
+
+#### **👥 Team Management System**
+* **Personal Teams Auto-Creation** - Every user automatically gets a personal team on registration
+* **Multi-Team Membership** - Users can belong to multiple teams with different roles (owner/member)
+* **Team Invitation System** - Email-based invitations with secure tokens and expiration
+* **Team Visibility Controls** - Private/Public team discovery and cross-team collaboration
+* **Team Administration** - Complete team lifecycle management via API and Admin UI
+
+#### **🔒 Resource Scoping & Visibility**
+* **Three-Tier Resource Visibility System**:
+  - **Private**: Owner-only access
+  - **Team**: Team member access
+  - **Public**: Cross-team access for collaboration
+* **Applied to All Resource Types**: Tools, Servers, Resources, Prompts, A2A Agents
+* **Team-Scoped API Endpoints** with proper access validation and filtering
+* **Cross-Team Resource Discovery** for public resources
+
+#### **🏗️ Platform Administration**
+* **Platform Admin Role** separate from team roles for system-wide management
+* **Domain-Based Auto-Assignment** via SSO (SSO_AUTO_ADMIN_DOMAINS)
+* **Enterprise Domain Trust** (SSO_TRUSTED_DOMAINS) for controlled access
+* **System-Wide Team Management** for administrators
+
+#### **🗄️ Database & Infrastructure**
+* **Complete Multi-Tenant Database Schema** with proper indexing and performance optimization
+* **Team-Based Query Filtering** for performance and security
+* **Automated Migration Strategy** from single-tenant to multi-tenant with rollback support
+* **All APIs Redesigned** to be team-aware with backward compatibility
+
+#### **🔧 Configuration & Security**
+* **Database Connection Pool Configuration** - Optimized settings for multi-tenant workloads:
+  ```bash
+  # New .env.example settings for performance:
+  DB_POOL_SIZE=50              # Maximum persistent connections (default: 200, SQLite capped at 50)
+  DB_MAX_OVERFLOW=20           # Additional connections beyond pool_size (default: 10, SQLite capped at 20)
+  DB_POOL_TIMEOUT=30           # Seconds to wait for connection before timeout (default: 30)
+  DB_POOL_RECYCLE=3600         # Seconds before recreating connection (default: 3600)
+  ```
+* **Complete MariaDB & MySQL Database Support** (#925) - Full production support for MariaDB and MySQL backends:
+  ```bash
+  # MariaDB (recommended MySQL-compatible option):
+  DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
+
+  # Docker deployment with MariaDB 12.0.2-ubi10:
+  DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp
+  ```
+  - **36+ database tables** fully compatible with MariaDB 12.0+ and MySQL 8.4+
+  - All **VARCHAR length issues** resolved for MySQL compatibility
+  - **Container support**: MariaDB and MySQL drivers included in all container images
+  - **Complete feature parity** with SQLite and PostgreSQL backends
+  - **Production ready**: Supports all MCP Gateway features including federation, caching, and A2A agents
+
+* **Enhanced JWT Configuration** - Audience, issuer claims, and improved token validation:
+  ```bash
+  # New JWT configuration options:
+  JWT_AUDIENCE=mcpgateway-api      # JWT audience claim for token validation
+  JWT_ISSUER=mcpgateway           # JWT issuer claim for token validation
+  ```
+* **Account Security Configuration** - Lockout policies and failed login attempt limits:
+  ```bash
+  # New security policy settings:
+  MAX_FAILED_LOGIN_ATTEMPTS=5              # Maximum failed attempts before lockout
+  ACCOUNT_LOCKOUT_DURATION_MINUTES=30      # Account lockout duration in minutes
+  ```
+
+### Changed
+
+#### **🔄 Authentication Migration**
+* **Username to Email Migration** - All authentication now uses email addresses instead of usernames
+  ```bash
+  # OLD (v0.6.0 and earlier):
+  python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key
+
+  # NEW (v0.7.0+):
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+  ```
+* **JWT Token Format Enhanced** - Tokens now include team context and scoped permissions
+* **API Authentication Updated** - All examples and documentation updated to use email-based authentication
+
+#### **📊 Database Schema Evolution**
+* **New Multi-Tenant Tables**: email_users, email_teams, email_team_members, email_team_invitations, **token_usage_logs**
+* **Token Management Tables**: email_api_tokens, token_usage_logs, token_revocations - Complete API token lifecycle tracking
+* **Extended Resource Tables** - All resource tables now include team_id, owner_email, visibility columns
+* **Performance Indexing** - Strategic indexes on team_id, owner_email, visibility for optimal query performance
+
+#### **🚀 API Enhancements**
+* **New Authentication Endpoints** - Email registration/login and SSO provider integration
+* **New Team Management Endpoints** - Complete CRUD operations for teams and memberships
+* **Enhanced Resource Endpoints** - All resource endpoints support team-scoping parameters
+* **Backward Compatibility** - Existing API endpoints remain functional with feature flags
+
+### Security
+
+* **Data Isolation** - Team-scoped queries prevent cross-tenant data access
+* **Resource Ownership** - Every resource has owner_email and team_id validation
+* **Visibility Enforcement** - Private/Team/Public visibility strictly enforced
+* **Secure Tokens** - Invitation tokens with expiration and single-use validation
+* **Domain Restrictions** - Corporate domain enforcement via SSO_TRUSTED_DOMAINS
+* **MFA Support** - Automatic enforcement of SSO provider MFA policies
+
+### Documentation
+
+* **Architecture Documentation** - `docs/docs/architecture/multitenancy.md` - Complete multi-tenancy architecture guide
+* **SSO Integration Tutorials**:
+  - `docs/docs/manage/sso.md` - General SSO configuration guide
+  - `docs/docs/manage/sso-github-tutorial.md` - GitHub SSO integration tutorial
+  - `docs/docs/manage/sso-google-tutorial.md` - Google SSO integration tutorial
+  - `docs/docs/manage/sso-ibm-tutorial.md` - IBM Security Verify integration tutorial
+  - `docs/docs/manage/sso-okta-tutorial.md` - Okta SSO integration tutorial
+* **Configuration Reference** - Complete environment variable documentation with examples
+* **Migration Guide** - Single-tenant to multi-tenant upgrade path with troubleshooting
+* **API Reference** - Team-scoped endpoint documentation with usage examples
+
+### Infrastructure
+
+* **Team-Based Indexing** - Optimized database queries for multi-tenant workloads
+* **Connection Pooling** - Enhanced configuration for enterprise scale
+* **Migration Scripts** - Automated Alembic migrations with rollback support
+* **Performance Monitoring** - Team-scoped metrics and observability
+
+### Migration Guide
+
+#### **Environment Configuration Updates**
+Update your `.env` file with the new multi-tenancy settings:
+
+```bash
+#####################################
+# Email-Based Authentication
+#####################################
+
+# Enable email-based authentication system
+EMAIL_AUTH_ENABLED=true
+
+# Platform admin user (bootstrap from environment)
+PLATFORM_ADMIN_EMAIL=admin@example.com
+PLATFORM_ADMIN_PASSWORD=changeme
+PLATFORM_ADMIN_FULL_NAME=Platform Administrator
+
+# Argon2id Password Hashing Configuration
+ARGON2ID_TIME_COST=3
+ARGON2ID_MEMORY_COST=65536
+ARGON2ID_PARALLELISM=1
+
+# Password Policy Configuration
+PASSWORD_MIN_LENGTH=8
+PASSWORD_REQUIRE_UPPERCASE=false
+PASSWORD_REQUIRE_LOWERCASE=false
+PASSWORD_REQUIRE_NUMBERS=false
+PASSWORD_REQUIRE_SPECIAL=false
+
+#####################################
+# Personal Teams Configuration
+#####################################
+
+# Enable automatic personal team creation for new users
+AUTO_CREATE_PERSONAL_TEAMS=true
+
+# Personal team naming prefix
+PERSONAL_TEAM_PREFIX=personal
+
+# Team Limits
+MAX_TEAMS_PER_USER=50
+MAX_MEMBERS_PER_TEAM=100
+
+# Team Invitation Settings
+INVITATION_EXPIRY_DAYS=7
+REQUIRE_EMAIL_VERIFICATION_FOR_INVITES=true
+
+#####################################
+# SSO Configuration (Optional)
+#####################################
+
+# Master SSO switch - enable Single Sign-On authentication
+SSO_ENABLED=false
+
+# GitHub OAuth Configuration
+SSO_GITHUB_ENABLED=false
+# SSO_GITHUB_CLIENT_ID=your-github-client-id
+# SSO_GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Google OAuth Configuration
+SSO_GOOGLE_ENABLED=false
+# SSO_GOOGLE_CLIENT_ID=your-google-client-id.googleusercontent.com
+# SSO_GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# IBM Security Verify OIDC Configuration
+SSO_IBM_VERIFY_ENABLED=false
+# SSO_IBM_VERIFY_CLIENT_ID=your-ibm-verify-client-id
+# SSO_IBM_VERIFY_CLIENT_SECRET=your-ibm-verify-client-secret
+# SSO_IBM_VERIFY_ISSUER=https://your-tenant.verify.ibm.com/oidc/endpoint/default
+```
+
+#### **Database Migration**
+Database migrations run automatically on startup:
+```bash
+# Backup your database AND .env file first
+cp mcp.db mcp.db.backup.$(date +%Y%m%d_%H%M%S)
+cp .env .env.bak
+
+# Update .env with new multi-tenancy settings
+cp .env.example .env  # then configure PLATFORM_ADMIN_EMAIL and other settings
+
+# Migrations run automatically when you start the server
+make dev  # Migrations execute automatically, then server starts
+
+# Or for production
+make serve  # Migrations execute automatically, then production server starts
+```
+
+#### **JWT Token Generation Updates**
+All JWT token generation now uses email addresses:
+```bash
+# Generate development tokens
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret my-test-key)
+
+# For API testing
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://127.0.0.1:4444/version | jq
+```
+
+### Breaking Changes
+
+* **Database Schema** - New tables and extended resource tables (backward compatible with feature flags)
+* **Authentication System** - Migration from username to email-based authentication
+  - **Action Required**: Update JWT token generation to use email addresses instead of usernames
+  - **Action Required**: Update `.env` with new authentication configuration
+* **API Changes** - New endpoints added, existing endpoints enhanced with team parameters
+  - **Backward Compatible**: Existing endpoints work with new team-scoping parameters
+* **Configuration** - New required environment variables for multi-tenancy features
+  - **Action Required**: Copy updated `.env.example` to `.env` and configure multi-tenancy settings
+
+### Issues Closed
+
+**Primary Epic:**
+- Closes #860 - [EPIC]: Complete Enterprise Multi-Tenancy System with Team-Based Resource Scoping
+
+**Core Security & Authentication:**
+- Closes #544 - Database-Backed User Authentication with Argon2id (replace BASIC auth)
+- Closes #283 - Role-Based Access Control (RBAC) - User/Team/Global Scopes for full multi-tenancy support
+- Closes #426 - Configurable Password and Secret Policy Engine
+- Closes #87 - Epic: Secure JWT Token Catalog with Per-User Expiry and Revocation
+- Closes #282 - Per-Virtual-Server API Keys with Scoped Access
+
+**SSO Integration:**
+- Closes #220 - Authentication & Authorization - SSO + Identity-Provider Integration
+- Closes #278 - Authentication & Authorization - Google SSO Integration Tutorial
+- Closes #859 - Authentication & Authorization - IBM Security Verify Enterprise SSO Integration
+
+**Future Foundation:**
+- Provides foundation for #706 - ABAC Virtual Server Support (RBAC foundation implemented)
+
+---
+
+## [0.6.0] - 2025-08-22 - Security, Scale & Smart Automation
+
+### Overview
+
+This major release focuses on **Security, Scale & Smart Automation** with **118 commits** and **50+ issues resolved**, bringing significant improvements across multiple domains:
+
+- **🔌 Plugin Framework** - Comprehensive plugin system with pre/post hooks for extensible gateway capabilities
+- **🤖 A2A (Agent-to-Agent) Support** - Full integration for external AI agents (OpenAI, Anthropic, custom agents)
+- **📊 OpenTelemetry Observability** - Vendor-agnostic observability with Phoenix integration and comprehensive metrics
+- **🔄 Bulk Import System** - Enterprise-grade bulk tool import with 200-tool capacity and rate limiting
+- **🔐 Enhanced Security** - OAuth 2.0 support, improved headers, well-known URI handlers, and security validation
+- **⚡ Performance & Scale** - Streamable HTTP improvements, better caching, connection optimizations
+- **🛠️ Developer Experience** - Enhanced UI/UX, better error handling, tool annotations, mutation testing
+
+### Added
+
+#### **🔌 Plugin Framework & Extensibility** (#319, #313)
+* **Comprehensive Plugin System** - Full plugin framework with manifest-based configuration
+* **Pre/Post Request Hooks** - Plugin hooks for request/response interception and modification
+* **Tool Invocation Hooks** (#682) - `tool_pre_invoke` and `tool_post_invoke` plugin hooks
+* **Plugin CLI Tools** (#720) - Command-line interface for authoring and packaging plugins
+* **Phoenix Observability Plugin** (#727) - Built-in Phoenix integration for observability
+* **External Plugin Support** (#773) - Support for loading external plugins with configuration management
+
+#### **🤖 A2A (Agent-to-Agent) Integration** (#298, #792)
+* **Multi-Agent Support** - Integration for OpenAI, Anthropic, and custom AI agents
+* **Agent as Tools** - A2A agents automatically exposed as tools within virtual servers
+* **Protocol Versioning** - A2A protocol version support for compatibility
+* **Authentication Support** - Flexible auth types (API key, OAuth, bearer tokens) for agents
+* **Metrics & Monitoring** - Comprehensive metrics collection for agent interactions
+* **Admin UI Integration** - Dedicated A2A management tab in admin interface
+
+#### **📊 OpenTelemetry Observability** (#735)
+* **Vendor-Agnostic Observability** - Full OpenTelemetry instrumentation across the gateway
+* **Phoenix Integration** (#727) - Built-in Phoenix observability plugin for ML monitoring
+* **Distributed Tracing** - Request tracing across federated gateways and MCP servers
+* **Metrics Export** - Comprehensive metrics export to OTLP-compatible backends
+* **Performance Monitoring** - Detailed performance metrics for tools, resources, and agents
+
+#### **🔄 Bulk Operations & Scale**
+* **Bulk Tool Import** (#737, #798) - Enterprise-grade bulk import with 200-tool capacity
+* **Rate Limiting** - Built-in rate limiting for bulk operations (10 requests/minute)
+* **Batch Processing** - Efficient batch processing with progress tracking
+* **Import Validation** - Comprehensive validation during bulk import operations
+* **Export Capabilities** (#186, #185) - Granular configuration export/import via UI & API
+
+#### **🔐 Security Enhancements**
+* **OAuth 2.0 Support** (#799) - OAuth authentication support in gateway edit functionality
+* **Well-Known URI Handler** (#540) - Configurable handlers for security.txt, robots.txt
+* **Enhanced Security Headers** (#533, #344) - Additional configurable security headers for Admin UI
+* **Header Passthrough Security** (#685) - Improved security for HTTP header passthrough
+* **Bearer Token Removal Option** (#705) - Option to completely disable bearer token authentication
+
+#### **💾 Admin UI Log Viewer** (#138, #364)
+* **Real-time Log Monitoring** - Built-in log viewer with live streaming via Server-Sent Events
+* **Advanced Filtering** - Filter by log level, entity type, time range, and full-text search
+* **Export Capabilities** - Export filtered logs to JSON or CSV format
+* **In-memory Buffer** - Configurable circular buffer (1MB default) with size-based eviction
+* **Color-coded Severity** - Visual indicators for debug, info, warning, error, critical levels
+* **Request Tracing** - Track logs by request ID for debugging distributed operations
+
+#### **🏷️ Tagging & Metadata System** (#586)
+* **Comprehensive Tag Support** - Tags for tools, resources, prompts, gateways, and A2A agents
+* **Tag-based Filtering** - Filter and search by tags across all entities
+* **Tag Validation** - Input validation and editing support for tags
+* **Metadata Tracking** (#137) - Creator and timestamp metadata for servers, tools, resources
+
+#### **🔄 MCP Protocol Enhancements**
+* **MCP Elicitation Support** (#708) - Implementation of MCP elicitation protocol (v2025-06-18)
+* **Streamable HTTP Virtual Server Support** (#320) - Full virtual server support for Streamable HTTP
+* **SSE Keepalive Configuration** (#690) - Configurable keepalive events for SSE transport
+* **Enhanced Tool Annotations** (#774) - Fixed and improved tool annotation system
+
+#### **🚀 Performance & Infrastructure**
+* **Mutation Testing** (#280, #256) - Comprehensive mutation testing with mutmut for test quality
+* **Async Performance Testing** (#254) - Async code testing and performance profiling
+* **Database Caching Improvements** (#794) - Enhanced caching with database as cache type
+* **Connection Optimizations** (#787) - Improved connection handling and authentication decoding
+
+### Fixed
+
+#### **🐛 Critical Bug Fixes**
+* **Virtual Server Functionality** (#704) - Fixed virtual servers not working as advertised in v0.5.0
+* **Tool Invocation Errors** (#753, #696) - Fixed tool invocation returning 'Invalid method' errors
+* **Streamable HTTP Issues** (#728, #560) - Fixed translation feature connection and tool listing issues
+* **Database Migration** (#661, #478, #479) - Fixed database migration issues during doctest execution
+* **Resource & Prompt Loading** (#716, #393) - Fixed resources and prompts not displaying in Admin Dashboard
+
+#### **🔧 Tool & Gateway Management**
+* **Tool Edit Screen Issues** (#715, #786) - Fixed field mismatch and MCP tool validation errors
+* **Duplicate Gateway Registration** (#649) - Fixed bypassing of uniqueness check for equivalent URLs
+* **Gateway Registration Failures** (#646) - Fixed MCP Server/Federated Gateway registration issues
+* **Tool Description Display** (#557) - Fixed cleanup of tool descriptions (newline removal, text truncation)
+
+#### **🚦 Connection & Transport Issues**
+* **DNS Resolution Issues** (#744) - Fixed gateway failures with CDNs/load balancers
+* **Docker Container Issues** (#560) - Fixed tool listing when running inside Docker
+* **Connection Authentication** - Fixed auth header issues and connection reliability
+* **Session Management** (#518) - Fixed Redis runtime errors with multiple sessions
+
+#### **🖥️ UI/UX Improvements**
+* **Tool Annotations Display** (#774) - Fixed annotations not working with improved specificity
+* **Escape Key Handler** (#802) - Added event handler for escape key functionality
+* **Content Validation** (#436) - Fixed content length verification when headers absent
+* **Resource MIME Types** (#520) - Fixed resource mime-type always storing as text/plain
+
+### Changed
+
+#### **🔄 Architecture & Protocol Updates**
+* **Wrapper Functionality** (#779, #780) - Major redesign of wrapper functionality for performance
+* **Integration Type Migration** (#452) - Removed "Integration Type: MCP", now supports only REST
+* **Transport Protocol Updates** - Enhanced Streamable HTTP support with virtual servers
+* **Plugin Configuration** - New plugin configuration system with enabled/disabled flags (#679)
+
+#### **📊 Metrics & Monitoring Enhancements** (#368)
+* **Enhanced Metrics Tab UI** - Virtual servers and top 5 performance tables
+* **Comprehensive Metrics Collection** - Improved metrics for A2A agents, plugins, and tools
+* **Performance Monitoring** - Better performance tracking across all system components
+
+#### **🔧 Developer Experience Improvements**
+* **Enhanced Error Messages** (#666, #672) - Improved error handling throughout main.py and frontend
+* **Better Validation** (#694) - Enhanced validation for gateway creation and all endpoints
+* **Documentation Updates** - Improved plugin development workflow and architecture documentation
+
+#### **⚙️ Configuration & Environment**
+* **Plugin Configuration** - New `plugins/config.yaml` system with enable/disable flags
+* **A2A Configuration** - Comprehensive A2A configuration options with feature flags
+* **Security Configuration** - Enhanced security configuration validation and startup checks
+
+### Security
+
+* **OAuth 2.0 Integration** - Secure OAuth authentication flow support
+* **Enhanced Header Security** - Improved HTTP header passthrough with security validation
+* **Well-Known URI Security** - Secure implementation of security.txt and robots.txt handlers
+* **Plugin Security Model** - Secure plugin loading with manifest validation
+* **A2A Security** - Encrypted credential storage for A2A agent authentication
+
+### Infrastructure & DevOps
+
+* **Comprehensive Testing** - Mutation testing, fuzz testing, async performance testing
+* **Enhanced CI/CD** - Improved build processes with better error handling
+* **Plugin Development Tools** - CLI tools for plugin authoring and packaging
+* **Observability Integration** - Full OpenTelemetry and Phoenix integration
+
+### Performance
+
+* **Bulk Import Optimization** - Efficient batch processing for large-scale tool imports
+* **Database Caching** - Enhanced caching strategies with database-backed cache
+* **Connection Pool Management** - Optimized connection handling for better performance
+* **Async Processing** - Improved async handling throughout the system
+
+---
+
+### 🌟 Release Contributors
+
+This release represents a major milestone in MCP Gateway's evolution toward enterprise-grade security, scale, and intelligent automation. With contributions from developers worldwide, 0.6.0 delivers groundbreaking features including a comprehensive plugin framework, A2A agent integration, and advanced observability.
+
+#### 🏆 Top Contributors in 0.6.0
+- **Mihai Criveti** (@crivetimihai) - Release coordination, A2A architecture, plugin framework, OpenTelemetry integration, and comprehensive testing infrastructure
+- **Manav Gupta** (@manavg) - Transport-translation enhancements, MCP eval server, reverse proxy implementation, and protocol optimizations
+- **Madhav Kandukuri** (@madhav165) - Tool service refactoring, database optimizations, UI improvements, and performance enhancements
+- **Keval Mahajan** (@kevalmahajan) - Plugin architecture, A2A catalog implementation, authentication improvements, and security enhancements
+
+#### 🎉 New Contributors
+Welcome to our first-time contributors who joined us in 0.6.0:
+
+- **Multiple Contributors** - Multiple contributors helped with OAuth implementation, bulk import features, UI enhancements, and bug fixes across the codebase
+- **Community Contributors** - Various developers contributed to plugin development, testing improvements, and documentation updates
+
+#### 💪 Returning Contributors
+Thank you to our dedicated contributors who continue to strengthen MCP Gateway:
+
+- **Core Team Members** - Continued contributions to architecture, testing, documentation, and feature development
+- **Community Members** - Ongoing support with bug reports, feature requests, and code improvements
+
+This release showcases the power of open-source collaboration, bringing together expertise in AI/ML, distributed systems, security, and developer experience to create a truly enterprise-ready MCP gateway solution.
 
 ---
 

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Log Storage Service Implementation.
-
+"""Location: ./mcpgateway/services/log_storage_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Log Storage Service Implementation.
 This service provides in-memory storage for recent logs with entity context,
 supporting filtering, pagination, and real-time streaming.
 """

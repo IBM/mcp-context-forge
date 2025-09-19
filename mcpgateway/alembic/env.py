@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Alembic environment configuration for database migrations.
-
+"""Location: ./mcpgateway/alembic/env.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Madhav Kandukuri
 
+Alembic environment configuration for database migrations.
 This module configures the Alembic migration environment for the MCP Gateway
 application. It sets up both offline and online migration modes, configures
 logging, and establishes the database connection parameters.

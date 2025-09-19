@@ -36,12 +36,12 @@ jobs:
 
     steps:
       - name: ⬇️  Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: 🐍  Setup Python ${{ matrix.python }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
           cache: pip
@@ -73,17 +73,17 @@ jobs:
           make async-validate
 
       - name: 📎  Upload async test artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: async-test-results
           path: |
-            async_testing/reports/
-            async_testing/profiles/
+            tests/async/reports/
+            tests/async/profiles/
           retention-days: 30
 
       - name: 📈  Performance regression check
         run: |
-          python async_testing/check_regression.py \
-            --current async_testing/profiles/latest.prof \
-            --baseline async_testing/profiles/baseline.prof \
+          python tests/async/check_regression.py \
+            --current tests/async/profiles/latest.prof \
+            --baseline tests/async/profiles/baseline.prof \
             --threshold 20  # 20% regression threshold

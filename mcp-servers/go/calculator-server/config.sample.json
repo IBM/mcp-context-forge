@@ -1,0 +1,102 @@
+{
+  "_comment": "Calculator Server Configuration - JSON Format",
+  "_description": "Complete configuration file with all options and their default values",
+
+  "server": {
+    "transport": "stdio",
+    "http": {
+      "host": "127.0.0.1",
+      "port": 8080,
+      "session_timeout": "5m",
+      "max_connections": 100,
+      "cors": {
+        "enabled": true,
+        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"]
+      }
+    }
+  },
+
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "output": "stdout"
+  },
+
+  "tools": {
+    "precision": {
+      "max_decimal_places": 15,
+      "default_decimal_places": 2
+    },
+    "expression_eval": {
+      "timeout": "10s",
+      "max_variables": 100
+    },
+    "statistics": {
+      "max_data_points": 10000
+    },
+    "financial": {
+      "currency_default": "USD"
+    }
+  },
+
+  "security": {
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 100
+    },
+    "request_size_limit": "1MB"
+  },
+
+  "_examples": {
+    "_comment": "Example configurations for different environments",
+
+    "_development": {
+      "server": {
+        "transport": "http",
+        "http": {
+          "host": "127.0.0.1",
+          "port": 8080,
+          "session_timeout": "10m",
+          "max_connections": 50,
+          "cors": {
+            "enabled": true,
+            "origins": ["http://localhost:3000", "http://localhost:8080"]
+          }
+        }
+      },
+      "logging": {
+        "level": "debug",
+        "format": "text",
+        "output": "stdout"
+      }
+    },
+
+    "_production": {
+      "server": {
+        "transport": "http",
+        "http": {
+          "host": "127.0.0.1",
+          "port": 8080,
+          "session_timeout": "5m",
+          "max_connections": 200,
+          "cors": {
+            "enabled": true,
+            "origins": ["https://your-production-domain.com"]
+          }
+        }
+      },
+      "logging": {
+        "level": "info",
+        "format": "json",
+        "output": "/var/log/calculator-server.log"
+      },
+      "security": {
+        "rate_limiting": {
+          "enabled": true,
+          "requests_per_minute": 1000
+        },
+        "request_size_limit": "1MB"
+      }
+    }
+  }
+}

@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
-"""
-Extended unit tests for GatewayService to improve coverage.
-
-These tests focus on uncovered areas of the GatewayService implementation,
-including error handling, edge cases, and specific transport scenarios.
-
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_service_extended.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
+
+Extended unit tests for GatewayService to improve coverage.
+These tests focus on uncovered areas of the GatewayService implementation,
+including error handling, edge cases, and specific transport scenarios.
 """
 
 # Future
@@ -429,7 +428,9 @@ class TestGatewayServiceExtended:
     async def test_redis_import_error_handling(self):
         """Test Redis import error handling path (lines 64-66)."""
         # This test verifies the REDIS_AVAILABLE flag functionality
+        # First-Party
         from mcpgateway.services.gateway_service import REDIS_AVAILABLE
+
         # Just verify the flag exists and is boolean
         assert isinstance(REDIS_AVAILABLE, bool)
 
@@ -499,6 +500,7 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Test method exists with proper signature
+        # Standard
         import inspect
         sig = inspect.signature(service._validate_gateway_url)
         assert len(sig.parameters) >= 3  # url and other params
@@ -509,6 +511,7 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Test method is async
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service._validate_gateway_url)
 
@@ -532,6 +535,7 @@ class TestGatewayServiceExtended:
         assert callable(getattr(service, 'initialize'))
 
         # Test it's an async method
+        # Standard
         import asyncio
         assert asyncio.iscoroutinefunction(service.initialize)
 

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Fixed unit tests for HTTP header passthrough functionality.
-
+"""Location: ./tests/unit/mcpgateway/utils/test_passthrough_headers_fixed.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Fixed unit tests for HTTP header passthrough functionality.
 This module contains comprehensive unit tests for the passthrough_headers utility
 module, covering all scenarios including configuration priorities, conflict
 detection, case sensitivity, and security features.
@@ -13,12 +13,14 @@ detection, case sensitivity, and security features.
 # Standard
 import logging
 from unittest.mock import Mock, patch
+
+# Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import GlobalConfig
-from mcpgateway.utils.passthrough_headers import get_passthrough_headers, set_global_passthrough_headers, PassthroughHeadersError
+from mcpgateway.utils.passthrough_headers import get_passthrough_headers, PassthroughHeadersError, set_global_passthrough_headers
 
 
 class TestPassthroughHeaders:

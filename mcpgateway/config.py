@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Gateway Configuration.
-
+"""Location: ./mcpgateway/config.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti, Manav Gupta
 
+MCP Gateway Configuration.
 This module defines configuration settings for the MCP Gateway using Pydantic.
 It loads configuration from environment variables with sensible defaults.
 
@@ -62,7 +62,7 @@ from fastapi import HTTPException
 import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Only configure basic logging if no handlers exist yet
@@ -75,6 +75,45 @@ if not logging.getLogger().handlers:
     )
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_env_list_vars() -> None:
+    """Normalize list-typed env vars to valid JSON arrays.
+
+    Ensures env values parse cleanly when providers expect JSON for complex types.
+    If a value is empty or CSV, convert to a JSON array string.
+    """
+    keys = [
+        "SSO_TRUSTED_DOMAINS",
+        "SSO_AUTO_ADMIN_DOMAINS",
+        "SSO_GITHUB_ADMIN_ORGS",
+        "SSO_GOOGLE_ADMIN_DOMAINS",
+    ]
+    for key in keys:
+        raw = os.environ.get(key)
+        if raw is None:
+            continue
+        s = raw.strip()
+        if not s:
+            os.environ[key] = "[]"
+            continue
+        if s.startswith("["):
+            # Already JSON-like, keep as is
+            try:
+                json.loads(s)
+                continue
+            except Exception:
+                pass  # nosec B110 - Intentionally continue with CSV parsing if JSON parsing fails
+        # Convert CSV to JSON array
+        items = [item.strip() for item in s.split(",") if item.strip()]
+        os.environ[key] = json.dumps(items)
+
+
+_normalize_env_list_vars()
+
+
+# Default content type for outgoing requests to Forge
+FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 
 
 class Settings(BaseSettings):
@@ -128,12 +167,48 @@ class Settings(BaseSettings):
     # Authentication
     basic_auth_user: str = "admin"
     basic_auth_password: str = "changeme"
-    jwt_secret_key: str = "my-test-key"
     jwt_algorithm: str = "HS256"
+    jwt_secret_key: str = "my-test-key"
+    jwt_public_key_path: str = ""
+    jwt_private_key_path: str = ""
+    jwt_audience: str = "mcpgateway-api"
+    jwt_issuer: str = "mcpgateway"
+    jwt_audience_verification: bool = True
     auth_required: bool = True
     token_expiry: int = 10080  # minutes
 
     require_token_expiration: bool = Field(default=False, description="Require all JWT tokens to have expiration claims")  # Default to flexible mode for backward compatibility
+
+    # SSO Configuration
+    sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
+    sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")
+    sso_github_client_id: Optional[str] = Field(default=None, description="GitHub OAuth client ID")
+    sso_github_client_secret: Optional[str] = Field(default=None, description="GitHub OAuth client secret")
+
+    sso_google_enabled: bool = Field(default=False, description="Enable Google OAuth authentication")
+    sso_google_client_id: Optional[str] = Field(default=None, description="Google OAuth client ID")
+    sso_google_client_secret: Optional[str] = Field(default=None, description="Google OAuth client secret")
+
+    sso_ibm_verify_enabled: bool = Field(default=False, description="Enable IBM Security Verify OIDC authentication")
+    sso_ibm_verify_client_id: Optional[str] = Field(default=None, description="IBM Security Verify client ID")
+    sso_ibm_verify_client_secret: Optional[str] = Field(default=None, description="IBM Security Verify client secret")
+    sso_ibm_verify_issuer: Optional[str] = Field(default=None, description="IBM Security Verify OIDC issuer URL")
+
+    sso_okta_enabled: bool = Field(default=False, description="Enable Okta OIDC authentication")
+    sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
+    sso_okta_client_secret: Optional[str] = Field(default=None, description="Okta client secret")
+    sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
+
+    # SSO Settings
+    sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
+    sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
+    sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
+
+    # SSO Admin Assignment Settings
+    sso_auto_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
+    sso_github_admin_orgs: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
+    sso_google_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
+    sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
 
     # MCP Client Authentication
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
@@ -150,12 +225,52 @@ class Settings(BaseSettings):
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
 
+    # Email-Based Authentication
+    email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
+    platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
+    platform_admin_password: str = Field(default="changeme", description="Platform administrator password")
+    platform_admin_full_name: str = Field(default="Platform Administrator", description="Platform administrator full name")
+
+    # Argon2id Password Hashing Configuration
+    argon2id_time_cost: int = Field(default=3, description="Argon2id time cost (number of iterations)")
+    argon2id_memory_cost: int = Field(default=65536, description="Argon2id memory cost in KiB")
+    argon2id_parallelism: int = Field(default=1, description="Argon2id parallelism (number of threads)")
+
+    # Password Policy Configuration
+    password_min_length: int = Field(default=8, description="Minimum password length")
+    password_require_uppercase: bool = Field(default=False, description="Require uppercase letters in passwords")
+    password_require_lowercase: bool = Field(default=False, description="Require lowercase letters in passwords")
+    password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
+    password_require_special: bool = Field(default=False, description="Require special characters in passwords")
+
+    # Account Security Configuration
+    max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
+    account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
+
+    # Personal Teams Configuration
+    auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
+    personal_team_prefix: str = Field(default="personal", description="Personal team naming prefix")
+    max_teams_per_user: int = Field(default=50, description="Maximum number of teams a user can belong to")
+    max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
+    invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
+    require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
+
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
+
+    # UI Tool Test Configuration
+    mcpgateway_ui_tool_test_timeout: int = Field(default=60000, description="Tool test timeout in milliseconds for the admin UI")
+
+    # A2A (Agent-to-Agent) Feature Flags
+    mcpgateway_a2a_enabled: bool = True
+    mcpgateway_a2a_max_agents: int = 100
+    mcpgateway_a2a_default_timeout: int = 30
+    mcpgateway_a2a_max_retries: int = 3
+    mcpgateway_a2a_metrics_enabled: bool = True
 
     # Security
     skip_ssl_verify: bool = False
@@ -191,6 +306,208 @@ class Settings(BaseSettings):
         "http://localhost",
         "http://localhost:4444",
     }
+
+    # Security validation thresholds
+    min_secret_length: int = 32
+    min_password_length: int = 12
+    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 0.8.0
+
+    @field_validator("jwt_secret_key", "auth_encryption_secret")
+    @classmethod
+    def validate_secrets(cls, v: str, info) -> str:
+        """Validate secret keys meet security requirements.
+
+        Args:
+            v: The secret key value to validate.
+            info: ValidationInfo containing field metadata.
+
+        Returns:
+            str: The validated secret key value.
+        """
+        field_name = info.field_name
+
+        # Check for default/weak secrets
+        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]  # nosec B105 - list of weak defaults to check against
+        if v.lower() in weak_secrets:
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! " "Please set a strong, unique value for production.")
+
+        # Check minimum length
+        if len(v) < 32:  # Using hardcoded value since we can't access instance attributes
+            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. " f"Current length: {len(v)}")
+
+        # Check entropy (basic check for randomness)
+        if len(set(v)) < 10:  # Less than 10 unique characters
+            logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. " "Consider using a more random value.")
+
+        return v
+
+    @field_validator("basic_auth_password")
+    @classmethod
+    def validate_admin_password(cls, v: str) -> str:
+        """Validate admin password meets security requirements.
+
+        Args:
+            v: The admin password value to validate.
+
+        Returns:
+            str: The validated admin password value.
+        """
+        if v == "changeme":  # nosec B105 - checking for default value
+            logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
+
+        if len(v) < 12:  # Using hardcoded value
+            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least 12 characters long. " f"Current length: {len(v)}")
+
+        # Check password complexity
+        has_upper = any(c.isupper() for c in v)
+        has_lower = any(c.islower() for c in v)
+        has_digit = any(c.isdigit() for c in v)
+        has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', v))
+
+        complexity_score = sum([has_upper, has_lower, has_digit, has_special])
+        if complexity_score < 3:
+            logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
+
+        return v
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def validate_cors_origins(cls, v: set) -> set:
+        """Validate CORS allowed origins.
+
+        Args:
+            v: The set of allowed origins to validate.
+
+        Returns:
+            set: The validated set of allowed origins.
+        """
+        if not v:
+            return v
+
+        dangerous_origins = ["*", "null", ""]
+        for origin in v:
+            if origin in dangerous_origins:
+                logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. " "Consider specifying explicit origins instead of wildcards.")
+
+            # Validate URL format
+            if not origin.startswith(("http://", "https://")) and origin not in dangerous_origins:
+                logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. " "Origins should start with http:// or https://")
+
+        return v
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        """Validate database connection string security.
+
+        Args:
+            v: The database URL to validate.
+
+        Returns:
+            str: The validated database URL.
+        """
+        # Check for hardcoded passwords in non-SQLite databases
+        if not v.startswith("sqlite"):
+            if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
+                logger.warning("Potentially weak database password detected. Consider using a stronger password.")
+
+        # Warn about SQLite in production
+        if v.startswith("sqlite"):
+            logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
+
+        return v
+
+    @model_validator(mode="after")
+    @classmethod
+    def validate_security_combinations(cls, values):
+        """Validate security setting combinations.
+
+        Args:
+            values: The Settings instance with all field values.
+
+        Returns:
+            Settings: The validated Settings instance.
+        """
+        # Check for dangerous combinations - only log warnings, don't raise errors
+        if not values.auth_required and values.mcpgateway_ui_enabled:
+            logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
+
+        if values.skip_ssl_verify and not values.dev_mode:
+            logger.warning("🔓 SECURITY WARNING: SSL verification is disabled in non-dev mode. This is a security risk! Set SKIP_SSL_VERIFY=false for production.")
+
+        if values.debug and not values.dev_mode:
+            logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
+
+        # Warn about federation without auth
+        if values.federation_enabled and not values.auth_required:
+            logger.warning("🌐 SECURITY WARNING: Federation is enabled without authentication. This may expose your gateway to unauthorized access.")
+
+        return values
+
+    def get_security_warnings(self) -> List[str]:
+        """Get list of security warnings for current configuration.
+
+        Returns:
+            List[str]: List of security warning messages.
+        """
+        warnings = []
+
+        # Authentication warnings
+        if not self.auth_required:
+            warnings.append("🔓 Authentication is disabled - ensure this is intentional")
+
+        if self.basic_auth_user == "admin":
+            warnings.append("⚠️  Using default admin username - consider changing it")
+
+        # SSL/TLS warnings
+        if self.skip_ssl_verify:
+            warnings.append("🔓 SSL verification is disabled - not recommended for production")
+
+        # Debug/Dev warnings
+        if self.debug and not self.dev_mode:
+            warnings.append("🐛 Debug mode enabled - disable in production to prevent info leakage")
+
+        if self.dev_mode:
+            warnings.append("🔧 Development mode enabled - not for production use")
+
+        # CORS warnings
+        if self.cors_enabled and "*" in self.allowed_origins:
+            warnings.append("🌐 CORS allows all origins (*) - this is a security risk")
+
+        # Token warnings
+        if self.token_expiry > 10080:  # More than 7 days
+            warnings.append("⏱️  JWT token expiry is very long - consider shorter duration")
+
+        # Database warnings
+        if self.database_url.startswith("sqlite") and not self.dev_mode:
+            warnings.append("💾 SQLite database in use - consider PostgreSQL/MySQL for production")
+
+        # Rate limiting warnings
+        if self.tool_rate_limit > 1000:
+            warnings.append("🚦 Tool rate limit is very high - may allow abuse")
+
+        return warnings
+
+    def get_security_status(self) -> dict:
+        """Get comprehensive security status.
+
+        Returns:
+            dict: Dictionary containing security status information including score and warnings.
+        """
+
+        # Compute a security score: 100 minus 10 for each warning
+        security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
+
+        return {
+            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
+            "auth_enabled": self.auth_required,
+            "ssl_verification": not self.skip_ssl_verify,
+            "debug_disabled": not self.debug,
+            "cors_restricted": "*" not in self.allowed_origins if self.cors_enabled else True,
+            "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
+            "warnings": self.get_security_warnings(),
+            "security_score": security_score,
+        }
 
     # Max retries for HTTP requests
     retry_max_attempts: int = 3
@@ -315,7 +632,7 @@ class Settings(BaseSettings):
             return peers
         return list(v)
 
-    federation_timeout: int = 30  # seconds
+    federation_timeout: int = 120  # seconds
     federation_sync_interval: int = 300  # seconds
 
     # Resources
@@ -433,7 +750,6 @@ Disallow: /
 
     # Cache control for well-known files (seconds)
     well_known_cache_max_age: int = 3600  # 1 hour default
-
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
 
     gateway_tool_name_separator: str = "-"
@@ -497,6 +813,47 @@ Disallow: /
         """
         if info.data and "well_known_security_txt" in info.data:
             return bool(info.data["well_known_security_txt"].strip())
+        return v
+
+    # -------------------------------
+    # Flexible list parsing for envs
+    # -------------------------------
+    @field_validator(
+        "sso_trusted_domains",
+        "sso_auto_admin_domains",
+        "sso_github_admin_orgs",
+        "sso_google_admin_domains",
+        mode="before",
+    )
+    @classmethod
+    def _parse_list_from_env(cls, v):  # type: ignore[override]
+        """Parse list fields from environment values.
+
+        Accepts either JSON arrays (e.g. '["a","b"]') or comma-separated
+        strings (e.g. 'a,b'). Empty or None becomes an empty list.
+
+        Args:
+            v: The value to parse, can be None, list, or string.
+
+        Returns:
+            list: Parsed list of values.
+        """
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    return parsed if isinstance(parsed, list) else []
+                except Exception:
+                    logger.warning("Invalid JSON list in env for list field; falling back to CSV parsing")
+            # CSV fallback
+            return [item.strip() for item in s.split(",") if item.strip()]
         return v
 
     @property
@@ -685,7 +1042,7 @@ Disallow: /
 
     # MCP-compliant size limits (configurable via env)
     validation_max_name_length: int = 255
-    validation_max_description_length: int = 4096
+    validation_max_description_length: int = 8192  # 8KB
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
     validation_max_json_depth: int = 10

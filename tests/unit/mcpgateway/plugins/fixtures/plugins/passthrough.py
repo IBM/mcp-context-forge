@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""
-Passthrough plugin.
-
+"""Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/passthrough.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Passthrough plugin.
 """
 
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginContext,
@@ -23,6 +25,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+
 
 class PassThroughPlugin(Plugin):
     """A simple pass through plugin."""

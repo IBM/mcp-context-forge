@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for mcpgateway.utils.services_auth
-
+"""Location: ./tests/unit/mcpgateway/utils/test_services_auth.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for mcpgateway.utils.services_auth
 Author: Mihai Criveti
 
 Covered behaviour

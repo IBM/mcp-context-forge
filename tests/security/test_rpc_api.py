@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""RPC method validation test
-
+"""Location: ./tests/security/test_rpc_api.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+RPC method validation test
 This script tests if alicious method names reach the tool lookup logic
 instead of being rejected at the validation layer.
 
@@ -39,7 +39,7 @@ def test_rpc_vulnerability():
     if not bearer_token:
         print("Please set MCPGATEWAY_BEARER_TOKEN environment variable")
         print("You can generate one with:")
-        print("  export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin --secret my-test-key)")
+        print("  export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)")
         sys.exit(1)
 
     headers = {"Authorization": f"Bearer {bearer_token}", "Content-Type": "application/json"}

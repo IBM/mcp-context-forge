@@ -1,0 +1,296 @@
+{
+  "metadata": {
+    "version": "0.6.0",
+    "description": "Sample test data for MCP Gateway v0.6.0 with enhanced features",
+    "created_by": "migration_test_suite",
+    "total_records": 15
+  },
+  "data": {
+    "tools": [
+      {
+        "name": "enhanced_file_reader_v060",
+        "description": "Enhanced file reading tool with display name support",
+        "display_name": "Enhanced File Reader",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path to read"
+            },
+            "encoding": {
+              "type": "string",
+              "description": "File encoding",
+              "default": "utf-8",
+              "enum": ["utf-8", "ascii", "latin-1"]
+            },
+            "max_size": {
+              "type": "integer",
+              "description": "Maximum file size in bytes",
+              "minimum": 1,
+              "maximum": 10485760
+            }
+          },
+          "required": ["path"]
+        },
+        "annotations": {
+          "category": "filesystem",
+          "version": "0.6.0",
+          "display_name": "Enhanced File Reader",
+          "created_by": "migration_test",
+          "enhanced_features": "true"
+        }
+      },
+      {
+        "name": "ai_data_processor_v060",
+        "description": "AI-enhanced data processing tool",
+        "display_name": "AI Data Processor",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "input_data": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {"type": "string"},
+                  "value": {"type": "number"},
+                  "metadata": {"type": "object", "additionalProperties": true}
+                }
+              }
+            },
+            "ai_processing": {
+              "type": "object",
+              "properties": {
+                "model": {"type": "string", "enum": ["gpt-4", "claude-3", "local-llm"]},
+                "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+                "max_tokens": {"type": "integer", "minimum": 1, "maximum": 4096}
+              }
+            },
+            "processing_options": {
+              "type": "object",
+              "properties": {
+                "method": {"type": "string", "enum": ["average", "sum", "max", "min", "ai_analyze"]},
+                "filter_null": {"type": "boolean", "default": true},
+                "parallel_processing": {"type": "boolean", "default": false}
+              }
+            }
+          },
+          "required": ["input_data"]
+        },
+        "annotations": {
+          "category": "ai",
+          "complexity": "high",
+          "version": "0.6.0",
+          "ai_enabled": "true"
+        }
+      },
+      {
+        "name": "advanced_monitor_v060",
+        "description": "Advanced system monitoring with alerting",
+        "display_name": "Advanced System Monitor",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "metrics": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "interval": {"type": "integer", "minimum": 1, "maximum": 3600},
+            "alerting": {
+              "type": "object",
+              "properties": {
+                "enabled": {"type": "boolean"},
+                "thresholds": {"type": "object", "additionalProperties": {"type": "number"}},
+                "notification_channels": {"type": "array", "items": {"type": "string"}}
+              }
+            }
+          }
+        },
+        "annotations": {
+          "category": "monitoring",
+          "priority": "high",
+          "version": "0.6.0",
+          "features": "alerting,notifications"
+        }
+      },
+      {
+        "name": "security_scanner_v060",
+        "description": "Security scanning and vulnerability assessment tool",
+        "display_name": "Security Scanner",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "target": {"type": "string", "description": "Target to scan"},
+            "scan_type": {"type": "string", "enum": ["port", "vulnerability", "compliance", "full"]},
+            "severity_filter": {"type": "array", "items": {"type": "string", "enum": ["low", "medium", "high", "critical"]}},
+            "output_format": {"type": "string", "enum": ["json", "xml", "html", "pdf"], "default": "json"}
+          },
+          "required": ["target"]
+        },
+        "annotations": {
+          "category": "security",
+          "priority": "critical",
+          "version": "0.6.0"
+        }
+      }
+    ],
+    "servers": [
+      {
+        "name": "enhanced_sse_server_v060",
+        "description": "Enhanced SSE server with authentication",
+        "display_name": "Enhanced SSE Server",
+        "transport": "sse",
+        "connection_string": "http://enhanced-sse.example.com:8080/sse",
+        "annotations": {
+          "environment": "test",
+          "transport": "sse",
+          "version": "0.6.0",
+          "authentication": "bearer_token",
+          "features": "enhanced_auth"
+        }
+      },
+      {
+        "name": "secure_ws_server_v060",
+        "description": "Secure WebSocket server with TLS",
+        "display_name": "Secure WebSocket Server",
+        "transport": "websocket",
+        "connection_string": "wss://secure-ws.example.com:8443/ws",
+        "annotations": {
+          "environment": "test",
+          "transport": "websocket",
+          "version": "0.6.0",
+          "security": "tls",
+          "features": "encrypted_transport"
+        }
+      },
+      {
+        "name": "stdio_server_v060",
+        "description": "Standard I/O server for local testing",
+        "display_name": "Standard I/O Server",
+        "transport": "stdio",
+        "command": "mcp-test-server --mode stdio --version 0.6.0 --verbose",
+        "annotations": {
+          "environment": "development",
+          "transport": "stdio",
+          "version": "0.6.0"
+        }
+      }
+    ],
+    "gateways": [
+      {
+        "name": "production_gateway_v060",
+        "base_url": "https://prod-gateway-060.example.com:4444",
+        "description": "Production gateway with enhanced security",
+        "display_name": "Production Gateway v0.6.0",
+        "health_check_url": "https://prod-gateway-060.example.com:4444/health",
+        "health_check_interval": 30,
+        "annotations": {
+          "type": "production",
+          "version": "0.6.0",
+          "region": "us-east-1",
+          "security": "enhanced",
+          "load_balancing": "true"
+        }
+      },
+      {
+        "name": "federation_gateway_v060",
+        "base_url": "https://federation-060.example.com:4444",
+        "description": "Federation gateway for multi-region deployment",
+        "display_name": "Federation Gateway",
+        "health_check_url": "https://federation-060.example.com:4444/health",
+        "health_check_interval": 45,
+        "annotations": {
+          "type": "federation",
+          "version": "0.6.0",
+          "regions": "us-east-1,eu-west-1,ap-southeast-1",
+          "capabilities": "cross_region_routing"
+        }
+      }
+    ],
+    "resources": [
+      {
+        "name": "enhanced_config_v060",
+        "uri": "file:///app/config/v0.6.0/enhanced_settings.yaml",
+        "description": "Enhanced configuration with new v0.6.0 features",
+        "display_name": "Enhanced Configuration",
+        "mimeType": "application/yaml",
+        "annotations": {
+          "category": "config",
+          "version": "0.6.0",
+          "size": "4096",
+          "features": "enhanced_settings"
+        }
+      },
+      {
+        "name": "migration_guide_v060",
+        "uri": "file:///app/docs/v0.6.0/migration_guide.md",
+        "description": "Migration guide for upgrading to v0.6.0",
+        "display_name": "Migration Guide v0.6.0",
+        "mimeType": "text/markdown",
+        "annotations": {
+          "category": "documentation",
+          "type": "migration_guide",
+          "version": "0.6.0"
+        }
+      },
+      {
+        "name": "performance_dataset_v060",
+        "uri": "file:///app/data/v0.6.0/performance_test_data.jsonl",
+        "description": "Large dataset for performance testing",
+        "display_name": "Performance Test Dataset",
+        "mimeType": "application/jsonlines",
+        "annotations": {
+          "category": "data",
+          "type": "performance_test",
+          "rows": "10000",
+          "version": "0.6.0"
+        }
+      }
+    ],
+    "prompts": [
+      {
+        "name": "welcome_prompt_v060",
+        "description": "Enhanced welcome prompt with personalization",
+        "display_name": "Welcome Prompt v0.6.0",
+        "template": "Welcome to MCP Gateway v0.6.0, {{name}}! 🚀\n\nI'm here to help you with {{task}}. With our enhanced features, I can now:\n- {{feature_1}}\n- {{feature_2}}\n- {{feature_3}}\n\nHow would you like to get started?",
+        "annotations": {
+          "category": "greeting",
+          "variables": "5",
+          "version": "0.6.0",
+          "personalization": "true"
+        }
+      },
+      {
+        "name": "security_analysis_prompt_v060",
+        "description": "Security-focused analysis prompt",
+        "display_name": "Security Analysis Prompt",
+        "template": "🔒 Security Analysis Request\n\nTarget: {{target}}\nScope: {{scope}}\n\nPlease perform a {{analysis_type}} security assessment focusing on:\n\n1. **Vulnerabilities**: {{vulnerability_focus}}\n2. **Compliance**: {{compliance_standards}}\n3. **Risk Assessment**: {{risk_categories}}\n\n**Output Requirements**:\n- Format: {{output_format}}\n- Severity Level: {{min_severity}} and above\n- Include remediation suggestions: {{include_remediation}}\n\nProceed with the analysis.",
+        "annotations": {
+          "category": "security",
+          "complexity": "high",
+          "variables": "8",
+          "version": "0.6.0"
+        }
+      }
+    ],
+    "a2a_agents": [
+      {
+        "name": "ai_assistant_v060",
+        "description": "AI assistant agent for enhanced automation",
+        "display_name": "AI Assistant Agent",
+        "provider": "openai",
+        "model": "gpt-4",
+        "endpoint_url": "https://api.openai.com/v1/chat/completions",
+        "annotations": {
+          "provider": "openai",
+          "model_family": "gpt",
+          "capabilities": "[\"text\", \"analysis\", \"code_generation\", \"reasoning\"]",
+          "max_tokens": "4096",
+          "version": "0.6.0",
+          "created_by": "migration_test"
+        }
+      }
+    ]
+  }
+}

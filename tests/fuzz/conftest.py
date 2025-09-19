@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Fuzzing test configuration."""
+"""Location: ./tests/fuzz/conftest.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Fuzzing test configuration.
+"""
+# Third-Party
+from hypothesis import HealthCheck, settings, Verbosity
 import pytest
-from hypothesis import settings, Verbosity, HealthCheck
 
 # Mark all tests in this directory as fuzz tests
 pytestmark = pytest.mark.fuzz
@@ -31,6 +38,7 @@ settings.register_profile(
 @pytest.fixture(scope="session")
 def fuzz_settings():
     """Configure fuzzing settings based on environment."""
+    # Standard
     import os
     profile = os.getenv("HYPOTHESIS_PROFILE", "dev")
     settings.load_profile(profile)

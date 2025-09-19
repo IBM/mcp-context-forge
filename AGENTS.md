@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+For specific tasks, see also: llms/api.md  llms/helm.md  llms/mcpgateway.md  llms/mcp-server-go.md  llms/mcp-server-python.md  llms/mkdocs.md  llms/plugins-llms.md  llms/testing.md
+
 ## Project Structure & Module Organization
 - `mcpgateway/`: FastAPI gateway source (entry `main.py`, `cli.py`, services, transports, templates/static, Alembic).
 - Services: `mcpgateway/services/` (gateway, server, tool, resource, prompt logic).
@@ -29,7 +31,7 @@
 - `make clean`: Remove caches, build artefacts, venv, coverage, docs, certs.
 
 MCP helpers
-- JWT token: `python -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret KEY`.
+- JWT token: `python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY`.
 - Expose stdio server: `python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000`.
 
 ## Coding Style & Naming Conventions
@@ -62,5 +64,5 @@ MCP helpers
 ## Security & Configuration Tips
 - Copy `.env.example` → `.env`; verify with `make check-env`. Never commit secrets.
 - Auth: set `JWT_SECRET_KEY`; export `MCPGATEWAY_BEARER_TOKEN` using the token utility for API calls.
-- Wrapper: set `MCP_SERVER_CATALOG_URLS` and `MCP_AUTH_TOKEN` when using `mcpgateway.wrapper`.
+- Wrapper: set `MCP_SERVER_URL` and `MCP_AUTH` when using `mcpgateway.wrapper`.
 - TLS: `make certs` → `make serve-ssl`. Prefer environment variables for config; see `README.md`.

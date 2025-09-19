@@ -1,0 +1,18 @@
+# Multi-stage container for {{ project_name }}
+
+FROM --platform=$TARGETPLATFORM golang:{{ go_version }} AS builder
+WORKDIR /src
+
+COPY go.mod .
+RUN go mod download
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /usr/local/bin/{{ bin_name }} .
+
+FROM scratch
+LABEL org.opencontainers.image.source https://github.com/contextforge/mcp-context-forge
+
+COPY --from=builder /usr/local/bin/{{ bin_name }} /{{ bin_name }}
+
+ENTRYPOINT ["/{{ bin_name }}"]
+

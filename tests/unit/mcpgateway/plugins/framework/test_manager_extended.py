@@ -1,28 +1,35 @@
 # -*- coding: utf-8 -*-
-"""
-Extended tests for plugin manager to achieve 100% coverage.
-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_manager_extended.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Extended tests for plugin manager to achieve 100% coverage.
 """
+# Standard
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+import re
 
+# Third-Party
 import pytest
 
+# First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import (
-    Config,
+from mcpgateway.plugins.framework.models import Config
+from mcpgateway.plugins.framework import (
     GlobalContext,
     HookType,
     PluginCondition,
     PluginConfig,
     PluginContext,
+    PluginError,
+    PluginManager,
     PluginMode,
-    PluginViolation,
     PluginResult,
+    PluginViolation,
+    PluginViolationError,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ToolPostInvokePayload,
@@ -67,13 +74,15 @@ async def test_manager_timeout_handling():
         prompt = PromptPrehookPayload(name="test", args={})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+        escaped_regex = re.escape("Plugin TimeoutPlugin exceeded 0.01s timeout")
+        with pytest.raises(PluginError, match=escaped_regex):
+            result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
-        # Should block in enforce mode
-        assert not result.continue_processing
-        assert result.violation is not None
-        assert result.violation.code == "PLUGIN_TIMEOUT"
-        assert "timeout" in result.violation.description.lower()
+        # Should pass since fail_on_plugin_error: false
+        # assert result.continue_processing
+        #assert result.violation is not None
+        #assert result.violation.code == "PLUGIN_TIMEOUT"
+        #assert "timeout" in result.violation.description.lower()
 
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
@@ -123,13 +132,15 @@ async def test_manager_exception_handling():
         prompt = PromptPrehookPayload(name="test", args={})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+        escaped_regex = re.escape("RuntimeError('Plugin error!')")
+        with pytest.raises(PluginError, match=escaped_regex):
+            result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
         # Should block in enforce mode
-        assert not result.continue_processing
-        assert result.violation is not None
-        assert result.violation.code == "PLUGIN_ERROR"
-        assert "error" in result.violation.description.lower()
+        #assert result.continue_processing
+        #assert result.violation is not None
+        #assert result.violation.code == "PLUGIN_ERROR"
+        #assert "error" in result.violation.description.lower()
 
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
@@ -140,6 +151,39 @@ async def test_manager_exception_handling():
         result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
         # Should continue in permissive mode
+        assert result.continue_processing
+        assert result.violation is None
+
+    plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
+    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+        plugin_ref = PluginRef(error_plugin)
+        mock_get.return_value = [plugin_ref]
+
+        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+
+        # Should continue in enforce_ignore_error mode
+        assert result.continue_processing
+        assert result.violation is None
+
+    plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
+    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+        plugin_ref = PluginRef(error_plugin)
+        mock_get.return_value = [plugin_ref]
+
+        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+
+        # Should continue in enforce_ignore_error mode
+        assert result.continue_processing
+        assert result.violation is None
+
+    plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
+    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+        plugin_ref = PluginRef(error_plugin)
+        mock_get.return_value = [plugin_ref]
+
+        result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
+
+        # Should continue in enforce_ignore_error mode
         assert result.continue_processing
         assert result.violation is None
 
@@ -373,6 +417,12 @@ async def test_manager_plugin_blocking():
         assert result.violation.code == "CONTENT_BLOCKED"
         assert result.violation.plugin_name == "BlockingPlugin"
 
+        with pytest.raises(PluginViolationError) as pve:
+            result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context, violations_as_exceptions=True)
+        assert pve.value.violation
+        assert pve.value.message
+        assert pve.value.violation.code == "CONTENT_BLOCKED"
+        assert pve.value.violation.plugin_name == "BlockingPlugin"
     await manager.shutdown()
 
 
@@ -451,8 +501,9 @@ async def test_manager_shutdown_behavior():
 @pytest.mark.asyncio
 async def test_manager_payload_size_validation():
     """Test payload size validation functionality."""
-    from mcpgateway.plugins.framework.manager import PayloadSizeError, MAX_PAYLOAD_SIZE, PluginExecutor
-    from mcpgateway.plugins.framework.models import PromptPrehookPayload, PromptPosthookPayload
+    # First-Party
+    from mcpgateway.plugins.framework.manager import MAX_PAYLOAD_SIZE, PayloadSizeError, PluginExecutor
+    from mcpgateway.plugins.framework.models import PromptPosthookPayload, PromptPrehookPayload
 
     # Test payload size validation directly on executor (covers lines 252, 258)
     executor = PluginExecutor[PromptPrehookPayload]()
@@ -466,7 +517,8 @@ async def test_manager_payload_size_validation():
         executor._validate_payload_size(large_prompt)
 
     # Test large result payload (covers line 258)
-    from mcpgateway.models import PromptResult, Message, TextContent, Role
+    # First-Party
+    from mcpgateway.models import Message, PromptResult, Role, TextContent
     large_text = "y" * (MAX_PAYLOAD_SIZE + 1)
     message = Message(role=Role.USER, content=TextContent(type="text", text=large_text))
     large_result = PromptResult(messages=[message])
@@ -494,8 +546,9 @@ async def test_manager_initialization_edge_cases():
     await manager.shutdown()
 
     # Test plugin instantiation failure (covers lines 495-501)
-    from mcpgateway.plugins.framework.models import PluginConfig, PluginMode, PluginSettings
+    # First-Party
     from mcpgateway.plugins.framework.loader.plugin import PluginLoader
+    from mcpgateway.plugins.framework.models import PluginConfig, PluginMode, PluginSettings
 
     manager2 = PluginManager()
     manager2._config = Config(
@@ -517,7 +570,7 @@ async def test_manager_initialization_edge_cases():
 
     # Mock the loader to return None (covers lines 495-496)
     with patch.object(manager2._loader, 'load_and_instantiate_plugin', return_value=None):
-        with pytest.raises(ValueError, match="Unable to register and initialize plugin"):
+        with pytest.raises(RuntimeError, match="Plugin initialization failed: FailingPlugin"):
             await manager2.initialize()
 
     # Test disabled plugin (covers line 501)
@@ -544,13 +597,17 @@ async def test_manager_initialization_edge_cases():
         mock_logger.debug.assert_called_with("Skipping disabled plugin: DisabledPlugin")
 
     await manager3.shutdown()
+    await manager2.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_manager_context_cleanup():
     """Test context cleanup functionality."""
-    from mcpgateway.plugins.framework.manager import CONTEXT_MAX_AGE
+    # Standard
     import time
+
+    # First-Party
+    from mcpgateway.plugins.framework.manager import CONTEXT_MAX_AGE
 
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
     await manager.initialize()
@@ -576,8 +633,8 @@ async def test_manager_context_cleanup():
 
     await manager.shutdown()
 
-
-def test_manager_constructor_context_init():
+@pytest.mark.asyncio
+async def test_manager_constructor_context_init():
     """Test manager constructor context initialization."""
 
     # Test that managers share state and context store exists (covers lines 432-433)
@@ -592,18 +649,27 @@ def test_manager_constructor_context_init():
 
     # They should be the same instance due to shared state
     assert manager1._context_store is manager2._context_store
+    await manager1.shutdown()
+    await manager2.shutdown()
 
 
 @pytest.mark.asyncio
 async def test_base_plugin_coverage():
     """Test base plugin functionality for complete coverage."""
+    # First-Party
+    from mcpgateway.models import Message, PromptResult, Role, TextContent
     from mcpgateway.plugins.framework.base import Plugin, PluginRef
-    from mcpgateway.plugins.framework.models import PluginConfig, HookType, PluginMode
     from mcpgateway.plugins.framework.models import (
-        PluginContext, GlobalContext, PromptPrehookPayload, PromptPosthookPayload,
-        ToolPreInvokePayload, ToolPostInvokePayload
+        GlobalContext,
+        HookType,
+        PluginConfig,
+        PluginContext,
+        PluginMode,
+        PromptPosthookPayload,
+        PromptPrehookPayload,
+        ToolPostInvokePayload,
+        ToolPreInvokePayload,
     )
-    from mcpgateway.models import PromptResult, Message, TextContent, Role
 
     # Test plugin with tags property (covers line 130)
     config = PluginConfig(
@@ -630,7 +696,7 @@ async def test_base_plugin_coverage():
     assert plugin_ref.mode == PluginMode.ENFORCE  # Default mode
 
     # Test NotImplementedError for prompt_pre_fetch (covers lines 151-155)
-    context = PluginContext(request_id="test")
+    context = PluginContext(global_context=GlobalContext(request_id="test"))
     payload = PromptPrehookPayload(name="test", args={})
 
     with pytest.raises(NotImplementedError, match="'prompt_pre_fetch' not implemented"):
@@ -658,13 +724,12 @@ async def test_base_plugin_coverage():
 @pytest.mark.asyncio
 async def test_plugin_types_coverage():
     """Test plugin types functionality for complete coverage."""
-    from mcpgateway.plugins.framework.models import (
-        PluginContext, PluginViolation
-    )
+    # First-Party
     from mcpgateway.plugins.framework.errors import PluginViolationError
+    from mcpgateway.plugins.framework.models import PluginContext, PluginViolation
 
     # Test PluginContext state methods (covers lines 266, 275)
-    plugin_ctx = PluginContext(request_id="test", user="testuser")
+    plugin_ctx = PluginContext(global_context=GlobalContext(request_id="test", user="testuser"))
 
     # Test get_state with default
     assert plugin_ctx.get_state("nonexistent", "default_value") == "default_value"
@@ -700,8 +765,9 @@ async def test_plugin_types_coverage():
 @pytest.mark.asyncio
 async def test_plugin_loader_return_none():
     """Test plugin loader return None case."""
+    # First-Party
     from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-    from mcpgateway.plugins.framework.models import PluginConfig, HookType
+    from mcpgateway.plugins.framework.models import HookType, PluginConfig
 
     loader = PluginLoader()
 
@@ -726,6 +792,7 @@ async def test_plugin_loader_return_none():
 
 def test_plugin_violation_setter_validation():
     """Test PluginViolation plugin_name setter validation."""
+    # First-Party
     from mcpgateway.plugins.framework.models import PluginViolation
 
     violation = PluginViolation(

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Pydantic models for plugins.
-
+"""Location: ./mcpgateway/plugins/framework/models.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor, Mihai Criveti
 
+Pydantic models for plugins.
 This module implements the pydantic models associated with
 the base plugin layer including configurations, and contexts.
 """
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeVar
 
 # Third-Party
-from pydantic import BaseModel, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, RootModel, ValidationInfo
 
 # First-Party
 from mcpgateway.models import PromptResult
@@ -60,13 +60,16 @@ class PluginMode(str, Enum):
     """Plugin modes of operation.
 
     Attributes:
-       enforce: enforces the plugin result.
+       enforce: enforces the plugin result, and blocks execution when there is an error.
+       enforce_ignore_error: enforces the plugin result, but allows execution when there is an error.
        permissive: audits the result.
        disabled: plugin disabled.
 
     Examples:
         >>> PluginMode.ENFORCE
         <PluginMode.ENFORCE: 'enforce'>
+        >>> PluginMode.ENFORCE_IGNORE_ERROR
+        <PluginMode.ENFORCE_IGNORE_ERROR: 'enforce_ignore_error'>
         >>> PluginMode.PERMISSIVE.value
         'permissive'
         >>> PluginMode('disabled')
@@ -76,11 +79,34 @@ class PluginMode(str, Enum):
     """
 
     ENFORCE = "enforce"
+    ENFORCE_IGNORE_ERROR = "enforce_ignore_error"
     PERMISSIVE = "permissive"
     DISABLED = "disabled"
 
 
-class ToolTemplate(BaseModel):
+class BaseTemplate(BaseModel):
+    """Base Template.The ToolTemplate, PromptTemplate and ResourceTemplate could be extended using this
+
+    Attributes:
+        context (Optional[list[str]]): specifies the keys of context to be extracted. The context could be global (shared between the plugins) or
+        local (shared within the plugin). Example: global.key1.
+        extensions (Optional[dict[str, Any]]): add custom keys for your specific plugin. Example - 'policy'
+        key for opa plugin.
+
+    Examples:
+        >>> base = BaseTemplate(context=["global.key1.key2", "local.key1.key2"])
+        >>> base.context
+        ['global.key1.key2', 'local.key1.key2']
+        >>> base = BaseTemplate(context=["global.key1.key2"], extensions={"policy" : "sample policy"})
+        >>> base.extensions
+        {'policy': 'sample policy'}
+    """
+
+    context: Optional[list[str]] = None
+    extensions: Optional[dict[str, Any]] = None
+
+
+class ToolTemplate(BaseTemplate):
     """Tool Template.
 
     Attributes:
@@ -106,7 +132,7 @@ class ToolTemplate(BaseModel):
     result: bool = False
 
 
-class PromptTemplate(BaseModel):
+class PromptTemplate(BaseTemplate):
     """Prompt Template.
 
     Attributes:
@@ -130,7 +156,7 @@ class PromptTemplate(BaseModel):
     result: bool = False
 
 
-class ResourceTemplate(BaseModel):
+class ResourceTemplate(BaseTemplate):
     """Resource Template.
 
     Attributes:
@@ -211,6 +237,8 @@ class AppliedTo(BaseModel):
         tools (Optional[list[ToolTemplate]]): tools and fields to be applied.
         prompts (Optional[list[PromptTemplate]]): prompts and fields to be applied.
         resources (Optional[list[ResourceTemplate]]): resources and fields to be applied.
+        global_context (Optional[list[str]]): keys in the context to be applied on globally
+        local_context(Optional[list[str]]): keys in the context to be applied on locally
     """
 
     tools: Optional[list[ToolTemplate]] = None
@@ -304,7 +332,7 @@ class PluginConfig(BaseModel):
     mode: PluginMode = PluginMode.ENFORCE
     priority: Optional[int] = None  # Lower = higher priority
     conditions: Optional[list[PluginCondition]] = None  # When to apply
-    applied_to: Optional[list[AppliedTo]] = None  # Fields to apply to.
+    applied_to: Optional[AppliedTo] = None  # Fields to apply to.
     config: Optional[dict[str, Any]] = None
     mcp: Optional[MCPConfig] = None
 
@@ -386,7 +414,7 @@ class PluginErrorModel(BaseModel):
 
     message: str
     code: Optional[str] = ""
-    details: Optional[dict[str, Any]] = {}
+    details: Optional[dict[str, Any]] = Field(default_factory=dict)
     plugin_name: str
 
 
@@ -502,7 +530,7 @@ class PromptPrehookPayload(BaseModel):
     """
 
     name: str
-    args: Optional[dict[str, str]] = {}
+    args: Optional[dict[str, str]] = Field(default_factory=dict)
 
 
 class PromptPosthookPayload(BaseModel):
@@ -568,11 +596,54 @@ class PluginResult(BaseModel, Generic[T]):
     continue_processing: bool = True
     modified_payload: Optional[T] = None
     violation: Optional[PluginViolation] = None
-    metadata: Optional[dict[str, Any]] = {}
+    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 PromptPrehookResult = PluginResult[PromptPrehookPayload]
 PromptPosthookResult = PluginResult[PromptPosthookPayload]
+
+
+class HttpHeaderPayload(RootModel[dict[str, str]]):
+    """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""
+
+    def __iter__(self):
+        """Custom iterator function to override root attribute.
+
+        Returns:
+            A custom iterator for header dictionary.
+        """
+        return iter(self.root)
+
+    def __getitem__(self, item: str) -> str:
+        """Custom getitem function to override root attribute.
+
+        Args:
+            item: The http header key.
+
+        Returns:
+            A custom accesser for the header dictionary.
+        """
+        return self.root[item]
+
+    def __setitem__(self, key: str, value: str) -> None:
+        """Custom setitem function to override root attribute.
+
+        Args:
+            key: The http header key.
+            value: The http header value to be set.
+        """
+        self.root[key] = value
+
+    def __len__(self):
+        """Custom len function to override root attribute.
+
+        Returns:
+            The len of the header dictionary.
+        """
+        return len(self.root)
+
+
+HttpHeaderPayloadResult = PluginResult[HttpHeaderPayload]
 
 
 class ToolPreInvokePayload(BaseModel):
@@ -581,6 +652,7 @@ class ToolPreInvokePayload(BaseModel):
     Args:
         name: The tool name.
         args: The tool arguments for invocation.
+        headers: The http pass through headers.
 
     Examples:
         >>> payload = ToolPreInvokePayload(name="test_tool", args={"input": "data"})
@@ -600,7 +672,8 @@ class ToolPreInvokePayload(BaseModel):
     """
 
     name: str
-    args: Optional[dict[str, Any]] = {}
+    args: Optional[dict[str, Any]] = Field(default_factory=dict)
+    headers: Optional[HttpHeaderPayload] = None
 
 
 class ToolPostInvokePayload(BaseModel):
@@ -639,6 +712,8 @@ class GlobalContext(BaseModel):
             user (str): user ID associated with the request.
             tenant_id (str): tenant ID.
             server_id (str): server ID.
+            metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
+            state (Optional[dict[str,Any]]): a global shared state across plugins.
 
     Examples:
         >>> ctx = GlobalContext(request_id="req-123")
@@ -662,18 +737,33 @@ class GlobalContext(BaseModel):
     user: Optional[str] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
+    state: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class PluginContext(GlobalContext):
+class PluginContext(BaseModel):
     """The plugin's context, which lasts a request lifecycle.
 
     Attributes:
-       metadata: context metadata.
        state:  the inmemory state of the request.
+       global_context: the context that is shared across plugins.
+       metadata: plugin meta data.
+
+    Examples:
+        >>> gctx = GlobalContext(request_id="req-123")
+        >>> ctx = PluginContext(global_context=gctx)
+        >>> ctx.global_context.request_id
+        'req-123'
+        >>> ctx.global_context.user is None
+        True
+        >>> ctx.state["somekey"] = "some value"
+        >>> ctx.state["somekey"]
+        'some value'
     """
 
-    state: dict[str, Any] = {}
-    metadata: dict[str, Any] = {}
+    state: dict[str, Any] = Field(default_factory=dict)
+    global_context: GlobalContext
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def get_state(self, key: str, default: Any = None) -> Any:
         """Get value from shared state.
@@ -701,6 +791,14 @@ class PluginContext(GlobalContext):
         self.state.clear()
         self.metadata.clear()
 
+    def is_empty(self) -> bool:
+        """Check whether the state and metadata objects are empty.
+
+        Returns:
+            True if the context state and metadata are empty.
+        """
+        return not (self.state or self.metadata or self.global_context.state)
+
 
 PluginContextTable = dict[str, PluginContext]
 
@@ -727,7 +825,7 @@ class ResourcePreFetchPayload(BaseModel):
     """
 
     uri: str
-    metadata: Optional[dict[str, Any]] = {}
+    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
 class ResourcePostFetchPayload(BaseModel):

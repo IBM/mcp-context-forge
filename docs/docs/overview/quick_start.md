@@ -17,9 +17,19 @@ Pick an install method below, generate an auth token, then walk through a real t
         **Prereqs**: Install uv (https://docs.astral.sh/uv/getting-started/installation/)
 
     ```bash
+    # Quick start with environment variables
     BASIC_AUTH_PASSWORD=pass \
     MCPGATEWAY_UI_ENABLED=true \
     MCPGATEWAY_ADMIN_API_ENABLED=true \
+    PLATFORM_ADMIN_EMAIL=admin@example.com \
+    PLATFORM_ADMIN_PASSWORD=changeme \
+    PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+    uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
+
+    # Or better: use the provided .env.example
+    curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
+    cp .env.example .env
+    # Edit .env to customize your settings
     uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
     ```
 
@@ -45,11 +55,23 @@ Pick an install method below, generate an auth token, then walk through a real t
         mcpgateway --version
         ```
 
-    3. **Launch it, listening on all interfaces**
+    3. **Configure and launch it**
 
         ```bash
+        # Option 1: Download and use the provided .env.example
+        curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
+        cp .env.example .env
+        # Edit .env to customize your settings (especially passwords!)
+        mcpgateway --host 0.0.0.0 --port 4444
+
+        # Option 2: Set environment variables directly
         export BASIC_AUTH_PASSWORD=changeme
         export JWT_SECRET_KEY=my-test-key
+        export MCPGATEWAY_UI_ENABLED=true
+        export MCPGATEWAY_ADMIN_API_ENABLED=true
+        export PLATFORM_ADMIN_EMAIL=admin@example.com
+        export PLATFORM_ADMIN_PASSWORD=changeme
+        export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
         mcpgateway --host 0.0.0.0 --port 4444
         ```
 
@@ -87,22 +109,78 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e JWT_SECRET_KEY=my-test-key \
           -e BASIC_AUTH_USER=admin \
           -e BASIC_AUTH_PASSWORD=changeme \
-          ghcr.io/ibm/mcp-context-forge:0.5.0
+          -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+          -e PLATFORM_ADMIN_PASSWORD=changeme \
+          -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+          ghcr.io/ibm/mcp-context-forge:0.7.0
         ```
 
     2. **(Optional) persist the DB**
 
-        ```bash
-        mkdir -p $(pwd)/data
-        docker run -d --name mcpgateway \
-          -p 4444:4444 \
-          -v $(pwd)/data:/data \
-          -e DATABASE_URL=sqlite:////data/mcp.db \
-          -e JWT_SECRET_KEY=my-test-key \
-          -e BASIC_AUTH_USER=admin \
-          -e BASIC_AUTH_PASSWORD=changeme \
-          ghcr.io/ibm/mcp-context-forge:0.5.0
-        ```
+        === "SQLite (Default)"
+            ```bash
+            mkdir -p $(pwd)/data
+            docker run -d --name mcpgateway \
+              -p 4444:4444 \
+              -v $(pwd)/data:/data \
+              -e DATABASE_URL=sqlite:////data/mcp.db \
+              -e JWT_SECRET_KEY=my-test-key \
+              -e BASIC_AUTH_USER=admin \
+              -e BASIC_AUTH_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+              ghcr.io/ibm/mcp-context-forge:0.7.0
+            ```
+
+        === "MySQL"
+            ```bash
+            # Start MySQL container first
+            docker run -d --name mysql-db \
+              -e MYSQL_ROOT_PASSWORD=mysecretpassword \
+              -e MYSQL_DATABASE=mcp \
+              -e MYSQL_USER=mysql \
+              -e MYSQL_PASSWORD=changeme \
+              -p 3306:3306 \
+              mysql:8
+
+            # Start MCP Gateway with MySQL connection
+            docker run -d --name mcpgateway \
+              -p 4444:4444 \
+              --link mysql-db:mysql \
+              -e DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp \
+              -e JWT_SECRET_KEY=my-test-key \
+              -e BASIC_AUTH_USER=admin \
+              -e BASIC_AUTH_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+              ghcr.io/ibm/mcp-context-forge:0.7.0
+            ```
+
+        === "PostgreSQL"
+            ```bash
+            # Start PostgreSQL container first
+            docker run -d --name postgres-db \
+              -e POSTGRES_USER=postgres \
+              -e POSTGRES_PASSWORD=mysecretpassword \
+              -e POSTGRES_DB=mcp \
+              -p 5432:5432 \
+              postgres:17
+
+            # Start MCP Gateway with PostgreSQL connection
+            docker run -d --name mcpgateway \
+              -p 4444:4444 \
+              --link postgres-db:postgres \
+              -e DATABASE_URL=postgresql://postgres:mysecretpassword@postgres:5432/mcp \
+              -e JWT_SECRET_KEY=my-test-key \
+              -e BASIC_AUTH_USER=admin \
+              -e BASIC_AUTH_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+              ghcr.io/ibm/mcp-context-forge:0.7.0
+            ```
 
     3. **Generate a token inside the container**
 
@@ -138,7 +216,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     2. **Pull the published image**
 
         ```bash
-        docker pull ghcr.io/ibm/mcp-context-forge:0.5.0
+        docker pull ghcr.io/ibm/mcp-context-forge:0.7.0
         ```
 
     3. **Start the stack**
@@ -156,9 +234,15 @@ Pick an install method below, generate an auth token, then walk through a real t
         curl -s http://localhost:4444/health | jq
         ```
 
-    > **Tip :** The sample Compose file has multiple database blocks
-    > (Postgres, MariaDB, MySQL, MongoDB) and admin tools. Uncomment one and align
-    > `DATABASE_URL` for your preferred backend.
+    !!! tip "Database Support"
+        The sample Compose file includes multiple database options:
+
+        - **PostgreSQL** (default): `postgresql://postgres:password@postgres:5432/mcp`
+        - **MariaDB**: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp` - fully supported with 36+ tables
+        - **MySQL**: `mysql+pymysql://admin:changeme@mysql:3306/mcp`
+        - **MongoDB**: `mongodb://admin:changeme@mongodb:27017/mcp`
+
+        MariaDB 12.0+ and MySQL 8.4+ are fully compatible with all VARCHAR length requirements resolved.
 
 ---
 
@@ -207,8 +291,8 @@ npx -y @modelcontextprotocol/inspector
 ## Connect via `mcpgateway-wrapper` (stdio)
 
 ```bash
-export MCP_AUTH_TOKEN=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_CATALOG_URLS=http://localhost:4444/servers/UUID_OF_SERVER_1
+export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
+export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
 python3 -m mcpgateway.wrapper   # behaves as a local MCP stdio server - run from MCP client
 ```
 
@@ -221,8 +305,8 @@ Use this in GUI clients (Claude Desktop, Continue, etc.) that prefer stdio. Exam
       "command": "python3",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_SERVER_CATALOG_URLS": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_AUTH_TOKEN": "<YOUR_JWT_TOKEN>",
+        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp",
+        "MCP_AUTH": "Bearer <YOUR_JWT_TOKEN>",
         "MCP_TOOL_CALL_TIMEOUT": "120"
       }
     }

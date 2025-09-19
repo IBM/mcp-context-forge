@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Plugin instance registry.
-
+"""Location: ./mcpgateway/plugins/framework/registry.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Plugin instance registry.
 Module that stores plugin instances and manages hook points.
 """
 
@@ -151,7 +151,9 @@ class PluginInstanceRegistry:
 
     async def shutdown(self) -> None:
         """Shutdown all plugins."""
-        for plugin_ref in self._plugins.values():
+        # Must cleanup the plugins in reverse of creating them to handle asyncio cleanup issues.
+        # https://github.com/microsoft/semantic-kernel/issues/12627
+        for plugin_ref in reversed(self._plugins.values()):
             try:
                 await plugin_ref.plugin.shutdown()
             except Exception as e:

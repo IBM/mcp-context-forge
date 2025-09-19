@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""MCP Protocol Type Definitions.
-
+"""Location: ./mcpgateway/models.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+MCP Protocol Type Definitions.
 This module defines all core MCP protocol types according to the specification.
 It includes:
   - Message content types (text, image, resource)
@@ -401,37 +401,103 @@ class PromptResult(BaseModel):
     description: Optional[str] = None
 
 
-# Tool types
-class Tool(BaseModel):
-    """A tool that can be invoked.
+class CommonAttributes(BaseModel):
+    """Common attributes for tools and gateways.
 
     Attributes:
         name (str): The unique name of the tool.
         url (AnyHttpUrl): The URL of the tool.
         description (Optional[str]): A description of the tool.
-        integrationType (str): The integration type of the tool (e.g. MCP or REST).
-        requestType (str): The HTTP method used to invoke the tool (GET, POST, PUT, DELETE, SSE, STDIO).
-        headers (Dict[str, Any]): A JSON object representing HTTP headers.
-        input_schema (Dict[str, Any]): A JSON Schema for validating the tool's input.
-        annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints.
-        auth_type (Optional[str]): The type of authentication used ("basic", "bearer", or None).
-        auth_username (Optional[str]): The username for basic authentication.
-        auth_password (Optional[str]): The password for basic authentication.
-        auth_token (Optional[str]): The token for bearer authentication.
+        created_at (Optional[datetime]): The time at which the tool was created.
+        update_at (Optional[datetime]): The time at which the tool was updated.
+        enabled (Optional[bool]): If the tool is enabled.
+        reachable (Optional[bool]): If the tool is currently reachable.
+        tags (Optional[list[str]]): A list of meta data tags describing the tool.
+        created_by (Optional[str]): The person that created the tool.
+        created_from_ip (Optional[str]): The client IP that created the tool.
+        created_via (Optional[str]): How the tool was created (e.g., ui).
+        created_user_agent (Optioanl[str]): The client user agent.
+        modified_by (Optional[str]): The person that modified the tool.
+        modified_from_ip (Optional[str]): The client IP that modified the tool.
+        modified_via (Optional[str]): How the tool was modified (e.g., ui).
+        modified_user_agent (Optioanl[str]): The client user agent.
+        import_batch_id (Optional[str]): The id of the batch file that imported the tool.
+        federation_source (Optional[str]): The federation source of the tool
+        version (Optional[int]): The version of the tool.
+        team_id (Optional[str]): The id of the team that created the tool.
+        owner_email (Optional[str]): Tool owner's email.
+        visibility (Optional[str]): Visibility of the tool (e.g., public, private).
     """
 
     name: str
     url: AnyHttpUrl
     description: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    enabled: Optional[bool] = None
+    reachable: Optional[bool] = None
+    auth_type: Optional[str] = None
+    tags: Optional[list[str]] = None
+    # Comprehensive metadata for audit tracking
+    created_by: Optional[str] = None
+    created_from_ip: Optional[str] = None
+    created_via: Optional[str] = None
+    created_user_agent: Optional[str] = None
+
+    modified_by: Optional[str] = None
+    modified_from_ip: Optional[str] = None
+    modified_via: Optional[str] = None
+    modified_user_agent: Optional[str] = None
+
+    import_batch_id: Optional[str] = None
+    federation_source: Optional[str] = None
+    version: Optional[int] = None
+    # Team scoping fields for resource organization
+    team_id: Optional[str] = None
+    owner_email: Optional[str] = None
+    visibility: Optional[str] = None
+
+
+# Tool types
+class Tool(CommonAttributes):
+    """A tool that can be invoked.
+
+    Attributes:
+        original_name (str): The original supplied name of the tool before imported by the gateway.
+        integrationType (str): The integration type of the tool (e.g. MCP or REST).
+        requestType (str): The HTTP method used to invoke the tool (GET, POST, PUT, DELETE, SSE, STDIO).
+        headers (Dict[str, Any]): A JSON object representing HTTP headers.
+        input_schema (Dict[str, Any]): A JSON Schema for validating the tool's input.
+        annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints.
+        auth_username (Optional[str]): The username for basic authentication.
+        auth_password (Optional[str]): The password for basic authentication.
+        auth_token (Optional[str]): The token for bearer authentication.
+        jsonpath_filter (Optional[str]):  Filter the tool based on a JSON path expression.
+        custom_name (Optional[str]): Custom tool name.
+        custom_name_slug (Optional[str]): Alternative custom tool name.
+        display_name (Optional[str]): Display name.
+        gateway_id (Optional[str]): The gateway id on which the tool is hosted.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    original_name: Optional[str] = None
     integration_type: str = "MCP"
     request_type: str = "SSE"
-    headers: Dict[str, Any] = Field(default_factory=dict)
+    headers: Optional[Dict[str, Any]] = Field(default_factory=dict)
     input_schema: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
     annotations: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tool annotations for behavior hints")
-    auth_type: Optional[str] = None
     auth_username: Optional[str] = None
     auth_password: Optional[str] = None
     auth_token: Optional[str] = None
+    jsonpath_filter: Optional[str] = None
+
+    # custom_name,custom_name_slug, display_name
+    custom_name: Optional[str] = None
+    custom_name_slug: Optional[str] = None
+    display_name: Optional[str] = None
+
+    # Federation relationship with a local gateway
+    gateway_id: Optional[str] = None
 
 
 class ToolResult(BaseModel):
@@ -811,7 +877,7 @@ class FederatedPrompt(Prompt):
     gateway_name: str
 
 
-class Gateway(BaseModel):
+class Gateway(CommonAttributes):
     """A federated gateway peer.
 
     Attributes:
@@ -822,8 +888,165 @@ class Gateway(BaseModel):
         last_seen (Optional[datetime]): Timestamp when the gateway was last seen.
     """
 
+    model_config = ConfigDict(from_attributes=True)
     id: str
-    name: str
-    url: AnyHttpUrl
     capabilities: ServerCapabilities
     last_seen: Optional[datetime] = None
+    slug: str
+    transport: str
+    last_seen: Optional[datetime]
+    # Header passthrough configuration
+    passthrough_headers: Optional[list[str]]  # Store list of strings as JSON array
+    # Request type and authentication fields
+    auth_value: Optional[str | dict]
+
+
+# ===== RBAC Models =====
+
+
+class RBACRole(BaseModel):
+    """Role model for RBAC system.
+
+    Represents roles that can be assigned to users with specific permissions.
+    Supports global, team, and personal scopes with role inheritance.
+
+    Attributes:
+        id: Unique role identifier
+        name: Human-readable role name
+        description: Role description and purpose
+        scope: Role scope ('global', 'team', 'personal')
+        permissions: List of permission strings
+        inherits_from: Parent role ID for inheritance
+        created_by: Email of user who created the role
+        is_system_role: Whether this is a system-defined role
+        is_active: Whether the role is currently active
+        created_at: Role creation timestamp
+        updated_at: Role last modification timestamp
+
+    Examples:
+        >>> from datetime import datetime
+        >>> role = RBACRole(
+        ...     id="role-123",
+        ...     name="team_admin",
+        ...     description="Team administrator with member management rights",
+        ...     scope="team",
+        ...     permissions=["teams.manage_members", "resources.create"],
+        ...     created_by="admin@example.com",
+        ...     created_at=datetime(2023, 1, 1),
+        ...     updated_at=datetime(2023, 1, 1)
+        ... )
+        >>> role.name
+        'team_admin'
+        >>> "teams.manage_members" in role.permissions
+        True
+    """
+
+    id: str = Field(..., description="Unique role identifier")
+    name: str = Field(..., description="Human-readable role name")
+    description: Optional[str] = Field(None, description="Role description and purpose")
+    scope: str = Field(..., description="Role scope", pattern="^(global|team|personal)$")
+    permissions: List[str] = Field(..., description="List of permission strings")
+    inherits_from: Optional[str] = Field(None, description="Parent role ID for inheritance")
+    created_by: str = Field(..., description="Email of user who created the role")
+    is_system_role: bool = Field(False, description="Whether this is a system-defined role")
+    is_active: bool = Field(True, description="Whether the role is currently active")
+    created_at: datetime = Field(..., description="Role creation timestamp")
+    updated_at: datetime = Field(..., description="Role last modification timestamp")
+
+
+class UserRoleAssignment(BaseModel):
+    """User role assignment model.
+
+    Represents the assignment of roles to users in specific scopes (global, team, personal).
+    Includes metadata about who granted the role and when it expires.
+
+    Attributes:
+        id: Unique assignment identifier
+        user_email: Email of the user assigned the role
+        role_id: ID of the assigned role
+        scope: Assignment scope ('global', 'team', 'personal')
+        scope_id: Team ID if team-scoped, None otherwise
+        granted_by: Email of user who granted this role
+        granted_at: Timestamp when role was granted
+        expires_at: Optional expiration timestamp
+        is_active: Whether the assignment is currently active
+
+    Examples:
+        >>> from datetime import datetime
+        >>> user_role = UserRoleAssignment(
+        ...     id="assignment-123",
+        ...     user_email="user@example.com",
+        ...     role_id="team-admin-123",
+        ...     scope="team",
+        ...     scope_id="team-engineering-456",
+        ...     granted_by="admin@example.com",
+        ...     granted_at=datetime(2023, 1, 1)
+        ... )
+        >>> user_role.scope
+        'team'
+        >>> user_role.is_active
+        True
+    """
+
+    id: str = Field(..., description="Unique assignment identifier")
+    user_email: str = Field(..., description="Email of the user assigned the role")
+    role_id: str = Field(..., description="ID of the assigned role")
+    scope: str = Field(..., description="Assignment scope", pattern="^(global|team|personal)$")
+    scope_id: Optional[str] = Field(None, description="Team ID if team-scoped, None otherwise")
+    granted_by: str = Field(..., description="Email of user who granted this role")
+    granted_at: datetime = Field(..., description="Timestamp when role was granted")
+    expires_at: Optional[datetime] = Field(None, description="Optional expiration timestamp")
+    is_active: bool = Field(True, description="Whether the assignment is currently active")
+
+
+class PermissionAudit(BaseModel):
+    """Permission audit log model.
+
+    Records all permission checks for security auditing and compliance.
+    Includes details about the user, permission, resource, and result.
+
+    Attributes:
+        id: Unique audit log entry identifier
+        timestamp: When the permission check occurred
+        user_email: Email of user being checked
+        permission: Permission being checked (e.g., 'tools.create')
+        resource_type: Type of resource (e.g., 'tools', 'teams')
+        resource_id: Specific resource ID if applicable
+        team_id: Team context if applicable
+        granted: Whether permission was granted
+        roles_checked: JSON of roles that were checked
+        ip_address: IP address of the request
+        user_agent: User agent string
+
+    Examples:
+        >>> from datetime import datetime
+        >>> audit_log = PermissionAudit(
+        ...     id=1,
+        ...     timestamp=datetime(2023, 1, 1),
+        ...     user_email="user@example.com",
+        ...     permission="tools.create",
+        ...     resource_type="tools",
+        ...     granted=True,
+        ...     roles_checked={"roles": ["team_admin"]}
+        ... )
+        >>> audit_log.granted
+        True
+        >>> audit_log.permission
+        'tools.create'
+    """
+
+    id: int = Field(..., description="Unique audit log entry identifier")
+    timestamp: datetime = Field(..., description="When the permission check occurred")
+    user_email: Optional[str] = Field(None, description="Email of user being checked")
+    permission: str = Field(..., description="Permission being checked")
+    resource_type: Optional[str] = Field(None, description="Type of resource")
+    resource_id: Optional[str] = Field(None, description="Specific resource ID if applicable")
+    team_id: Optional[str] = Field(None, description="Team context if applicable")
+    granted: bool = Field(..., description="Whether permission was granted")
+    roles_checked: Optional[Dict] = Field(None, description="JSON of roles that were checked")
+    ip_address: Optional[str] = Field(None, description="IP address of the request")
+    user_agent: Optional[str] = Field(None, description="User agent string")
+
+
+# Permission constants are imported from db.py to avoid duplication
+# Use Permissions class from mcpgateway.db instead of duplicate SystemPermissions

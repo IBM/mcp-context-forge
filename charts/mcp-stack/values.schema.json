@@ -191,6 +191,23 @@
               "additionalProperties": {
                 "type": "string"
               }
+            },
+            "tls": {
+              "type": "object",
+              "description": "TLS configuration for ingress",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable TLS for ingress",
+                  "default": false
+                },
+                "secretName": {
+                  "type": "string",
+                  "description": "Name of the TLS secret (optional, auto-generated if empty)",
+                  "default": ""
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -1191,7 +1208,7 @@
             "tag": {
               "type": "string",
               "description": "Image tag",
-              "default": "0.5.0"
+              "default": "0.7.0"
             },
             "pullPolicy": {
               "type": "string",

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Services Package.
-
+"""Location: ./mcpgateway/plugins/framework/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
+Services Package.
 Exposes core MCP Gateway plugin components:
 - Context
 - Manager
@@ -22,6 +22,8 @@ from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
+    HttpHeaderPayload,
+    HttpHeaderPayloadResult,
     HookType,
     PluginCondition,
     PluginConfig,
@@ -50,6 +52,8 @@ __all__ = [
     "ExternalPluginServer",
     "GlobalContext",
     "HookType",
+    "HttpHeaderPayload",
+    "HttpHeaderPayloadResult",
     "Plugin",
     "PluginCondition",
     "PluginConfig",

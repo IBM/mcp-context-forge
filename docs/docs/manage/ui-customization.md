@@ -707,6 +707,9 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   ghcr.io/MCP-Mirror/mcpgateway:latest
 ```
 
@@ -732,6 +735,9 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   ghcr.io/MCP-Mirror/mcpgateway:latest
 ```
 
@@ -1510,7 +1516,7 @@ fetch('/metrics/custom', {
 
 ## Related Documentation
 
-- [Admin UI Overview](/overview/ui/) - Basic UI concepts and navigation
-- [Security Configuration](/manage/securing/) - Securing the Admin UI
-- [Performance Tuning](/manage/tuning/) - Optimizing UI performance
-- [API Reference](/api/admin/) - Admin API endpoints
+- [Admin UI Overview](../overview/ui.md) - Basic UI concepts and navigation
+- [Security Configuration](./securing.md) - Securing the Admin UI
+- [Performance Tuning](./tuning.md) - Optimizing UI performance
+- [API Reference](https://ibm.github.io/mcp-context-forge/api/admin/) - Admin API endpoints

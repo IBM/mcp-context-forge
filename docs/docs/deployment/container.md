@@ -13,12 +13,17 @@ docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
+  -e JWT_AUDIENCE=mcpgateway-api \
+  -e JWT_ISSUER=mcpgateway \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   --network=host \
-  ghcr.io/ibm/mcp-context-forge:0.5.0
+  ghcr.io/ibm/mcp-context-forge:0.7.0
 
 docker logs mcpgateway
 ```

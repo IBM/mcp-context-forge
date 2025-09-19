@@ -3,7 +3,7 @@
      -------------------------------------------------------------------- */}}
 {{- define "mcp-stack.fullname" -}}
 {{- if .Values.global.fullnameOverride }}
-{{ .Values.global.fullnameOverride }}
+{{- .Values.global.fullnameOverride }}
 {{- else -}}
 {{- $name := default .Chart.Name .Values.global.nameOverride }}
 {{- if contains $name .Release.Name }}

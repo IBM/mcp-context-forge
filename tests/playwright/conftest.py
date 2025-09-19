@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/playwright/conftest.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Playwright test configuration - Simple version without python-dotenv.
 This assumes environment variables are loaded by the Makefile.
 """
@@ -16,7 +20,7 @@ import pytest
 
 # Get configuration from environment
 BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
-API_TOKEN = os.getenv("MCP_AUTH_TOKEN", "test-token")
+API_TOKEN = os.getenv("MCP_AUTH", "test-token")
 
 # Basic Auth credentials - these MUST be set in environment
 BASIC_AUTH_USER = os.getenv("BASIC_AUTH_USER", "admin")

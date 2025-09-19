@@ -22,7 +22,7 @@ MCP Gateway uses JWT Bearer tokens for authentication. Generate a token before m
 ```bash
 # Generate authentication token
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Verify the token was generated
 echo "Token: ${MCPGATEWAY_BEARER_TOKEN}"
@@ -37,7 +37,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 {
   "status": "healthy",
   "timestamp": "2025-01-15T10:30:00Z",
-  "version": "0.6.0"
+  "version": "0.7.0"
 }
 ```
 
@@ -132,7 +132,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
     },
     "serverInfo": {
       "name": "mcpgateway",
-      "version": "0.6.0"
+      "version": "0.7.0"
     }
   }
 }
@@ -474,8 +474,8 @@ For command-line integration and desktop client compatibility, use the STDIO wra
 
 ```bash
 # Configure environment variables
-export MCP_AUTH_TOKEN=${MCPGATEWAY_BEARER_TOKEN}
-export MCP_SERVER_CATALOG_URLS="http://localhost:4444/servers/your-server-id"
+export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
+export MCP_SERVER_URL="http://localhost:4444/servers/your-server-id"
 export MCP_TOOL_CALL_TIMEOUT=120
 export MCP_WRAPPER_LOG_LEVEL=INFO
 
@@ -506,7 +506,7 @@ echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | python3 -m mcpgateway.wr
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Function to make authenticated JSON-RPC calls
 make_call() {
@@ -625,7 +625,7 @@ echo "=== Session Complete ==="
 
 # Setup
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 echo "=== Starting SSE Session ==="
 
@@ -771,7 +771,7 @@ MCP follows JSON-RPC 2.0 error handling standards:
 ```bash
 # Verify token generation
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin --exp 10080 --secret my-test-key)
+    --username admin@example.com --exp 10080 --secret my-test-key)
 
 # Test token validity
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -1090,7 +1090,7 @@ async function main() {
     try {
         // Generate authentication token
         const authToken = execSync(
-            'python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 10080 --secret my-test-key',
+            'python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key',
             { encoding: 'utf8' }
         ).trim();
 
@@ -1170,4 +1170,4 @@ module.exports = MCPGatewayClient;
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 - [MCP Gateway Documentation](https://ibm.github.io/mcp-context-forge/)
 - [MCP Gateway Admin UI Guide](../manage/index.md)
-- [MCP Gateway Wrapper Documentation](mcpgateway-wrapper.md)
+- [MCP Gateway Wrapper Documentation](../using/mcpgateway-wrapper.md)

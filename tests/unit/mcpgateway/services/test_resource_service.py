@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive test suite for ResourceService.
-
+"""Location: ./tests/unit/mcpgateway/services/test_resource_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Assistant
 
+Comprehensive test suite for ResourceService.
 This suite provides complete test coverage for:
 - All ResourceService methods
 - Error conditions and edge cases
@@ -72,6 +72,8 @@ def mock_resource():
     resource.binary_content = None
     resource.size = 12
     resource.is_active = True
+    resource.created_by = "test_user"
+    resource.modified_by = "test_user"
     resource.created_at = datetime.now(timezone.utc)
     resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []
@@ -104,6 +106,8 @@ def mock_inactive_resource():
     resource.binary_content = None
     resource.size = 0
     resource.is_active = False
+    resource.created_by = "test_user"
+    resource.modified_by = "test_user"
     resource.created_at = datetime.now(timezone.utc)
     resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []
@@ -1304,6 +1308,7 @@ class TestResourceServiceMetricsExtended:
     @pytest.mark.asyncio
     async def test_list_resources_with_tags(self, resource_service, mock_db, mock_resource):
         """Test listing resources with tag filtering."""
+        # Third-Party
         from sqlalchemy import func
 
         # Mock query chain
@@ -1311,18 +1316,31 @@ class TestResourceServiceMetricsExtended:
         mock_query.where.return_value = mock_query
         mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_resource]
 
+        bind = MagicMock()
+        bind.dialect = MagicMock()
+        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        mock_db.get_bind.return_value = bind
+
         with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
-            with patch("mcpgateway.services.resource_service.func") as mock_func:
-                mock_func.json_contains.return_value = MagicMock()
-                mock_func.or_.return_value = MagicMock()
+            with patch("mcpgateway.services.resource_service.json_contains_expr") as mock_json_contains:
+                # return a fake condition object that query.where will accept
+                fake_condition = MagicMock()
+                mock_json_contains.return_value = fake_condition
 
                 result = await resource_service.list_resources(
                     mock_db, tags=["test", "production"]
                 )
 
-                # Verify tag filtering was applied
-                assert mock_func.json_contains.call_count == 2
-                mock_func.or_.assert_called_once()
+                # helper should be called once with the tags list (not once per tag)
+                mock_json_contains.assert_called_once()                       # called exactly once
+                called_args = mock_json_contains.call_args[0]                # positional args tuple
+                assert called_args[0] is mock_db                            # session passed through
+                # third positional arg is the tags list (signature: session, col, values, match_any=True)
+                assert called_args[2] == ["test", "production"]
+                # and the fake condition returned must have been passed to where()
+                mock_query.where.assert_called_with(fake_condition)
+                # finally, your service should return the list produced by mock_db.execute(...)
+                assert isinstance(result, list)
                 assert len(result) == 1
 
     @pytest.mark.asyncio

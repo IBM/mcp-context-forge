@@ -1,7 +1,7 @@
 # 🚀 Deploying the MCP Gateway Stack to IBM Cloud Kubernetes Service with Argo CD
 
-!!! warning "Work in progress"
-    This document is a WORK IN PROGRESS and is not yet ready for consumption.
+!!! warning "Preview"
+    This guide is in preview and will continue to evolve. Content is accurate but may receive refinements as the Helm chart and GitOps flows mature.
 
 !!! abstract "What you'll achieve"
     * Build or pull the OCI image(s) for MCP Gateway
@@ -106,7 +106,7 @@ podman build -t mcp-context-forge:dev -f Containerfile .
 !!! note "Production deployments"
     Production deployments can pull the signed image directly:
     ```
-    ghcr.io/ibm/mcp-context-forge:0.5.0
+    ghcr.io/ibm/mcp-context-forge:0.7.0
     ```
 
 ---
@@ -169,8 +169,8 @@ ibmcloud is subnet-create mcp-subnet-eu-de-3 \
 ibmcloud cr login
 
 # Tag and push the image
-podman tag mcp-context-forge:dev eu.icr.io/mcp-gw/mcpgateway:0.5.0
-podman push eu.icr.io/mcp-gw/mcpgateway:0.5.0
+podman tag mcp-context-forge:dev eu.icr.io/mcp-gw/mcpgateway:0.7.0
+podman push eu.icr.io/mcp-gw/mcpgateway:0.7.0
 
 # Verify the image
 ibmcloud cr images --restrict mcp-gw
@@ -359,7 +359,7 @@ mcpContextForge:
 
   image:
     repository: eu.icr.io/mcp-gw/mcpgateway
-    tag: "0.5.0"
+    tag: "0.7.0"
     pullPolicy: IfNotPresent
 
   # Service configuration
@@ -694,8 +694,8 @@ Add to your Claude Desktop configuration:
       "command": "python",
       "args": ["-m", "mcpgateway.wrapper"],
       "env": {
-        "MCP_AUTH_TOKEN": "<MCPGATEWAY_BEARER_TOKEN>",
-        "MCP_SERVER_CATALOG_URLS": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1"
+        "MCP_AUTH": "<MCPGATEWAY_BEARER_TOKEN>",
+        "MCP_SERVER_URL": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp"
       }
     }
   }
@@ -727,11 +727,11 @@ Update the image tag in your values file and commit:
 
 ```bash
 # Update values file
-sed -i 's/tag: "0.3.0"/tag: "0.5.0"/' charts/mcp-stack/envs/iks/values.yaml
+sed -i 's/tag: "0.3.0"/tag: "0.7.0"/' charts/mcp-stack/envs/iks/values.yaml
 
 # Commit and push
 git add charts/mcp-stack/envs/iks/values.yaml
-git commit -m "Upgrade MCP Gateway to v0.5.0"
+git commit -m "Upgrade MCP Gateway to v0.7.0"
 git push
 
 # Argo CD will automatically sync the changes
@@ -804,7 +804,14 @@ ibmcloud logs tail -r eu-de
 
 ## 11.5 Grafana Dashboards
 
-> TODO
+If you collect Prometheus metrics from the gateway and backing services, import standard HTTP and container dashboards or create a custom dashboard for:
+
+- Request rate, error rate, and latency for `/health`, `/version`, and `/rpc`
+- Pod CPU/memory and restarts per deployment
+- Database connection count, latency, and saturation
+- Redis hit ratio and command latency
+
+Store dashboards as code in your Git repo and have Argo CD apply them via ConfigMaps or Grafana's provisioning.
 
 ---
 

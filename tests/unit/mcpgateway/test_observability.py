@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for observability module."""
+"""Location: ./tests/unit/mcpgateway/test_observability.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for observability module.
+"""
 
 # Standard
 import os
@@ -31,7 +37,9 @@ class TestObservability:
     def teardown_method(self):
         """Clean up after each test."""
         # Reset global tracer
+        # First-Party
         import mcpgateway.observability
+
         # pylint: disable=protected-access
         mcpgateway.observability._TRACER = None
 
@@ -57,7 +65,7 @@ class TestObservability:
         result = init_telemetry()
         assert result is None
 
-    @patch("mcpgateway.observability.OTLPSpanExporter")
+    @patch("mcpgateway.observability.OTLP_SPAN_EXPORTER")
     @patch("mcpgateway.observability.TracerProvider")
     @patch("mcpgateway.observability.BatchSpanProcessor")
     def test_init_telemetry_otlp_success(self, mock_processor, mock_provider, mock_exporter):
@@ -117,7 +125,7 @@ class TestObservability:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4317"
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "api-key=secret,x-auth=token123"
 
-        with patch("mcpgateway.observability.OTLPSpanExporter") as mock_exporter:
+        with patch("mcpgateway.observability.OTLP_SPAN_EXPORTER") as mock_exporter:
             with patch("mcpgateway.observability.TracerProvider"):
                 with patch("mcpgateway.observability.BatchSpanProcessor"):
                     init_telemetry()
@@ -129,7 +137,9 @@ class TestObservability:
 
     def test_create_span_no_tracer(self):
         """Test create_span when tracer is not initialized."""
+        # First-Party
         import mcpgateway.observability
+
         # pylint: disable=protected-access
         mcpgateway.observability._TRACER = None
 
@@ -167,7 +177,9 @@ class TestObservability:
     @pytest.mark.asyncio
     async def test_trace_operation_decorator_no_tracer(self):
         """Test trace_operation decorator when tracer is not initialized."""
+        # First-Party
         import mcpgateway.observability
+
         # pylint: disable=protected-access
         mcpgateway.observability._TRACER = None
 
@@ -274,6 +286,7 @@ class TestObservability:
 
     def test_create_span_none_attributes_filtered(self):
         """Test that None values in attributes are filtered out."""
+        # First-Party
         import mcpgateway.observability
 
         # Setup mock tracer

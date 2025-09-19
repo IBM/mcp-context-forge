@@ -4,7 +4,7 @@ This guide provides essential security configurations and best practices for dep
 
 ## ⚠️ Critical Security Notice
 
-**MCP Gateway is currently in early beta (v0.5.0)** and requires careful security configuration for production use:
+**MCP Gateway is currently in early beta (v0.7.0)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
 - MCP Gateway is **not a standalone product** - it's an open source component to integrate into your solution
@@ -35,6 +35,17 @@ MCPGATEWAY_AUTH_ENABLED=true
 MCPGATEWAY_AUTH_USERNAME=custom-username  # Change from default
 MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 
+# Platform admin user (auto-created during bootstrap)
+PLATFORM_ADMIN_EMAIL=admin@yourcompany.com  # Change from default
+PLATFORM_ADMIN_PASSWORD=secure-admin-password  # Use secrets manager
+
+# JWT Configuration - Choose based on deployment architecture
+JWT_ALGORITHM=RS256                        # Recommended for production (asymmetric)
+JWT_PUBLIC_KEY_PATH=jwt/public.pem         # Path to public key file
+JWT_PRIVATE_KEY_PATH=jwt/private.pem       # Path to private key file (secure location)
+JWT_AUDIENCE_VERIFICATION=true             # Enable audience validation
+JWT_ISSUER=your-company-name               # Set to your organization identifier
+
 # Set environment for security defaults
 ENVIRONMENT=production
 
@@ -49,7 +60,144 @@ COOKIE_SAMESITE=strict
 CORS_ALLOW_CREDENTIALS=true
 ```
 
-### 3. Network Security
+#### Platform Admin Security Notes
+
+The platform admin user (`PLATFORM_ADMIN_EMAIL`) is automatically created during database bootstrap with full administrative privileges. This user:
+
+- Has access to all RBAC-protected endpoints
+- Can manage users, teams, and system configuration
+- Is recognized by both database-persisted and virtual authentication flows
+- Should use a strong, unique email and password in production
+
+#### JWT Security Configuration
+
+MCP Gateway supports both symmetric (HMAC) and asymmetric (RSA/ECDSA) JWT algorithms. **Asymmetric algorithms are strongly recommended for production** due to enhanced security properties.
+
+##### Production JWT Security (Recommended)
+
+```bash
+# Use asymmetric algorithm for production
+JWT_ALGORITHM=RS256                        # or RS384, RS512, ES256, ES384, ES512
+JWT_PUBLIC_KEY_PATH=/secure/path/jwt/public.pem
+JWT_PRIVATE_KEY_PATH=/secure/path/jwt/private.pem
+JWT_AUDIENCE=your-api-identifier
+JWT_ISSUER=your-organization
+JWT_AUDIENCE_VERIFICATION=true
+REQUIRE_TOKEN_EXPIRATION=true
+```
+
+##### Development JWT Security
+
+```bash
+# HMAC acceptable for development/testing only
+JWT_ALGORITHM=HS256
+JWT_SECRET_KEY=your-strong-secret-key-here  # Minimum 32 characters
+JWT_AUDIENCE=mcpgateway-api
+JWT_ISSUER=mcpgateway
+JWT_AUDIENCE_VERIFICATION=true
+REQUIRE_TOKEN_EXPIRATION=true
+```
+
+##### JWT Key Management Best Practices
+
+**RSA Key Generation:**
+```bash
+# Option 1: Use Makefile (Recommended for development/local)
+make certs-jwt                   # Generates ./certs/jwt/{private,public}.pem with secure permissions
+
+# Option 2: Manual generation (Production with custom paths)
+mkdir -p /secure/certs/jwt
+openssl genrsa -out /secure/certs/jwt/private.pem 4096
+openssl rsa -in /secure/certs/jwt/private.pem -pubout -out /secure/certs/jwt/public.pem
+chmod 600 /secure/certs/jwt/private.pem  # Private key: owner read/write only
+chmod 644 /secure/certs/jwt/public.pem   # Public key: world readable
+chown mcpgateway:mcpgateway /secure/certs/jwt/*.pem
+```
+
+**ECDSA Key Generation (Alternative):**
+```bash
+# Option 1: Use Makefile (Recommended for development/local)
+make certs-jwt-ecdsa             # Generates ./certs/jwt/{ec_private,ec_public}.pem with secure permissions
+
+# Option 2: Manual generation (Production with custom paths)
+mkdir -p /secure/certs/jwt
+openssl ecparam -genkey -name prime256v1 -noout -out /secure/certs/jwt/ec_private.pem
+openssl ec -in /secure/certs/jwt/ec_private.pem -pubout -out /secure/certs/jwt/ec_public.pem
+chmod 600 /secure/certs/jwt/ec_private.pem
+chmod 644 /secure/certs/jwt/ec_public.pem
+```
+
+**Combined Generation (SSL + JWT):**
+```bash
+make certs-all                   # Generates both TLS certificates and JWT RSA keys
+```
+
+**Security Requirements:**
+- [ ] **Never commit private keys** to version control
+- [ ] **Store private keys** in secure, encrypted storage
+- [ ] **Use strong file permissions** (600) on private keys
+- [ ] **Implement key rotation** procedures (recommend 90-day rotation)
+- [ ] **Monitor key access** in system audit logs
+- [ ] **Use Hardware Security Modules (HSMs)** for high-security environments
+- [ ] **Separate key storage** from application deployment
+
+**Container Security for JWT Keys:**
+```bash
+# Mount keys as read-only secrets (Kubernetes example)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jwt-keys
+type: Opaque
+data:
+  private.pem: <base64-encoded-private-key>
+  public.pem: <base64-encoded-public-key>
+
+# In pod spec:
+volumes:
+  - name: jwt-keys
+    secret:
+      secretName: jwt-keys
+      defaultMode: 0600
+```
+
+### 3. Token Scoping Security
+
+The gateway supports fine-grained token scoping to restrict token access to specific servers, permissions, IP ranges, and time windows. This provides defense-in-depth security for API access.
+
+#### Server-Scoped Tokens
+
+Server-scoped tokens are restricted to specific MCP servers and cannot access admin endpoints:
+
+```bash
+# Generate server-scoped token (example)
+python3 -m mcpgateway.utils.create_jwt_token \
+  --username user@example.com \
+  --scopes '{"server_id": "my-specific-server"}'
+```
+
+**Security Features:**
+- Server-scoped tokens **cannot access `/admin`** endpoints (security hardening)
+- Only truly public endpoints (`/health`, `/metrics`, `/docs`) bypass server restrictions
+- RBAC permission checks still apply to all endpoints
+
+#### Permission-Scoped Tokens
+
+Tokens can be restricted to specific permission sets:
+
+```bash
+# Generate permission-scoped token
+python3 -m mcpgateway.utils.create_jwt_token \
+  --username user@example.com \
+  --scopes '{"permissions": ["tools.read", "resources.read"]}'
+```
+
+**Canonical Permissions Used:**
+- `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute`
+- `resources.create`, `resources.read`, `resources.update`, `resources.delete`
+- `admin.system_config`, `admin.user_management`, `admin.security_audit`
+
+### 4. Network Security
 
 - [ ] Configure TLS/HTTPS with valid certificates
 - [ ] Implement firewall rules and network policies
@@ -242,7 +390,7 @@ MCPGATEWAY_LOG_SENSITIVE_DATA=false     # Never log sensitive data
 
 - [Security Policy](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) - Full security documentation
 - [Deployment Options](index.md) - Various deployment methods
-- [Environment Variables](../configuration/environment-variables.md) - Complete configuration reference
+- [Environment Variables](../index.md#configuration-env-or-env-vars) - Complete configuration reference
 
 ## ⚡ Quick Start Security Commands
 

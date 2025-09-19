@@ -1,12 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Test backward compatibility for tool invocation after PR #746."""
+"""Location: ./tests/unit/mcpgateway/test_rpc_backward_compatibility.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Test backward compatibility for tool invocation after PR #746.
+"""
+
+# Standard
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+# Third-Party
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy.orm import Session
 
+# First-Party
 from mcpgateway.main import app
 
 

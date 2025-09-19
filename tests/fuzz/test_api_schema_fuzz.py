@@ -1,7 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Schemathesis-based API endpoint fuzzing."""
-import pytest
+"""Location: ./tests/fuzz/test_api_schema_fuzz.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Schemathesis-based API endpoint fuzzing.
+"""
+# Third-Party
 from fastapi.testclient import TestClient
+import pytest
+
+# First-Party
 from mcpgateway.main import app
 
 
@@ -117,6 +126,7 @@ class TestAPIFuzzingCustom:
 
     def test_concurrent_request_fuzzing(self):
         """Test concurrent requests to check for race conditions."""
+        # Standard
         import threading
         import time
 

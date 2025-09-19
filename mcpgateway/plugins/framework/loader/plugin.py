@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Plugin loader implementation.
-
+"""Location: ./mcpgateway/plugins/framework/loader/plugin.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor, Mihai Criveti
 
+Plugin loader implementation.
 This module implements the plugin loader.
 """
 

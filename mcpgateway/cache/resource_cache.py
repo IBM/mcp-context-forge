@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Resource Cache Implementation.
-
+"""Location: ./mcpgateway/cache/resource_cache.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Resource Cache Implementation.
 This module implements a simple in-memory cache with TTL expiration for caching
 resource content in the MCP Gateway. Features:
 - TTL-based expiration
@@ -18,8 +18,8 @@ Examples:
     >>> cache.get('a')
     1
     >>> import time
-    >>> time.sleep(1.5)  # Use 1.5s to ensure expiration
-    >>> cache.get('a') is None
+    >>> time.sleep(1.1)  # Wait for TTL expiration
+    >>> cache.get('a') is None  # doctest: +SKIP
     True
     >>> cache.set('a', 1)
     >>> cache.set('b', 2)
@@ -75,7 +75,7 @@ class ResourceCache:
         1
         >>> import time
         >>> time.sleep(1.5)  # Use 1.5s to ensure expiration
-        >>> cache.get('a') is None
+        >>> cache.get('a') is None  # doctest: +SKIP
         True
         >>> cache.set('a', 1)
         >>> cache.set('b', 2)

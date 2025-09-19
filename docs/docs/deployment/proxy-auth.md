@@ -43,6 +43,83 @@ AUTH_REQUIRED=true
 
 ## Common Proxy Configurations
 
+### HyprMCP Gateway
+
+Find the completed guide on how to use the [HyprMCP Gateway](https://github.com/hyprmcp/mcp-gateway) to support DCR and OAuth2 here:
+[Tutorial: Dynamic Client Registration with HyprMCP](../tutorials/dcr-hyprmcp.md)
+
+
+```yaml
+# docker-compose.yaml
+services:
+    hyprmcp-dex:
+        image: ghcr.io/dexidp/dex:v2.43.1-alpine
+        command: ["dex", "serve", "/config.yaml"]
+        ports:
+            - 5556:5556
+            - 5557:5557
+        healthcheck:
+            test: wget http://localhost:5556/.well-known/openid-configuration -O -
+            interval: 5s
+            start_period: 10s
+            start_interval: 1s
+        volumes:
+            - type: bind
+              source: config/hyprmcp-dex.yaml
+              target: /config.yaml
+              read_only: true
+            - type: bind
+              source: ./data
+              target: /data
+        #env_file:
+        #  - config/.dex.secret.env
+
+    hyprmcp-gateway:
+        image: ghcr.io/hyprmcp/mcp-gateway:0.2.6
+        command: ["serve", "--config", "/opt/config.yaml"]
+        ports:
+            - 9000:9000
+        volumes:
+            - type: bind
+              source: config/hyprmcp-gateway.yaml
+              target: /opt/config.yaml
+              read_only: true
+        depends_on:
+            hyprmcp-dex:
+                condition: service_healthy
+                required: true
+        network_mode: host
+
+    context-forge:
+        image: ghcr.io/ibm/mcp-context-forge:0.7.0
+        ports:
+            - 4444:4444
+        volumes:
+            - type: bind
+              source: ./data
+              target: /data
+            - ./config/public.pem:/opt/public.pem:ro
+            - ./config/private.pem:/opt/private.pem:ro
+        env_file:
+            - config/context-forge.env
+        environment:
+            JWT_ALGORITHM: RS256
+            JWT_PUBLIC_KEY_PATH: /opt/public.pem
+            JWT_PRIVATE_KEY_PATH: /opt/private.pem
+            JWT_AUDIENCE_VERIFICATION: false
+            JWT_ISSUER: http://localhost:5556
+            DATABASE_URL: sqlite:////data/context-forge.db
+            HOST: 0.0.0.0
+            PORT: "4444"
+            MCPGATEWAY_UI_ENABLED: true
+            MCPGATEWAY_ADMIN_API_ENABLED: true
+            BASIC_AUTH_USER: admin
+            BASIC_AUTH_PASSWORD: changeme
+            AUTH_REQUIRED: false
+            MCP_CLIENT_AUTH_ENABLED: false
+            TRUST_PROXY_AUTH: true
+```
+
 ### OAuth2 Proxy
 
 OAuth2 Proxy is a popular reverse proxy that provides authentication using OAuth2 providers.

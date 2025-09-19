@@ -1,0 +1,179 @@
+# MCP Gateway v0.7.0 - Authentication API Tests
+# Comprehensive testing of authentication endpoints
+# Focus: All authentication methods and security
+
+worksheet_name: "API Authentication"
+description: "Complete authentication endpoint testing including email, SSO, and JWT"
+priority: "HIGH"
+estimated_time: "30-60 minutes"
+
+headers:
+  - "Test ID"
+  - "Endpoint"
+  - "Method"
+  - "Description"
+  - "cURL Command"
+  - "Request Body"
+  - "Expected Status"
+  - "Expected Response"
+  - "Actual Status"
+  - "Actual Response"
+  - "Status"
+  - "Tester"
+  - "Comments"
+
+tests:
+  - test_id: "AUTH-001"
+    endpoint: "/auth/register"
+    method: "POST"
+    description: "User registration endpoint"
+    curl_command: 'curl -X POST http://localhost:4444/auth/register -H "Content-Type: application/json"'
+    request_body: '{"email":"testuser@example.com","password":"TestPass123","full_name":"Test User"}'
+    expected_status: 201
+    expected_response: "User created successfully with personal team"
+    test_steps:
+      - "Execute cURL command with test user data"
+      - "Verify HTTP status code is 201"
+      - "Check response contains user ID and email"
+      - "Verify personal team was created for user"
+      - "Record exact response content"
+    validation: "Response should include user_id, email, and personal_team_id"
+
+  - test_id: "AUTH-002"
+    endpoint: "/auth/login"
+    method: "POST"
+    description: "Email authentication login"
+    curl_command: 'curl -X POST http://localhost:4444/auth/login -H "Content-Type: application/json"'
+    request_body: '{"email":"admin@example.com","password":"changeme"}'
+    expected_status: 200
+    expected_response: "JWT token returned in response"
+    critical: true
+    test_steps:
+      - "Use admin credentials from .env file"
+      - "Execute login request"
+      - "Verify HTTP 200 status code"
+      - "Check response contains 'token' field"
+      - "Verify token is valid JWT format"
+      - "Save token for subsequent API tests"
+    validation: "Response must contain valid JWT token"
+
+  - test_id: "AUTH-003"
+    endpoint: "/auth/logout"
+    method: "POST"
+    description: "User logout endpoint"
+    curl_command: 'curl -X POST http://localhost:4444/auth/logout -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "Logout successful, token invalidated"
+    test_steps:
+      - "Use JWT token from login test"
+      - "Execute logout request with Authorization header"
+      - "Verify HTTP 200 status"
+      - "Try using the token again (should fail)"
+      - "Verify token is now invalid"
+
+  - test_id: "AUTH-004"
+    endpoint: "/auth/refresh"
+    method: "POST"
+    description: "JWT token refresh"
+    curl_command: 'curl -X POST http://localhost:4444/auth/refresh -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "New JWT token issued"
+    test_steps:
+      - "Use valid JWT token"
+      - "Request token refresh"
+      - "Verify new token returned"
+      - "Test both old and new tokens"
+      - "Verify new token works"
+
+  - test_id: "AUTH-005"
+    endpoint: "/auth/profile"
+    method: "GET"
+    description: "Get user profile information"
+    curl_command: 'curl http://localhost:4444/auth/profile -H "Authorization: Bearer <TOKEN>"'
+    request_body: ""
+    expected_status: 200
+    expected_response: "User profile data including email, teams, roles"
+    test_steps:
+      - "Use valid JWT token"
+      - "Request user profile"
+      - "Verify profile contains user email"
+      - "Check team membership information"
+      - "Verify role assignments if applicable"
+
+  - test_id: "AUTH-006"
+    endpoint: "/auth/change-password"
+    method: "POST"
+    description: "Change user password"
+    curl_command: 'curl -X POST http://localhost:4444/auth/change-password -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
+    request_body: '{"old_password":"changeme","new_password":"NewPassword123"}'
+    expected_status: 200
+    expected_response: "Password updated successfully"
+    test_steps:
+      - "Use current password as old_password"
+      - "Provide strong new password"
+      - "Execute password change request"
+      - "Verify success response"
+      - "Test login with new password"
+      - "IMPORTANT: Change password back for other tests"
+
+  - test_id: "AUTH-007"
+    endpoint: "/auth/sso/github"
+    method: "GET"
+    description: "GitHub SSO authentication initiation"
+    curl_command: "curl -I http://localhost:4444/auth/sso/github"
+    request_body: ""
+    expected_status: 302
+    expected_response: "Redirect to GitHub OAuth authorization"
+    requires_config: "SSO_GITHUB_ENABLED=true, GitHub OAuth app"
+    test_steps:
+      - "Execute request to GitHub SSO endpoint"
+      - "Verify HTTP 302 redirect status"
+      - "Check Location header contains github.com"
+      - "Verify OAuth parameters in redirect URL"
+
+  - test_id: "AUTH-008"
+    endpoint: "/auth/sso/google"
+    method: "GET"
+    description: "Google SSO authentication initiation"
+    curl_command: "curl -I http://localhost:4444/auth/sso/google"
+    request_body: ""
+    expected_status: 302
+    expected_response: "Redirect to Google OAuth authorization"
+    requires_config: "SSO_GOOGLE_ENABLED=true, Google OAuth app"
+    test_steps:
+      - "Execute request to Google SSO endpoint"
+      - "Verify HTTP 302 redirect status"
+      - "Check Location header contains accounts.google.com"
+      - "Verify OAuth parameters in redirect URL"
+
+  - test_id: "AUTH-009"
+    endpoint: "/auth/verify-email"
+    method: "POST"
+    description: "Email address verification"
+    curl_command: 'curl -X POST http://localhost:4444/auth/verify-email -H "Content-Type: application/json"'
+    request_body: '{"token":"<verification-token>"}'
+    expected_status: 200
+    expected_response: "Email verified successfully"
+    requires_config: "Email delivery configured"
+    test_steps:
+      - "Register new user first (to get verification token)"
+      - "Check email for verification token (if email configured)"
+      - "Use token in verification request"
+      - "Verify email verification status updated"
+
+  - test_id: "AUTH-010"
+    endpoint: "/auth/forgot-password"
+    method: "POST"
+    description: "Password reset request"
+    curl_command: 'curl -X POST http://localhost:4444/auth/forgot-password -H "Content-Type: application/json"'
+    request_body: '{"email":"admin@example.com"}'
+    expected_status: 200
+    expected_response: "Password reset email sent"
+    requires_config: "Email delivery configured"
+    test_steps:
+      - "Request password reset for known user"
+      - "Verify HTTP 200 response"
+      - "Check email for reset link (if email configured)"
+      - "Test reset token functionality"

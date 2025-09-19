@@ -130,7 +130,7 @@ def test_with_page_object(page: Page, base_url: str):
 export TEST_BASE_URL=http://localhost:8000
 
 # Authentication token
-export MCP_AUTH_TOKEN=your-test-token
+export MCP_AUTH=your-test-token
 
 # Playwright options
 export PWDEBUG=1           # Enable Playwright Inspector
