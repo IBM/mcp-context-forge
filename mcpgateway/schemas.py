@@ -253,6 +253,22 @@ class PromptMetrics(BaseModelWithConfigDict):
     avg_response_time: Optional[float] = Field(None, description="Average response time in seconds")
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent invocation")
 
+class ProtectionMetrics(BaseModelWithConfigDict):
+    """
+    Represents the protection metrics (rate limiting, DDoS protection, etc.).
+    """
+
+    client_id: int = Field(..., description="The client id fields that corresponds to this metric ")
+    client_ip: Optional[str] = Field(..., description="The client ip fields that corresponds to this metric ")
+    path: str = Field(..., description="The path from the request that corresponds to this metric ")
+    method: str = Field(..., description="The method from the request that corresponds to this metric ")
+    rate_limit_key:str = Field(..., description="The rate limit key (anonymous, tool, admin, etc.)")
+    metric_type:str =  Field(..., description="Type of protection metric: rate_limit, ddos, etc.")
+    current_usage: Optional[int] =Field(..., description="For rate limiting") 
+    limit: Optional[int] =Field(..., description="For rate limiting") 
+    remaining: Optional[int] =Field(..., description="For rate limiting") 
+    reset_time: Optional[int] =Field(..., description="For rate limiting") 
+    is_blocked: bool = Field(..., description="Generic blocked status (rate limited, DDoS blocked, etc.)")
 
 # --- JSON Path API modifier Schema
 

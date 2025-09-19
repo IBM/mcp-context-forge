@@ -297,6 +297,28 @@ class PromptMetric(Base):
     prompt: Mapped["Prompt"] = relationship("Prompt", back_populates="metrics")
 
 
+class ProtectionMetrics(Base):
+    """
+    Model for protection metrics (rate limiting, DDoS protection, etc.).
+    """
+
+    __tablename__ = "protection_metrics"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    client_id: Mapped[int] = mapped_column(Text, nullable=False)
+    client_ip: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False)
+    rate_limit_key: Mapped[str] = mapped_column(Text, nullable=True)
+    metric_type: Mapped[str] = mapped_column(Text, default="rate_limit",nullable=False) # Type of protection metric: "rate_limit", "ddos", etc.
+    current_usage: Mapped[Optional[int]] = mapped_column(Integer, nullable=True) # For rate limiting
+    limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For rate limiting
+    remaining: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For rate limiting
+    reset_time: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For rate limiting
+    is_blocked: Mapped[Boolean] = mapped_column(Boolean,nullable=False,default=False)  # Generic blocked status (rate limited, DDoS blocked, etc.)
+
+
 class Tool(Base):
     """
     ORM model for a registered Tool.

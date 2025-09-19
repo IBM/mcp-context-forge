@@ -907,6 +907,8 @@ function displayMetrics(data) {
             metricsContainer.appendChild(toolsCard);
         }
 
+        
+
         // Resources metrics
         if (data.resources) {
             const resourcesCard = createMetricsCard(
@@ -933,6 +935,13 @@ function displayMetrics(data) {
             const serversCard = createMetricsCard("Servers", data.servers);
             metricsContainer.appendChild(serversCard);
         }
+
+        // Tools metrics
+        if (data.tools) {
+            const protectionMetricCard = createProtectionMetricsCard("Protection", data.protection_metrics);
+            metricsContainer.appendChild(protectionMetricCard);
+        }
+
 
         // Performance metrics
         if (data.performance) {
@@ -1843,6 +1852,52 @@ function createMetricsCard(title, metrics) {
         { key: "failureRate", label: "Failure Rate" },
         { key: "avgResponseTime", label: "Average Response Time" },
         { key: "lastExecutionTime", label: "Last Execution Time" },
+    ];
+
+    metricsToShow.forEach((metric) => {
+        const value =
+            metrics[metric.key] ??
+            metrics[metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
+            "N/A";
+
+        const metricRow = document.createElement("div");
+        metricRow.className = "flex justify-between";
+
+        const label = document.createElement("span");
+        label.className = "text-gray-600 dark:text-gray-400";
+        label.textContent = metric.label + ":";
+
+        const valueSpan = document.createElement("span");
+        valueSpan.className = "font-medium dark:text-gray-200";
+        valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
+
+        metricRow.appendChild(label);
+        metricRow.appendChild(valueSpan);
+        metricsList.appendChild(metricRow);
+    });
+
+    card.appendChild(metricsList);
+    return card;
+}
+
+function createProtectionMetricsCard(title, metrics) {
+    const card = document.createElement("div");
+    card.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
+
+    const titleElement = document.createElement("h3");
+    titleElement.className = "text-lg font-medium mb-4 dark:text-gray-200";
+    titleElement.textContent = `${title} Metrics`;
+    card.appendChild(titleElement);
+
+    const metricsList = document.createElement("div");
+    metricsList.className = "space-y-2";
+
+    const metricsToShow = [
+        { label: "Total protection metrics for Admin paths", key: "total_admin_metrics" },
+        { label: "Total Potection metrics for Tools Potection metrics for ToolsccessfulExecutions", key: "total_tools_metrics" },
+        { label: "Total Protection metrics for Anonymous", key: "total_anon_metrics" },
+        { label: "Total Protection metrics for other paths", key: "total_others" },
+        { label: "Total warnings", key: "total_warnings" },
     ];
 
     metricsToShow.forEach((metric) => {

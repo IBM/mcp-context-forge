@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.middleware.protection_metrics import ProtectionMetricsService
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     GatewayCreate,
@@ -122,6 +123,7 @@ resource_service: ResourceService = ResourceService()
 root_service: RootService = RootService()
 export_service: ExportService = ExportService()
 import_service: ImportService = ImportService()
+protection_metrics_service: ProtectionMetricsService = ProtectionMetricsService()
 
 # Set up basic authentication
 
@@ -4175,11 +4177,13 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
               and servers.
     """
+    
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
         "prompts": await prompt_service.aggregate_metrics(db),
         "servers": await server_service.aggregate_metrics(db),
+        "protection_metrics": await protection_metrics_service.get_protection_metrics(db),
         "topPerformers": {
             "tools": await tool_service.get_top_tools(db, limit=5),
             "resources": await resource_service.get_top_resources(db, limit=5),
@@ -4237,6 +4241,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user: str = Depends
     await resource_service.reset_metrics(db)
     await server_service.reset_metrics(db)
     await prompt_service.reset_metrics(db)
+    await protection_metrics_service.reset_metrics(db)
     return {"message": "All metrics reset successfully", "success": True}
 
 

@@ -60,6 +60,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.rate_limiter_middleware import RateLimiterMiddleware,ProtectionMetricsService
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, ResourceContent, Root
 from mcpgateway.observability import init_telemetry
@@ -150,6 +151,8 @@ server_service = ServerService()
 tag_service = TagService()
 export_service = ExportService()
 import_service = ImportService()
+protection_metrics_service = ProtectionMetricsService()
+
 
 # Initialize session manager for Streamable HTTP transport
 streamable_http_session = SessionManagerWrapper()
@@ -557,6 +560,13 @@ app.add_middleware(MCPPathRewriteMiddleware)
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+
+#Add Rate limiter 
+
+PROTECTION_SUITE_ENABLED = settings.experimental_protection_suite
+logger.info(f"Protection Suite enabled: {PROTECTION_SUITE_ENABLED}")
+if PROTECTION_SUITE_ENABLED:
+    app.add_middleware(RateLimiterMiddleware, metric_service=protection_metrics_service)
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -2655,11 +2665,14 @@ async def get_metrics(db: Session = Depends(get_db), user: str = Depends(require
     resource_metrics = await resource_service.aggregate_metrics(db)
     server_metrics = await server_service.aggregate_metrics(db)
     prompt_metrics = await prompt_service.aggregate_metrics(db)
+    protection_metrics = await protection_metrics_service.get_protection_metrics(db)
+
     return {
         "tools": tool_metrics,
         "resources": resource_metrics,
         "servers": server_metrics,
         "prompts": prompt_metrics,
+        "protection_metrics":protection_metrics,
     }
 
 
@@ -2688,6 +2701,7 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
         await resource_service.reset_metrics(db)
         await server_service.reset_metrics(db)
         await prompt_service.reset_metrics(db)
+        await protection_metrics_service.reset_metrics(db)
     elif entity.lower() == "tool":
         await tool_service.reset_metrics(db, entity_id)
     elif entity.lower() == "resource":
