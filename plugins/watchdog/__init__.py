@@ -1,0 +1,2 @@
+"""Watchdog Plugin package."""
+

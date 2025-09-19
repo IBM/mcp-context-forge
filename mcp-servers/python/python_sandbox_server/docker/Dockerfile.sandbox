@@ -1,0 +1,31 @@
+# Dockerfile for Python sandbox execution environment
+# This creates a minimal, secure Python environment for code execution
+
+FROM python:3.11-alpine AS base
+
+# Install minimal Python packages for sandbox
+RUN apk add --no-cache \
+    ca-certificates \
+    && python -m pip install --no-cache-dir \
+    numpy \
+    pandas \
+    matplotlib \
+    requests \
+    && rm -rf /root/.cache
+
+# Create non-root user for security
+RUN addgroup -g 1001 sandbox && \
+    adduser -D -u 1001 -G sandbox sandbox
+
+# Create minimal directory structure
+RUN mkdir -p /app /tmp/sandbox && \
+    chown -R sandbox:sandbox /app /tmp/sandbox
+
+# Switch to non-root user
+USER sandbox
+
+# Set working directory
+WORKDIR /app
+
+# Default command to execute Python code from /tmp/code.py
+CMD ["python", "/tmp/code.py"]

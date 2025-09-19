@@ -1,0 +1,2 @@
+"""Citation Validator Plugin package."""
+

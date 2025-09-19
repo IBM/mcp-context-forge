@@ -1,0 +1,2 @@
+"""SQL Sanitizer Plugin package."""
+

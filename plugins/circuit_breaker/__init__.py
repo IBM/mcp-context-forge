@@ -1,0 +1,2 @@
+"""Circuit Breaker Plugin package."""
+

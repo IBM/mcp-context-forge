@@ -1,0 +1,2 @@
+"""Summarizer Plugin package."""
+

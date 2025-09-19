@@ -1,0 +1,2 @@
+"""Code Formatter Plugin package."""
+

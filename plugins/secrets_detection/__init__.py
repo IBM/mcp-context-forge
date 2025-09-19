@@ -1,0 +1,2 @@
+"""Secrets Detection Plugin package."""
+

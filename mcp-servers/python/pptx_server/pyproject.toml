@@ -1,6 +1,6 @@
 [project]
 name = "pptx-server"
-version = "0.1.0"
+version = "2.0.0"
 description = "Comprehensive Python MCP server for creating and editing PowerPoint (.pptx) files"
 authors = [
   { name = "MCP Context Forge", email = "noreply@example.com" }
@@ -21,6 +21,7 @@ dependencies = [
   "aiofiles>=23.0.0",
   "fastapi>=0.100.0",
   "uvicorn>=0.22.0",
+  "fastmcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +42,7 @@ build-backend = "hatchling.build"
 packages = ["src/pptx_server"]
 
 [project.scripts]
-pptx-server = "pptx_server.server:main"
+pptx-server = "pptx_server.server_fastmcp:main"
 
 [tool.black]
 line-length = 100

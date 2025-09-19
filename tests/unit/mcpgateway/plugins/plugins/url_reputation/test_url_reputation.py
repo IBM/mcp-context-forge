@@ -1,0 +1,31 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/plugins/plugins/url_reputation/test_url_reputation.py
+Tests for URLReputationPlugin.
+"""
+
+import pytest
+
+from mcpgateway.plugins.framework.models import (
+    GlobalContext,
+    HookType,
+    PluginConfig,
+    PluginContext,
+    ResourcePreFetchPayload,
+)
+from plugins.url_reputation.url_reputation import URLReputationPlugin
+
+
+@pytest.mark.asyncio
+async def test_blocks_blocklisted_domain():
+    plugin = URLReputationPlugin(
+        PluginConfig(
+            name="urlrep",
+            kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
+            hooks=[HookType.RESOURCE_PRE_FETCH],
+            config={"blocked_domains": ["bad.example"]},
+        )
+    )
+    ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
+    res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://api.bad.example/v1"), ctx)
+    assert res.violation is not None
+
