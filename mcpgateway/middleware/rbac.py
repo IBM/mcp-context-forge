@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""RBAC Permission Checking Middleware.
+"""Location: ./mcpgateway/middleware/rbac.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+RBAC Permission Checking Middleware.
 
 This module provides middleware for FastAPI to enforce role-based access control
 on API endpoints. It includes permission decorators and dependency injection

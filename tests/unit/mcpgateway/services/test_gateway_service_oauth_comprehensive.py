@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive OAuth tests for GatewayService to improve coverage.
-Location: ./tests/unit/mcpgateway/services/test_gateway_service_oauth_comprehensive.py
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_service_oauth_comprehensive.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
+Comprehensive OAuth tests for GatewayService to improve coverage.
 These tests specifically target OAuth functionality in gateway_service.py including:
 - OAuth client credentials flow in health checks and request forwarding
 - OAuth authorization code flow with TokenStorageService integration

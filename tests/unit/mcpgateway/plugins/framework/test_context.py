@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""
-Tests for context passing plugins.
-
+"""Location: ./tests/unit/mcpgateway/plugins/framework/test_context.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for context passing plugins.
 """
 
 import pytest

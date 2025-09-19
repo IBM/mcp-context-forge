@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""add_display_name_to_tools
+"""Location: ./mcpgateway/alembic/versions/733159a4fa74_add_display_name_to_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+add_display_name_to_tools
 
 Revision ID: 733159a4fa74
 Revises: 1fc1795f6983
 Create Date: 2025-08-23 13:01:28.785095
-
 """
 
 # Standard

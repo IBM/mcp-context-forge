@@ -1,0 +1,10 @@
+description: "Fixed-window in-memory rate limiting by user/tenant/tool"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "prompt_pre_fetch"
+  - "tool_pre_invoke"
+default_configs:
+  by_user: "60/m"
+  by_tenant: "600/m"
+  by_tool: {}

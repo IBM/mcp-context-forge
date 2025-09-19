@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Show current migration testing version configuration."""
+"""Location: ./tests/migration/version_status.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Show current migration testing version configuration.
+"""
 
 # Third-Party
 from version_config import get_migration_pairs, get_supported_versions, VersionConfig

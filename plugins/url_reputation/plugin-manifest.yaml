@@ -1,0 +1,8 @@
+description: "Static URL reputation checks using blocked domains/patterns"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "resource_pre_fetch"
+default_configs:
+  blocked_domains: []
+  blocked_patterns: []

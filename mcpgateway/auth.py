@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Shared authentication utilities.
+"""Location: ./mcpgateway/auth.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Shared authentication utilities.
 
 This module provides common authentication functions that can be shared
 across different parts of the application without creating circular imports.

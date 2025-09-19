@@ -1,0 +1,123 @@
+# -*- coding: utf-8 -*-
+"""AI Artifacts Normalizer Plugin.
+
+Replaces common AI output artifacts: smart quotes → ASCII, ligatures → letters,
+en/em dashes → '-', ellipsis → '...', removes bidi controls and zero-width chars,
+and normalizes excessive spacing.
+
+Hooks: prompt_pre_fetch, resource_post_fetch, tool_post_invoke
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+from pydantic import BaseModel
+
+from mcpgateway.plugins.framework import (
+    Plugin,
+    PluginConfig,
+    PluginContext,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+    ResourcePostFetchPayload,
+    ResourcePostFetchResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+)
+
+
+SMART_MAP = {
+    """: '"',
+    """: '"',
+    "„": '"',
+    """: '"',
+    "'": "'",
+    "'": "'",
+    "‚": "'",
+    "'": "'",
+    "—": "-",
+    "–": "-",
+    "−": "-",
+    "…": "...",
+    "•": "-",
+    "·": "-",
+    " ": " ",  # nbsp to space
+}
+
+LIGATURE_MAP = {
+    "fi": "fi",
+    "fl": "fl",
+    "ffi": "ffi",
+    "ffl": "ffl",
+    "ff": "ff",
+}
+
+BIDI_AND_ZERO_WIDTH = re.compile(
+    "[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2066-\u2069]"
+)
+
+SPACING_RE = re.compile(r"[ \t\x0b\x0c]+")
+
+
+class AINormalizerConfig(BaseModel):
+    replace_smart_quotes: bool = True
+    replace_ligatures: bool = True
+    remove_bidi_controls: bool = True
+    collapse_spacing: bool = True
+    normalize_dashes: bool = True
+    normalize_ellipsis: bool = True
+
+
+def _normalize_text(text: str, cfg: AINormalizerConfig) -> str:
+    out = text
+    if cfg.replace_smart_quotes or cfg.normalize_dashes or cfg.normalize_ellipsis:
+        for k, v in SMART_MAP.items():
+            out = out.replace(k, v)
+    if cfg.replace_ligatures:
+        for k, v in LIGATURE_MAP.items():
+            out = out.replace(k, v)
+    if cfg.remove_bidi_controls:
+        out = BIDI_AND_ZERO_WIDTH.sub("", out)
+    if cfg.collapse_spacing:
+        # Collapse horizontal whitespace, preserve newlines
+        out = "\n".join(SPACING_RE.sub(" ", line).rstrip() for line in out.splitlines())
+    return out
+
+
+class AIArtifactsNormalizerPlugin(Plugin):
+    def __init__(self, config: PluginConfig) -> None:
+        super().__init__(config)
+        self._cfg = AINormalizerConfig(**(config.config or {}))
+
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        args = payload.args or {}
+        changed = False
+        new_args = {}
+        for k, v in args.items():
+            if isinstance(v, str):
+                nv = _normalize_text(v, self._cfg)
+                new_args[k] = nv
+                changed = changed or (nv != v)
+            else:
+                new_args[k] = v
+        if changed:
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=new_args))
+        return PromptPrehookResult(continue_processing=True)
+
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        c = payload.content
+        if hasattr(c, "text") and isinstance(c.text, str):
+            nt = _normalize_text(c.text, self._cfg)
+            if nt != c.text:
+                new_payload = ResourcePostFetchPayload(uri=payload.uri, content=type(c)(**{**c.model_dump(), "text": nt}))
+                return ResourcePostFetchResult(modified_payload=new_payload)
+        return ResourcePostFetchResult(continue_processing=True)
+
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        if isinstance(payload.result, str):
+            nt = _normalize_text(payload.result, self._cfg)
+            if nt != payload.result:
+                return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=nt))
+        return ToolPostInvokeResult(continue_processing=True)

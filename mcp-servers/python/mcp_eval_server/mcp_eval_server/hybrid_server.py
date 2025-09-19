@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Hybrid server that runs both MCP (stdio) and REST API simultaneously.
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/hybrid_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Hybrid server that runs both MCP (stdio) and REST API simultaneously.
 
 This module creates a server that can handle both:
 1. MCP protocol over stdio (for Claude Desktop, MCP clients)

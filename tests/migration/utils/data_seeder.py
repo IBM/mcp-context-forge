@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Data seeding utilities for migration testing.
+"""Location: ./tests/migration/utils/data_seeder.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Data seeding utilities for migration testing.
 
 This module provides comprehensive test data generation and seeding
 capabilities for validating data integrity across migrations.

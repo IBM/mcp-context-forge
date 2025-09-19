@@ -2,6 +2,7 @@
 """Location: ./mcpgateway/utils/jwt_config_helper.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
 
 JWT Configuration Helper Utilities.
 This module provides JWT configuration validation and key retrieval functions.

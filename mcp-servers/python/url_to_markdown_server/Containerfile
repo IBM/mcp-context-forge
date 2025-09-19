@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim AS base
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/app/.venv/bin:$PATH"
+
+WORKDIR /app
+
+# System deps for document processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl \
+    libxml2-dev libxslt-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy metadata early for layer caching
+COPY pyproject.toml README.md ./
+
+# Create venv and install with full features
+RUN python -m venv /app/.venv && \
+    /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
+    /app/.venv/bin/pip install -e ".[full]"
+
+# Copy source
+COPY src/ ./src/
+
+# Non-root user
+RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
+USER 1001
+
+CMD ["python", "-m", "url_to_markdown_server.server"]

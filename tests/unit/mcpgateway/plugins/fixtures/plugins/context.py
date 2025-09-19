@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
-"""
-Context plugin.
-
+"""Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/context.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Context plugin.
 """
 
 

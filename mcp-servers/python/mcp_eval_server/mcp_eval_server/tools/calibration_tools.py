@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""MCP tools for calibration and meta-evaluation."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/tools/calibration_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP tools for calibration and meta-evaluation.
+"""
 
 # Standard
 from collections import Counter

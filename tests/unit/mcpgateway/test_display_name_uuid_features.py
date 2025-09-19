@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for displayName and UUID editing features."""
+"""Location: ./tests/unit/mcpgateway/test_display_name_uuid_features.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for displayName and UUID editing features.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, Mock
