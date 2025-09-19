@@ -15,26 +15,6 @@ plugin_settings:
   plugin_health_check_interval: 60
 
 plugins:
-  # Vault Plugin - Generates bearer tokens from vault-saved tokens
-  - name: "VaultPlugin"
-    kind: "plugins.vault.vault_plugin.Vault"
-    description: "Generates bearer tokens based on vault-saved tokens"
-    version: "0.0.1"
-    author: "Adrian Popa"
-    hooks: ["tool_pre_invoke"]
-    tags: ["security", "vault", "OAUTH2"]
-    mode: "permissive"
-    priority: 10
-    conditions:
-      - prompts: []
-        server_ids: []
-        tenant_ids: []
-    config:
-      system_tag_prefix: "system"
-      vault_header_name: "X-Vault-Tokens"
-      vault_handling: "raw"
-      system_handling: "tag"
-
   # Argument Normalizer - stabilize inputs before anything else
   - name: "ArgumentNormalizer"
     kind: "plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin"
@@ -751,3 +731,22 @@ plugins:
       block_on_all_fail: false
       block_on_any_fail: false
       user_agent: "MCP-Context-Forge/1.0 CitationValidator"
+  # Vault Plugin - Generates bearer tokens from vault-saved tokens
+  - name: "VaultPlugin"
+    kind: "plugins.vault.vault_plugin.Vault"
+    description: "Generates bearer tokens based on vault-saved tokens"
+    version: "0.0.1"
+    author: "Adrian Popa"
+    hooks: ["tool_pre_invoke"]
+    tags: ["security", "vault", "OAUTH2"]
+    mode: "permissive"
+    priority: 10
+    conditions:
+      - prompts: []
+        server_ids: []
+        tenant_ids: []
+    config:
+      system_tag_prefix: "system"
+      vault_header_name: "X-Vault-Tokens"
+      vault_handling: "raw"
+      system_handling: "tag"
