@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""VirusTotal URL Checker Plugin.
-
+"""Location: ./plugins/virus_total_checker/virus_total_checker.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+VirusTotal URL Checker Plugin.
 Integrates with VirusTotal API v3 to evaluate URLs, domains, and IP
 addresses before fetching resources. Optionally submits unknown URLs for
 analysis and waits briefly for results. Caches lookups in-memory to reduce

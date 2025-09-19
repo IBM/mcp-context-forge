@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Harmful Content Detector Plugin.
+"""Location: ./plugins/harmful_content_detector/harmful_content_detector.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Harmful Content Detector Plugin.
 
 Detects categories such as self-harm, violence, and hate via keyword lexicons.
 

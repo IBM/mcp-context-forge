@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""JSON Repair Plugin.
-
+"""Location: ./plugins/json_repair/json_repair.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+JSON Repair Plugin.
 Attempts to repair nearly-JSON string outputs into valid JSON strings.
 It is conservative: only applies transformations when confidently fixable.
 """

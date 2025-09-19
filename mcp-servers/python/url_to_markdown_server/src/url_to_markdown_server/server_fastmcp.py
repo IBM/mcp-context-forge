@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/url_to_markdown_server/src/url_to_markdown_server/server_fastmcp.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 URL-to-Markdown FastMCP Server
 
 A modern FastMCP implementation of the URL-to-Markdown converter with comprehensive

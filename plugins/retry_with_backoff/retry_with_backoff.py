@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Retry With Backoff Plugin.
-
+"""Location: ./plugins/retry_with_backoff/retry_with_backoff.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Retry With Backoff Plugin.
 Advisory plugin that annotates retry policy metadata for downstream systems.
 Note: The framework cannot re-execute tools/resources; this provides guidance only.
 """

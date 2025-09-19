@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Safe HTML Sanitizer Plugin.
+"""Location: ./plugins/safe_html_sanitizer/safe_html_sanitizer.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Safe HTML Sanitizer Plugin.
 
 Sanitizes fetched HTML to neutralize common XSS vectors:
 - Removes dangerous tags (script, iframe, object, embed, meta, link)

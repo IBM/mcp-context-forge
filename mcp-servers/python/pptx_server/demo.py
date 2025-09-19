@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/pptx_server/demo.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 PowerPoint MCP Server Demo Script
 
 This script demonstrates all the capabilities of the PowerPoint MCP Server

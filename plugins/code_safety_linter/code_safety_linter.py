@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Code Safety Linter Plugin.
-
+"""Location: ./plugins/code_safety_linter/code_safety_linter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Code Safety Linter Plugin.
 Detects risky code patterns (eval/exec/system/spawn) in tool outputs and
 either blocks or annotates based on mode.
 """

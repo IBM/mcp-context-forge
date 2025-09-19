@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Health check HTTP server for MCP Evaluation Server."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/health.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Health check HTTP server for MCP Evaluation Server.
+"""
 
 # Standard
 import logging

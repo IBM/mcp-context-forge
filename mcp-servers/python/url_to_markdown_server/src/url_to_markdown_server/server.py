@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/url_to_markdown_server/src/url_to_markdown_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 URL-to-Markdown MCP Server
 
 The ultimate MCP server for retrieving web content and files, then converting them to markdown.

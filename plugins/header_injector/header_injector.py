@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Header Injector Plugin.
+"""Location: ./plugins/header_injector/header_injector.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Header Injector Plugin.
 
 Injects custom HTTP headers into resource fetches by merging into payload.metadata["headers"].
 

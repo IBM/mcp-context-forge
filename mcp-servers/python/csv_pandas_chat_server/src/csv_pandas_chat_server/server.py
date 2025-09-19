@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/csv_pandas_chat_server/src/csv_pandas_chat_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 CSV Pandas Chat MCP Server
 
 A secure MCP server for analyzing CSV data using natural language queries.

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Robots and License Guard Plugin.
+"""Location: ./plugins/robots_license_guard/robots_license_guard.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Robots and License Guard Plugin.
 
 Honors basic content usage signals found in HTML: robots/noai/noimageai meta and license meta.
 Blocks or annotates based on configuration.

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Privacy Notice Injector Plugin.
+"""Location: ./plugins/privacy_notice_injector/privacy_notice_injector.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Privacy Notice Injector Plugin.
 
 Adds a configurable privacy notice to rendered prompts by modifying the first
 user message (prepend/append) or by inserting a separate message when none exists.

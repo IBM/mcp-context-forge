@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Markdown Cleaner Plugin.
-
+"""Location: ./plugins/markdown_cleaner/markdown_cleaner.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Markdown Cleaner Plugin.
 Tidies Markdown by fixing headings, list markers, code fences, and collapsing
 excess blank lines. Works on prompt results and resource content.
 """

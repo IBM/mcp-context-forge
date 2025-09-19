@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for XLSX MCP Server."""
+"""Location: ./mcp-servers/python/xlsx_server/tests/test_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for XLSX MCP Server.
+"""
 
 import json
 import pytest

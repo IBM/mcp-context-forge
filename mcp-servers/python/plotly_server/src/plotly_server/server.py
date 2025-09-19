@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/plotly_server/src/plotly_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Plotly MCP Server
 
 Advanced data visualization server using Plotly for creating interactive charts and graphs.

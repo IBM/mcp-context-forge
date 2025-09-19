@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Combined MCP and HTTP server for PowerPoint automation with downloads."""
+"""Location: ./mcp-servers/python/pptx_server/src/pptx_server/combined_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Combined MCP and HTTP server for PowerPoint automation with downloads.
+"""
 
 # Standard
 import asyncio

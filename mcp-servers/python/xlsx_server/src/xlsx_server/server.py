@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/xlsx_server/src/xlsx_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 XLSX MCP Server
 
 A comprehensive MCP server for creating, editing, and analyzing Microsoft Excel (.xlsx) spreadsheets.

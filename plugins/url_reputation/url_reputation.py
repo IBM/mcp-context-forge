@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""URL Reputation Plugin.
-
+"""Location: ./plugins/url_reputation/url_reputation.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+URL Reputation Plugin.
 Blocks known-bad domains or URL patterns before fetching resources.
 """
 

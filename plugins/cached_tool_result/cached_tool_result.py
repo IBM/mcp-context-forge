@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Cached Tool Result Plugin.
-
+"""Location: ./plugins/cached_tool_result/cached_tool_result.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Cached Tool Result Plugin.
 Stores idempotent tool results in an in-memory cache keyed by tool name and
 selected argument fields. Reads are advisory (metadata) due to framework
 constraints; writes occur in tool_post_invoke.

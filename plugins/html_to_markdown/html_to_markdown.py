@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""HTML to Markdown Plugin.
-
+"""Location: ./plugins/html_to_markdown/html_to_markdown.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+HTML to Markdown Plugin.
 Converts HTML resource content to Markdown, optionally preserving code blocks
 and tables. Designed to run as a resource post-fetch transformer.
 """

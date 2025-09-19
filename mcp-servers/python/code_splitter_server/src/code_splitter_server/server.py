@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/code_splitter_server/src/code_splitter_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Code Splitter MCP Server
 
 Advanced code analysis and splitting using Abstract Syntax Tree (AST) parsing.

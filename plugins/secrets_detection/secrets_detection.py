@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Secrets Detection Plugin.
+"""Location: ./plugins/secrets_detection/secrets_detection.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Secrets Detection Plugin.
 
 Detects likely credentials and secrets in inputs and outputs using regex and simple heuristics.
 

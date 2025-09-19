@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/docx_server/src/docx_server/server_fastmcp.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 DOCX MCP Server - FastMCP Implementation
 
 A comprehensive MCP server for creating, editing, and analyzing Microsoft Word (.docx) documents.

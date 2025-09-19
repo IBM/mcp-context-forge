@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/graphviz_server/src/graphviz_server/server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Graphviz MCP Server
 
 A comprehensive MCP server for creating, editing, and rendering Graphviz graphs.

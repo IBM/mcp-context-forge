@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Summarizer Plugin.
+"""Location: ./plugins/summarizer/summarizer.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Summarizer Plugin.
 
 Summarizes long text content using configurable LLM providers (OpenAI initially).
 

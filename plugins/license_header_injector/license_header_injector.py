@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""License Header Injector Plugin.
+"""Location: ./plugins/license_header_injector/license_header_injector.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+License Header Injector Plugin.
 
 Adds a language-appropriate license header to code outputs.
 

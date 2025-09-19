@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""ClamAV Remote Plugin (External MCP server).
-
+"""Location: ./plugins/external/clamav_server/clamav_plugin.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+ClamAV Remote Plugin (External MCP server).
 Provides malware scanning via ClamAV for resources and content. Designed to run
 in an external MCP server process and be called by the gateway through STDIO.
 

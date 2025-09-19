@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Watchdog Plugin.
+"""Location: ./plugins/watchdog/watchdog.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Watchdog Plugin.
 
 Records tool execution duration and enforces a max runtime policy: warn or block.
 

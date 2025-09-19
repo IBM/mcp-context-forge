@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Timezone Translator Plugin.
+"""Location: ./plugins/timezone_translator/timezone_translator.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Timezone Translator Plugin.
 
 Converts detected ISO-like timestamps between server and user timezones.
 

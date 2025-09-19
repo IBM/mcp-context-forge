@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Output Length Guard Plugin for MCP Gateway.
-
+"""Location: ./plugins/output_length_guard/output_length_guard.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Output Length Guard Plugin for MCP Gateway.
 Enforces min/max output length bounds on tool results, with either
 truncate or block strategies.
 

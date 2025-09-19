@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for MCP Eval Server main functionality."""
+"""Location: ./mcp-servers/python/mcp_eval_server/tests/test_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for MCP Eval Server main functionality.
+"""
 
 # Third-Party
 from mcp_eval_server.mcp_eval_server.server import (

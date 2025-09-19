@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Code Formatter Plugin.
+"""Location: ./plugins/code_formatter/code_formatter.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Code Formatter Plugin.
 
 Formats code/text outputs with lightweight, dependency-free normalization:
 - Trim trailing whitespace

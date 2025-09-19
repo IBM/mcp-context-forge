@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SQL Sanitizer Plugin.
+"""Location: ./plugins/sql_sanitizer/sql_sanitizer.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+SQL Sanitizer Plugin.
 
 Detects risky SQL patterns and optionally sanitizes or blocks.
 Target fields are scanned for SQL text; comments can be stripped,

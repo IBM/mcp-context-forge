@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Citation Validator Plugin.
+"""Location: ./plugins/citation_validator/citation_validator.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Citation Validator Plugin.
 
 Validates links (citations) by checking reachability (HTTP status) and optional
 content keyword hints. Annotates or blocks based on configuration.

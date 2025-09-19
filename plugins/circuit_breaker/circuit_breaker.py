@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Circuit Breaker Plugin.
+"""Location: ./plugins/circuit_breaker/circuit_breaker.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Circuit Breaker Plugin.
 
 Trips a per-tool breaker on high error rate or consecutive failures.
 Blocks calls during cooldown; resets after cooldown elapses.

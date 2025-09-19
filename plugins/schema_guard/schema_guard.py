@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Schema Guard Plugin.
-
+"""Location: ./plugins/schema_guard/schema_guard.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Schema Guard Plugin.
 Validates tool args and results against a minimal JSONSchema-like subset.
 Supported: type, properties, required. Types: object, string, number, integer, boolean, array.
 """

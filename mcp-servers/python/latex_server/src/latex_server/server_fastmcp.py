@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/latex_server/src/latex_server/server_fastmcp.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 LaTeX MCP Server - FastMCP Implementation
 
 A comprehensive MCP server for LaTeX document processing, compilation, and management.

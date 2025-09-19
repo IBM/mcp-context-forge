@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Rate Limiter Plugin.
-
+"""Location: ./plugins/rate_limiter/rate_limiter.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Rate Limiter Plugin.
 Enforces simple in-memory rate limits by user, tenant, and/or tool.
 Uses a fixed window keyed by second for simplicity and determinism.
 """

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for CSV Pandas Chat MCP Server."""
+"""Location: ./mcp-servers/python/csv_pandas_chat_server/tests/test_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for CSV Pandas Chat MCP Server.
+"""
 
 import json
 import pandas as pd

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Simple example plugin for searching and replacing text.
-
+"""Location: ./plugins/deny_filter/deny.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Fred Araujo
 
+Simple example plugin for searching and replacing text.
 This module loads configurations for plugins.
 """
 # Third-Party

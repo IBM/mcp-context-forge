@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Response Cache by Prompt Plugin.
+"""Location: ./plugins/response_cache_by_prompt/response_cache_by_prompt.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Response Cache by Prompt Plugin.
 
 Advisory approximate caching of tool results using cosine similarity over
 selected string fields (e.g., "prompt", "input").

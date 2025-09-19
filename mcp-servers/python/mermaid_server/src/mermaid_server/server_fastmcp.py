@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./mcp-servers/python/mermaid_server/src/mermaid_server/server_fastmcp.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Mermaid FastMCP Server
 
 Comprehensive server for creating, editing, and rendering Mermaid diagrams.
