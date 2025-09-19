@@ -155,7 +155,7 @@ Create documents from built-in templates.
     "author": "John Doe",
     "abstract": "This paper explores advanced ML techniques...",
     "introduction": "Machine learning has evolved significantly...",
-    "conclusion": "In conclusion, these techniques show promise..."
+    "conclusion": "These techniques show promise..."
   }
 }
 ```

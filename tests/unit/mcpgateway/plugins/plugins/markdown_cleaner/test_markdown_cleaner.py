@@ -25,7 +25,7 @@ async def test_cleans_markdown_prompt():
             hooks=[HookType.PROMPT_POST_FETCH],
         )
     )
-    txt = "#Heading\n\n\n* item\n\n``````\n\n``````\n"
+    txt = "#Heading\n\n\n* item\n\n```\n\n```\n"
     pr = PromptResult(messages=[Message(role="assistant", content=TextContent(type="text", text=txt))])
     payload = PromptPosthookPayload(name="p", result=pr)
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
