@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_a2a_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-14 15:16 +0100
+            created at 2025-09-19 19:13 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -589,8 +589,8 @@
     <p class="pln"><span class="n"><a id="t505" href="#t505">505</a></span><span class="t"><span class="str">            >>> ToolCreate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t506" href="#t506">506</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t507" href="#t507">507</a></span><span class="t"><span class="str">            >>> truncated = ToolCreate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t508" href="#t508">508</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t509" href="#t509">509</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t508" href="#t508">508</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t509" href="#t509">509</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t510" href="#t510">510</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t511" href="#t511">511</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t512" href="#t512">512</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -917,8 +917,8 @@
     <p class="pln"><span class="n"><a id="t833" href="#t833">833</a></span><span class="t"><span class="str">            >>> ToolUpdate.validate_description(None)  # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t834" href="#t834">834</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t835" href="#t835">835</a></span><span class="t"><span class="str">            >>> truncated = ToolUpdate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t836" href="#t836">836</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t837" href="#t837">837</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t836" href="#t836">836</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t837" href="#t837">837</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t838" href="#t838">838</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t839" href="#t839">839</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t840" href="#t840">840</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -1385,8 +1385,8 @@
     <p class="pln"><span class="n"><a id="t1301" href="#t1301">1301</a></span><span class="t"><span class="str">            >>> ResourceCreate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1302" href="#t1302">1302</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1303" href="#t1303">1303</a></span><span class="t"><span class="str">            >>> truncated = ResourceCreate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1304" href="#t1304">1304</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1305" href="#t1305">1305</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1304" href="#t1304">1304</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1305" href="#t1305">1305</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1306" href="#t1306">1306</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1307" href="#t1307">1307</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1308" href="#t1308">1308</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -1512,8 +1512,8 @@
     <p class="pln"><span class="n"><a id="t1428" href="#t1428">1428</a></span><span class="t"><span class="str">            >>> ResourceUpdate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1429" href="#t1429">1429</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1430" href="#t1430">1430</a></span><span class="t"><span class="str">            >>> truncated = ResourceUpdate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1431" href="#t1431">1431</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1432" href="#t1432">1432</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1431" href="#t1431">1431</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1432" href="#t1432">1432</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1433" href="#t1433">1433</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1434" href="#t1434">1434</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1435" href="#t1435">1435</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -1900,8 +1900,8 @@
     <p class="pln"><span class="n"><a id="t1816" href="#t1816">1816</a></span><span class="t"><span class="str">            >>> PromptCreate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1817" href="#t1817">1817</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1818" href="#t1818">1818</a></span><span class="t"><span class="str">            >>> truncated = PromptCreate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1819" href="#t1819">1819</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1820" href="#t1820">1820</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1819" href="#t1819">1819</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1820" href="#t1820">1820</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1821" href="#t1821">1821</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1822" href="#t1822">1822</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1823" href="#t1823">1823</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -2035,8 +2035,8 @@
     <p class="pln"><span class="n"><a id="t1951" href="#t1951">1951</a></span><span class="t"><span class="str">            >>> PromptUpdate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1952" href="#t1952">1952</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1953" href="#t1953">1953</a></span><span class="t"><span class="str">            >>> truncated = PromptUpdate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1954" href="#t1954">1954</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1955" href="#t1955">1955</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1954" href="#t1954">1954</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1955" href="#t1955">1955</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1956" href="#t1956">1956</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1957" href="#t1957">1957</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1958" href="#t1958">1958</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -2283,8 +2283,8 @@
     <p class="pln"><span class="n"><a id="t2199" href="#t2199">2199</a></span><span class="t"><span class="str">            >>> GatewayCreate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2200" href="#t2200">2200</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2201" href="#t2201">2201</a></span><span class="t"><span class="str">            >>> truncated = ToolCreate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t2202" href="#t2202">2202</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t2203" href="#t2203">2203</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t2202" href="#t2202">2202</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t2203" href="#t2203">2203</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2204" href="#t2204">2204</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2205" href="#t2205">2205</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2206" href="#t2206">2206</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -2542,8 +2542,8 @@
     <p class="pln"><span class="n"><a id="t2458" href="#t2458">2458</a></span><span class="t"><span class="str">            >>> GatewayUpdate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2459" href="#t2459">2459</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2460" href="#t2460">2460</a></span><span class="t"><span class="str">            >>> truncated = ToolCreate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t2461" href="#t2461">2461</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t2462" href="#t2462">2462</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t2461" href="#t2461">2461</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t2462" href="#t2462">2462</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2463" href="#t2463">2463</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2464" href="#t2464">2464</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t2465" href="#t2465">2465</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -3228,8 +3228,8 @@
     <p class="pln"><span class="n"><a id="t3144" href="#t3144">3144</a></span><span class="t"><span class="str">            >>> ServerCreate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3145" href="#t3145">3145</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3146" href="#t3146">3146</a></span><span class="t"><span class="str">            >>> truncated = ServerCreate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3147" href="#t3147">3147</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3148" href="#t3148">3148</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3147" href="#t3147">3147</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3148" href="#t3148">3148</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3149" href="#t3149">3149</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3150" href="#t3150">3150</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3151" href="#t3151">3151</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -3403,8 +3403,8 @@
     <p class="pln"><span class="n"><a id="t3319" href="#t3319">3319</a></span><span class="t"><span class="str">            >>> ServerUpdate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3320" href="#t3320">3320</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3321" href="#t3321">3321</a></span><span class="t"><span class="str">            >>> truncated = ServerUpdate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3322" href="#t3322">3322</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3323" href="#t3323">3323</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3322" href="#t3322">3322</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3323" href="#t3323">3323</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3324" href="#t3324">3324</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3325" href="#t3325">3325</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3326" href="#t3326">3326</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -3710,8 +3710,8 @@
     <p class="pln"><span class="n"><a id="t3626" href="#t3626">3626</a></span><span class="t"><span class="str">            >>> A2AAgentCreate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3627" href="#t3627">3627</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3628" href="#t3628">3628</a></span><span class="t"><span class="str">            >>> truncated = A2AAgentCreate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3629" href="#t3629">3629</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3630" href="#t3630">3630</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3629" href="#t3629">3629</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3630" href="#t3630">3630</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3631" href="#t3631">3631</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3632" href="#t3632">3632</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3633" href="#t3633">3633</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -3856,8 +3856,8 @@
     <p class="pln"><span class="n"><a id="t3772" href="#t3772">3772</a></span><span class="t"><span class="str">            >>> A2AAgentUpdate.validate_description(None) # Test None case</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3773" href="#t3773">3773</a></span><span class="t"><span class="str">            >>> long_desc = 'x' * SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3774" href="#t3774">3774</a></span><span class="t"><span class="str">            >>> truncated = A2AAgentUpdate.validate_description(long_desc)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3775" href="#t3775">3775</a></span><span class="t"><span class="str">            >>> len(truncated)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t3776" href="#t3776">3776</a></span><span class="t"><span class="str">            8192</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3775" href="#t3775">3775</a></span><span class="t"><span class="str">            >>> len(truncated) - SecurityValidator.MAX_DESCRIPTION_LENGTH</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t3776" href="#t3776">3776</a></span><span class="t"><span class="str">            0</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3777" href="#t3777">3777</a></span><span class="t"><span class="str">            >>> truncated == long_desc[:SecurityValidator.MAX_DESCRIPTION_LENGTH]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3778" href="#t3778">3778</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t3779" href="#t3779">3779</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
@@ -5388,7 +5388,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_a2a_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.6">coverage.py v7.10.6</a>,
-            created at 2025-09-14 15:16 +0100
+            created at 2025-09-19 19:13 +0100
         </p>
     </div>
 </footer>
