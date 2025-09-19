@@ -172,3 +172,13 @@ exclude plugins/external/opa/MANIFEST.in
 exclude plugins/external/opa/opaserver/rego/example.rego
 exclude plugins/external/opa/pyproject.toml
 exclude plugins/external/opa/run-server.sh
+
+# Exclude llmguard
+exclude  plugins/external/llmguard/.dockerignore
+exclude plugins/external/llmguard/.env.template
+exclude plugins/external/llmguard/.ruff.toml
+exclude plugins/external/llmguard/Containerfile
+exclude plugins/external/llmguard/MANIFEST.in
+exclude plugins/external/llmguard/opaserver/rego/example.rego
+exclude plugins/external/llmguard/pyproject.toml
+exclude plugins/external/llmguard/run-server.sh

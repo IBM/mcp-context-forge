@@ -1,0 +1,7 @@
+description: "A plugin that leverages the capabilities of llmguard library to apply guardrails on input and output prompts"
+author: "Shriti Priya"
+version: "0.1.0"
+available_hooks:
+  - "prompt_pre_hook"
+  - "prompt_post_hook"
+default_configs:
