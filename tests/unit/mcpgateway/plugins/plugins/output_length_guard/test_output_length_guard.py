@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/output_length_guard/test_output_length_guard.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Unit tests for Output Length Guard Plugin.
 """
 

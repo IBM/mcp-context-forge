@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Permission Service for RBAC System.
+"""Location: ./mcpgateway/services/permission_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Permission Service for RBAC System.
 
 This module provides the core permission checking logic for the RBAC system.
 It handles role-based permission validation, permission auditing, and caching.

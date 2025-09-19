@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/file_type_allowlist/test_file_type_allowlist.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Tests for FileTypeAllowlistPlugin.
 """
 

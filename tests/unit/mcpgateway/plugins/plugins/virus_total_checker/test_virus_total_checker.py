@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/virus_total_checker/test_virus_total_checker.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Unit tests for VirusTotalURLCheckerPlugin with stubbed client.
 """
 

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for token scoping middleware security fixes.
+"""Location: ./tests/unit/mcpgateway/middleware/test_token_scoping.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for token scoping middleware security fixes.
 
 This module tests the token scoping middleware, particularly the security fixes for:
 - Issue 4: Admin endpoint whitelist removal

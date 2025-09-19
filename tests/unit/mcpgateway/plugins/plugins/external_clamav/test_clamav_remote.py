@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 """Location: ./tests/unit/mcpgateway/plugins/plugins/external_clamav/test_clamav_remote.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 Tests for ClamAVRemotePlugin (direct import, eicar_only mode).
 """
 

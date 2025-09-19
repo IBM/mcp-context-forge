@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Version configuration for migration testing.
+"""Location: ./tests/migration/version_config.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Version configuration for migration testing.
 
 This module defines the version configuration for migration testing,
 following an n-2 support policy where we test the current version

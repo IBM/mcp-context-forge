@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive unit tests for PermissionService to maximize coverage."""
+"""Location: ./tests/unit/mcpgateway/services/test_permission_service_comprehensive.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Comprehensive unit tests for PermissionService to maximize coverage.
+"""
 
 # Standard
 from datetime import datetime, timedelta
