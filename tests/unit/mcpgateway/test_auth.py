@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Test authentication utilities module.
+"""Location: ./tests/unit/mcpgateway/test_auth.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test authentication utilities module.
 
 This module provides comprehensive unit tests for the auth.py module,
 covering JWT authentication, API token authentication, user validation,

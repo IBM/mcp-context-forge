@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Tests for the PowerPoint MCP Server."""
+"""Location: ./mcp-servers/python/pptx_server/tests/test_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for the PowerPoint MCP Server.
+"""
 
 # Standard
 import asyncio

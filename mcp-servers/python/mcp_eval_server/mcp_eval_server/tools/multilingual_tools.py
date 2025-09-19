@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""MCP tools for multilingual evaluation."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/tools/multilingual_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP tools for multilingual evaluation.
+"""
 
 # Standard
 from collections import Counter, defaultdict

@@ -24,16 +24,16 @@ lint: ## Lint (ruff, mypy)
 test: ## Run tests
 	pytest -v --cov=pptx_server --cov-report=term-missing
 
-dev: ## Run stdio MCP server
-	@echo "Starting PowerPoint MCP server (stdio)..."
-	$(PYTHON) -m pptx_server.server
+dev: ## Run FastMCP server (stdio)
+	@echo "Starting PowerPoint FastMCP server (stdio)..."
+	$(PYTHON) -m pptx_server.server_fastmcp
 
 mcp-info: ## Show stdio client config snippet
-	@echo '{"command": "python", "args": ["-m", "pptx_server.server"], "cwd": "'$(PWD)'"}'
+	@echo '{"command": "python", "args": ["-m", "pptx_server.server_fastmcp"], "cwd": "'$(PWD)'"}'
 
-serve-http: ## Expose stdio server over HTTP (JSON-RPC + SSE)
+serve-http: ## Expose FastMCP server over HTTP (JSON-RPC + SSE)
 	@echo "HTTP: http://$(HTTP_HOST):$(HTTP_PORT)"
-	$(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m pptx_server.server" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
+	$(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m pptx_server.server_fastmcp" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
 
 test-http: ## Basic HTTP checks
 	curl -s http://$(HTTP_HOST):$(HTTP_PORT)/ | head -20 || true

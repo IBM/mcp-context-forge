@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
+"""Location: ./tests/manual/generate_test_plan.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
 MCP Gateway v0.7.0 - Test Plan Generator from YAML
 
 Generates Excel test plan from YAML test definition files.

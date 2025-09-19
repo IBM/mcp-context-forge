@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Migration performance and benchmarking tests.
+"""Location: ./tests/migration/test_migration_performance.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Migration performance and benchmarking tests.
 
 This module provides comprehensive performance testing for database migrations
 including benchmarking, stress testing, and resource monitoring.

@@ -1,0 +1,6 @@
+description: "Conservative JSON string repair for tool outputs"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "tool_post_invoke"
+default_configs: {}

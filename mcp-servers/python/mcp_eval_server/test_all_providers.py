@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Test all provider implementations with mock credentials."""
+"""Location: ./mcp-servers/python/mcp_eval_server/test_all_providers.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test all provider implementations with mock credentials.
+"""
 
 # Standard
 import asyncio

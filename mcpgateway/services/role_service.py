@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Role Management Service for RBAC System.
+"""Location: ./mcpgateway/services/role_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Role Management Service for RBAC System.
 
 This module provides CRUD operations for roles and user role assignments.
 It handles role creation, assignment, revocation, and validation.

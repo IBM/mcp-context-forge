@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Migration testing package for MCP Gateway.
+"""Location: ./tests/migration/__init__.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Migration testing package for MCP Gateway.
 
 This package provides comprehensive database migration testing capabilities
 across multiple container versions and database backends (SQLite, PostgreSQL).

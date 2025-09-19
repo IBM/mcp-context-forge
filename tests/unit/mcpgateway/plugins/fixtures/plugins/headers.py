@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 
-"""
-Headers plugin.
-
+"""Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/headers.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Headers plugin.
 """
 import copy
 import logging

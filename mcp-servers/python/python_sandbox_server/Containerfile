@@ -1,0 +1,43 @@
+# Containerfile for Python Sandbox MCP Server
+# This container runs the MCP server itself, not the sandboxed code
+
+# syntax=docker/dockerfile:1
+FROM python:3.11-slim AS base
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/app/.venv/bin:$PATH"
+
+WORKDIR /app
+
+# System deps including Docker for container execution
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl \
+    docker.io \
+    coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy metadata early for layer caching
+COPY pyproject.toml README.md ./
+
+# Create venv and install
+RUN python -m venv /app/.venv && \
+    /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
+    /app/.venv/bin/pip install -e ".[sandbox]"
+
+# Copy source
+COPY src/ ./src/
+COPY docker/ ./docker/
+
+# Build the sandbox container image
+RUN cd docker && docker build -t python-sandbox:latest -f Dockerfile.sandbox .
+
+# Non-root user
+RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
+
+# Note: For container execution, the user needs access to Docker socket
+# This should be mounted at runtime: -v /var/run/docker.sock:/var/run/docker.sock
+
+USER 1001
+
+CMD ["python", "-m", "python_sandbox_server.server"]
