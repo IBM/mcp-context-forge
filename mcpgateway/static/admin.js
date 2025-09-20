@@ -921,7 +921,13 @@ function displayMetrics(data) {
 
         // Key Performance Indicators section
         const kpiData = extractKPIData(data);
-        if (Object.keys(kpiData).length > 0) {
+        // ensure top-of-page KPI cards are updated (if present)
+        updateKPICards(kpiData);
+
+        if (
+            !document.getElementById("metrics-total-executions") &&
+            Object.keys(kpiData).length > 0
+        ) {
             const kpiSection = createKPISection(kpiData);
             mainContainer.appendChild(kpiSection);
         }
@@ -1101,39 +1107,47 @@ function createKPISection(kpiData) {
         const section = document.createElement("div");
         section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
 
-        // Define KPI indicators with safe configuration
         const kpis = [
-            {
-                key: "totalExecutions",
-                label: "Total Executions",
-                icon: "🎯",
-                color: "blue",
+            { 
+             key: "totalExecutions",
+             label: "Total Executions",
+             icon: "🎯", 
+             color: "blue"
             },
             {
-                key: "successRate",
-                label: "Success Rate",
-                icon: "✅",
-                color: "green",
-                suffix: "%",
+             key: "successRate", 
+             label: "Success Rate", 
+             icon: "✅", 
+             color: "green" 
             },
-            {
-                key: "avgResponseTime",
-                label: "Avg Response Time",
-                icon: "⚡",
-                color: "yellow",
-                suffix: "ms",
+            { 
+             key: "avgResponseTime", 
+             label: "Avg Response Time", 
+             icon: "⚡", 
+             color: "yellow" 
             },
-            {
-                key: "errorRate",
-                label: "Error Rate",
-                icon: "❌",
-                color: "red",
-                suffix: "%",
+            { 
+             key: "errorRate", 
+             label: "Error Rate", 
+             icon: "❌", 
+             color: "red" 
             },
         ];
 
         kpis.forEach((kpi) => {
-            const value = kpiData[kpi.key] ?? "N/A";
+            let value = kpiData[kpi.key];
+            if (value === null || value === undefined || value === "N/A") {
+                value = "N/A";
+            } else {
+                if (kpi.key === "avgResponseTime") {
+                    // ensure numeric then 3 decimals + unit
+                    value = isNaN(Number(value)) ? "N/A" : Number(value).toFixed(3) + " ms";
+                } else if (kpi.key === "successRate" || kpi.key === "errorRate") {
+                    value = String(value) + "%";
+                } else {
+                    value = String(value);
+                }
+            }
 
             const kpiCard = document.createElement("div");
             kpiCard.className = `bg-white rounded-lg shadow p-4 border-l-4 border-${kpi.color}-500 dark:bg-gray-800`;
@@ -1150,8 +1164,7 @@ function createKPISection(kpiData) {
 
             const valueSpan = document.createElement("div");
             valueSpan.className = `text-2xl font-bold text-${kpi.color}-600`;
-            valueSpan.textContent =
-                (value === "N/A" ? "N/A" : String(value)) + (kpi.suffix || "");
+            valueSpan.textContent = value;
 
             const labelSpan = document.createElement("div");
             labelSpan.className = "text-sm text-gray-500 dark:text-gray-400";
@@ -1166,73 +1179,188 @@ function createKPISection(kpiData) {
         });
 
         return section;
-    } catch (error) {
-        console.error("Error creating KPI section:", error);
-        return document.createElement("div"); // Safe fallback
+    } catch (err) {
+        console.error("Error creating KPI section:", err);
+        return document.createElement("div");
     }
 }
 
 /**
  * SECURITY: Extract and calculate KPI data with validation
  */
+/**
+ * SECURITY: Extract and calculate KPI data with robust key handling and weighted avg.
+ * Returns numeric totalExecutions, successRate, errorRate, and avgResponseTime (ms) or null.
+ */
 function extractKPIData(data) {
     try {
-        const kpiData = {};
-
-        // Initialize calculation variables
         let totalExecutions = 0;
         let totalSuccessful = 0;
         let totalFailed = 0;
-        const responseTimes = [];
+        let weightedResponseSum = 0;
 
-        // Process each category safely
-        const categories = [
-            "tools",
-            "resources",
-            "prompts",
-            "gateways",
-            "servers",
+        const categoryKeys = [
+            ["tools", "Tools Metrics", "Tools", "tools_metrics"],
+            [
+                "resources",
+                "Resources Metrics",
+                "Resources", 
+                "resources_metrics",
+            ],
+            ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
+            ["servers", "Servers Metrics", "Servers", "servers_metrics"],
+            ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
+            [
+                "virtualServers",
+                "Virtual Servers",
+                "VirtualServers",
+                "virtual_servers",
+            ],
         ];
-        categories.forEach((category) => {
-            if (data[category]) {
-                const categoryData = data[category];
-                totalExecutions += Number(categoryData.totalExecutions || 0);
-                totalSuccessful += Number(
-                    categoryData.successfulExecutions || 0,
-                );
-                totalFailed += Number(categoryData.failedExecutions || 0);
 
-                if (
-                    categoryData.avgResponseTime &&
-                    categoryData.avgResponseTime !== "N/A"
-                ) {
-                    responseTimes.push(Number(categoryData.avgResponseTime));
+        categoryKeys.forEach((aliases) => {
+            let categoryData = null;
+            for (const key of aliases) {
+                if (data && data[key]) {
+                    categoryData = data[key];
+                    break;
                 }
+            }
+            if (!categoryData) return;
+
+            // Build a lowercase-key map so "Successful Executions" and "successfulExecutions" both match
+            const normalized = {};
+            Object.entries(categoryData).forEach(([k, v]) => {
+                normalized[k.toString().trim().toLowerCase()] = v;
+            });
+
+            const executions = Number(
+                normalized["total executions"] ??
+                normalized["totalexecutions"] ??
+                normalized["execution_count"] ??
+                normalized["execution-count"] ??
+                normalized["executions"] ??
+                normalized["total_executions"] ??
+                0
+            );
+
+            const successful = Number(
+                normalized["successful executions"] ??
+                normalized["successfulexecutions"] ??
+                normalized["successful"] ??
+                normalized["successful_executions"] ??
+                0
+            );
+
+            const failed = Number(
+                normalized["failed executions"] ??
+                normalized["failedexecutions"] ??
+                normalized["failed"] ??
+                normalized["failed_executions"] ??
+                0
+            );
+
+            const avgResponseRaw =
+                normalized["average response time"] ??
+                normalized["avgresponsetime"] ??
+                normalized["avg_response_time"] ??
+                normalized["avgresponsetime"] ??
+                null;
+
+            totalExecutions += Number.isNaN(executions) ? 0 : executions;
+            totalSuccessful += Number.isNaN(successful) ? 0 : successful;
+            totalFailed += Number.isNaN(failed) ? 0 : failed;
+
+            if (
+                avgResponseRaw !== null &&
+                avgResponseRaw !== undefined &&
+                avgResponseRaw !== "N/A" &&
+                !Number.isNaN(Number(avgResponseRaw)) &&
+                executions > 0
+            ) {
+                weightedResponseSum += executions * Number(avgResponseRaw);
             }
         });
 
-        // Calculate safe aggregate metrics
-        kpiData.totalExecutions = totalExecutions;
-        kpiData.successRate =
+        const avgResponseTime =
+            totalExecutions > 0 && weightedResponseSum > 0
+                ? weightedResponseSum / totalExecutions
+                : null;
+
+        const successRate =
             totalExecutions > 0
                 ? Math.round((totalSuccessful / totalExecutions) * 100)
                 : 0;
-        kpiData.errorRate =
+
+        const errorRate =
             totalExecutions > 0
                 ? Math.round((totalFailed / totalExecutions) * 100)
                 : 0;
-        kpiData.avgResponseTime =
-            responseTimes.length > 0
-                ? Math.round(
-                      responseTimes.reduce((a, b) => a + b, 0) /
-                          responseTimes.length,
-                  )
-                : "N/A";
 
-        return kpiData;
-    } catch (error) {
-        console.error("Error extracting KPI data:", error);
-        return {}; // Safe fallback
+        // Debug: show what we've read from the payload
+        console.log("KPI Totals:", { totalExecutions, totalSuccessful, totalFailed, successRate, errorRate, avgResponseTime });
+
+        return { totalExecutions, successRate, errorRate, avgResponseTime };
+    } catch (err) {
+        console.error("Error extracting KPI data:", err);
+        return { totalExecutions: 0, successRate: 0, errorRate: 0, avgResponseTime: null };
+    }
+}
+
+/**
+ * Update the top KPI header cards if they exist on the page.
+ * This function attempts several common id/class/data-attribute patterns.
+ */
+function updateKPICards(kpiData) {
+    try {
+        if (!kpiData) return;
+
+        const formatAvg = (v) =>
+            v === null || v === undefined || isNaN(v) ? "N/A" : Number(v).toFixed(3) + " ms";
+
+        const kv = {
+            totalExecutions: kpiData.totalExecutions ?? 0,
+            successRate: (kpiData.successRate ?? 0) + "%",
+            avgResponse: formatAvg(kpiData.avgResponseTime),
+            errorRate: (kpiData.errorRate ?? 0) + "%",
+        };
+
+        const idMap = {
+            "metrics-total-executions": kv.totalExecutions,
+            "metrics-success-rate": kv.successRate,
+            "metrics-avg-response-time": kv.avgResponse,
+            "metrics-error-rate": kv.errorRate,
+        };
+
+        // Try to apply immediately, but retry up to N times if header not yet in DOM
+        let tries = 0;
+        const maxTries = 8;
+        const retryDelay = 200; // ms
+
+        function applyOnce() {
+            tries++;
+            let foundAny = false;
+            Object.entries(idMap).forEach(([id, value]) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    foundAny = true;
+                    // If element contains child spans, prefer updating inner .value or the element text
+                    const valueEl = el.querySelector && (el.querySelector(".value") || el.querySelector(".kpi-value"));
+                    if (valueEl) valueEl.textContent = value;
+                    else el.textContent = value;
+                }
+            });
+
+            console.debug("KPI Cards Update attempt", tries, "foundAny:", foundAny, "values:", kv);
+
+            if (!foundAny && tries < maxTries) {
+                setTimeout(applyOnce, retryDelay);
+            }
+        }
+
+        applyOnce();
+    } catch (err) {
+        console.error("updateKPICards error:", err);
     }
 }
 
@@ -1890,6 +2018,15 @@ function createMetricsCard(title, metrics) {
             metrics[metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
             "N/A";
 
+        const valueDisplay = value === null 
+            ? "N/A"
+            : formatValue(value);
+
+        if (metric.key === "successRate" ||
+            metric.key === "errorRate") {
+            // handle rate values
+        }
+
         const metricRow = document.createElement("div");
         metricRow.className = "flex justify-between";
 
@@ -1899,7 +2036,7 @@ function createMetricsCard(title, metrics) {
 
         const valueSpan = document.createElement("span");
         valueSpan.className = "font-medium dark:text-gray-200";
-        valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
+        valueSpan.textContent = valueDisplay;
 
         metricRow.appendChild(label);
         metricRow.appendChild(valueSpan);
