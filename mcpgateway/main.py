@@ -206,8 +206,18 @@ def get_user_email(user):
         >>> main.get_user_email(user_dict)
         'alice@example.com'
 
-        Test with dictionary user without email:
-        >>> user_dict_no_email = {'username': 'bob', 'role': 'user'}
+        Test with dictionary user containing sub (JWT standard claim):
+        >>> user_dict_sub = {'sub': 'bob@example.com', 'role': 'user'}
+        >>> main.get_user_email(user_dict_sub)
+        'bob@example.com'
+
+        Test with dictionary user containing both email and sub (email takes precedence):
+        >>> user_dict_both = {'email': 'alice@example.com', 'sub': 'bob@example.com'}
+        >>> main.get_user_email(user_dict_both)
+        'alice@example.com'
+
+        Test with dictionary user without email or sub:
+        >>> user_dict_no_email = {'username': 'charlie', 'role': 'user'}
         >>> main.get_user_email(user_dict_no_email)
         'unknown'
 
@@ -244,7 +254,8 @@ def get_user_email(user):
         'unknown'
     """
     if isinstance(user, dict):
-        return user.get("email", "unknown")
+        # First try 'email', then 'sub' (JWT standard claim)
+        return user.get("email") or user.get("sub") or "unknown"
     return str(user) if user else "unknown"
 
 

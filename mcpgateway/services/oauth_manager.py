@@ -15,6 +15,8 @@ This module handles OAuth 2.0 authentication flows including:
 import asyncio
 import base64
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -79,6 +81,7 @@ class OAuthManager:
         self.request_timeout = request_timeout
         self.max_retries = max_retries
         self.token_storage = token_storage
+        self.settings = get_settings()
 
     async def get_access_token(self, credentials: Dict[str, Any]) -> str:
         """Get access token based on grant type.
@@ -370,10 +373,25 @@ class OAuthManager:
         Raises:
             OAuthError: If state validation fails or token exchange fails
         """
-        # Decode state to extract user context
+        # Decode state to extract user context and verify HMAC
         try:
-            state_decoded = base64.urlsafe_b64decode(state.encode()).decode()
-            state_data = json.loads(state_decoded)
+            # Decode base64
+            state_with_sig = base64.urlsafe_b64decode(state.encode())
+
+            # Split state and signature (HMAC-SHA256 is 32 bytes)
+            state_bytes = state_with_sig[:-32]
+            received_signature = state_with_sig[-32:]
+
+            # Verify HMAC signature
+            secret_key = self.settings.auth_encryption_secret.encode() if self.settings.auth_encryption_secret else b"default-secret-key"
+            expected_signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+
+            if not hmac.compare_digest(received_signature, expected_signature):
+                raise OAuthError("Invalid state signature - possible CSRF attack")
+
+            # Parse state data
+            state_json = state_bytes.decode()
+            state_data = json.loads(state_json)
             app_user_email = state_data.get("app_user_email")
             state_gateway_id = state_data.get("gateway_id")
 
@@ -412,18 +430,18 @@ class OAuthManager:
             return {"success": True, "user_id": user_id, "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None}
         return {"success": True, "user_id": user_id, "expires_at": None}
 
-    async def get_access_token_for_user(self, gateway_id: str, user_id: str) -> Optional[str]:
+    async def get_access_token_for_user(self, gateway_id: str, app_user_email: str) -> Optional[str]:
         """Get valid access token for a specific user.
 
         Args:
             gateway_id: ID of the gateway
-            user_id: OAuth provider user ID
+            app_user_email: MCP Gateway user email
 
         Returns:
             Valid access token or None if not available
         """
         if self.token_storage:
-            return await self.token_storage.get_valid_token(gateway_id, user_id)
+            return await self.token_storage.get_user_token(gateway_id, app_user_email)
         return None
 
     def _generate_state(self, gateway_id: str, app_user_email: str = None) -> str:
@@ -434,14 +452,22 @@ class OAuthManager:
             app_user_email: MCP Gateway user email (optional but recommended)
 
         Returns:
-            Unique state string with embedded user context
+            Unique state string with embedded user context and HMAC signature
         """
         # Include user email in state for secure user association
         state_data = {"gateway_id": gateway_id, "app_user_email": app_user_email, "nonce": secrets.token_urlsafe(16), "timestamp": datetime.now(timezone.utc).isoformat()}
 
-        # Encode state as base64 JSON
+        # Encode state as JSON
         state_json = json.dumps(state_data, separators=(",", ":"))
-        state_encoded = base64.urlsafe_b64encode(state_json.encode()).decode()
+        state_bytes = state_json.encode()
+
+        # Create HMAC signature
+        secret_key = self.settings.auth_encryption_secret.encode() if self.settings.auth_encryption_secret else b"default-secret-key"
+        signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+
+        # Combine state and signature, then base64 encode
+        state_with_sig = state_bytes + signature
+        state_encoded = base64.urlsafe_b64encode(state_with_sig).decode()
 
         return state_encoded
 

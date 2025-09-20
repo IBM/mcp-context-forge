@@ -583,48 +583,72 @@ class TestOAuthManager:
         """Test successful completion of authorization code flow."""
         import base64
         import json
+        import hashlib
+        import hmac
+        from unittest.mock import patch
 
-        mock_token_storage = Mock()
-        manager = OAuthManager(token_storage=mock_token_storage)
+        with patch('mcpgateway.services.oauth_manager.get_settings') as mock_get_settings:
+            mock_settings = Mock()
+            mock_settings.auth_encryption_secret = "test-secret-key"
+            mock_get_settings.return_value = mock_settings
 
-        gateway_id = "gateway123"
-        code = "auth_code_123"
-        # Create state with new format
-        state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com", "nonce": "state456"}
-        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
-        credentials = {"client_id": "test_client"}
+            mock_token_storage = Mock()
+            manager = OAuthManager(token_storage=mock_token_storage)
 
-        token_response = {
-            "access_token": "access123",
-            "refresh_token": "refresh123",
-            "expires_in": 3600
-        }
+            gateway_id = "gateway123"
+            code = "auth_code_123"
+            # Create state with new format and HMAC signature
+            from datetime import datetime, timezone
+            state_data = {
+                "gateway_id": "gateway123",
+                "app_user_email": "test@example.com",
+                "nonce": "state456",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            state_json = json.dumps(state_data, separators=(",", ":"))
+            state_bytes = state_json.encode()
 
-        with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
-                mock_exchange.return_value = token_response
+            # Create HMAC signature using the mocked secret
+            secret_key = b"test-secret-key"
+            signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
 
-                with patch.object(manager, '_extract_user_id') as mock_extract_user:
-                    mock_extract_user.return_value = "user123"
+            # Combine state and signature
+            state_with_sig = state_bytes + signature
+            state = base64.urlsafe_b64encode(state_with_sig).decode()
 
-                    with patch.object(mock_token_storage, 'store_tokens', new_callable=AsyncMock) as mock_store_tokens:
-                        mock_token_record = Mock()
-                        mock_token_record.expires_at = None
-                        mock_store_tokens.return_value = mock_token_record
+            credentials = {"client_id": "test_client"}
 
-                        result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+            token_response = {
+                "access_token": "access123",
+                "refresh_token": "refresh123",
+                "expires_in": 3600
+            }
 
-                        expected = {
-                            "user_id": "user123",
-                            "expires_at": None,  # None because we set it to None in mock
-                            "success": True
-                        }
-                        assert result["user_id"] == expected["user_id"]
-                        assert result["success"] == expected["success"]
-                        assert result["expires_at"] == expected["expires_at"]
+            with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
+                    mock_exchange.return_value = token_response
 
-                        mock_exchange.assert_called_once_with(credentials, code)
-                        mock_extract_user.assert_called_once_with(token_response, credentials)
-                        mock_store_tokens.assert_called_once()
+                    with patch.object(manager, '_extract_user_id') as mock_extract_user:
+                        mock_extract_user.return_value = "user123"
+
+                        with patch.object(mock_token_storage, 'store_tokens', new_callable=AsyncMock) as mock_store_tokens:
+                            mock_token_record = Mock()
+                            mock_token_record.expires_at = None
+                            mock_store_tokens.return_value = mock_token_record
+
+                            result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+
+                            expected = {
+                                "user_id": "user123",
+                                "expires_at": None,  # None because we set it to None in mock
+                                "success": True
+                            }
+                            assert result["user_id"] == expected["user_id"]
+                            assert result["success"] == expected["success"]
+                            assert result["expires_at"] == expected["expires_at"]
+
+                            mock_exchange.assert_called_once_with(credentials, code)
+                            mock_extract_user.assert_called_once_with(token_response, credentials)
+                            mock_store_tokens.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_invalid_state(self):
@@ -653,24 +677,24 @@ class TestOAuthManager:
     async def test_get_access_token_for_user_success(self):
         """Test getting access token for specific user."""
         mock_token_storage = Mock()
-        mock_token_storage.get_valid_token = AsyncMock(return_value="user_token_123")
+        mock_token_storage.get_user_token = AsyncMock(return_value="user_token_123")
 
         manager = OAuthManager(token_storage=mock_token_storage)
 
-        result = await manager.get_access_token_for_user("gateway123", "user123")
+        result = await manager.get_access_token_for_user("gateway123", "test@example.com")
 
         assert result == "user_token_123"
-        mock_token_storage.get_valid_token.assert_called_once_with("gateway123", "user123")
+        mock_token_storage.get_user_token.assert_called_once_with("gateway123", "test@example.com")
 
     @pytest.mark.asyncio
     async def test_get_access_token_for_user_not_found(self):
         """Test getting access token when user token not found."""
         mock_token_storage = Mock()
-        mock_token_storage.get_valid_token = AsyncMock(return_value=None)
+        mock_token_storage.get_user_token = AsyncMock(return_value=None)
 
         manager = OAuthManager(token_storage=mock_token_storage)
 
-        result = await manager.get_access_token_for_user("gateway123", "user123")
+        result = await manager.get_access_token_for_user("gateway123", "test@example.com")
 
         assert result is None
 
@@ -684,21 +708,45 @@ class TestOAuthManager:
         assert result is None
 
     def test_generate_state_format(self):
-        """Test state generation format."""
-        manager = OAuthManager()
-
-        state = manager._generate_state("gateway123", "test@example.com")
-
-        # State is now base64 encoded JSON
+        """Test state generation format with HMAC signature."""
         import base64
         import json
-        decoded = json.loads(base64.urlsafe_b64decode(state.encode()).decode())
-        assert decoded["gateway_id"] == "gateway123"
-        assert decoded["app_user_email"] == "test@example.com"
+        import hashlib
+        import hmac
+        from unittest.mock import patch, Mock
 
-        # Should generate different states each time
-        state2 = manager._generate_state("gateway123", "test@example.com")
-        assert state != state2
+        with patch('mcpgateway.services.oauth_manager.get_settings') as mock_get_settings:
+            mock_settings = Mock()
+            mock_settings.auth_encryption_secret = "test-secret-key"
+            mock_get_settings.return_value = mock_settings
+
+            manager = OAuthManager()
+
+            state = manager._generate_state("gateway123", "test@example.com")
+
+            # State is now base64 encoded JSON with HMAC signature
+            state_with_sig = base64.urlsafe_b64decode(state.encode())
+
+            # Split state and signature (HMAC-SHA256 is 32 bytes)
+            state_bytes = state_with_sig[:-32]
+            received_signature = state_with_sig[-32:]
+
+            # Verify HMAC signature
+            secret_key = b"test-secret-key"  # Use the same secret we mocked
+            expected_signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+            assert hmac.compare_digest(received_signature, expected_signature)
+
+            # Parse and verify state data
+            state_json = state_bytes.decode()
+            decoded = json.loads(state_json)
+            assert decoded["gateway_id"] == "gateway123"
+            assert decoded["app_user_email"] == "test@example.com"
+            assert "nonce" in decoded
+            assert "timestamp" in decoded
+
+            # Should generate different states each time (different nonce)
+            state2 = manager._generate_state("gateway123", "test@example.com")
+            assert state != state2
 
     @pytest.mark.asyncio
     async def test_store_authorization_state_placeholder(self):

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """add_user_context_to_oauth_tokens
 
 Revision ID: 14ac971cee42

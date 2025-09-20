@@ -207,7 +207,23 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
     """
     passthrough_headers = base_headers.copy()
 
-    # Early return if feature is disabled
+    # Special handling for X-Upstream-Authorization header (always enabled)
+    # If gateway uses auth and client wants to pass Authorization to upstream,
+    # client can use X-Upstream-Authorization which gets renamed to Authorization
+    if gateway and gateway.auth_type in ["basic", "bearer", "oauth"]:
+        request_headers_lower = {k.lower(): v for k, v in request_headers.items()} if request_headers else {}
+        upstream_auth = request_headers_lower.get("x-upstream-authorization")
+        if upstream_auth:
+            try:
+                sanitized_value = sanitize_header_value(upstream_auth)
+                if sanitized_value:
+                    # Rename X-Upstream-Authorization to Authorization for upstream
+                    passthrough_headers["Authorization"] = sanitized_value
+                    logger.debug("Renamed X-Upstream-Authorization to Authorization for upstream passthrough")
+            except Exception as e:
+                logger.warning(f"Failed to sanitize X-Upstream-Authorization header: {e}")
+
+    # Early return if header passthrough feature is disabled
     if not settings.enable_header_passthrough:
         logger.debug("Header passthrough is disabled via ENABLE_HEADER_PASSTHROUGH flag")
         return passthrough_headers
@@ -268,21 +284,6 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
                 logger.debug(f"Added passthrough header: {header_name}")
             else:
                 logger.debug(f"Header {header_name} not found in request headers, skipping passthrough")
-
-    # Special handling for X-Upstream-Authorization header
-    # If gateway uses auth and client wants to pass Authorization to upstream,
-    # client can use X-Upstream-Authorization which gets renamed to Authorization
-    if gateway and gateway.auth_type in ["basic", "bearer", "oauth"]:
-        upstream_auth = request_headers_lower.get("x-upstream-authorization")
-        if upstream_auth:
-            try:
-                sanitized_value = sanitize_header_value(upstream_auth)
-                if sanitized_value:
-                    # Rename X-Upstream-Authorization to Authorization for upstream
-                    passthrough_headers["Authorization"] = sanitized_value
-                    logger.debug("Renamed X-Upstream-Authorization to Authorization for upstream passthrough")
-            except Exception as e:
-                logger.warning(f"Failed to sanitize X-Upstream-Authorization header: {e}")
 
     logger.debug(f"Final passthrough headers: {list(passthrough_headers.keys())}")
     return passthrough_headers
