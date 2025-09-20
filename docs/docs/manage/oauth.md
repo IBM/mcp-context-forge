@@ -133,15 +133,18 @@ sequenceDiagram
 
 ---
 
-## Token Storage and Refresh (Optional)
+## Token Storage and Refresh
 
-By default, access tokens are fetched on-demand and not persisted. The Authorization Code UI design introduces optional storage and refresh:
+OAuth tokens are stored per gateway and user for the Authorization Code flow to ensure proper security isolation:
 
-- Store tokens per gateway + user
+- **User-Scoped Tokens**: OAuth tokens are scoped per MCP Gateway user (using app_user_email field) to prevent token sharing between users
+- Store tokens per gateway + user combination with unique constraints
 - Auto-refresh using refresh tokens when near expiry
 - Encrypt tokens at rest using `AUTH_ENCRYPTION_SECRET`
+- Foreign key relationships ensure token cleanup when users are deleted
 
-If enabled in future releases, you will be able to toggle token storage and auto-refresh in the gateway's OAuth settings. See oauth-authorization-code-ui-design.md.
+!!! important "Security Enhancement"
+    OAuth tokens are now user-scoped to prevent token sharing between users. Each Authorization Code flow token is tied to the specific MCP Gateway user who authorized it, providing better security isolation.
 
 ---
 

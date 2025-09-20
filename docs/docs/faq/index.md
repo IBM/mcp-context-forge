@@ -145,6 +145,24 @@
     - Use `make podman-run-ssl` for self-signed certs or drop your own certificate under `certs`.
     - Set `ALLOWED_ORIGINS` or `CORS_ENABLED` for CORS headers.
 
+???+ example "🔐 How do I pass Authorization headers to upstream MCP servers when the gateway uses authentication?"
+    When MCP Gateway uses authentication (JWT/Bearer/Basic/OAuth), there's a conflict if you need to pass different Authorization headers to upstream MCP servers.
+
+    **Solution: Use X-Upstream-Authorization header**
+
+    ```bash
+    # Send X-Upstream-Authorization header - gateway automatically renames it to Authorization for upstream
+    curl -H "Authorization: Bearer $GATEWAY_TOKEN" \
+         -H "X-Upstream-Authorization: Bearer $UPSTREAM_TOKEN" \
+         -X POST http://localhost:4444/tools/invoke/my_tool \
+         -d '{"arguments": {}}'
+    ```
+
+    The gateway will:
+    1. Use the `Authorization` header for gateway authentication
+    2. Rename `X-Upstream-Authorization` to `Authorization` when forwarding to the upstream MCP server
+    3. This solves the header conflict and allows different auth tokens for gateway vs upstream
+
 ---
 
 ## 📡 Tools, Servers & Federation

@@ -71,6 +71,27 @@ ADD COLUMN oauth_config JSON;
 }
 ```
 
+### OAuth Tokens Table
+
+```sql
+CREATE TABLE oauth_tokens (
+    id INTEGER PRIMARY KEY,
+    gateway_id VARCHAR(255) NOT NULL,
+    user_id VARCHAR(255) NOT NULL,
+    app_user_email VARCHAR(255) NOT NULL, -- MCP Gateway user (security isolation)
+    access_token TEXT NOT NULL,
+    refresh_token TEXT,
+    expires_at TIMESTAMP NOT NULL,
+    scopes JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (gateway_id) REFERENCES gateways (id) ON DELETE CASCADE,
+    FOREIGN KEY (app_user_email) REFERENCES email_users (email) ON DELETE CASCADE,
+    UNIQUE CONSTRAINT (gateway_id, app_user_email) -- One token per gateway per MCP user
+);
+```
+
 ## Core Components
 
 ### 1. OAuth Manager Service
@@ -315,11 +336,13 @@ sequenceDiagram
 
 ## Security Considerations
 
-1. **Token Storage**: Access tokens are never stored - requested fresh for each operation
-2. **Secret Encryption**: Client secrets encrypted using `AUTH_ENCRYPTION_SECRET`
-3. **HTTPS Required**: All OAuth endpoints must use HTTPS
-4. **Scope Validation**: Request minimum required scopes
-5. **Error Handling**: Comprehensive error handling for OAuth failures
+1. **User-Scoped Token Storage**: OAuth tokens are stored per gateway and MCP Gateway user (app_user_email) to prevent token sharing between users
+2. **Token Isolation**: Each Authorization Code flow token is tied to the specific user who authorized it with unique constraints
+3. **Secret Encryption**: Client secrets and stored tokens encrypted using `AUTH_ENCRYPTION_SECRET`
+4. **HTTPS Required**: All OAuth endpoints must use HTTPS
+5. **Scope Validation**: Request minimum required scopes
+6. **Error Handling**: Comprehensive error handling for OAuth failures
+7. **Data Integrity**: Foreign key relationships ensure token cleanup when users are deleted
 
 ## Configuration
 
