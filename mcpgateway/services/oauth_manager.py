@@ -14,7 +14,7 @@ This module handles OAuth 2.0 authentication flows including:
 # Standard
 import asyncio
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -31,6 +31,15 @@ from mcpgateway.config import get_settings
 from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 
 logger = logging.getLogger(__name__)
+
+# In-memory storage for OAuth states with expiration
+# Format: {state_key: {"state": state, "gateway_id": gateway_id, "expires_at": datetime}}
+_oauth_states: Dict[str, Dict[str, Any]] = {}
+# Lock for thread-safe state operations
+_state_lock = asyncio.Lock()
+
+# State TTL in seconds (5 minutes)
+STATE_TTL_SECONDS = 300
 
 
 class OAuthManager:
@@ -373,6 +382,10 @@ class OAuthManager:
         Raises:
             OAuthError: If state validation fails or token exchange fails
         """
+        # First, validate state to prevent replay attacks
+        if not await self._validate_authorization_state(gateway_id, state):
+            raise OAuthError("Invalid or expired state parameter - possible replay attack")
+
         # Decode state to extract user context and verify HMAC
         try:
             # Decode base64
@@ -402,9 +415,6 @@ class OAuthManager:
             # Fallback for legacy state format (gateway_id_random)
             logger.warning(f"Failed to decode state JSON, trying legacy format: {e}")
             app_user_email = None
-            # Legacy validation
-            if self.token_storage and not await self._validate_authorization_state(gateway_id, state):
-                raise OAuthError("Invalid state parameter")
 
         # Exchange code for tokens
         token_response = await self._exchange_code_for_tokens(credentials, code)
@@ -471,32 +481,61 @@ class OAuthManager:
 
         return state_encoded
 
-    async def _store_authorization_state(self, gateway_id: str, state: str) -> None:  # pylint: disable=unused-argument
-        """Store authorization state for validation.
+    async def _store_authorization_state(self, gateway_id: str, state: str) -> None:
+        """Store authorization state for validation with TTL.
 
         Args:
             gateway_id: ID of the gateway
             state: State parameter to store
         """
-        # This is a placeholder implementation
-        # In a real implementation, you would store the state in a cache or database
-        # with an expiration time for security
-        logger.debug(f"Stored authorization state for gateway {gateway_id}")
+        async with _state_lock:
+            # Clean up expired states first
+            now = datetime.now(timezone.utc)
+            expired_states = [key for key, data in _oauth_states.items() if data["expires_at"] < now]
+            for key in expired_states:
+                del _oauth_states[key]
+                logger.debug(f"Cleaned up expired state: {key[:10]}...")
 
-    async def _validate_authorization_state(self, gateway_id: str, state: str) -> bool:  # pylint: disable=unused-argument
-        """Validate authorization state parameter.
+            # Store the new state with expiration
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
+            state_key = f"{gateway_id}:{state}"
+            _oauth_states[state_key] = {"state": state, "gateway_id": gateway_id, "expires_at": expires_at, "used": False}  # Track if state has been used
+            logger.debug(f"Stored authorization state for gateway {gateway_id}, expires at {expires_at.isoformat()}")
+
+    async def _validate_authorization_state(self, gateway_id: str, state: str) -> bool:
+        """Validate authorization state parameter and mark as used.
 
         Args:
             gateway_id: ID of the gateway
             state: State parameter to validate
 
         Returns:
-            True if state is valid
+            True if state is valid and not yet used, False otherwise
         """
-        # This is a placeholder implementation
-        # In a real implementation, you would retrieve and validate the stored state
-        logger.debug(f"Validating authorization state for gateway {gateway_id}")
-        return True  # Placeholder: always return True for now
+        async with _state_lock:
+            state_key = f"{gateway_id}:{state}"
+            state_data = _oauth_states.get(state_key)
+
+            # Check if state exists
+            if not state_data:
+                logger.warning(f"State not found for gateway {gateway_id}")
+                return False
+
+            # Check if state has expired
+            if state_data["expires_at"] < datetime.now(timezone.utc):
+                logger.warning(f"State has expired for gateway {gateway_id}")
+                del _oauth_states[state_key]  # Clean up expired state
+                return False
+
+            # Check if state has already been used (prevent replay)
+            if state_data.get("used", False):
+                logger.warning(f"State has already been used for gateway {gateway_id} - possible replay attack")
+                return False
+
+            # Mark state as used and remove it (single-use)
+            del _oauth_states[state_key]
+            logger.debug(f"Successfully validated and consumed state for gateway {gateway_id}")
+            return True
 
     def _create_authorization_url(self, credentials: Dict[str, Any], state: str) -> tuple[str, str]:
         """Create authorization URL with state parameter.

@@ -624,6 +624,9 @@ class TestOAuthManager:
                 "expires_in": 3600
             }
 
+            # Store the state first to make it valid
+            await manager._store_authorization_state(gateway_id, state)
+
             with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
                     mock_exchange.return_value = token_response
 
@@ -703,7 +706,8 @@ class TestOAuthManager:
         """Test getting access token when no token storage is available."""
         manager = OAuthManager()  # No token_storage
 
-        result = await manager.get_access_token_for_user("gateway123", "user123")
+        # Note: app_user_email is now used as the user identifier
+        result = await manager.get_access_token_for_user("gateway123", "user@example.com")
 
         assert result is None
 
@@ -749,21 +753,29 @@ class TestOAuthManager:
             assert state != state2
 
     @pytest.mark.asyncio
-    async def test_store_authorization_state_placeholder(self):
-        """Test authorization state storage placeholder."""
+    async def test_store_authorization_state(self):
+        """Test authorization state storage with expiration."""
         manager = OAuthManager()
 
-        # This is a placeholder method, should complete without error
+        # Store a state
         await manager._store_authorization_state("gateway123", "state123")
 
-    @pytest.mark.asyncio
-    async def test_validate_authorization_state_placeholder(self):
-        """Test authorization state validation placeholder."""
-        manager = OAuthManager()
-
-        # This is a placeholder method, should return True
+        # Verify it can be validated
         result = await manager._validate_authorization_state("gateway123", "state123")
         assert result is True
+
+        # Verify single-use: second validation should fail
+        result = await manager._validate_authorization_state("gateway123", "state123")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_validate_authorization_state_not_found(self):
+        """Test authorization state validation for non-existent state."""
+        manager = OAuthManager()
+
+        # Try to validate a state that was never stored
+        result = await manager._validate_authorization_state("gateway123", "nonexistent")
+        assert result is False
 
     def test_create_authorization_url(self):
         """Test authorization URL creation."""
@@ -1249,15 +1261,18 @@ class TestOAuthManager:
             "expires_in": 3600
         }
 
-        # No token storage means no state validation
-        with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
-            mock_exchange.return_value = token_response
+        # Mock state validation since we're testing the flow without storage
+        with patch.object(manager, '_validate_authorization_state') as mock_validate:
+            mock_validate.return_value = True
 
-            with patch.object(manager, '_extract_user_id') as mock_extract_user:
-                mock_extract_user.return_value = "user123"
+            with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
+                mock_exchange.return_value = token_response
 
-                # This should hit line 334 - return without token storage
-                result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+                with patch.object(manager, '_extract_user_id') as mock_extract_user:
+                    mock_extract_user.return_value = "user123"
+
+                    # This should hit line 334 - return without token storage
+                    result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
                 expected = {
                     "success": True,

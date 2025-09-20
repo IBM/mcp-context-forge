@@ -765,6 +765,8 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
         # Client auth disabled → allow proxy header
         if proxy_user:
+            # Set user context for proxy-authenticated sessions
+            user_context_var.set({"email": proxy_user})
             return True  # Trusted proxy supplied user
 
     # --- Standard JWT authentication flow (client auth enabled) ---

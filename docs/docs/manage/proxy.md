@@ -425,10 +425,11 @@ JWT_SECRET_KEY=your-secret
 # oauth_config in gateway configuration
 ```
 
-The gateway will only process `X-Upstream-Authorization` headers when:
+The gateway will always process `X-Upstream-Authorization` headers when:
 1. The gateway itself uses authentication (`auth_type` in ["basic", "bearer", "oauth"])
 2. The header value passes security validation
-3. Header passthrough is not explicitly disabled
+
+**Note**: `X-Upstream-Authorization` processing is independent of the `ENABLE_HEADER_PASSTHROUGH` flag and always works when the gateway uses authentication.
 
 #### Security Notes
 
