@@ -206,8 +206,18 @@ def get_user_email(user):
         >>> main.get_user_email(user_dict)
         'alice@example.com'
 
-        Test with dictionary user without email:
-        >>> user_dict_no_email = {'username': 'bob', 'role': 'user'}
+        Test with dictionary user containing sub (JWT standard claim):
+        >>> user_dict_sub = {'sub': 'bob@example.com', 'role': 'user'}
+        >>> main.get_user_email(user_dict_sub)
+        'bob@example.com'
+
+        Test with dictionary user containing both email and sub (email takes precedence):
+        >>> user_dict_both = {'email': 'alice@example.com', 'sub': 'bob@example.com'}
+        >>> main.get_user_email(user_dict_both)
+        'alice@example.com'
+
+        Test with dictionary user without email or sub:
+        >>> user_dict_no_email = {'username': 'charlie', 'role': 'user'}
         >>> main.get_user_email(user_dict_no_email)
         'unknown'
 
@@ -244,7 +254,8 @@ def get_user_email(user):
         'unknown'
     """
     if isinstance(user, dict):
-        return user.get("email", "unknown")
+        # First try 'email', then 'sub' (JWT standard claim)
+        return user.get("email") or user.get("sub") or "unknown"
     return str(user) if user else "unknown"
 
 
@@ -284,7 +295,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("Observability initialized")
 
     try:
-
         # Validate security configuration
         await validate_security_configuration()
 
@@ -3457,12 +3467,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             arguments = params.get("arguments", {})
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
+            # Get user email for OAuth token selection
+            user_email = get_user_email(user)
             try:
-                result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=headers)
+                result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=headers, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
-                result = await gateway_service.forward_request(db, method, params)
+                result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
         # TODO: Implement methods  # pylint: disable=fixme
@@ -3485,8 +3497,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # This allows both old format (method=tool_name) and new format (method=tools/call)
             # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
+            # Get user email for OAuth token selection
+            user_email = get_user_email(user)
             try:
-                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
@@ -3494,7 +3508,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
-                    result = await gateway_service.forward_request(db, method, params)
+                    result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
                     if hasattr(result, "model_dump"):
                         result = result.model_dump(by_alias=True, exclude_none=True)
                 except Exception:

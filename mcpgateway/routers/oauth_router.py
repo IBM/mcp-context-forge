@@ -23,7 +23,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth import get_current_user
 from mcpgateway.db import Gateway, get_db
+from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -33,7 +35,7 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(gateway_id: str, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> RedirectResponse:
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -43,6 +45,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, db: Session = D
     Args:
         gateway_id: The unique identifier of the gateway to authorize.
         request: The FastAPI request object.
+        current_user: The authenticated user initiating the OAuth flow.
         db: The database session dependency.
 
     Returns:
@@ -70,11 +73,11 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, db: Session = D
         if gateway.oauth_config.get("grant_type") != "authorization_code":
             raise HTTPException(status_code=400, detail="Gateway is not configured for Authorization Code flow")
 
-        # Initiate OAuth flow
+        # Initiate OAuth flow with user context
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, gateway.oauth_config)
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, gateway.oauth_config, app_user_email=current_user.email)
 
-        logger.info(f"Initiated OAuth flow for gateway {gateway_id}")
+        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.email}")
 
         # Redirect user to OAuth provider
         return RedirectResponse(url=auth_data["authorization_url"])
@@ -109,6 +112,9 @@ async def oauth_callback(
     Returns:
         HTMLResponse: An HTML response indicating the result of the OAuth authorization process.
 
+    Raises:
+        ValueError: Raised internally when state parameter is missing gateway_id (caught and handled).
+
     Examples:
         >>> import asyncio
         >>> asyncio.iscoroutinefunction(oauth_callback)
@@ -120,10 +126,23 @@ async def oauth_callback(
         root_path = request.scope.get("root_path", "") if request else ""
 
         # Extract gateway_id from state parameter
-        if "_" not in state:
-            return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
+        # Try new base64-encoded JSON format first
+        # Standard
+        import base64
+        import json
 
-        gateway_id = state.split("_")[0]
+        try:
+            state_decoded = base64.urlsafe_b64decode(state.encode()).decode()
+            state_data = json.loads(state_decoded)
+            gateway_id = state_data.get("gateway_id")
+            if not gateway_id:
+                raise ValueError("No gateway_id in state")
+        except Exception as e:
+            # Fallback to legacy format (gateway_id_random)
+            logger.warning(f"Failed to decode state as JSON, trying legacy format: {e}")
+            if "_" not in state:
+                return HTMLResponse(content="<h1>❌ Invalid state parameter</h1>", status_code=400)
+            gateway_id = state.split("_")[0]
 
         # Get gateway configuration
         gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
@@ -384,11 +403,12 @@ async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> di
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
-async def fetch_tools_after_oauth(gateway_id: str, db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
     Args:
         gateway_id: ID of the gateway to fetch tools for
+        current_user: The authenticated user fetching tools
         db: Database session
 
     Returns:
@@ -402,7 +422,7 @@ async def fetch_tools_after_oauth(gateway_id: str, db: Session = Depends(get_db)
         from mcpgateway.services.gateway_service import GatewayService
 
         gateway_service = GatewayService()
-        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id)
+        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.email)
         tools_count = len(result.get("tools", []))
 
         return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
