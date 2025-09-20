@@ -30,8 +30,12 @@ When clients make requests through the MCP Gateway, certain headers (like authen
 # Enable the feature (disabled by default)
 ENABLE_HEADER_PASSTHROUGH=true
 
+# Optional: Enable overwriting of base headers (disabled by default)
+ENABLE_OVERWRITE_BASE_HEADERS=false
+
 # Or in .env file
 ENABLE_HEADER_PASSTHROUGH=true
+ENABLE_OVERWRITE_BASE_HEADERS=false
 ```
 
 **Warning**: Only enable this feature if you:
@@ -60,6 +64,29 @@ DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id"]
 - Only add `Authorization` if you fully understand the token leakage risks
 - Header names are validated against pattern: `^[A-Za-z0-9-]+$`
 - Header values are sanitized (newlines removed, length limited to 4KB)
+
+### Base Headers Override (Advanced)
+
+By default, passthrough headers **cannot override** existing base headers set by the gateway (like `Content-Type`, `Authorization`, etc.). This prevents conflicts with essential gateway functionality.
+
+```bash
+# Enable overwriting of base headers (⚠️ Advanced usage only)
+ENABLE_OVERWRITE_BASE_HEADERS=true
+```
+
+**⚠️ Warning**: Only enable this if you:
+- Understand the implications of overriding gateway headers
+- Need specific headers from client requests to take precedence
+- Have thoroughly tested the impact on gateway functionality
+
+**Use Cases**:
+- Custom authentication schemes that require client-provided `Authorization` headers
+- Specialized content negotiation requiring client `Content-Type` override
+- Advanced proxy scenarios with specific header requirements
+
+**Conflicts Still Prevented**:
+- Gateway authentication conflicts are still detected and logged
+- Invalid headers are still rejected and sanitized
 
 ### Admin UI Configuration
 

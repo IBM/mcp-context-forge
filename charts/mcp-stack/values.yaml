@@ -282,6 +282,7 @@ mcpContextForge:
 
     # ─ Header Passthrough (Security Warning) ─
     ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough (security implications)
+    ENABLE_OVERWRITE_BASE_HEADERS: "false" # enable overwriting of base headers (advanced usage)
     DEFAULT_PASSTHROUGH_HEADERS: '["X-Tenant-Id", "X-Trace-Id"]' # default headers to pass through (JSON array)
 
   ####################################################################

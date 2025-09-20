@@ -1073,6 +1073,7 @@ Disallow: /
 
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")
+    enable_overwrite_base_headers: bool = Field(default=False, description="Enable overwriting of base headers")
 
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)

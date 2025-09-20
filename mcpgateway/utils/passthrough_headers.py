@@ -240,6 +240,9 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
         logger.debug("Header passthrough is disabled via ENABLE_HEADER_PASSTHROUGH flag")
         return passthrough_headers
 
+    if settings.enable_overwrite_base_headers:
+        logger.debug("Overwriting base headers is enabled via ENABLE_OVERWRITE_BASE_HEADERS flag")
+
     # Get global passthrough headers first
     global_config = db.query(GlobalConfig).first()
     allowed_headers = global_config.passthrough_headers if global_config else settings.default_passthrough_headers
@@ -278,7 +281,7 @@ def get_passthrough_headers(request_headers: Dict[str, str], base_headers: Dict[
                     continue
 
                 # Skip if header would conflict with existing auth headers
-                if header_lower in base_headers_keys:
+                if header_lower in base_headers_keys and not settings.enable_overwrite_base_headers:
                     logger.warning(f"Skipping {header_name} header passthrough as it conflicts with pre-defined headers")
                     continue
 
