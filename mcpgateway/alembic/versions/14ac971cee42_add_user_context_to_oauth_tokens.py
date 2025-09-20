@@ -36,7 +36,11 @@ def upgrade() -> None:
     # First, delete all existing OAuth tokens as they lack user context
     # This is a security fix - existing tokens are vulnerable
     try:
-        op.execute("DELETE FROM oauth_tokens")
+        # Check if table has any rows
+        result = conn.execute(sa.text("SELECT COUNT(*) FROM oauth_tokens")).scalar()
+        if result > 0:
+            op.execute("DELETE FROM oauth_tokens")
+            print(f"Deleted {result} existing OAuth tokens (security fix)")
     except Exception as e:
         print(f"Warning: Could not delete existing tokens: {e}")
 
