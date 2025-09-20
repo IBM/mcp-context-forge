@@ -181,18 +181,78 @@ class TokenStorageService:
             New access token or None if refresh failed
         """
         try:
-            # This is a placeholder for token refresh implementation
-            # In a real implementation, you would:
-            # 1. Decrypt the refresh token
-            # 2. Make a request to the OAuth provider's token endpoint
-            # 3. Update the stored tokens with the new response
-            # 4. Return the new access token
+            if not token_record.refresh_token:
+                logger.warning(f"No refresh token available for gateway {token_record.gateway_id}")
+                return None
 
-            logger.info(f"Token refresh not yet implemented for gateway {token_record.gateway_id}")
-            return None
+            # Get the gateway configuration to retrieve OAuth settings
+            # First-Party
+            from mcpgateway.db import Gateway  # pylint: disable=import-outside-toplevel
+
+            gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
+
+            if not gateway or not gateway.oauth_config:
+                logger.error(f"No OAuth configuration found for gateway {token_record.gateway_id}")
+                return None
+
+            # Decrypt the refresh token if encryption is available
+            refresh_token = token_record.refresh_token
+            if self.encryption:
+                try:
+                    refresh_token = self.encryption.decrypt_secret(refresh_token)
+                except Exception as e:
+                    logger.error(f"Failed to decrypt refresh token: {str(e)}")
+                    return None
+
+            # Decrypt client_secret if it's encrypted
+            oauth_config = gateway.oauth_config.copy()
+            if "client_secret" in oauth_config and oauth_config["client_secret"]:
+                if self.encryption:
+                    try:
+                        oauth_config["client_secret"] = self.encryption.decrypt_secret(oauth_config["client_secret"])
+                    except Exception:
+                        # If decryption fails, assume it's already plain text
+                        pass
+
+            # Use OAuthManager to refresh the token
+            # First-Party
+            from mcpgateway.services.oauth_manager import OAuthManager  # pylint: disable=import-outside-toplevel
+
+            oauth_manager = OAuthManager()
+
+            logger.info(f"Attempting to refresh token for gateway {token_record.gateway_id}, user {token_record.app_user_email}")
+            token_response = await oauth_manager.refresh_token(refresh_token, oauth_config)
+
+            # Update stored tokens with new values
+            new_access_token = token_response["access_token"]
+            new_refresh_token = token_response.get("refresh_token", refresh_token)  # Some providers return new refresh token
+            expires_in = token_response.get("expires_in", 3600)
+
+            # Encrypt new tokens if encryption is available
+            encrypted_access = new_access_token
+            encrypted_refresh = new_refresh_token
+            if self.encryption:
+                encrypted_access = self.encryption.encrypt_secret(new_access_token)
+                encrypted_refresh = self.encryption.encrypt_secret(new_refresh_token)
+
+            # Update the token record
+            token_record.access_token = encrypted_access
+            token_record.refresh_token = encrypted_refresh
+            token_record.expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+            token_record.updated_at = datetime.now(timezone.utc)
+
+            self.db.commit()
+            logger.info(f"Successfully refreshed token for gateway {token_record.gateway_id}, user {token_record.app_user_email}")
+
+            return new_access_token
 
         except Exception as e:
-            logger.error(f"Failed to refresh OAuth token: {str(e)}")
+            logger.error(f"Failed to refresh OAuth token for gateway {token_record.gateway_id}: {str(e)}")
+            # If refresh fails, we should clear the token to force re-authentication
+            if "invalid" in str(e).lower() or "expired" in str(e).lower():
+                logger.warning(f"Refresh token appears invalid/expired, clearing tokens for gateway {token_record.gateway_id}")
+                self.db.delete(token_record)
+                self.db.commit()
             return None
 
     def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:

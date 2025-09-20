@@ -1600,6 +1600,163 @@ class TestOAuthManager:
                     assert result == "exchange_exception_token"
                     mock_encryption.decrypt_secret.assert_called_once_with(encrypted_secret)
 
+    @pytest.mark.asyncio
+    async def test_refresh_token_success(self):
+        """Test successful token refresh."""
+        manager = OAuthManager()
+
+        credentials = {
+            "token_url": "https://oauth.example.com/token",
+            "client_id": "test_client",
+            "client_secret": "test_secret"
+        }
+
+        with patch('mcpgateway.services.oauth_manager.aiohttp.ClientSession') as mock_session_class:
+            mock_session_instance = MagicMock()
+            mock_post = MagicMock()
+            mock_session_instance.post = mock_post
+
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.json = AsyncMock(return_value={
+                "access_token": "new_access_token",
+                "refresh_token": "new_refresh_token",
+                "expires_in": 7200
+            })
+            mock_response.raise_for_status = MagicMock()
+            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_response.__aexit__ = AsyncMock(return_value=None)
+
+            mock_post.return_value = mock_response
+            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
+            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_session_instance
+
+            result = await manager.refresh_token("old_refresh_token", credentials)
+
+            assert result == {
+                "access_token": "new_access_token",
+                "refresh_token": "new_refresh_token",
+                "expires_in": 7200
+            }
+
+            # Verify the correct data was sent
+            mock_post.assert_called_once()
+            call_args = mock_post.call_args
+            assert call_args[0][0] == "https://oauth.example.com/token"
+            assert call_args[1]["data"]["grant_type"] == "refresh_token"
+            assert call_args[1]["data"]["refresh_token"] == "old_refresh_token"
+            assert call_args[1]["data"]["client_id"] == "test_client"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_with_client_secret(self):
+        """Test token refresh with client secret included."""
+        manager = OAuthManager()
+
+        credentials = {
+            "token_url": "https://oauth.example.com/token",
+            "client_id": "test_client",
+            "client_secret": "test_secret"
+        }
+
+        with patch('mcpgateway.services.oauth_manager.aiohttp.ClientSession') as mock_session_class:
+            mock_session_instance = MagicMock()
+            mock_post = MagicMock()
+            mock_session_instance.post = mock_post
+
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.json = AsyncMock(return_value={
+                "access_token": "new_token"
+            })
+            mock_response.raise_for_status = MagicMock()
+            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_response.__aexit__ = AsyncMock(return_value=None)
+
+            mock_post.return_value = mock_response
+            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
+            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_session_instance
+
+            await manager.refresh_token("refresh_token", credentials)
+
+            # Verify client secret was included
+            call_args = mock_post.call_args
+            assert call_args[1]["data"]["client_secret"] == "test_secret"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_error_handling(self):
+        """Test token refresh error handling."""
+        manager = OAuthManager()
+
+        credentials = {
+            "token_url": "https://oauth.example.com/token",
+            "client_id": "test_client"
+        }
+
+        with patch('mcpgateway.services.oauth_manager.aiohttp.ClientSession') as mock_session_class:
+            mock_session_instance = MagicMock()
+            mock_post = MagicMock()
+            mock_session_instance.post = mock_post
+
+            mock_response = MagicMock()
+            mock_response.status = 400
+            mock_response.json = AsyncMock(return_value={
+                "error": "invalid_grant"
+            })
+            mock_response.text = AsyncMock(return_value='{"error": "invalid_grant"}')
+            mock_response.raise_for_status = MagicMock(side_effect=aiohttp.ClientResponseError(
+                request_info=MagicMock(),
+                history=(),
+                status=400
+            ))
+            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_response.__aexit__ = AsyncMock(return_value=None)
+
+            mock_post.return_value = mock_response
+            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
+            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_session_instance
+
+            with pytest.raises(OAuthError) as exc_info:
+                await manager.refresh_token("invalid_token", credentials)
+
+            assert "Refresh token invalid or expired" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_missing_access_token(self):
+        """Test token refresh when access_token is missing from response."""
+        manager = OAuthManager()
+
+        credentials = {
+            "token_url": "https://oauth.example.com/token",
+            "client_id": "test_client"
+        }
+
+        with patch('mcpgateway.services.oauth_manager.aiohttp.ClientSession') as mock_session_class:
+            mock_session_instance = MagicMock()
+            mock_post = MagicMock()
+            mock_session_instance.post = mock_post
+
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.json = AsyncMock(return_value={
+                "expires_in": 3600  # Missing access_token
+            })
+            mock_response.raise_for_status = MagicMock()
+            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_response.__aexit__ = AsyncMock(return_value=None)
+
+            mock_post.return_value = mock_response
+            mock_session_instance.__aenter__ = AsyncMock(return_value=mock_session_instance)
+            mock_session_instance.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_session_instance
+
+            with pytest.raises(OAuthError) as exc_info:
+                await manager.refresh_token("refresh_token", credentials)
+
+            assert "No access_token in refresh response" in str(exc_info.value)
+
 
 class TestTokenStorageService:
     """Test cases for TokenStorageService class."""
@@ -2035,9 +2192,83 @@ class TestTokenStorageService:
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_refresh_access_token_not_implemented(self):
-        """Test _refresh_access_token placeholder implementation."""
+    async def test_refresh_access_token_success(self):
+        """Test successful token refresh in TokenStorageService."""
+        # Standard
+        from mcpgateway.db import Gateway
+
         mock_db = Mock()
+
+        # Create a mock gateway with OAuth config
+        mock_gateway = Gateway(
+            id="gateway123",
+            name="Test Gateway",
+            oauth_config={
+                "token_url": "https://oauth.example.com/token",
+                "client_id": "test_client",
+                "client_secret": "test_secret"
+            }
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
+        mock_db.commit = Mock()
+
+        with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
+            mock_get_settings.side_effect = ImportError("No encryption")
+
+            service = TokenStorageService(mock_db)
+
+            token_record = OAuthToken(
+                gateway_id="gateway123",
+                user_id="user123",
+                app_user_email="test@example.com",
+                access_token="expired_token",
+                refresh_token="old_refresh_token",
+                expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1)
+            )
+
+            # Mock the OAuthManager refresh_token method
+            with patch('mcpgateway.services.oauth_manager.OAuthManager') as mock_oauth_manager_class:
+                mock_manager = mock_oauth_manager_class.return_value
+                mock_manager.refresh_token = AsyncMock(return_value={
+                    "access_token": "new_access_token",
+                    "refresh_token": "new_refresh_token",
+                    "expires_in": 7200
+                })
+
+                result = await service._refresh_access_token(token_record)
+
+                assert result == "new_access_token"
+                assert token_record.access_token == "new_access_token"
+                assert token_record.refresh_token == "new_refresh_token"
+                mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_access_token_no_refresh_token(self):
+        """Test refresh when no refresh token is available."""
+        mock_db = Mock()
+
+        with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
+            mock_get_settings.side_effect = ImportError("No encryption")
+
+            service = TokenStorageService(mock_db)
+
+            token_record = OAuthToken(
+                gateway_id="gateway123",
+                user_id="user123",
+                access_token="expired_token",
+                refresh_token=None,  # No refresh token
+                expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1)
+            )
+
+            result = await service._refresh_access_token(token_record)
+
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_refresh_access_token_no_gateway(self):
+        """Test refresh when gateway is not found."""
+        mock_db = Mock()
+        mock_db.query.return_value.filter.return_value.first.return_value = None  # Gateway not found
 
         with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2057,22 +2288,52 @@ class TestTokenStorageService:
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_refresh_access_token_exception(self):
-        """Test exception handling in _refresh_access_token."""
+    async def test_refresh_access_token_invalid_token(self):
+        """Test refresh with invalid refresh token."""
+        # Standard
+        from mcpgateway.db import Gateway
+
         mock_db = Mock()
+        mock_db.delete = Mock()
+        mock_db.commit = Mock()
+
+        # Create a mock gateway with OAuth config
+        mock_gateway = Gateway(
+            id="gateway123",
+            name="Test Gateway",
+            oauth_config={
+                "token_url": "https://oauth.example.com/token",
+                "client_id": "test_client",
+                "client_secret": "test_secret"
+            }
+        )
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
 
         with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
 
             service = TokenStorageService(mock_db)
 
-            # Force an exception during refresh
-            token_record = Mock()
-            token_record.gateway_id = None  # This will cause an error in f-string
+            token_record = OAuthToken(
+                gateway_id="gateway123",
+                user_id="user123",
+                app_user_email="test@example.com",
+                access_token="expired_token",
+                refresh_token="invalid_refresh_token",
+                expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1)
+            )
 
-            result = await service._refresh_access_token(token_record)
+            # Mock the OAuthManager refresh_token method to raise an error
+            with patch('mcpgateway.services.oauth_manager.OAuthManager') as mock_oauth_manager_class:
+                mock_manager = mock_oauth_manager_class.return_value
+                mock_manager.refresh_token = AsyncMock(side_effect=Exception("Refresh token invalid or expired"))
 
-            assert result is None
+                result = await service._refresh_access_token(token_record)
+
+                assert result is None
+                # Should delete the invalid token
+                mock_db.delete.assert_called_once_with(token_record)
+                mock_db.commit.assert_called_once()
 
     def test_is_token_expired_no_expires_at(self):
         """Test _is_token_expired with no expiration date."""

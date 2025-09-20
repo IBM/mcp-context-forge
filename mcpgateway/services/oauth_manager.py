@@ -789,6 +789,72 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
+    async def refresh_token(self, refresh_token: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
+        """Refresh an expired access token using a refresh token.
+
+        Args:
+            refresh_token: The refresh token to use
+            credentials: OAuth configuration including client_id, client_secret, token_url
+
+        Returns:
+            Dict containing new access_token, optional refresh_token, and expires_in
+
+        Raises:
+            OAuthError: If token refresh fails
+        """
+        if not refresh_token:
+            raise OAuthError("No refresh token available")
+
+        token_url = credentials.get("token_url")
+        if not token_url:
+            raise OAuthError("No token URL configured for OAuth provider")
+
+        client_id = credentials.get("client_id")
+        client_secret = credentials.get("client_secret")
+
+        if not client_id:
+            raise OAuthError("No client_id configured for OAuth provider")
+
+        # Prepare token refresh request
+        token_data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        }
+
+        # Add client_secret if available (some providers require it)
+        if client_secret:
+            token_data["client_secret"] = client_secret
+
+        # Attempt token refresh with retries
+        for attempt in range(self.max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=self.request_timeout)) as response:
+                        if response.status == 200:
+                            token_response = await response.json()
+
+                            # Validate required fields
+                            if "access_token" not in token_response:
+                                raise OAuthError("No access_token in refresh response")
+
+                            logger.info("Successfully refreshed OAuth token")
+                            return token_response
+
+                        error_text = await response.text()
+                        # If we get a 400/401, the refresh token is likely invalid
+                        if response.status in [400, 401]:
+                            raise OAuthError(f"Refresh token invalid or expired: {error_text}")
+                        logger.warning(f"Token refresh failed with status {response.status}: {error_text}")
+
+            except aiohttp.ClientError as e:
+                logger.warning(f"Token refresh attempt {attempt + 1} failed: {str(e)}")
+                if attempt == self.max_retries - 1:
+                    raise OAuthError(f"Failed to refresh token after {self.max_retries} attempts: {str(e)}")
+                await asyncio.sleep(2**attempt)  # Exponential backoff
+
+        raise OAuthError("Failed to refresh token after all retry attempts")
+
     def _extract_user_id(self, token_response: Dict[str, Any], credentials: Dict[str, Any]) -> str:
         """Extract user ID from token response.
 
