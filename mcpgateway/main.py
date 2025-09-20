@@ -284,7 +284,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("Observability initialized")
 
     try:
-
         # Validate security configuration
         await validate_security_configuration()
 
@@ -3457,12 +3456,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             arguments = params.get("arguments", {})
             if not name:
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
+            # Get user email for OAuth token selection
+            user_email = get_user_email(user)
             try:
-                result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=headers)
+                result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=headers, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
-                result = await gateway_service.forward_request(db, method, params)
+                result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
         # TODO: Implement methods  # pylint: disable=fixme
@@ -3485,8 +3486,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # This allows both old format (method=tool_name) and new format (method=tools/call)
             # Standard
             headers = {k.lower(): v for k, v in request.headers.items()}
+            # Get user email for OAuth token selection
+            user_email = get_user_email(user)
             try:
-                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers)
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
@@ -3494,7 +3497,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             except (ValueError, Exception):
                 # If not a tool, try forwarding to gateway
                 try:
-                    result = await gateway_service.forward_request(db, method, params)
+                    result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
                     if hasattr(result, "model_dump"):
                         result = result.model_dump(by_alias=True, exclude_none=True)
                 except Exception:

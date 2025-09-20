@@ -566,7 +566,7 @@ class TestOAuthManager:
                 with patch.object(manager, '_create_authorization_url') as mock_create_url:
                     mock_create_url.return_value = ("https://oauth.example.com/authorize?state=state123", "state123")
 
-                    result = await manager.initiate_authorization_code_flow(gateway_id, credentials)
+                    result = await manager.initiate_authorization_code_flow(gateway_id, credentials, app_user_email="test@example.com")
 
                     expected = {
                         "authorization_url": "https://oauth.example.com/authorize?state=state123",
@@ -574,19 +574,24 @@ class TestOAuthManager:
                         "gateway_id": "gateway123"
                     }
                     assert result == expected
-                    mock_generate_state.assert_called_once_with(gateway_id)
+                    mock_generate_state.assert_called_once_with(gateway_id, "test@example.com")
                     mock_store_state.assert_called_once_with(gateway_id, "state123")
                     mock_create_url.assert_called_once_with(credentials, "state123")
 
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_success(self):
         """Test successful completion of authorization code flow."""
+        import base64
+        import json
+
         mock_token_storage = Mock()
         manager = OAuthManager(token_storage=mock_token_storage)
 
         gateway_id = "gateway123"
         code = "auth_code_123"
-        state = "gateway123_state456"
+        # Create state with new format
+        state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com", "nonce": "state456"}
+        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
         credentials = {"client_id": "test_client"}
 
         token_response = {
@@ -595,10 +600,7 @@ class TestOAuthManager:
             "expires_in": 3600
         }
 
-        with patch.object(manager, '_validate_authorization_state') as mock_validate_state:
-            mock_validate_state.return_value = True
-
-            with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
+        with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
                 mock_exchange.return_value = token_response
 
                 with patch.object(manager, '_extract_user_id') as mock_extract_user:
@@ -620,7 +622,6 @@ class TestOAuthManager:
                         assert result["success"] == expected["success"]
                         assert result["expires_at"] == expected["expires_at"]
 
-                        mock_validate_state.assert_called_once_with(gateway_id, state)
                         mock_exchange.assert_called_once_with(credentials, code)
                         mock_extract_user.assert_called_once_with(token_response, credentials)
                         mock_store_tokens.assert_called_once()
@@ -628,14 +629,25 @@ class TestOAuthManager:
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_invalid_state(self):
         """Test authorization code flow completion with invalid state."""
+        import base64
+        import json
+
         mock_token_storage = Mock()
         manager = OAuthManager(token_storage=mock_token_storage)
 
-        with patch.object(manager, '_validate_authorization_state') as mock_validate_state:
-            mock_validate_state.return_value = False
+        # Create state with mismatched gateway ID
+        state_data = {"gateway_id": "wrong_gateway", "app_user_email": "test@example.com", "nonce": "state456"}
+        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
 
-            with pytest.raises(OAuthError, match="Invalid state parameter"):
-                await manager.complete_authorization_code_flow("gateway123", "code", "invalid_state", {})
+        credentials = {
+            "client_id": "test_client",
+            "client_secret": "test_secret",
+            "token_url": "https://oauth.example.com/token",
+            "redirect_uri": "https://gateway.example.com/oauth/callback"
+        }
+
+        with pytest.raises(OAuthError):
+            await manager.complete_authorization_code_flow("gateway123", "code", state, credentials)
 
     @pytest.mark.asyncio
     async def test_get_access_token_for_user_success(self):
@@ -675,13 +687,17 @@ class TestOAuthManager:
         """Test state generation format."""
         manager = OAuthManager()
 
-        state = manager._generate_state("gateway123")
+        state = manager._generate_state("gateway123", "test@example.com")
 
-        assert state.startswith("gateway123_")
-        assert len(state) > len("gateway123_")
+        # State is now base64 encoded JSON
+        import base64
+        import json
+        decoded = json.loads(base64.urlsafe_b64decode(state.encode()).decode())
+        assert decoded["gateway_id"] == "gateway123"
+        assert decoded["app_user_email"] == "test@example.com"
 
         # Should generate different states each time
-        state2 = manager._generate_state("gateway123")
+        state2 = manager._generate_state("gateway123", "test@example.com")
         assert state != state2
 
     @pytest.mark.asyncio
@@ -1167,11 +1183,16 @@ class TestOAuthManager:
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_no_token_storage(self):
         """Test complete authorization code flow without token storage (line 334)."""
+        import base64
+        import json
+
         manager = OAuthManager()  # No token storage
 
         gateway_id = "gateway123"
         code = "auth_code_123"
-        state = "gateway123_state456"
+        # Create state with new format
+        state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com", "nonce": "state456"}
+        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
         credentials = {"client_id": "test_client"}
 
         token_response = {
@@ -1591,6 +1612,7 @@ class TestTokenStorageService:
                     result = await service.store_tokens(
                         gateway_id="gateway123",
                         user_id="user123",
+                        app_user_email="test@example.com",
                         access_token="access_token_123",
                         refresh_token="refresh_token_123",
                         expires_in=3600,
@@ -1632,6 +1654,7 @@ class TestTokenStorageService:
                 result = await service.store_tokens(
                     gateway_id="gateway123",
                     user_id="user123",
+                        app_user_email="test@example.com",
                     access_token="access_token_123",
                     refresh_token="refresh_token_123",
                     expires_in=3600,
@@ -1689,6 +1712,7 @@ class TestTokenStorageService:
                     result = await service.store_tokens(
                         gateway_id="gateway123",
                         user_id="user123",
+                        app_user_email="test@example.com",
                         access_token="new_access_token",
                         refresh_token="new_refresh_token",
                         expires_in=3600,
@@ -1732,6 +1756,7 @@ class TestTokenStorageService:
                     result = await service.store_tokens(
                         gateway_id="gateway123",
                         user_id="user123",
+                        app_user_email="test@example.com",
                         access_token="access_token_123",
                         refresh_token=None,
                         expires_in=3600,
@@ -1760,6 +1785,7 @@ class TestTokenStorageService:
                 await service.store_tokens(
                     gateway_id="gateway123",
                     user_id="user123",
+                        app_user_email="test@example.com",
                     access_token="access_token_123",
                     refresh_token="refresh_token_123",
                     expires_in=3600,
@@ -1798,7 +1824,7 @@ class TestTokenStorageService:
 
                 service = TokenStorageService(mock_db)
 
-                result = await service.get_valid_token("gateway123", "user123")
+                result = await service.get_user_token("gateway123", "test@example.com")
 
                 assert result == "decrypted_access_token"
                 mock_encryption.decrypt_secret.assert_called_once_with("encrypted_token")
@@ -1824,7 +1850,7 @@ class TestTokenStorageService:
 
             service = TokenStorageService(mock_db)
 
-            result = await service.get_valid_token("gateway123", "user123")
+            result = await service.get_user_token("gateway123", "test@example.com")
 
             assert result == "plain_access_token"
 
@@ -1839,7 +1865,7 @@ class TestTokenStorageService:
 
             service = TokenStorageService(mock_db)
 
-            result = await service.get_valid_token("gateway123", "user123")
+            result = await service.get_user_token("gateway123", "test@example.com")
 
             assert result is None
 
@@ -1869,7 +1895,7 @@ class TestTokenStorageService:
             with patch.object(service, '_refresh_access_token') as mock_refresh:
                 mock_refresh.return_value = "new_access_token"
 
-                result = await service.get_valid_token("gateway123", "user123")
+                result = await service.get_user_token("gateway123", "test@example.com")
 
                 assert result == "new_access_token"
                 mock_refresh.assert_called_once_with(token_record)
@@ -1895,7 +1921,7 @@ class TestTokenStorageService:
 
             service = TokenStorageService(mock_db)
 
-            result = await service.get_valid_token("gateway123", "user123")
+            result = await service.get_user_token("gateway123", "test@example.com")
 
             assert result is None
 
@@ -1925,7 +1951,7 @@ class TestTokenStorageService:
             with patch.object(service, '_refresh_access_token') as mock_refresh:
                 mock_refresh.return_value = "refreshed_token"
 
-                result = await service.get_valid_token("gateway123", "user123", threshold_seconds=300)
+                result = await service.get_user_token("gateway123", "test@example.com", threshold_seconds=300)
 
                 assert result == "refreshed_token"
                 mock_refresh.assert_called_once_with(token_record)
@@ -1941,90 +1967,7 @@ class TestTokenStorageService:
 
             service = TokenStorageService(mock_db)
 
-            result = await service.get_valid_token("gateway123", "user123")
-
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_any_valid_token_success(self):
-        """Test getting any valid token for a gateway."""
-        mock_db = Mock()
-
-        future_time = datetime.now(tz=timezone.utc) + timedelta(hours=1)
-        token_record = OAuthToken(
-            gateway_id="gateway123",
-            user_id="any_user",
-            access_token="valid_token",
-            refresh_token="refresh_token",
-            expires_at=future_time,
-            scopes=["read", "write"]
-        )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
-
-        with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
-
-            service = TokenStorageService(mock_db)
-
-            result = await service.get_any_valid_token("gateway123")
-
-            assert result == "valid_token"
-
-    @pytest.mark.asyncio
-    async def test_get_any_valid_token_not_found(self):
-        """Test getting any valid token when no tokens exist."""
-        mock_db = Mock()
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
-
-        with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
-
-            service = TokenStorageService(mock_db)
-
-            result = await service.get_any_valid_token("gateway123")
-
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_any_valid_token_expired_with_refresh(self):
-        """Test getting any expired token with refresh capability."""
-        mock_db = Mock()
-
-        past_time = datetime.now(tz=timezone.utc) - timedelta(hours=1)
-        token_record = OAuthToken(
-            gateway_id="gateway123",
-            user_id="any_user",
-            access_token="expired_token",
-            refresh_token="refresh_token",
-            expires_at=past_time,
-            scopes=["read", "write"]
-        )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
-
-        with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
-
-            service = TokenStorageService(mock_db)
-
-            with patch.object(service, '_refresh_access_token') as mock_refresh:
-                mock_refresh.return_value = "refreshed_any_token"
-
-                result = await service.get_any_valid_token("gateway123")
-
-                assert result == "refreshed_any_token"
-
-    @pytest.mark.asyncio
-    async def test_get_any_valid_token_exception(self):
-        """Test exception handling in get_any_valid_token."""
-        mock_db = Mock()
-        mock_db.execute.side_effect = Exception("Database error")
-
-        with patch('mcpgateway.services.token_storage_service.get_settings') as mock_get_settings:
-            mock_get_settings.side_effect = ImportError("No encryption")
-
-            service = TokenStorageService(mock_db)
-
-            result = await service.get_any_valid_token("gateway123")
+            result = await service.get_user_token("gateway123", "test@example.com")
 
             assert result is None
 
@@ -2165,6 +2108,7 @@ class TestTokenStorageService:
         token_record = OAuthToken(
             gateway_id="gateway123",
             user_id="user123",
+            app_user_email="test@example.com",
             access_token="token",
             token_type="Bearer",
             expires_at=expires_time,
@@ -2183,10 +2127,11 @@ class TestTokenStorageService:
             with patch.object(service, '_is_token_expired') as mock_is_expired:
                 mock_is_expired.return_value = False
 
-                result = await service.get_token_info("gateway123", "user123")
+                result = await service.get_token_info("gateway123", "test@example.com")
 
                 expected = {
                     "user_id": "user123",
+                    "app_user_email": "test@example.com",
                     "token_type": "Bearer",
                     "expires_at": "2025-01-01T15:00:00",
                     "scopes": ["read", "write"],
@@ -2238,7 +2183,7 @@ class TestTokenStorageService:
             with patch.object(service, '_is_token_expired') as mock_is_expired:
                 mock_is_expired.return_value = True
 
-                result = await service.get_token_info("gateway123", "user123")
+                result = await service.get_token_info("gateway123", "test@example.com")
 
                 assert result["expires_at"] is None
                 assert result["is_expired"] is True

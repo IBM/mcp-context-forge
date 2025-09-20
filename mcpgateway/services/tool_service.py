@@ -769,7 +769,7 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to toggle tool status: {str(e)}")
 
-    async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any], request_headers: Optional[Dict[str, str]] = None) -> ToolResult:
+    async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any], request_headers: Optional[Dict[str, str]] = None, app_user_email: Optional[str] = None) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
 
@@ -779,6 +779,8 @@ class ToolService:
             arguments: Tool arguments.
             request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Defaults to None.
+            app_user_email (Optional[str], optional): MCP Gateway user email for OAuth token retrieval.
+                Required for OAuth-protected gateways.
 
         Returns:
             Tool invocation result.
@@ -951,15 +953,17 @@ class ToolService:
 
                                 token_storage = TokenStorageService(db)
 
-                                # Try to get a valid token for any user (for now, we'll use a placeholder)
-                                # In a real implementation, you might want to specify which user's tokens to use
-                                access_token = await token_storage.get_any_valid_token(gateway.id)
+                                # Get user-specific OAuth token
+                                if not app_user_email:
+                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated.")
+
+                                access_token = await token_storage.get_user_token(gateway.id, app_user_email)
 
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}
                                 else:
-                                    # No valid token available - user needs to complete OAuth flow
-                                    raise ToolInvocationError(f"OAuth Authorization Code flow requires user consent. Please complete the OAuth flow for gateway '{gateway.name}' before using tools.")
+                                    # User hasn't authorized this gateway yet
+                                    raise ToolInvocationError(f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow.")
                             except Exception as e:
                                 logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")

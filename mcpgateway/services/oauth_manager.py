@@ -13,6 +13,9 @@ This module handles OAuth 2.0 authentication flows including:
 
 # Standard
 import asyncio
+import base64
+from datetime import datetime, timezone
+import json
 import logging
 import secrets
 from typing import Any, Dict, Optional
@@ -326,19 +329,20 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
-    async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any]) -> Dict[str, str]:
+    async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None) -> Dict[str, str]:
         """Initiate Authorization Code flow and return authorization URL.
 
         Args:
             gateway_id: ID of the gateway being configured
             credentials: OAuth configuration with client_id, authorization_url, etc.
+            app_user_email: MCP Gateway user email to associate with tokens
 
         Returns:
             Dict containing authorization_url and state
         """
 
-        # Generate state parameter for CSRF protection
-        state = self._generate_state(gateway_id)
+        # Generate state parameter with user context for CSRF protection
+        state = self._generate_state(gateway_id, app_user_email)
 
         # Store state in session/cache for validation
         if self.token_storage:
@@ -366,9 +370,23 @@ class OAuthManager:
         Raises:
             OAuthError: If state validation fails or token exchange fails
         """
-        # Validate state parameter
-        if self.token_storage and not await self._validate_authorization_state(gateway_id, state):
-            raise OAuthError("Invalid state parameter")
+        # Decode state to extract user context
+        try:
+            state_decoded = base64.urlsafe_b64decode(state.encode()).decode()
+            state_data = json.loads(state_decoded)
+            app_user_email = state_data.get("app_user_email")
+            state_gateway_id = state_data.get("gateway_id")
+
+            # Validate gateway ID matches
+            if state_gateway_id != gateway_id:
+                raise OAuthError("State parameter gateway mismatch")
+        except Exception as e:
+            # Fallback for legacy state format (gateway_id_random)
+            logger.warning(f"Failed to decode state JSON, trying legacy format: {e}")
+            app_user_email = None
+            # Legacy validation
+            if self.token_storage and not await self._validate_authorization_state(gateway_id, state):
+                raise OAuthError("Invalid state parameter")
 
         # Exchange code for tokens
         token_response = await self._exchange_code_for_tokens(credentials, code)
@@ -378,9 +396,13 @@ class OAuthManager:
 
         # Store tokens if storage service is available
         if self.token_storage:
+            if not app_user_email:
+                raise OAuthError("User context required for OAuth token storage")
+
             token_record = await self.token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=user_id,
+                app_user_email=app_user_email,  # User from state
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
                 expires_in=token_response.get("expires_in", 3600),
@@ -404,16 +426,24 @@ class OAuthManager:
             return await self.token_storage.get_valid_token(gateway_id, user_id)
         return None
 
-    def _generate_state(self, gateway_id: str) -> str:
-        """Generate a unique state parameter for CSRF protection.
+    def _generate_state(self, gateway_id: str, app_user_email: str = None) -> str:
+        """Generate a unique state parameter with user context for CSRF protection.
 
         Args:
             gateway_id: ID of the gateway
+            app_user_email: MCP Gateway user email (optional but recommended)
 
         Returns:
-            Unique state string
+            Unique state string with embedded user context
         """
-        return f"{gateway_id}_{secrets.token_urlsafe(32)}"
+        # Include user email in state for secure user association
+        state_data = {"gateway_id": gateway_id, "app_user_email": app_user_email, "nonce": secrets.token_urlsafe(16), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+        # Encode state as base64 JSON
+        state_json = json.dumps(state_data, separators=(",", ":"))
+        state_encoded = base64.urlsafe_b64encode(state_json.encode()).decode()
+
+        return state_encoded
 
     async def _store_authorization_state(self, gateway_id: str, state: str) -> None:  # pylint: disable=unused-argument
         """Store authorization state for validation.

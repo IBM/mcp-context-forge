@@ -527,7 +527,7 @@ class TestGatewayServiceOAuthComprehensive:
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
-            mock_token_service.get_any_valid_token = AsyncMock(return_value="oauth_callback_token")
+            mock_token_service.get_user_token = AsyncMock(return_value="oauth_callback_token")
 
             # Mock the connection methods
             gateway_service.connect_to_sse_server = AsyncMock(return_value=(
@@ -538,10 +538,10 @@ class TestGatewayServiceOAuthComprehensive:
             ))
 
             # Execute
-            result = await gateway_service.fetch_tools_after_oauth(test_db, "2")
+            result = await gateway_service.fetch_tools_after_oauth(test_db, "2", "test@example.com")
 
             # Verify token service was called
-            mock_token_service.get_any_valid_token.assert_called_once_with(mock_oauth_auth_code_gateway.id)
+            mock_token_service.get_user_token.assert_called_once_with(mock_oauth_auth_code_gateway.id, "test@example.com")
 
             # Verify connection was made with token
             gateway_service.connect_to_sse_server.assert_called_once_with(
@@ -561,7 +561,7 @@ class TestGatewayServiceOAuthComprehensive:
 
         # Execute and expect error
         with pytest.raises(GatewayConnectionError) as exc_info:
-            await gateway_service.fetch_tools_after_oauth(test_db, "999")
+            await gateway_service.fetch_tools_after_oauth(test_db, "999", "test@example.com")
 
         assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 
@@ -578,7 +578,7 @@ class TestGatewayServiceOAuthComprehensive:
 
         # Execute and expect error
         with pytest.raises(GatewayConnectionError) as exc_info:
-            await gateway_service.fetch_tools_after_oauth(test_db, "1")
+            await gateway_service.fetch_tools_after_oauth(test_db, "1", "test@example.com")
 
         assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 
@@ -590,7 +590,7 @@ class TestGatewayServiceOAuthComprehensive:
 
         # Execute and expect error (mock_oauth_gateway uses client_credentials)
         with pytest.raises(GatewayConnectionError) as exc_info:
-            await gateway_service.fetch_tools_after_oauth(test_db, "1")
+            await gateway_service.fetch_tools_after_oauth(test_db, "1", "test@example.com")
 
         assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 
@@ -606,13 +606,13 @@ class TestGatewayServiceOAuthComprehensive:
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
-            mock_token_service.get_any_valid_token = AsyncMock(return_value=None)
+            mock_token_service.get_user_token = AsyncMock(return_value=None)
 
             # Execute and expect error
             with pytest.raises(GatewayConnectionError) as exc_info:
-                await gateway_service.fetch_tools_after_oauth(test_db, "2")
+                await gateway_service.fetch_tools_after_oauth(test_db, "2", "test@example.com")
 
-            assert "No valid OAuth tokens found" in str(exc_info.value)
+            assert "No OAuth tokens found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_initialization_failure(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
@@ -626,14 +626,14 @@ class TestGatewayServiceOAuthComprehensive:
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
             mock_token_service = MagicMock()
             mock_token_service_class.return_value = mock_token_service
-            mock_token_service.get_any_valid_token = AsyncMock(return_value="valid_token")
+            mock_token_service.get_user_token = AsyncMock(return_value="valid_token")
 
             # Mock connection to fail
             gateway_service.connect_to_sse_server = AsyncMock(side_effect=GatewayConnectionError("Connection refused"))
 
             # Execute and expect error
             with pytest.raises(GatewayConnectionError) as exc_info:
-                await gateway_service.fetch_tools_after_oauth(test_db, "2")
+                await gateway_service.fetch_tools_after_oauth(test_db, "2", "test@example.com")
 
             assert "Failed to fetch tools after OAuth" in str(exc_info.value)
 

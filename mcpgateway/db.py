@@ -2582,13 +2582,14 @@ class SessionMessageRecord(Base):
 
 
 class OAuthToken(Base):
-    """ORM model for OAuth access and refresh tokens."""
+    """ORM model for OAuth access and refresh tokens with user association."""
 
     __tablename__ = "oauth_tokens"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
     access_token: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
@@ -2597,8 +2598,12 @@ class OAuthToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
-    # Relationship with gateway
+    # Relationships
     gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="oauth_tokens")
+    app_user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[app_user_email])
+
+    # Unique constraint: one token per user per gateway
+    __table_args__ = (UniqueConstraint("gateway_id", "app_user_email", name="uq_oauth_gateway_user"),)
 
 
 class EmailApiToken(Base):
