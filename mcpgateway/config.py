@@ -329,15 +329,15 @@ class Settings(BaseSettings):
         # Check for default/weak secrets
         weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]  # nosec B105 - list of weak defaults to check against
         if v.lower() in weak_secrets:
-            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! " "Please set a strong, unique value for production.")
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
         # Check minimum length
         if len(v) < 32:  # Using hardcoded value since we can't access instance attributes
-            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. " f"Current length: {len(v)}")
+            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(v)}")
 
         # Check entropy (basic check for randomness)
         if len(set(v)) < 10:  # Less than 10 unique characters
-            logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. " "Consider using a more random value.")
+            logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
 
         return v
 
@@ -356,7 +356,7 @@ class Settings(BaseSettings):
             logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
 
         if len(v) < 12:  # Using hardcoded value
-            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least 12 characters long. " f"Current length: {len(v)}")
+            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least 12 characters long. Current length: {len(v)}")
 
         # Check password complexity
         has_upper = any(c.isupper() for c in v)
@@ -387,11 +387,11 @@ class Settings(BaseSettings):
         dangerous_origins = ["*", "null", ""]
         for origin in v:
             if origin in dangerous_origins:
-                logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. " "Consider specifying explicit origins instead of wildcards.")
+                logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. Consider specifying explicit origins instead of wildcards.")
 
             # Validate URL format
             if not origin.startswith(("http://", "https://")) and origin not in dangerous_origins:
-                logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. " "Origins should start with http:// or https://")
+                logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. Origins should start with http:// or https://")
 
         return v
 

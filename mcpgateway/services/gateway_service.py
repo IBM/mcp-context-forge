@@ -715,12 +715,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
 
-    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str) -> Dict[str, Any]:
+    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
+            app_user_email: MCP Gateway user email for token retrieval
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -748,12 +749,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             token_storage = TokenStorageService(db)
 
-            # Try to get a valid token for any user (for now, we'll use a placeholder)
-            # In a real implementation, you might want to specify which user's tokens to use
-            access_token = await token_storage.get_any_valid_token(gateway.id)
+            # Get user-specific OAuth token
+            if not app_user_email:
+                raise GatewayConnectionError(f"User authentication required for OAuth gateway {gateway.name}")
+
+            access_token = await token_storage.get_user_token(gateway.id, app_user_email)
 
             if not access_token:
-                raise GatewayConnectionError(f"No valid OAuth tokens found for gateway {gateway.name}. Please complete the OAuth authorization flow first.")
+                raise GatewayConnectionError(
+                    f"No OAuth tokens found for user {app_user_email} on gateway {gateway.name}. Please complete the OAuth authorization flow first at /oauth/authorize/{gateway.id}"
+                )
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
 
@@ -1476,7 +1481,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db.rollback()
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
-    async def forward_request(self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None) -> Any:  # noqa: F811 # pylint: disable=function-redefined
+    async def forward_request(
+        self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None
+    ) -> Any:  # noqa: F811 # pylint: disable=function-redefined
         """
         Forward a request to a gateway or multiple gateways.
 
@@ -1488,6 +1495,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway_or_db: Either a DbGateway object or database Session
             method: RPC method name
             params: Optional method parameters
+            app_user_email: Optional app user email for OAuth token selection
 
         Returns:
             Gateway response
@@ -1499,11 +1507,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Dispatch based on first parameter type
         if hasattr(gateway_or_db, "execute"):
             # This is a database session - forward to all active gateways
-            return await self._forward_request_to_all(gateway_or_db, method, params)
+            return await self._forward_request_to_all(gateway_or_db, method, params, app_user_email)
         # This is a gateway object - forward to specific gateway
-        return await self._forward_request_to_gateway(gateway_or_db, method, params)
+        return await self._forward_request_to_gateway(gateway_or_db, method, params, app_user_email)
 
-    async def _forward_request_to_gateway(self, gateway: DbGateway, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    async def _forward_request_to_gateway(self, gateway: DbGateway, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None) -> Any:
         """
         Forward a request to a specific gateway.
 
@@ -1511,6 +1519,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway: Gateway to forward to
             method: RPC method name
             params: Optional method parameters
+            app_user_email: Optional app user email for OAuth token selection
 
         Returns:
             Gateway response
@@ -1560,16 +1569,25 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             headers = {"Authorization": f"Bearer {access_token}"}
                         elif grant_type == "authorization_code":
                             # For Authorization Code flow, try to get a stored token
+                            if not app_user_email:
+                                logger.warning(f"Skipping OAuth authorization code gateway {gateway.name} - user-specific tokens required but no user email provided")
+                                raise GatewayConnectionError(f"OAuth authorization code gateway {gateway.name} requires user context")
+
                             # First-Party
+                            from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
                             from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
-                            with cast(Any, SessionLocal)() as token_db:
-                                token_storage = TokenStorageService(token_db)
-                                access_token = await token_storage.get_any_valid_token(gateway.id)
+                            # Get database session (this is a bit hacky but necessary for now)
+                            db = next(get_db())
+                            try:
+                                token_storage = TokenStorageService(db)
+                                access_token = await token_storage.get_user_token(str(gateway.id), app_user_email)
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}
                                 else:
-                                    raise GatewayConnectionError(f"No valid OAuth token found for authorization_code gateway {gateway.name}")
+                                    raise GatewayConnectionError(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
+                            finally:
+                                db.close()
                     except Exception as oauth_error:
                         raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
                 else:
@@ -1609,7 +1627,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             return result.get("result")
 
-    async def _forward_request_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    async def _forward_request_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None) -> Any:
         """
         Forward a request to all active gateways that can handle the method.
 
@@ -1617,6 +1635,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db: Database session
             method: RPC method name
             params: Optional method parameters
+            app_user_email: Optional app user email for OAuth token selection
 
         Returns:
             Gateway response from the first successful gateway
@@ -1648,15 +1667,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             headers = {"Authorization": f"Bearer {access_token}"}
                         elif grant_type == "authorization_code":
                             # For Authorization Code flow, try to get a stored token
+                            if not app_user_email:
+                                # System operations cannot use user-specific OAuth tokens
+                                # Skip OAuth authorization code gateways in system context
+                                logger.warning(f"Skipping OAuth authorization code gateway {gateway.name} - user-specific tokens required but no user email provided")
+                                continue
+
                             # First-Party
                             from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
                             token_storage = TokenStorageService(db)
-                            access_token = await token_storage.get_any_valid_token(gateway.id)
+                            access_token = await token_storage.get_user_token(str(gateway.id), app_user_email)
                             if access_token:
                                 headers = {"Authorization": f"Bearer {access_token}"}
                             else:
-                                logger.warning(f"No valid OAuth token found for authorization_code gateway {gateway.name}. Skipping.")
+                                logger.warning(f"No valid OAuth token for user {app_user_email} and gateway {gateway.name}")
                                 continue
                     except Exception as oauth_error:
                         logger.warning(f"Failed to obtain OAuth token for gateway {gateway.name}: {oauth_error}")
@@ -1826,17 +1851,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         headers = {"Authorization": f"Bearer {access_token}"}
                                     elif grant_type == "authorization_code":
                                         # For Authorization Code flow, try to get a stored token
-                                        # First-Party
-                                        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-                                        with cast(Any, SessionLocal)() as token_db:
-                                            token_storage = TokenStorageService(token_db)
-                                            access_token = await token_storage.get_any_valid_token(gateway.id)
-                                            if access_token:
-                                                headers = {"Authorization": f"Bearer {access_token}"}
-                                            else:
-                                                logger.warning(f"No valid OAuth token found for authorization_code gateway {gateway.name}. Health check may fail.")
-                                                headers = {}
+                                        # System operations cannot use user-specific OAuth tokens
+                                        # Skip OAuth authorization code gateways in health checks
+                                        logger.warning(f"Cannot health check OAuth authorization code gateway {gateway.name} - user-specific tokens required")
+                                        headers = {}  # Will likely fail but attempt anyway
                                 except Exception as oauth_error:
                                     logger.warning(f"Failed to obtain OAuth token for health check of gateway {gateway.name}: {oauth_error}")
                                     headers = {}

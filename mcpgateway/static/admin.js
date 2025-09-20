@@ -9726,10 +9726,11 @@ async function fetchToolsForGateway(gatewayId, gatewayName) {
             button.className =
                 "inline-block bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm mr-2";
 
-            // Show success message
-            showSuccessMessage(
-                `Successfully fetched ${result.tools_created} tools from ${gatewayName}`,
-            );
+            // Show success message - API returns {success: true, message: "..."}
+            const message =
+                result.message ||
+                `Successfully fetched tools from ${gatewayName}`;
+            showSuccessMessage(message);
 
             // Refresh the page to show the new tools
             setTimeout(() => {

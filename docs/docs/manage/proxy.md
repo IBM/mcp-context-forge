@@ -379,6 +379,65 @@ ENABLE_HEADER_PASSTHROUGH=true
 DEFAULT_PASSTHROUGH_HEADERS='["X-Tenant-Id", "X-Request-Id", "X-Authenticated-User", "X-Groups"]'
 ```
 
+### X-Upstream-Authorization Header
+
+When MCP Gateway uses authentication (JWT/Bearer/Basic/OAuth), clients face an Authorization header conflict when trying to pass different auth to upstream MCP servers.
+
+**Problem**: You need one `Authorization` header for gateway auth and a different one for upstream MCP servers.
+
+**Solution**: Use the `X-Upstream-Authorization` header, which the gateway automatically renames to `Authorization` when forwarding to upstream servers.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gateway as MCP Gateway
+    participant MCP as MCP Server
+
+    Client->>Gateway: Authorization: Bearer gateway_token<br/>X-Upstream-Authorization: Bearer upstream_token
+    Gateway->>Gateway: Validate gateway_token
+    Gateway->>MCP: Authorization: Bearer upstream_token<br/>(X-Upstream-Authorization renamed)
+    MCP-->>Gateway: Response
+    Gateway-->>Client: Response
+```
+
+#### Example Usage
+
+```bash
+# Client authenticates to gateway with one token
+# and passes different auth to upstream MCP server
+curl -H "Authorization: Bearer $GATEWAY_JWT" \
+     -H "X-Upstream-Authorization: Bearer $MCP_SERVER_TOKEN" \
+     -X POST http://localhost:4444/tools/invoke/github_create_issue \
+     -d '{"arguments": {"title": "New Issue"}}'
+```
+
+#### Configuration
+
+This feature is automatically enabled when the gateway uses authentication:
+
+```bash
+# Any of these auth methods enable X-Upstream-Authorization handling
+AUTH_REQUIRED=true
+BASIC_AUTH_USER=admin
+JWT_SECRET_KEY=your-secret
+
+# Or OAuth-enabled gateways
+# oauth_config in gateway configuration
+```
+
+The gateway will always process `X-Upstream-Authorization` headers when:
+1. The gateway itself uses authentication (`auth_type` in ["basic", "bearer", "oauth"])
+2. The header value passes security validation
+
+**Note**: `X-Upstream-Authorization` processing is independent of the `ENABLE_HEADER_PASSTHROUGH` flag and always works when the gateway uses authentication.
+
+#### Security Notes
+
+- Headers are sanitized before forwarding
+- Only processed when gateway authentication is enabled
+- Failed sanitization logs warnings but doesn't block requests
+- Provides clean separation between gateway and upstream authentication
+
 ## Security Considerations
 
 ### Network Isolation
