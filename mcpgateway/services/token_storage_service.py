@@ -210,8 +210,8 @@ class TokenStorageService:
                 if self.encryption:
                     try:
                         oauth_config["client_secret"] = self.encryption.decrypt_secret(oauth_config["client_secret"])
-                    except Exception:
-                        # If decryption fails, assume it's already plain text
+                    except Exception:  # nosec B110
+                        # If decryption fails, assume it's already plain text - intentional fallback
                         pass
 
             # Use OAuthManager to refresh the token
