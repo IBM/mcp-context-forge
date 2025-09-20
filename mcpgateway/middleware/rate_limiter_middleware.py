@@ -124,7 +124,6 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
            pass
 
         reset_time = await self._get_reset_time(identifier, limit)
-        logger.info(f"Hitting rate limit with limit_group type: {type(limit)}, identifier: {identifier}")
         is_allowed = await self.limiter.hit(limit, identifier)
         if not is_allowed:
                 # Request exceeds rate limit
