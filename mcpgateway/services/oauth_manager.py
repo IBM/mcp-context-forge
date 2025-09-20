@@ -32,7 +32,7 @@ from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 
 logger = logging.getLogger(__name__)
 
-# In-memory storage for OAuth states with expiration
+# In-memory storage for OAuth states with expiration (fallback for single-process)
 # Format: {state_key: {"state": state, "gateway_id": gateway_id, "expires_at": datetime}}
 _oauth_states: Dict[str, Dict[str, Any]] = {}
 # Lock for thread-safe state operations
@@ -40,6 +40,41 @@ _state_lock = asyncio.Lock()
 
 # State TTL in seconds (5 minutes)
 STATE_TTL_SECONDS = 300
+
+# Redis client for distributed state storage (initialized lazily)
+_redis_client: Optional[Any] = None
+_REDIS_INITIALIZED = False
+
+
+async def _get_redis_client():
+    """Get or create Redis client for distributed state storage.
+
+    Returns:
+        Redis client instance or None if unavailable
+    """
+    global _redis_client, _REDIS_INITIALIZED  # pylint: disable=global-statement
+
+    if _REDIS_INITIALIZED:
+        return _redis_client
+
+    settings = get_settings()
+    if settings.cache_type == "redis" and settings.redis_url:
+        try:
+            # Third-Party
+            import aioredis  # pylint: disable=import-outside-toplevel
+
+            _redis_client = await aioredis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=5, socket_timeout=5)
+            # Test connection
+            await _redis_client.ping()
+            logger.info("Connected to Redis for OAuth state storage")
+        except Exception as e:
+            logger.warning(f"Failed to connect to Redis, falling back to in-memory storage: {e}")
+            _redis_client = None
+    else:
+        _redis_client = None
+
+    _REDIS_INITIALIZED = True
+    return _redis_client
 
 
 class OAuthManager:
@@ -488,19 +523,32 @@ class OAuthManager:
             gateway_id: ID of the gateway
             state: State parameter to store
         """
+        state_key = f"oauth:state:{gateway_id}:{state}"
+        state_data = {"state": state, "gateway_id": gateway_id, "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)).isoformat(), "used": False}
+
+        # Try Redis first for distributed storage
+        redis = await _get_redis_client()
+        if redis:
+            try:
+                # Store in Redis with TTL
+                await redis.setex(state_key, STATE_TTL_SECONDS, json.dumps(state_data))
+                logger.debug(f"Stored OAuth state in Redis for gateway {gateway_id}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to store state in Redis: {e}, falling back to memory")
+
+        # Fallback to in-memory storage
         async with _state_lock:
             # Clean up expired states first
             now = datetime.now(timezone.utc)
-            expired_states = [key for key, data in _oauth_states.items() if data["expires_at"] < now]
+            expired_states = [key for key, data in _oauth_states.items() if datetime.fromisoformat(data["expires_at"]) < now]
             for key in expired_states:
                 del _oauth_states[key]
-                logger.debug(f"Cleaned up expired state: {key[:10]}...")
+                logger.debug(f"Cleaned up expired state: {key[:20]}...")
 
             # Store the new state with expiration
-            expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
-            state_key = f"{gateway_id}:{state}"
-            _oauth_states[state_key] = {"state": state, "gateway_id": gateway_id, "expires_at": expires_at, "used": False}  # Track if state has been used
-            logger.debug(f"Stored authorization state for gateway {gateway_id}, expires at {expires_at.isoformat()}")
+            _oauth_states[state_key] = state_data
+            logger.debug(f"Stored OAuth state in memory for gateway {gateway_id}")
 
     async def _validate_authorization_state(self, gateway_id: str, state: str) -> bool:
         """Validate authorization state parameter and mark as used.
@@ -512,17 +560,46 @@ class OAuthManager:
         Returns:
             True if state is valid and not yet used, False otherwise
         """
+        state_key = f"oauth:state:{gateway_id}:{state}"
+
+        # Try Redis first for distributed storage
+        redis = await _get_redis_client()
+        if redis:
+            try:
+                # Get and delete state atomically (single-use)
+                state_json = await redis.getdel(state_key)
+                if not state_json:
+                    logger.warning(f"State not found in Redis for gateway {gateway_id}")
+                    return False
+
+                state_data = json.loads(state_json)
+
+                # Check if state has expired
+                if datetime.fromisoformat(state_data["expires_at"]) < datetime.now(timezone.utc):
+                    logger.warning(f"State has expired for gateway {gateway_id}")
+                    return False
+
+                # Check if state was already used (should not happen with getdel)
+                if state_data.get("used", False):
+                    logger.warning(f"State was already used for gateway {gateway_id} - possible replay attack")
+                    return False
+
+                logger.debug(f"Successfully validated OAuth state from Redis for gateway {gateway_id}")
+                return True
+            except Exception as e:
+                logger.warning(f"Failed to validate state in Redis: {e}, falling back to memory")
+
+        # Fallback to in-memory storage
         async with _state_lock:
-            state_key = f"{gateway_id}:{state}"
             state_data = _oauth_states.get(state_key)
 
             # Check if state exists
             if not state_data:
-                logger.warning(f"State not found for gateway {gateway_id}")
+                logger.warning(f"State not found in memory for gateway {gateway_id}")
                 return False
 
             # Check if state has expired
-            if state_data["expires_at"] < datetime.now(timezone.utc):
+            if datetime.fromisoformat(state_data["expires_at"]) < datetime.now(timezone.utc):
                 logger.warning(f"State has expired for gateway {gateway_id}")
                 del _oauth_states[state_key]  # Clean up expired state
                 return False
@@ -534,7 +611,7 @@ class OAuthManager:
 
             # Mark state as used and remove it (single-use)
             del _oauth_states[state_key]
-            logger.debug(f"Successfully validated and consumed state for gateway {gateway_id}")
+            logger.debug(f"Successfully validated OAuth state from memory for gateway {gateway_id}")
             return True
 
     def _create_authorization_url(self, credentials: Dict[str, Any], state: str) -> tuple[str, str]:

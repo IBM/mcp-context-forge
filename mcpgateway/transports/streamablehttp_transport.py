@@ -787,6 +787,11 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             # If using proxy auth, store the proxy user
             user_context_var.set({"email": proxy_user})
     except Exception:
+        # If JWT auth fails but we have a trusted proxy user, use that
+        if settings.trust_proxy_auth and proxy_user:
+            user_context_var.set({"email": proxy_user})
+            return True  # Fall back to proxy authentication
+
         response = JSONResponse(
             {"detail": "Authentication failed"},
             status_code=HTTP_401_UNAUTHORIZED,
