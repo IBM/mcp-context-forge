@@ -49,8 +49,9 @@ You can run the gateway with:
 ```bash
 make serve         # production-mode (Gunicorn) on http://localhost:4444
 make dev           # hot-reload (Uvicorn) on http://localhost:8000
-make run           # wrapper over uvicorn; pass --reload to enable auto-reload
-./run.sh --reload  # equivalent of 'make run' with explicit flags
+make run           # executes ./run.sh with your current .env settings
+RELOAD=true make run   # enable auto-reload via run.sh (same as ./run.sh --reload)
+./run.sh --help    # view all supported flags
 ```
 
 Use `make dev` during development for auto-reload on port 8000.
@@ -59,7 +60,7 @@ Use `make dev` during development for auto-reload on port 8000.
 
 ## 🔄 Live Reload Tips
 
-Ensure `RELOAD=true` and `DEV_MODE=true` are set in your `.env` during development.
+When relying on `run.sh`, set `RELOAD=true` (or pass `--reload`) and `DEV_MODE=true` in your `.env` so settings match.
 
 Also set:
 
