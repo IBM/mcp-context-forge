@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""In-memory persistence for generated datasets."""
+"""Location: ./mcp-servers/python/synthetic_data_server/src/synthetic_data_server/storage.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+In-memory persistence for generated datasets.
+"""
 
 from __future__ import annotations
 

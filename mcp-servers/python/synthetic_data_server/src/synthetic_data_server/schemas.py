@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Pydantic models describing synthetic data generation requests and responses."""
+"""Location: ./mcp-servers/python/synthetic_data_server/src/synthetic_data_server/schemas.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Pydantic models describing synthetic data generation requests and responses.
+"""
 
 from __future__ import annotations
 

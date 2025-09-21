@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Synthetic data FastMCP server package."""
+"""Location: ./mcp-servers/python/synthetic_data_server/src/synthetic_data_server/__init__.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Synthetic data FastMCP server package.
+"""
 
 from . import schemas
 from .generators import SyntheticDataGenerator, build_presets

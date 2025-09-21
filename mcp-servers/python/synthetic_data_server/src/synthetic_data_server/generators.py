@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Synthetic data generation utilities used by the FastMCP server."""
+"""Location: ./mcp-servers/python/synthetic_data_server/src/synthetic_data_server/generators.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Synthetic data generation utilities used by the FastMCP server.
+"""
 
 from __future__ import annotations
 

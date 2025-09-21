@@ -1,5 +1,7 @@
 # Synthetic Data FastMCP Server
 
+> Author: Mihai Criveti
+
 Generate high-quality synthetic tabular datasets on demand using the FastMCP 2 framework. The
 server ships with curated presets, configurable column primitives, deterministic seeding, and
 multiple output formats to accelerate prototyping, testing, and analytics workflows.

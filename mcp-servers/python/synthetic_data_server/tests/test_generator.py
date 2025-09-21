@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for the synthetic data server utilities."""
+"""Location: ./mcp-servers/python/synthetic_data_server/tests/test_generator.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for the synthetic data server utilities.
+"""
 
 from __future__ import annotations
 
