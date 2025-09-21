@@ -563,8 +563,22 @@ async def create_chart(
 
 def main():
     """Main entry point for the FastMCP server."""
-    logger.info("Starting XLSX FastMCP Server...")
-    mcp.run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="XLSX FastMCP Server")
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                        help="Transport mode (stdio or http)")
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
+    parser.add_argument("--port", type=int, default=9017, help="HTTP port")
+
+    args = parser.parse_args()
+
+    if args.transport == "http":
+        logger.info(f"Starting XLSX FastMCP Server on HTTP at {args.host}:{args.port}")
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        logger.info("Starting XLSX FastMCP Server on stdio")
+        mcp.run()
 
 
 if __name__ == "__main__":

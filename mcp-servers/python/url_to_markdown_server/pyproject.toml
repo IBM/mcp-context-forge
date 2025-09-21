@@ -9,8 +9,7 @@ license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastmcp>=0.1.0",
-  "mcp>=1.0.0",
+  "fastmcp==2.11.3",
   "pydantic>=2.5.0",
   "httpx>=0.27.0",
   "typing-extensions>=4.5.0",
