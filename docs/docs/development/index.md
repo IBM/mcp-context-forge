@@ -103,9 +103,9 @@ echo $MCPGATEWAY_BEARER_TOKEN
 Then test:
 
 ```bash
-curl -k -sX GET \
+curl -sX GET \
   -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-  https://localhost:4444/tools | jq
+  http://localhost:4444/tools | jq
 ```
 
 ---
@@ -126,7 +126,7 @@ Key configs include:
 | ------------------- | ---------------------------- |
 | `DATABASE_URL`      | Database connection          |
 | `JWT_SECRET_KEY`    | Signing key for JWTs         |
-| `DEV_MODE=true`     | Enables hot reload and debug |
+| `DEV_MODE=true`     | Enables relaxed development defaults (set together with `RELOAD=true` if you rely on `run.sh`) |
 | `CACHE_TYPE=memory` | Options: memory, redis, none |
 
 ---
