@@ -1,9 +1,7 @@
-Python MCP Servers: Create, Build, and Run
+FastMCP 2 Python Servers: Create, Build, and Run
 
-- Scope: Practical guide to author, package, containerize, and expose Python MCP servers.
-- References: See working examples under `mcp-servers/python/`:
-  - `mcp-servers/python/data_analysis_server` (focused, minimal dependencies)
-  - `mcp-servers/python/mcp_eval_server` (larger, optional REST mode + many extras)
+- Scope: Practical guide for authoring, packaging, containerizing, and exposing Python MCP servers with FastMCP 2.x.
+- References: See full implementations under `mcp-servers/python/*/server_fastmcp.py`, e.g. `mcp-servers/python/chunker_server/src/chunker_server/server_fastmcp.py` and `mcp-servers/python/url_to_markdown_server/src/url_to_markdown_server/server_fastmcp.py`.
 
 **Project Layout**
 - Recommended structure for a new server `awesome_server`:
@@ -17,85 +15,48 @@ awesome_server/
   src/
     awesome_server/
       __init__.py
-      server.py      # MCP entry (stdio)
-      tools.py       # optional: keep tool logic separate
+      server_fastmcp.py  # FastMCP entry point
+      tools.py           # optional: keep tool logic separate
   tests/
     test_server.py
 ```
 
-**Minimal Server (stdio)**
-- Implements a basic MCP server with 1 tool (`echo`).
+**Minimal Server (stdio + http)**
+- Implements a basic FastMCP server with one tool (`echo`). Type hints define schemas.
 
 ```python
-# src/awesome_server/server.py
-import asyncio
-import json
-import logging
-import sys
-from mcp.server import Server
-from mcp.server.models import InitializationOptions
-from mcp.types import TextContent, Tool
+# src/awesome_server/server_fastmcp.py
+from fastmcp import FastMCP
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stderr)],  # stderr avoids protocol noise
-)
-log = logging.getLogger("awesome_server")
-
-server = Server("awesome-server")
+mcp = FastMCP("awesome-server", version="0.1.0")
 
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
-    return [
-        Tool(
-            name="echo",
-            description="Return the provided text.",
-            inputSchema={
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-                "required": ["text"],
-            },
-        )
-    ]
+@mcp.tool
+def echo(text: str) -> str:
+    """Return the provided text."""
+    return text
 
 
-@server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    if name == "echo":
-        return [TextContent(type="text", text=json.dumps({"ok": True, "echo": arguments["text"]}))]
-    return [TextContent(type="text", text=json.dumps({"ok": False, "error": f"unknown tool: {name}"}))]
-
-
-async def main() -> None:
-    log.info("Starting Awesome MCP server (stdio)...")
-    from mcp.server.stdio import stdio_server
-
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="awesome-server",
-                server_version="0.1.0",
-                capabilities={"tools": {}, "logging": {}},
-            ),
-        )
+def main() -> None:
+    """Entry point for `python -m awesome_server.server_fastmcp`."""
+    mcp.run()  # stdio by default
 
 
 if __name__ == "__main__":  # pragma: no cover
-    asyncio.run(main())
+    main()
 ```
 
+- Run over HTTP (no code changes) with the CLI: `fastmcp run src/awesome_server/server_fastmcp.py:mcp --transport http --host 0.0.0.0 --port 8000`.
+- Prefer `fastmcp run` for transport/host/port overrides since the CLI imports the `mcp` object directly and ignores the `if __name__ == "__main__"` block.
+
 **pyproject.toml (template)**
-- Minimal, typed, with common dev extras; adjust metadata and dependencies.
+- Pin FastMCP for production deployments; adjust metadata and optional extras.
 
 ```toml
 [project]
 name = "awesome-server"
 version = "0.1.0"
-description = "Example Python MCP server (stdio + containerizable)"
+description = "Example FastMCP 2 server"
 authors = [
   { name = "MCP Context Forge", email = "noreply@example.com" }
 ]
@@ -103,7 +64,7 @@ license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "mcp>=1.0.0",
+  "fastmcp==2.11.3",
   "pydantic>=2.5.0",
 ]
 
@@ -125,7 +86,7 @@ build-backend = "hatchling.build"
 packages = ["src/awesome_server"]
 
 [project.scripts]
-awesome-server = "awesome_server.server:main"
+awesome-server = "awesome_server.server_fastmcp:main"
 
 [tool.black]
 line-length = 100
@@ -149,19 +110,20 @@ addopts = "--cov=awesome_server --cov-report=term-missing"
 ```
 
 Notes:
-- See richer examples in `data_analysis_server/pyproject.toml` and `mcp_eval_server/pyproject.toml` for add‑on extras, entry points, and packaging knobs.
+- Use exact FastMCP versions (`fastmcp==…`) in production to avoid breaking changes.
+- See richer examples in `data_analysis_server/pyproject.toml` and `mcp_eval_server/pyproject.toml` for additional extras and entry points.
 
 **Makefile (template)**
-- Provides dev install, format/lint/test, stdio run, and HTTP bridge via the gateway.
+- Provides dev install, format/lint/test targets, stdio run via `python -m`, and HTTP exposure with `fastmcp run`.
 
 ```makefile
-# Makefile for Awesome MCP Server
+# Makefile for Awesome FastMCP Server
 
 .PHONY: help install dev-install format lint test dev mcp-info serve-http test-http clean
 
 PYTHON ?= python3
-HTTP_PORT ?= 9000
-HTTP_HOST ?= localhost
+HTTP_PORT ?= 8000
+HTTP_HOST ?= 0.0.0.0
 
 help: ## Show help
     @awk 'BEGIN {FS=":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -181,33 +143,30 @@ lint: ## Lint (ruff, mypy)
 test: ## Run tests
     pytest -v --cov=awesome_server --cov-report=term-missing
 
-dev: ## Run stdio MCP server
-    @echo "Starting Awesome MCP server (stdio)..."
-    $(PYTHON) -m awesome_server.server
+dev: ## Run FastMCP server (stdio)
+    $(PYTHON) -m awesome_server.server_fastmcp
 
-mcp-info: ## Show stdio client config snippet
-    @echo '{"command": "python", "args": ["-m", "awesome_server.server"], "cwd": "'$(PWD)'"}'
+mcp-info: ## Show FastMCP CLI snippet
+    @echo 'fastmcp run src/awesome_server/server_fastmcp.py:mcp'
 
-serve-http: ## Expose stdio server over HTTP (JSON-RPC + SSE)
-    @echo "HTTP: http://$(HTTP_HOST):$(HTTP_PORT)"
-    $(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m awesome_server.server" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
+serve-http: ## Run FastMCP server over HTTP
+    fastmcp run src/awesome_server/server_fastmcp.py:mcp --transport http --host $(HTTP_HOST) --port $(HTTP_PORT)
 
-test-http: ## Basic HTTP checks
-    curl -s http://$(HTTP_HOST):$(HTTP_PORT)/ | head -20 || true
+test-http: ## Basic HTTP check (tools.list)
     curl -s -X POST -H 'Content-Type: application/json' \
       -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
-      http://$(HTTP_HOST):$(HTTP_PORT)/ | head -40 || true
+      http://$(HTTP_HOST):$(HTTP_PORT)/mcp/ | head -40 || true
 
 clean: ## Remove caches
     rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__
 ```
 
 Notes:
-- For a complete, production‑grade Makefile with additional targets (container build, examples, rich info), see `data_analysis_server/Makefile` and `mcp_eval_server/Makefile`.
+- Use `uv pip install -e .` if your team standardizes on uv.
+- For richer Makefiles (container build, smoke tests, docs), see `mcp_eval_server/Makefile`.
 
 **Containerfile (template)**
-- Minimal, pragmatic container using `python:3.11-slim`.
-- For hardened scratch‑based images with UBI9 and multi‑stage rootfs, review `data_analysis_server/Containerfile` and `mcp_eval_server/Containerfile`.
+- Minimal container using `python:3.11-slim`; installs your project in a virtualenv with a non-root user.
 
 ```Dockerfile
 # syntax=docker/dockerfile:1
@@ -219,52 +178,45 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps (optional: add build-essential if compiling wheels)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy metadata early for layer caching
 COPY pyproject.toml README.md ./
+COPY src/ ./src/
 
-# Create venv and install
 RUN python -m venv /app/.venv && \
     /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
     /app/.venv/bin/pip install -e .
 
-# Copy source
-COPY src/ ./src/
-
-# Non-root user
 RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
 USER 1001
 
-CMD ["python", "-m", "awesome_server.server"]
+CMD ["python", "-m", "awesome_server.server_fastmcp"]
 ```
 
 Notes:
-- Switch to the scratch‑based, hardened pattern when you need smallest images, reproducible Python from UBI9, and extra hardening. The advanced Containerfiles in this repo demonstrate:
-  - Multi‑stage build with UBI9 builder + scratch runtime
-  - Pre‑compiled bytecode (`-OO`), setuid/gid cleanup, minimal `/etc/{passwd,group}`
-  - Non‑root user (1001), healthchecks, and SSE/HTTP exposure via the gateway
+- Swap the container entrypoint to `fastmcp run /app/src/awesome_server/server_fastmcp.py:mcp --transport http --host 0.0.0.0 --port 8000` (or similar) when you need remote HTTP access.
+- For hardened multi-stage builds (scratch base, non-root, healthchecks), study `data_analysis_server/Containerfile` and `mcp_eval_server/Containerfile`.
 
 **Run Locally**
-- Stdio mode (for Claude Desktop, IDEs, or direct JSON‑RPC piping):
+- Stdio mode (for local LLM clients or direct JSON-RPC piping):
   - `make dev`
-  - Test tools via JSON‑RPC: `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | python -m awesome_server.server`
-- HTTP bridge (wrap stdio through the gateway's translate module):
+  - `fastmcp run src/awesome_server/server_fastmcp.py:mcp`
+- HTTP mode:
   - `make serve-http`
-  - `make test-http`
+  - Call with curl: `curl -s -X POST http://localhost:8000/mcp/ -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'`
 
 **Tips & Patterns**
-- Separate tool logic from the transport layer (keep `server.py` thin; put domain logic in `tools.py` or subpackages).
-- Always log to stderr to avoid corrupting the MCP stdio protocol.
-- Keep tool schemas explicit and stable; return exactly one of `result` or `error` payload per call.
-- Prefer small, focused servers with clear tool boundaries; use the gateway for aggregation, auth, and policy.
-- Look at `data_analysis_server/src/data_analysis_server/server.py` for a clean stdio pattern with `mcp.server` and `InitializationOptions`.
+- Keep FastMCP objects (`FastMCP`, `@mcp.tool`, `@mcp.prompt`, `@mcp.resource`) in `server_fastmcp.py`; move heavy business logic into `tools.py` or subpackages.
+- Log to stderr when running under stdio transports to avoid corrupting the protocol stream.
+- Prefer Pydantic models for complex tool arguments/returns; FastMCP exposes them as structured schemas automatically.
+- Use `mcp.run(transport="http", ...)` for quick testing, but deploy with `fastmcp run ... --transport http` to keep configuration outside code.
+- Combine FastMCP with the gateway by registering the HTTP endpoint (`/mcp`) or by wrapping stdio servers with `mcpgateway.translate` if you need SSE bridging.
 
-**Scaffold With Copier**
-- Generate a new Python MCP server from the template:
-  - `mcp-servers/scaffold-python-server.sh awesome_server` (defaults to `mcp-servers/python/awesome_server`)
-  - Follow prompts (project name, package, version, etc.)
-  - Then: `cd mcp-servers/python/awesome_server && python -m pip install -e .[dev] && make dev`
+**FastMCP 2 Resources**
+- Core docs: [Welcome to FastMCP 2.0](https://gofastmcp.com/getting-started/welcome.md), [Installation](https://gofastmcp.com/getting-started/installation.md), [Quickstart](https://gofastmcp.com/getting-started/quickstart.md), [Changelog](https://gofastmcp.com/changelog.md).
+- Client guides: [Client overview](https://gofastmcp.com/clients/client.md), [Authentication (Bearer)](https://gofastmcp.com/clients/auth/bearer.md), [Authentication (OAuth)](https://gofastmcp.com/clients/auth/oauth.md), [User elicitation](https://gofastmcp.com/clients/elicitation.md), [Logging](https://gofastmcp.com/clients/logging.md), [Messages](https://gofastmcp.com/clients/messages.md), [Progress](https://gofastmcp.com/clients/progress.md), [Prompts](https://gofastmcp.com/clients/prompts.md), [Resources](https://gofastmcp.com/clients/resources.md), [Tools](https://gofastmcp.com/clients/tools.md), [Transports](https://gofastmcp.com/clients/transports.md), [LLM sampling](https://gofastmcp.com/clients/sampling.md).
+- Server guides: [Server fundamentals](https://gofastmcp.com/servers/server.md), [Context](https://gofastmcp.com/servers/context.md), [Tools](https://gofastmcp.com/servers/tools.md), [Resources & templates](https://gofastmcp.com/servers/resources.md), [Prompts](https://gofastmcp.com/servers/prompts.md), [Logging](https://gofastmcp.com/servers/logging.md), [Progress](https://gofastmcp.com/servers/progress.md), [Middleware](https://gofastmcp.com/servers/middleware.md), [Authentication](https://gofastmcp.com/servers/auth/authentication.md), [Proxy](https://gofastmcp.com/servers/proxy.md), [LLM sampling](https://gofastmcp.com/servers/sampling.md).
+- Operations: [Running your server](https://gofastmcp.com/deployment/running-server.md), [Self-hosted remote MCP](https://gofastmcp.com/deployment/self-hosted.md), [FastMCP Cloud](https://gofastmcp.com/deployment/fastmcp-cloud.md), [Project configuration](https://gofastmcp.com/deployment/server-configuration.md).
+- Integrations: [FastAPI](https://gofastmcp.com/integrations/fastapi.md), [Anthropic API](https://gofastmcp.com/integrations/anthropic.md), [OpenAI API](https://gofastmcp.com/integrations/openai.md), [Claude Desktop](https://gofastmcp.com/integrations/claude-desktop.md), [Cursor](https://gofastmcp.com/integrations/cursor.md).
