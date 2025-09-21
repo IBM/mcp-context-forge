@@ -356,7 +356,7 @@ Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.exam
 ```bash
 # 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
 python3 -m mcpgateway.translate \
-     --stdio "docker run --rm -i -p 8888:8080 ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
+     --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
      --expose-sse \
      --port 8003
 
@@ -1494,6 +1494,8 @@ mcpgateway
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
+| `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
+| `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 
 ### Database
 
@@ -1513,6 +1515,8 @@ mcpgateway
 | `CACHE_TYPE`              | Backend type | `database` | `none`, `memory`, `database`, `redis` |
 | `REDIS_URL`               | Redis connection URL       | (none)   | string or empty          |
 | `CACHE_PREFIX`            | Key prefix                 | `mcpgw:` | string                   |
+| `SESSION_TTL`             | Session validity (secs)    | `3600`   | int > 0                  |
+| `MESSAGE_TTL`             | Message retention (secs)   | `600`    | int > 0                  |
 | `REDIS_MAX_RETRIES`       | Max Retry Attempts         | `3`      | int > 0                  |
 | `REDIS_RETRY_INTERVAL_MS` | Retry Interval (ms)        | `2000`   | int > 0                  |
 

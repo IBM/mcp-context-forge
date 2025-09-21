@@ -19,7 +19,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 
 MCP Gateway is built with:
 
-* **Python 3.10+**
+* **Python 3.11+**
 * **FastAPI** + **SQLAlchemy (async)** + **Pydantic Settings**
 * **HTMX**, **Alpine.js**, **TailwindCSS** for the Admin UI
 
@@ -52,9 +52,9 @@ Test coverage includes:
 Use:
 
 ```bash
-make test          # run all tests
-make test-unit     # run only unit tests
-make test-e2e      # run end-to-end
+make test                  # run full suite
+python3 -m pytest tests/unit     # run only unit tests
+python3 -m pytest tests/e2e      # run end-to-end scenarios
 ```
 
 ---
