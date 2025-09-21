@@ -151,7 +151,7 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 <details>
 <summary><strong>📋 Prerequisites</strong></summary>
 
-* **Python ≥ 3.10** (3.11 recommended)
+* **Python ≥ 3.11** (3.11 recommended)
 * **curl + jq** - only for the last smoke-test step
 
 </details>
@@ -787,7 +787,7 @@ Common tasks inside the container:
 
 ```bash
 # Start dev server (hot reload)
-make dev            # http://localhost:4444
+make dev            # http://localhost:8000
 
 # Run tests & linters
 make test
@@ -819,7 +819,7 @@ No local Docker? Use Codespaces:
 
 ### Prerequisites
 
-* **Python ≥ 3.10**
+* **Python ≥ 3.11**
 * **GNU Make** (optional, but all common workflows are available as Make targets)
 * Optional: **Docker / Podman** for containerized runs
 

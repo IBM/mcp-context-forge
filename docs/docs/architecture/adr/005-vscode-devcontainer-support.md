@@ -91,7 +91,7 @@ The devcontainer uses:
 - **Python 3.11**: As specified in the project requirements
 - **PDM and UV**: For package management (matching the project's tooling)
 - **Make targets**: Leverages existing `make install-dev` and `make test` workflows
-- **Environment variables**: Sets `MCPGATEWAY_DEV_MODE=true` for development
+- **Environment variables**: Sets `DEV_MODE=true` for development
 - **VS Code extensions**: Includes Python and Docker extensions for optimal development experience
 
 ## Verification

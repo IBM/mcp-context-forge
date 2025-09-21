@@ -4,7 +4,7 @@ This guide helps you to set up your local environment for contributing to the Mo
 
 ## Tooling Requirements
 
--   **Python** (>= 3.10)
+-   **Python** (>= 3.11)
     -   Download from [python.org](https://www.python.org/downloads/) or use your package manager (e.g., `brew install python` on macOS, `sudo apt-get install python3` on Ubuntu).
     -   Verify: `python3 --version`.
 -   **Docker or Podman**
