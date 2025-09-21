@@ -1,4 +1,11 @@
-"""In-memory resource registry exposed via FastMCP resources."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/resource_store.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+In-memory resource registry exposed via FastMCP resources.
+"""
 
 from __future__ import annotations
 

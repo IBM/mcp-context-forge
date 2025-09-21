@@ -140,7 +140,3 @@ Contributions are welcome! Please ensure:
 1. Code passes all tests: `make test`
 2. Code is properly formatted: `make fmt`
 3. Dependencies are tidied: `make tidy`
-
-## License
-
-MIT
