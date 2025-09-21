@@ -192,7 +192,7 @@ gh pr checkout 29
 ### 5.1 Local build (SQLite + self-signed HTTPS)
 
 ```bash
-make venv install install-dev serve-ssl
+make install-dev serve-ssl
 ```
 
 * Sets up a Python virtualenv
@@ -202,12 +202,13 @@ make venv install install-dev serve-ssl
 ### 5.2 Container build (PostgreSQL + Redis)
 
 ```bash
-make compose-up
+make docker-prod      # build the lite runtime image locally
+make compose-up       # start the Docker Compose stack (PostgreSQL + Redis)
 ```
 
 * Spins up the full Docker Compose stack
 * Uses PostgreSQL for persistence and Redis for queueing
-* Rebuilds images so you catch Docker-specific issues
+* Rebuilds/uses your freshly built image so you catch Docker-specific issues
 
 ### 5.3 Gateway JWT (local API access)
 
@@ -215,21 +216,21 @@ Quickly confirm that authentication works and the gateway is healthy:
 
 ```bash
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key)
-curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/health
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/health
 ```
 
 Expected output:
 
 ```json
-{"status": "ok"}
+{"status": "healthy"}
 ```
 
-If you see anything other than `{"status":"ok"}`, investigate before approving the PR.
+If you see anything other than `{"status":"healthy"}`, investigate before approving the PR.
 
 Quickly confirm that the MCP Gateway is configured with the correct database, and it is reachable:
 
 ```bash
-curl -s -k -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" https://localhost:4444/version | jq
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/version | jq
 ```
 
 Then proceed to register an MCP Server under Gateways using the UI, ensuring that Tools work, creating a Virtual Server and testing that from UI, API and a MCP Client.
@@ -311,19 +312,14 @@ Use the UI method only if reviewers are done-every push re-triggers CI.
 Before requesting review, confirm that **all** required status checks on the PR page are green ✅ ("All checks have passed"). You should now see something like:
 
 ```text
-Bandit / bandit (pull_request)                  ✅  Successful in 21s
-Build Python Package / build-package (3.10)     ✅  Successful in 12s
-Code scanning results / Bandit                  ✅  No new alerts in code changed by this pull request
-Code scanning results / Dockle                  ✅  No new alerts in code changed by this pull request
-Code scanning results / Hadolint                ✅  No new alerts in code changed by this pull request
-Code scanning results / Trivy                   ✅  No new alerts in code changed by this pull request
-CodeQL Advanced / CodeQL (javascript-typescript)✅  Successful in 1m
-CodeQL Advanced / CodeQL (python)               ✅  Successful in 1m
+Secure Docker Build / docker-image              ✅  Successful in ~4m
+Build Python Package / python-package (3.11)    ✅  Successful in ~2m
+Tests & Coverage / pytest                       ✅  Successful in ~3m
+Lint & Static Analysis / lint                   ✅  Successful in ~2m
+Bandit / bandit                                 ✅  Successful in ~1m
+CodeQL                                          ✅  Successful in ~1m
+Dependency Review / dependency-review           ✅  Successful in seconds
 DCO                                             ✅  Passed
-Dependency Review / dependency-review           ✅  Successful in 4s
-Secure Docker Build / build-scan-sign           ✅  Successful in 4m
-Travis CI - Branch                              ✅  Build Passed
-Travis CI - Pull Request                        ✅  Build Passed
 ```
 
 If anything is red or still running, wait or push a **fix in the same PR** until every line is green. Ensure that a CODEOWNER is assigned to review the PR.

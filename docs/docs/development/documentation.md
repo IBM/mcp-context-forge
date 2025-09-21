@@ -145,9 +145,9 @@ The `build` target produces a fully-static site (used by CI for docs previews an
 
 ## 📤 Publishing (CI)
 
-Docs are tested, but not deployed automatically by GitHub Actions on every push to `main`. The workflow runs `cd docs && make build`.
+We do not currently run a dedicated docs-build workflow in CI. Build locally with `make build` (or the `make doctest`/`make lint` suite from the repo root) before opening a PR that touches docs-heavy changes.
 
-Publishing is done manually by repo maintainers with `make deploy` which publishes the generated site to **GitHub Pages**.
+Publishing to GitHub Pages remains a manual maintainer task via `make deploy`.
 
 ---
 

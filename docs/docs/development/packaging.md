@@ -9,14 +9,15 @@ This guide covers how to package MCP Gateway for deployment in various environme
 Build an OCI-compliant container image using:
 
 ```bash
-make podman
+make podman        # builds using Containerfile with Podman
+# or manually
 podman build -t mcpgateway:latest -f Containerfile .
 ```
 
 Or with Docker (if Podman is not available):
 
 ```bash
-make docker
+make docker        # builds using Containerfile with Docker
 # or manually
 docker build -t mcpgateway:latest -f Containerfile .
 ```
@@ -59,13 +60,15 @@ You can bump the version manually or automate it via Git tags or CI/CD.
 
 ## 📁 Release Artifacts
 
-If you need to ship ZIPs, wheels, or a full binary:
+If you need to ship ZIPs or wheels use the project build tooling:
 
 ```bash
+make dist
+# or
 python3 -m build
 ```
 
-Outputs will be under `dist/`. You can then:
+Outputs land under `dist/`. You can then:
 
 * Push to PyPI (internal or public)
 * Upload to GitHub Releases
