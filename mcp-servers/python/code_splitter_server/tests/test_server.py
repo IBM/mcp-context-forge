@@ -4,26 +4,15 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Tests for Code Splitter MCP Server.
+Tests for Code Splitter MCP Server (FastMCP).
 """
 
 import json
 import pytest
-from code_splitter_server.server import handle_call_tool, handle_list_tools
+from code_splitter_server.server_fastmcp import splitter
 
 
-@pytest.mark.asyncio
-async def test_list_tools():
-    """Test that tools are listed correctly."""
-    tools = await handle_list_tools()
-    tool_names = [tool.name for tool in tools]
-    expected_tools = ["split_code", "analyze_code", "extract_functions", "extract_classes"]
-    for expected in expected_tools:
-        assert expected in tool_names
-
-
-@pytest.mark.asyncio
-async def test_analyze_code():
+def test_analyze_code_structure():
     """Test code analysis."""
     python_code = '''
 def hello_world():
@@ -34,15 +23,15 @@ class MyClass:
     def method(self):
         return "test"
 '''
-    result = await handle_call_tool("analyze_code", {"code": python_code})
-    result_data = json.loads(result[0].text)
-    if result_data.get("success"):
-        assert result_data["function_count"] == 2  # hello_world + method
-        assert result_data["class_count"] == 1
+    result = splitter.analyze_code_structure(python_code)
+    assert result["success"] is True
+    assert result["function_count"] == 2  # hello_world + method (counts all functions)
+    assert result["class_count"] == 1
+    assert len(result["functions"]) == 2
+    assert len(result["classes"]) == 1
 
 
-@pytest.mark.asyncio
-async def test_extract_functions():
+def test_extract_functions_only():
     """Test function extraction."""
     python_code = '''
 def func1():
@@ -52,8 +41,52 @@ def func2(x, y):
     """Add two numbers."""
     return x + y
 '''
-    result = await handle_call_tool("extract_functions", {"code": python_code})
-    result_data = json.loads(result[0].text)
-    if result_data.get("success"):
-        assert result_data["function_count"] == 2
-        assert len(result_data["functions"]) == 2
+    result = splitter.extract_functions_only(python_code)
+    assert result["success"] is True
+    assert result["function_count"] == 2
+    assert len(result["functions"]) == 2
+
+
+def test_extract_classes_only():
+    """Test class extraction."""
+    python_code = '''
+class BaseClass:
+    def base_method(self):
+        pass
+
+class DerivedClass(BaseClass):
+    def derived_method(self):
+        pass
+'''
+    result = splitter.extract_classes_only(python_code)
+    assert result["success"] is True
+    assert result["class_count"] == 2
+    assert len(result["classes"]) == 2
+
+
+def test_split_python_code():
+    """Test code splitting."""
+    python_code = '''
+def func1():
+    return 1
+
+class MyClass:
+    def method(self):
+        return 2
+
+def func2():
+    return 3
+'''
+    # Use min_lines=1 since test functions are short
+    result = splitter.split_python_code(python_code, min_lines=1)
+    assert result["success"] is True
+    assert "segments" in result
+    assert result["total_segments"] > 0
+
+
+def test_supported_languages():
+    """Test getting supported languages."""
+    languages = splitter.supported_languages
+    assert isinstance(languages, dict)
+    assert "python" in languages
+    # Should have at least Python support

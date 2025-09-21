@@ -7,25 +7,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System deps including Graphviz
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl \
-    graphviz \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy metadata early for layer caching
 COPY pyproject.toml README.md ./
+COPY src/ ./src/
 
-# Create venv and install
 RUN python -m venv /app/.venv && \
     /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
     /app/.venv/bin/pip install -e .
 
-# Copy source
-COPY src/ ./src/
-
-# Non-root user
 RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
 USER 1001
 
-CMD ["python", "-m", "graphviz_server.server_fastmcp"]
+CMD ["python", "-m", "synthetic_data_server.server_fastmcp"]

@@ -4,147 +4,157 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Tests for XLSX MCP Server.
+Tests for XLSX MCP Server (FastMCP).
 """
 
 import json
 import pytest
 import tempfile
 from pathlib import Path
-from xlsx_server.server import handle_call_tool, handle_list_tools
-
-
-@pytest.mark.asyncio
-async def test_list_tools():
-    """Test that tools are listed correctly."""
-    tools = await handle_list_tools()
-
-    tool_names = [tool.name for tool in tools]
-    expected_tools = [
-        "create_workbook",
-        "write_data",
-        "read_data",
-        "format_cells",
-        "add_formula",
-        "analyze_workbook",
-        "create_chart"
-    ]
-
-    for expected in expected_tools:
-        assert expected in tool_names
 
 
 @pytest.mark.asyncio
 async def test_create_workbook():
     """Test workbook creation."""
+    from xlsx_server.server_fastmcp import ops
+
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = str(Path(tmpdir) / "test.xlsx")
 
-        result = await handle_call_tool(
-            "create_workbook",
-            {"file_path": file_path, "sheet_names": ["Sheet1", "Sheet2"]}
-        )
+        result = ops.create_workbook(file_path, ["Sheet1", "Sheet2"])
 
-        result_data = json.loads(result[0].text)
-        assert result_data["success"] is True
+        assert result["success"] is True
         assert Path(file_path).exists()
-        assert "Sheet1" in result_data["sheets"]
-        assert "Sheet2" in result_data["sheets"]
+        assert "sheets" in result
+        assert len(result["sheets"]) == 2
 
 
 @pytest.mark.asyncio
 async def test_write_and_read_data():
-    """Test writing and reading data."""
+    """Test writing and reading data to/from a workbook."""
+    from xlsx_server.server_fastmcp import ops
+
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = str(Path(tmpdir) / "test.xlsx")
 
         # Create workbook
-        await handle_call_tool("create_workbook", {"file_path": file_path})
+        ops.create_workbook(file_path, ["Sheet1"])
 
         # Write data
-        test_data = [["A", "B", "C"], [1, 2, 3], [4, 5, 6]]
-        result = await handle_call_tool(
-            "write_data",
-            {"file_path": file_path, "data": test_data, "headers": ["Col1", "Col2", "Col3"]}
-        )
+        data = [["Name", "Age"], ["Alice", 30], ["Bob", 25]]
+        write_result = ops.write_data(file_path, data, None, 1, 1, None)
+        assert write_result["success"] is True
 
-        result_data = json.loads(result[0].text)
-        assert result_data["success"] is True
-
-        # Read data back
-        result = await handle_call_tool(
-            "read_data",
-            {"file_path": file_path}
-        )
-
-        result_data = json.loads(result[0].text)
-        assert result_data["success"] is True
-        assert len(result_data["data"]) > 0
+        # Read data
+        read_result = ops.read_data(file_path, "A1:B3", None)
+        assert read_result["success"] is True
+        assert len(read_result["data"]) == 3
+        assert read_result["data"][0] == ["Name", "Age"]
 
 
 @pytest.mark.asyncio
 async def test_add_formula():
-    """Test adding formulas."""
+    """Test adding formulas to cells."""
+    from xlsx_server.server_fastmcp import ops
+
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = str(Path(tmpdir) / "test.xlsx")
 
-        # Create workbook and add data
-        await handle_call_tool("create_workbook", {"file_path": file_path})
-        await handle_call_tool("write_data", {"file_path": file_path, "data": [[1, 2], [3, 4]]})
+        # Create workbook
+        ops.create_workbook(file_path, ["Sheet1"])
 
-        # Add formula
-        result = await handle_call_tool(
-            "add_formula",
-            {"file_path": file_path, "cell": "C1", "formula": "=A1+B1"}
-        )
+        # Write some data
+        data = [[1], [2], [3]]
+        ops.write_data(file_path, data, None, 1, 1, None)
 
-        result_data = json.loads(result[0].text)
-        assert result_data["success"] is True
-        assert result_data["formula"] == "=A1+B1"
-
-
-@pytest.mark.asyncio
-async def test_analyze_workbook():
-    """Test workbook analysis."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        file_path = str(Path(tmpdir) / "test.xlsx")
-
-        # Create workbook and add content
-        await handle_call_tool("create_workbook", {"file_path": file_path})
-        await handle_call_tool("write_data", {"file_path": file_path, "data": [[1, 2, 3]]})
-
-        # Analyze
-        result = await handle_call_tool(
-            "analyze_workbook",
-            {"file_path": file_path}
-        )
-
-        result_data = json.loads(result[0].text)
-        assert result_data["success"] is True
-        assert "structure" in result_data
-        assert "data_summary" in result_data
+        # Add a SUM formula
+        formula_result = ops.add_formula(file_path, "A4", "=SUM(A1:A3)", None)
+        assert formula_result["success"] is True
+        assert formula_result["formula"] == "=SUM(A1:A3)"
 
 
 @pytest.mark.asyncio
 async def test_format_cells():
     """Test cell formatting."""
+    from xlsx_server.server_fastmcp import ops
+
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = str(Path(tmpdir) / "test.xlsx")
 
-        # Create workbook and add data
-        await handle_call_tool("create_workbook", {"file_path": file_path})
-        await handle_call_tool("write_data", {"file_path": file_path, "data": [[1, 2, 3]]})
+        # Create workbook
+        ops.create_workbook(file_path, ["Sheet1"])
 
-        # Format cells
-        result = await handle_call_tool(
-            "format_cells",
-            {
-                "file_path": file_path,
-                "cell_range": "A1:C1",
-                "font_bold": True,
-                "background_color": "#FF0000"
-            }
+        # Write some data
+        data = [["Header"]]
+        ops.write_data(file_path, data, None, 1, 1, None)
+
+        # Format the cell
+        format_result = ops.format_cells(
+            file_path, "A1", None,
+            font_bold=True,
+            font_italic=False,
+            font_color="#FF0000",
+            background_color="#FFFF00",
+            alignment="center"
+        )
+        assert format_result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_analyze_workbook():
+    """Test workbook analysis."""
+    from xlsx_server.server_fastmcp import ops
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = str(Path(tmpdir) / "test.xlsx")
+
+        # Create workbook with data
+        ops.create_workbook(file_path, ["Sheet1", "Sheet2"])
+        data = [["Name", "Score"], ["Alice", 95], ["Bob", 87]]
+        ops.write_data(file_path, data, None, 1, 1, None)
+
+        # Analyze workbook
+        analysis = ops.analyze_workbook(
+            file_path,
+            include_structure=True,
+            include_data_summary=True,
+            include_formulas=True
         )
 
-        result_data = json.loads(result[0].text)
-        assert result_data["success"] is True
+        assert analysis["success"] is True
+        assert "structure" in analysis
+        assert analysis["structure"]["sheets"] == 2  # sheets is the sheet count
+        assert "Sheet1" in [s["name"] for s in analysis["sheets"]]
+
+
+@pytest.mark.asyncio
+async def test_create_chart():
+    """Test chart creation."""
+    from xlsx_server.server_fastmcp import ops
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = str(Path(tmpdir) / "test.xlsx")
+
+        # Create workbook with data
+        ops.create_workbook(file_path, ["Sheet1"])
+        data = [
+            ["Month", "Sales"],
+            ["Jan", 100],
+            ["Feb", 150],
+            ["Mar", 120]
+        ]
+        ops.write_data(file_path, data, None, 1, 1, None)
+
+        # Create a chart
+        chart_result = ops.create_chart(
+            file_path,
+            sheet_name=None,
+            chart_type="column",
+            data_range="A1:B4",
+            title="Monthly Sales",
+            x_axis_title="Month",
+            y_axis_title="Sales"
+        )
+
+        assert chart_result["success"] is True
+        assert chart_result["chart_type"] == "column"
