@@ -1,6 +1,6 @@
 # Makefile for Chunker MCP Server
 
-.PHONY: help install dev-install install-nlp install-full format lint test dev dev-fastmcp mcp-info serve-http serve-http-fastmcp test-http clean
+.PHONY: help install dev-install install-nlp install-full format lint test dev mcp-info serve-http serve-sse test-http clean
 
 PYTHON ?= python3
 HTTP_PORT ?= 9010
@@ -52,8 +52,16 @@ mcp-info: ## Show MCP client config
 	@echo ""
 	@echo "=================================================================="
 
-serve-http: ## Expose FastMCP server over HTTP
-	@echo "HTTP: http://$(HTTP_HOST):$(HTTP_PORT)"
+serve-http: ## Run with native FastMCP HTTP
+	@echo "Starting FastMCP server with native HTTP support..."
+	@echo "HTTP endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/mcp/"
+	@echo "API docs: http://$(HTTP_HOST):$(HTTP_PORT)/docs"
+	$(PYTHON) -m chunker_server.server_fastmcp --transport http --host $(HTTP_HOST) --port $(HTTP_PORT)
+
+serve-sse: ## Run with mcpgateway.translate (SSE bridge)
+	@echo "Starting with translate SSE bridge..."
+	@echo "SSE endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/sse"
+	@echo "HTTP endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/"
 	$(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m chunker_server.server_fastmcp" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
 
 test-http: ## Basic HTTP checks

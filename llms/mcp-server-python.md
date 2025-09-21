@@ -46,8 +46,46 @@ if __name__ == "__main__":  # pragma: no cover
     main()
 ```
 
-- Run over HTTP (no code changes) with the CLI: `fastmcp run src/awesome_server/server_fastmcp.py:mcp --transport http --host 0.0.0.0 --port 8000`.
-- Prefer `fastmcp run` for transport/host/port overrides since the CLI imports the `mcp` object directly and ignores the `if __name__ == "__main__"` block.
+**Enhanced Server with Native HTTP Support**
+- For better flexibility, add argument parsing to support both stdio and HTTP modes natively:
+
+```python
+# src/awesome_server/server_fastmcp.py
+from fastmcp import FastMCP
+import argparse
+
+mcp = FastMCP("awesome-server", version="0.1.0")
+
+
+@mcp.tool
+def echo(text: str) -> str:
+    """Return the provided text."""
+    return text
+
+
+def main() -> None:
+    """Entry point with transport selection."""
+    parser = argparse.ArgumentParser(description="Awesome FastMCP Server")
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                        help="Transport mode (stdio or http)")
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
+    parser.add_argument("--port", type=int, default=8000, help="HTTP port")
+
+    args = parser.parse_args()
+
+    if args.transport == "http":
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        mcp.run()
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
+```
+
+- Run over stdio: `python -m awesome_server.server_fastmcp`
+- Run over HTTP: `python -m awesome_server.server_fastmcp --transport http --host 0.0.0.0 --port 8000`
+- Alternative with CLI: `fastmcp run src/awesome_server/server_fastmcp.py:mcp --transport http --host 0.0.0.0 --port 8000`
 
 **pyproject.toml (template)**
 - Pin FastMCP for production deployments; adjust metadata and optional extras.
@@ -114,19 +152,25 @@ Notes:
 - See richer examples in `data_analysis_server/pyproject.toml` and `mcp_eval_server/pyproject.toml` for additional extras and entry points.
 
 **Makefile (template)**
-- Provides dev install, format/lint/test targets, stdio run via `python -m`, and HTTP exposure with `fastmcp run`.
+- Provides dev install, format/lint/test targets, multiple transport modes (stdio, native HTTP, SSE bridge).
 
 ```makefile
 # Makefile for Awesome FastMCP Server
 
-.PHONY: help install dev-install format lint test dev mcp-info serve-http test-http clean
+.PHONY: help install dev-install format lint test dev serve-http serve-sse test-http mcp-info clean
 
 PYTHON ?= python3
 HTTP_PORT ?= 8000
 HTTP_HOST ?= 0.0.0.0
 
 help: ## Show help
-    @awk 'BEGIN {FS=":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+    @echo "Quick Start:"
+    @echo "  make install          Install FastMCP server"
+    @echo "  make dev              Run FastMCP server (stdio)"
+    @echo "  make serve-http       Run with native FastMCP HTTP"
+    @echo "  make serve-sse        Run with translate SSE bridge"
+    @echo ""
+    @awk 'BEGIN {FS=":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 install: ## Install in editable mode
     $(PYTHON) -m pip install -e .
@@ -135,7 +179,7 @@ dev-install: ## Install with dev extras
     $(PYTHON) -m pip install -e ".[dev]"
 
 format: ## Format (black + ruff --fix)
-    black . && ruff --fix .
+    black . && ruff check --fix .
 
 lint: ## Lint (ruff, mypy)
     ruff check . && mypy src/awesome_server
@@ -146,19 +190,29 @@ test: ## Run tests
 dev: ## Run FastMCP server (stdio)
     $(PYTHON) -m awesome_server.server_fastmcp
 
-mcp-info: ## Show FastMCP CLI snippet
-    @echo 'fastmcp run src/awesome_server/server_fastmcp.py:mcp'
+serve-http: ## Run with native FastMCP HTTP
+    @echo "HTTP endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/mcp/"
+    $(PYTHON) -m awesome_server.server_fastmcp --transport http --host $(HTTP_HOST) --port $(HTTP_PORT)
 
-serve-http: ## Run FastMCP server over HTTP
-    fastmcp run src/awesome_server/server_fastmcp.py:mcp --transport http --host $(HTTP_HOST) --port $(HTTP_PORT)
+serve-sse: ## Run with mcpgateway.translate (SSE bridge)
+    @echo "SSE endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/sse"
+    $(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m awesome_server.server_fastmcp" \
+      --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
 
-test-http: ## Basic HTTP check (tools.list)
+test-http: ## Test native HTTP endpoint
     curl -s -X POST -H 'Content-Type: application/json' \
       -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
-      http://$(HTTP_HOST):$(HTTP_PORT)/mcp/ | head -40 || true
+      http://$(HTTP_HOST):$(HTTP_PORT)/mcp/ | python3 -m json.tool | head -40 || true
+
+mcp-info: ## Show MCP client configs
+    @echo "1. FastMCP Server (stdio - for Claude Desktop):"
+    @echo '{"command": "python", "args": ["-m", "awesome_server.server_fastmcp"]}'
+    @echo ""
+    @echo "2. Native HTTP: make serve-http"
+    @echo "3. SSE bridge: make serve-sse"
 
 clean: ## Remove caches
-    rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__
+    rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__ *.egg-info
 ```
 
 Notes:
@@ -211,8 +265,19 @@ Notes:
 - Keep FastMCP objects (`FastMCP`, `@mcp.tool`, `@mcp.prompt`, `@mcp.resource`) in `server_fastmcp.py`; move heavy business logic into `tools.py` or subpackages.
 - Log to stderr when running under stdio transports to avoid corrupting the protocol stream.
 - Prefer Pydantic models for complex tool arguments/returns; FastMCP exposes them as structured schemas automatically.
-- Use `mcp.run(transport="http", ...)` for quick testing, but deploy with `fastmcp run ... --transport http` to keep configuration outside code.
+- Add argparse for flexible transport selection (stdio/HTTP) in the same codebase.
 - Combine FastMCP with the gateway by registering the HTTP endpoint (`/mcp`) or by wrapping stdio servers with `mcpgateway.translate` if you need SSE bridging.
+
+**Best Practices (from production experience)**
+1. **Single Implementation**: Use only FastMCP 2.x - avoid maintaining both MCP 1.0 and FastMCP versions
+2. **Version Pinning**: Always pin FastMCP to exact version (`fastmcp==2.11.3`) to avoid breaking changes
+3. **Error Handling**: Gracefully handle missing dependencies (e.g., Graphviz) with clear error messages
+4. **Transport Flexibility**: Support multiple transports in the same server:
+   - stdio for Claude Desktop and local clients
+   - Native HTTP for REST API access
+   - SSE bridge via translate for streaming clients
+5. **Testing**: Write tests that work directly with processor classes, not just via MCP protocol
+6. **Project Structure**: Keep it simple - one `server_fastmcp.py` file is often sufficient for small/medium servers
 
 **FastMCP 2 Resources**
 - Core docs: [Welcome to FastMCP 2.0](https://gofastmcp.com/getting-started/welcome.md), [Installation](https://gofastmcp.com/getting-started/installation.md), [Quickstart](https://gofastmcp.com/getting-started/quickstart.md), [Changelog](https://gofastmcp.com/changelog.md).

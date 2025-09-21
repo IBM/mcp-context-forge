@@ -4,37 +4,88 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-Tests for Mermaid MCP Server.
+Tests for Mermaid MCP Server (FastMCP).
 """
 
-import json
 import pytest
-from mermaid_server.server import handle_call_tool, handle_list_tools
+from mermaid_server.server_fastmcp import processor
 
 
-@pytest.mark.asyncio
-async def test_list_tools():
-    """Test that tools are listed correctly."""
-    tools = await handle_list_tools()
-    tool_names = [tool.name for tool in tools]
-    expected_tools = ["create_diagram", "create_flowchart", "create_sequence_diagram", "create_gantt_chart", "validate_mermaid", "get_templates"]
-    for expected in expected_tools:
-        assert expected in tool_names
+def test_create_flowchart():
+    """Test creating flowchart diagram."""
+    if processor is None:
+        pytest.skip("Mermaid processor not available")
+
+    result = processor.create_flowchart(
+        nodes=["A", "B", "C"],
+        edges=[("A", "B", "Step 1"), ("B", "C", "Step 2")]
+    )
+
+    assert result["success"] is True
+    assert "graph" in result["diagram"]
 
 
-@pytest.mark.asyncio
-async def test_get_templates():
-    """Test getting diagram templates."""
-    result = await handle_call_tool("get_templates", {})
-    result_data = json.loads(result[0].text)
-    assert "flowchart" in result_data
-    assert "sequence" in result_data
+def test_create_sequence_diagram():
+    """Test creating sequence diagram."""
+    if processor is None:
+        pytest.skip("Mermaid processor not available")
+
+    result = processor.create_sequence_diagram(
+        participants=["Alice", "Bob"],
+        messages=[("Alice", "Bob", "Hello")]
+    )
+
+    assert result["success"] is True
+    assert "sequenceDiagram" in result["diagram"]
 
 
-@pytest.mark.asyncio
-async def test_validate_mermaid():
+def test_create_gantt_chart():
+    """Test creating Gantt chart."""
+    if processor is None:
+        pytest.skip("Mermaid processor not available")
+
+    result = processor.create_gantt_chart(
+        title="Project",
+        tasks=[{
+            "id": "task1",
+            "name": "Task 1",
+            "start": "2024-01-01",
+            "duration": "5d"
+        }]
+    )
+
+    assert result["success"] is True
+    assert "gantt" in result["diagram"]
+
+
+def test_validate_mermaid():
     """Test Mermaid validation."""
-    valid_mermaid = "flowchart TD\n    A --> B"
-    result = await handle_call_tool("validate_mermaid", {"mermaid_code": valid_mermaid})
-    result_data = json.loads(result[0].text)
-    assert result_data["valid"] is True
+    if processor is None:
+        pytest.skip("Mermaid processor not available")
+
+    # Valid diagram
+    result = processor.validate_mermaid("graph TD\n  A --> B")
+    assert result["valid"] is True
+
+    # Invalid diagram (empty)
+    result = processor.validate_mermaid("")
+    assert result["valid"] is False
+
+
+def test_get_templates():
+    """Test getting templates."""
+    if processor is None:
+        pytest.skip("Mermaid processor not available")
+
+    result = processor.get_diagram_templates()
+    assert "flowchart" in result
+    assert "sequence" in result
+
+
+def test_processor_initialization():
+    """Test processor initialization state."""
+    # Processor may be None if dependencies not available
+    if processor is not None:
+        assert hasattr(processor, "create_flowchart")
+        assert hasattr(processor, "create_sequence_diagram")
+        assert hasattr(processor, "validate_mermaid")

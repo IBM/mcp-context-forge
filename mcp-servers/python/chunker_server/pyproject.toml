@@ -9,10 +9,8 @@ license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastmcp>=0.1.0",
-  "mcp>=1.0.0",
+  "fastmcp==2.11.3",
   "pydantic>=2.5.0",
-  "typing-extensions>=4.5.0",
 ]
 
 [project.optional-dependencies]
@@ -45,8 +43,7 @@ build-backend = "hatchling.build"
 packages = ["src/chunker_server"]
 
 [project.scripts]
-chunker-server = "chunker_server.server:main"
-chunker-server-fastmcp = "chunker_server.server_fastmcp:main"
+chunker-server = "chunker_server.server_fastmcp:main"
 
 [tool.black]
 line-length = 100
