@@ -17,7 +17,7 @@
 ???+ check "Python tooling"
     - [ ] `pip install --upgrade pip`
     - [ ] `uv` and `uvx` installed - [install uv](https://github.com/astral-sh/uv)
-    - [ ] `.venv` created with `make venv install install-dev`
+    - [ ] `.venv` recreated with `make install-dev` (installs runtime + dev extras)
 
 ???+ check "Additional tools"
     - [ ] `helm` installed for Kubernetes deployments ([Helm install docs](https://helm.sh/docs/intro/install/))
@@ -43,7 +43,7 @@
 
 ???+ check "Local setup"
     - [ ] `make check-env` (validates .env is complete)
-    - [ ] `make venv install install-dev serve`
+    - [ ] `make install-dev serve`
     - [ ] `make smoketest` runs and passes
 
 ???+ check "Container builds"

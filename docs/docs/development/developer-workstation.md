@@ -100,16 +100,10 @@ This guide helps you to set up your local environment for contributing to the Mo
 ### Set Up and Serve Documentation
 
 ```bash
-# Create and activate virtual environment
-make venv
-source .venv/bin/activate  # Linux/macOS
-.venv\Scripts\activate     # Windows
-
-# Install dependencies
-make install
-
-# Serve documentation locally
-make serve
+# Build docs in an isolated environment
+cd docs
+make venv          # first run only; installs MkDocs + plugins
+make serve         # http://127.0.0.1:8000 with live reload
 ```
 
 ## Signing commits

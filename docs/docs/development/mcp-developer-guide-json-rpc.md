@@ -35,9 +35,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 **Expected health response:**
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2025-01-15T10:30:00Z",
-  "version": "0.7.0"
+  "status": "healthy"
 }
 ```
 
@@ -118,22 +116,16 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
   "result": {
     "protocolVersion": "2025-03-26",
     "capabilities": {
-      "experimental": {},
-      "prompts": {
-        "listChanged": false
-      },
-      "resources": {
-        "subscribe": false,
-        "listChanged": false
-      },
-      "tools": {
-        "listChanged": false
-      }
+      "prompts": {"listChanged": true},
+      "resources": {"subscribe": true, "listChanged": true},
+      "tools": {"listChanged": true},
+      "logging": {}
     },
     "serverInfo": {
-      "name": "mcpgateway",
+      "name": "MCP_Gateway",
       "version": "0.7.0"
-    }
+    },
+    "instructions": "MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."
   }
 }
 ```
@@ -182,7 +174,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 }
 ```
 
-**Response with tools available:**
+**Response with tools available (e.g. after registering the Fast Time Server example):**
 ```json
 {
   "jsonrpc": "2.0",
@@ -396,9 +388,22 @@ curl -N -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/sse
 ```
 
+The first event emitted by the stream is an `endpoint` payload with the per-session POST URL:
+
+```text
+event: endpoint
+data: http://localhost:4444/message?session_id=7bfbf2a4-...
+```
+
+Copy that value (it changes each run) into an environment variable used by your second terminal:
+
+```bash
+export MCP_SSE_ENDPOINT="http://localhost:4444/message?session_id=7bfbf2a4-..."
+```
+
 ### Sending Messages via SSE
 
-In a separate terminal, send JSON-RPC messages:
+Now send JSON-RPC messages to the captured endpoint:
 
 ```bash
 # Initialize via SSE
@@ -414,7 +419,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
              "clientInfo": {"name": "sse-client", "version": "1.0"}
            }
          }' \
-     http://localhost:4444/message
+     "$MCP_SSE_ENDPOINT"
 
 # List tools via SSE
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -424,9 +429,9 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
            "id": 2,
            "method": "tools/list"
          }' \
-     http://localhost:4444/message
+     "$MCP_SSE_ENDPOINT"
 
-# Call a tool via SSE
+# Call a tool via SSE (after registering one)
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
      -d '{
@@ -438,7 +443,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
              "arguments": {"timezone": "Asia/Tokyo"}
            }
          }' \
-     http://localhost:4444/message
+     "$MCP_SSE_ENDPOINT"
 ```
 
 ## Utility Operations
@@ -485,16 +490,17 @@ python3 -m mcpgateway.wrapper
 
 ### STDIO Communication
 
-Send JSON-RPC commands directly to stdin:
+Feed multiple JSON-RPC messages in one stream (the wrapper exits when STDIN closes):
 
 ```bash
-# Send commands to stdin (each on a single line)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"stdio-client","version":"1.0"}}}' | python3 -m mcpgateway.wrapper
-
-echo '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' | python3 -m mcpgateway.wrapper
-
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | python3 -m mcpgateway.wrapper
+python3 -m mcpgateway.wrapper <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"stdio-client","version":"1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/list"}
+EOF
 ```
+
+Run it interactively (without the here-doc) if you prefer to type requests by hand.
 
 ## Complete Session Examples
 
