@@ -430,15 +430,23 @@ Consider using the full [MCP Gateway](../overview/index.md).
 
 ## Advanced Configuration
 
-### Environment Variables
+### Configuration
 
-All command-line options can be set via environment variables:
+`mcpgateway.translate` reads its configuration from command-line arguments
+only, with one exception: the HTTP `Content-Type` header defaults to the
+`FORGE_CONTENT_TYPE` environment variable (falls back to `application/json`).
+If you want shell-friendly defaults, wrap the invocation with an alias or
+script:
 
 ```bash
-export MCPGATEWAY_PORT=9000
-export MCPGATEWAY_LOG_LEVEL=debug
-export MCPGATEWAY_CORS_ORIGINS="http://localhost:3000"
-python3 -m mcpgateway.translate --stdio "mcp-server"
+alias translate-git='python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --host 127.0.0.1 --port 9000 --expose-sse'
+translate-git
+```
+
+Optional: adjust the outbound content type once for your shell session:
+
+```bash
+export FORGE_CONTENT_TYPE=application/json
 ```
 
 ### Custom Headers

@@ -21,19 +21,22 @@ This guide provides essential security configurations and best practices for dep
 MCPGATEWAY_UI_ENABLED=false
 MCPGATEWAY_ADMIN_API_ENABLED=false
 
-# Disable unused features
-MCPGATEWAY_ENABLE_ROOTS=false    # If not using roots
-MCPGATEWAY_ENABLE_PROMPTS=false  # If not using prompts
-MCPGATEWAY_ENABLE_RESOURCES=false # If not using resources
+# Optional: turn off auxiliary systems you do not need
+MCPGATEWAY_BULK_IMPORT_ENABLED=false
+MCPGATEWAY_A2A_ENABLED=false
 ```
+
+Use RBAC policies to revoke access to prompts, resources, or tools you do not
+intend to expose—these surfaces are always mounted but can be hidden from end
+users by removing the corresponding permissions.
 
 ### 2. Enable Authentication & Security
 
 ```bash
 # Configure strong authentication
-MCPGATEWAY_AUTH_ENABLED=true
-MCPGATEWAY_AUTH_USERNAME=custom-username  # Change from default
-MCPGATEWAY_AUTH_PASSWORD=strong-password-here  # Use secrets manager
+AUTH_REQUIRED=true
+BASIC_AUTH_USER=custom-username       # Change from default
+BASIC_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 
 # Platform admin user (auto-created during bootstrap)
 PLATFORM_ADMIN_EMAIL=admin@yourcompany.com  # Change from default
@@ -310,24 +313,28 @@ Applications consuming MCP Gateway data must:
 # Core Security
 MCPGATEWAY_UI_ENABLED=false              # Must be false in production
 MCPGATEWAY_ADMIN_API_ENABLED=false       # Must be false in production
-MCPGATEWAY_AUTH_ENABLED=true             # Enable authentication
-MCPGATEWAY_AUTH_USERNAME=custom-user     # Change from default
-MCPGATEWAY_AUTH_PASSWORD=<from-secrets>  # Use secrets manager
+AUTH_REQUIRED=true                       # Enforce auth for every request
+BASIC_AUTH_USER=custom-user              # Change from default
+BASIC_AUTH_PASSWORD=<from-secrets>       # Use secrets manager or secret store
 
 # Feature Flags (disable unused features)
-MCPGATEWAY_ENABLE_ROOTS=false
-MCPGATEWAY_ENABLE_PROMPTS=false
-MCPGATEWAY_ENABLE_RESOURCES=false
+MCPGATEWAY_BULK_IMPORT_ENABLED=false
+MCPGATEWAY_A2A_ENABLED=false
 
 # Network Security
-MCPGATEWAY_CORS_ALLOWED_ORIGINS=https://your-domain.com
-MCPGATEWAY_RATE_LIMIT_ENABLED=true
-MCPGATEWAY_RATE_LIMIT_PER_MINUTE=100
+CORS_ENABLED=true
+ALLOWED_ORIGINS=https://your-domain.com
+SECURITY_HEADERS_ENABLED=true
 
 # Logging (no sensitive data)
-MCPGATEWAY_LOG_LEVEL=INFO               # Not DEBUG in production
-MCPGATEWAY_LOG_SENSITIVE_DATA=false     # Never log sensitive data
+LOG_LEVEL=INFO               # Avoid DEBUG in production
+LOG_TO_FILE=false            # Disable file logging unless required
+LOG_ROTATION_ENABLED=false   # Enable only when log files are needed
 ```
+
+> **Rate limiting:** MCP Gateway does not ship a built-in global rate limiter. Enforce
+> request throttling at an upstream ingress (NGINX, Envoy, API gateway) before traffic
+> reaches the service.
 
 ## 🚀 Deployment Architecture
 
