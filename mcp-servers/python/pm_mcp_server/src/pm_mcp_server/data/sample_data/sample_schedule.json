@@ -1,0 +1,7 @@
+{
+  "tasks": [
+    {"id": "T1", "name": "Kickoff", "duration_days": 2, "dependencies": [], "owner": "PMO"},
+    {"id": "T2", "name": "Requirements", "duration_days": 5, "dependencies": ["T1"], "owner": "BA"},
+    {"id": "T3", "name": "Design", "duration_days": 4, "dependencies": ["T2"], "owner": "Architect"}
+  ]
+}

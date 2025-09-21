@@ -1,0 +1,3 @@
+id,type,description,owner,impact,probability,mitigation,status
+R-001,Risk,Dependency on vendor delivery,Alex High,High,Medium,Escalate weekly,Open
+A-001,Assumption,Legacy API remains stable this quarter,Sara,Medium,Low,Monitor metrics,Valid
