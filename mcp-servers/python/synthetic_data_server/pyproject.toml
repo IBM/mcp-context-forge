@@ -5,7 +5,7 @@ description = "FastMCP server for generating high quality synthetic tabular data
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
-  { name = "MCP Context Forge", email = "oss@mcp-context-forge.example" }
+  { name = "Mihai Criveti", email = "noreply@example.com" }
 ]
 license = { text = "Apache-2.0" }
 dependencies = [

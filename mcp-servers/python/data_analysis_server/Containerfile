@@ -248,7 +248,7 @@ ARG ROOTFS_PATH
 LABEL maintainer="MCP Context Forge" \
       org.opencontainers.image.title="mcp/mcp-data-analysis-server" \
       org.opencontainers.image.description="MCP Data Analysis Server: Comprehensive data analysis capabilities with pandas, numpy, scipy" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="0.1.0" \
       org.opencontainers.image.source="https://github.com/contextforge/mcp-context-forge" \
       org.opencontainers.image.documentation="https://github.com/contextforge/mcp-context-forge/mcp-servers/python/data-analysis-server" \

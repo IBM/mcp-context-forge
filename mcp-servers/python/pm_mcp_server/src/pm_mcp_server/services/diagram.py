@@ -1,4 +1,11 @@
-"""Utilities for producing diagram artefacts."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/services/diagram.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Utilities for producing diagram artefacts.
+"""
 
 from __future__ import annotations
 

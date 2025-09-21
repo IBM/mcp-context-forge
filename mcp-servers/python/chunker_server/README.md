@@ -368,7 +368,7 @@ pip install spacy  # For NLP processing
 
 ## License
 
-MIT License - See LICENSE file for details
+Apache-2.0 License - See LICENSE file for details
 
 ## Contributing
 

@@ -1,5 +1,7 @@
 # PM MCP Server
 
+> Author: Mihai Criveti
+
 Project management-focused FastMCP server delivering planning, scheduling, risk, and reporting tools for PM workflows.
 
 ## Features

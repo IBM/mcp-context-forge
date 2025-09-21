@@ -1,4 +1,11 @@
-"""Collaboration and communication helper tools."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/tools/collaboration.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Collaboration and communication helper tools.
+"""
 
 from __future__ import annotations
 

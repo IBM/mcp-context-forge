@@ -3,9 +3,9 @@ name = "graphviz-server"
 version = "2.0.0"
 description = "Comprehensive Python MCP server for creating, editing, and rendering Graphviz graphs"
 authors = [
-  { name = "MCP Context Forge", email = "noreply@example.com" }
+  { name = "Mihai Criveti", email = "noreply@example.com" }
 ]
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

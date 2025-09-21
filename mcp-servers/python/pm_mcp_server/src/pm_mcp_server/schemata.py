@@ -1,4 +1,11 @@
-"""Pydantic models used by the project management MCP server."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/schemata.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Pydantic models used by the project management MCP server.
+"""
 
 from __future__ import annotations
 
