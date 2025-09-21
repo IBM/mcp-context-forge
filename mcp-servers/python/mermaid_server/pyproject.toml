@@ -3,9 +3,9 @@ name = "mermaid-server"
 version = "2.0.0"
 description = "Comprehensive Mermaid diagram generation and rendering MCP server"
 authors = [
-  { name = "MCP Context Forge", email = "noreply@example.com" }
+  { name = "Mihai Criveti", email = "noreply@example.com" }
 ]
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

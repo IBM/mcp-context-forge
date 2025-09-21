@@ -1,4 +1,11 @@
-"""Governance-oriented tools (risks, change control, earned value)."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/tools/governance.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Governance-oriented tools (risks, change control, earned value).
+"""
 
 from __future__ import annotations
 

@@ -3,9 +3,9 @@ name = "pm-mcp-server"
 version = "0.1.0"
 description = "Project management toolkit MCP server built with FastMCP"
 authors = [
-  { name = "MCP Context Forge", email = "noreply@example.com" }
+  { name = "Mihai Criveti", email = "noreply@example.com" }
 ]
-license = { text = "MIT" }
+license = { text = "Apache-2" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

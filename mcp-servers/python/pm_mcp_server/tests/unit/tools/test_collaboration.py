@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""Module Description.
+Location: ./mcp-servers/python/pm_mcp_server/tests/unit/tools/test_collaboration.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Module documentation...
+"""
 from pm_mcp_server.schemata import ActionItem, ActionItemLog, Stakeholder
 from pm_mcp_server.tools import collaboration
 

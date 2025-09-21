@@ -324,7 +324,3 @@ For issues and feature requests, please check:
 1. README.md for basic usage
 2. test_server.py for detailed examples
 3. GitHub issues for known problems
-
-## License
-
-MIT License - See LICENSE file for details.

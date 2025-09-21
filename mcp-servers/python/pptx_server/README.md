@@ -419,7 +419,7 @@ The server is built using:
 
 ## License
 
-MIT License - See LICENSE file for details.
+Apache-2.0 License - See LICENSE file for details.
 
 ## Related Projects
 
