@@ -48,14 +48,19 @@ class GraphvizProcessor:
             'dot',
             '/usr/bin/dot',
             '/usr/local/bin/dot',
-            '/opt/graphviz/bin/dot'
+            '/opt/graphviz/bin/dot',
+            '/opt/homebrew/bin/dot',  # macOS Homebrew
+            'C:\\Program Files\\Graphviz\\bin\\dot.exe',  # Windows
+            'C:\\Program Files (x86)\\Graphviz\\bin\\dot.exe'  # Windows x86
         ]
 
         for cmd in possible_commands:
             if shutil.which(cmd):
+                logger.info(f"Found Graphviz at: {cmd}")
                 return cmd
 
-        raise RuntimeError("Graphviz not found. Please install Graphviz.")
+        logger.warning("Graphviz not found. Please install Graphviz.")
+        raise RuntimeError("Graphviz not found. Please install Graphviz from https://graphviz.org/download/")
 
     def create_graph(self, file_path: str, graph_type: str = "digraph", graph_name: str = "G",
                     attributes: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -419,7 +424,11 @@ class GraphvizProcessor:
 
 
 # Initialize the processor
-processor = GraphvizProcessor()
+try:
+    processor = GraphvizProcessor()
+except RuntimeError as e:
+    logger.warning(f"Graphviz not available: {e}")
+    processor = None  # Server will still work for DOT file manipulation
 
 
 @mcp.tool(description="Create a new DOT graph file")
@@ -509,8 +518,22 @@ async def list_layouts() -> Dict[str, Any]:
 
 def main():
     """Main entry point for the FastMCP server."""
-    logger.info("Starting Graphviz FastMCP Server...")
-    mcp.run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Graphviz FastMCP Server")
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                        help="Transport mode (stdio or http)")
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
+    parser.add_argument("--port", type=int, default=9005, help="HTTP port")
+
+    args = parser.parse_args()
+
+    if args.transport == "http":
+        logger.info(f"Starting Graphviz FastMCP Server on HTTP at {args.host}:{args.port}")
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        logger.info("Starting Graphviz FastMCP Server on stdio")
+        mcp.run()
 
 
 if __name__ == "__main__":

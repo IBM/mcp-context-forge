@@ -675,7 +675,22 @@ async def get_sandbox_info() -> Dict[str, Any]:
 
 def main():
     """Run the FastMCP server."""
-    mcp.run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Python Sandbox FastMCP Server")
+    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                        help="Transport mode (stdio or http)")
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
+    parser.add_argument("--port", type=int, default=9015, help="HTTP port")
+
+    args = parser.parse_args()
+
+    if args.transport == "http":
+        logger.info(f"Starting Python Sandbox FastMCP Server on HTTP at {args.host}:{args.port}")
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        logger.info("Starting Python Sandbox FastMCP Server on stdio")
+        mcp.run()
 
 
 if __name__ == "__main__":
