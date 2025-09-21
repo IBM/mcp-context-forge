@@ -7,8 +7,10 @@ multiple output formats to accelerate prototyping, testing, and analytics workfl
 ## Features
 
 - FastMCP 2 server with stdio and native HTTP transports
-- Ten+ column primitives including numeric, boolean, categorical, temporal, text, and Faker-backed entities
-- Curated presets for customer profiles, transactions, and IoT telemetry
+- 12+ column types: integer, float, boolean, categorical, date, datetime, text, pattern, name, email, address, company, UUID
+- Curated presets: customer profiles, transactions, IoT telemetry, products catalog, employee records
+- Pattern-based string generation for SKUs, product codes, employee IDs (e.g., "PROD-{:04d}")
+- Flexible text generation modes: word, sentence, or paragraph
 - Deterministic generation with per-request seeds and Faker locale overrides
 - Built-in dataset catalog with summaries, preview rows, and reusable resources (CSV / JSONL)
 - In-memory cache for recently generated datasets with LRU eviction
@@ -24,8 +26,36 @@ python -m synthetic_data_server.server_fastmcp
 Invoke over HTTP:
 
 ```bash
-python -m synthetic_data_server.server_fastmcp --transport http --host 0.0.0.0 --port 8000
+python -m synthetic_data_server.server_fastmcp --transport http --host localhost --port 9018
 ```
+
+## Available Column Types
+
+| Type | Description | Key Parameters |
+| --- | --- | --- |
+| `integer` | Integer values within a range | `minimum`, `maximum`, `step` |
+| `float` | Floating-point numbers | `minimum`, `maximum`, `precision` |
+| `boolean` | True/false values | `true_probability` |
+| `categorical` | Random selection from list | `categories`, `weights` (optional) |
+| `date` | Date values | `start_date`, `end_date`, `date_format` |
+| `datetime` | Timestamp values | `start_datetime`, `end_datetime`, `output_format` |
+| `text` | Generated text content | `mode` (word/sentence/paragraph), `word_count`, `min_sentences`, `max_sentences` |
+| `pattern` | Formatted strings with patterns | `pattern` (e.g., "SKU-{:05d}"), `sequence_start`, `random_choices` |
+| `name` | Realistic person names | `locale` (optional) |
+| `email` | Email addresses | `locale` (optional) |
+| `address` | Street addresses | `locale` (optional) |
+| `company` | Company names | `locale` (optional) |
+| `uuid` | UUID v4 identifiers | `uppercase` |
+
+All column types support `nullable` and `null_probability` for generating null values.
+
+## Available Presets
+
+- **customer_profiles**: Customer data with IDs, names, emails, signup dates, and lifetime values
+- **transactions**: Financial transactions with amounts, timestamps, statuses, and payment methods
+- **iot_telemetry**: IoT sensor readings with device IDs, timestamps, temperatures, and battery levels
+- **products**: Product catalog with SKUs, names, prices, categories, and stock status
+- **employees**: Employee records with IDs, names, departments, salaries, and hire dates
 
 ## Available Tools
 
@@ -37,8 +67,9 @@ python -m synthetic_data_server.server_fastmcp --transport http --host 0.0.0.0 -
 | `summarize_dataset` | Retrieve cached summary statistics for a dataset |
 | `retrieve_dataset` | Download persisted CSV/JSONL artifacts |
 
-### Example `generate_dataset` Payload
+### Example Requests
 
+#### Using a Preset
 ```json
 {
   "rows": 1000,
@@ -47,6 +78,40 @@ python -m synthetic_data_server.server_fastmcp --transport http --host 0.0.0.0 -
   "preview_rows": 5,
   "output_formats": ["csv", "jsonl"],
   "include_summary": true
+}
+```
+
+#### Custom Dataset with Pattern Column
+```json
+{
+  "rows": 500,
+  "columns": [
+    {
+      "name": "product_id",
+      "type": "pattern",
+      "pattern": "SKU-{:05d}",
+      "sequence_start": 10000
+    },
+    {
+      "name": "product_name",
+      "type": "text",
+      "mode": "word",
+      "word_count": 3
+    },
+    {
+      "name": "price",
+      "type": "float",
+      "minimum": 9.99,
+      "maximum": 999.99,
+      "precision": 2
+    },
+    {
+      "name": "in_stock",
+      "type": "boolean",
+      "true_probability": 0.8
+    }
+  ],
+  "seed": 456
 }
 ```
 
@@ -89,7 +154,7 @@ Build and run the container image:
 
 ```bash
 docker build -t synthetic-data-server .
-docker run --rm -p 8000:8000 synthetic-data-server python -m synthetic_data_server.server_fastmcp --transport http --host 0.0.0.0 --port 8000
+docker run --rm -p 9018:9018 synthetic-data-server python -m synthetic_data_server.server_fastmcp --transport http --host 0.0.0.0 --port 9018
 ```
 
 ## Testing
@@ -109,4 +174,4 @@ The unit tests cover deterministic generation, preset usage, and artifact persis
 }
 ```
 
-For HTTP clients, invoke `make serve-http` and target `http://localhost:8000/mcp/`.
+For HTTP clients, invoke `make serve-http` and target `http://localhost:9018/mcp/`.

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Synthetic Data Generation FastMCP Server."""
 
 from __future__ import annotations
@@ -107,7 +108,7 @@ def main() -> None:
         help="Transport mode (stdio or http)",
     )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
-    parser.add_argument("--port", type=int, default=8000, help="HTTP port")
+    parser.add_argument("--port", type=int, default=9018, help="HTTP port")
 
     args = parser.parse_args()
 

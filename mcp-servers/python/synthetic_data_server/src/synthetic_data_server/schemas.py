@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Pydantic models describing synthetic data generation requests and responses."""
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ class ColumnKind(str, Enum):
     DATE = "date"
     DATETIME = "datetime"
     TEXT = "text"
+    PATTERN = "pattern"
     NAME = "name"
     EMAIL = "email"
     ADDRESS = "address"
@@ -150,6 +152,8 @@ class TextColumn(ColumnBase):
     type: Literal[ColumnKind.TEXT.value] = ColumnKind.TEXT.value
     min_sentences: int = Field(default=1, ge=1, le=10)
     max_sentences: int = Field(default=3, ge=1, le=20)
+    mode: Literal["sentence", "word", "paragraph"] = Field(default="sentence")
+    word_count: Optional[int] = Field(default=None, ge=1, le=50, description="Number of words when mode='word'")
     wrap_within: Optional[int] = Field(
         default=None,
         description="Optional maximum number of characters per line for generated text.",
@@ -160,6 +164,17 @@ class TextColumn(ColumnBase):
         if self.max_sentences < self.min_sentences:
             raise ValueError("max_sentences must be >= min_sentences")
         return self
+
+
+class PatternColumn(ColumnBase):
+    """Pattern-based string column for formatted strings."""
+
+    type: Literal[ColumnKind.PATTERN.value] = ColumnKind.PATTERN.value
+    pattern: str = Field(..., description="Python format string e.g. 'PROD-{:04d}' or with multiple: 'USER-{}-{}'")
+    sequence_start: Optional[int] = Field(default=1, description="Starting number for sequence patterns")
+    sequence_step: int = Field(default=1, description="Step for sequence patterns")
+    random_choices: Optional[list[str]] = Field(default=None, description="Random values to use in pattern")
+    random_digits: int = Field(default=4, ge=1, le=10, description="Number of random digits if no choices provided")
 
 
 class SimpleFakerColumn(ColumnBase):
@@ -193,6 +208,7 @@ ColumnDefinition = Annotated[
         DateColumn,
         DateTimeColumn,
         TextColumn,
+        PatternColumn,
         SimpleFakerColumn,
         UUIDColumn,
     ],

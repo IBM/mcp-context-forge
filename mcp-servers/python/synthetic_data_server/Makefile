@@ -1,47 +1,54 @@
 # Synthetic Data FastMCP Server Makefile
 
+.PHONY: help install dev-install format lint test dev mcp-info serve-http serve-sse test-http clean
+
 PYTHON ?= python3
 PACKAGE = synthetic_data_server
-HTTP_HOST ?= 0.0.0.0
-HTTP_PORT ?= 8000
+HTTP_HOST ?= localhost
+HTTP_PORT ?= 9018
 
-.PHONY: install dev serve-http serve-sse lint test clean
+help: ## Show help
+	@awk 'BEGIN {FS=":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-install:
-	uv pip install -e .[dev]
+install: ## Install in editable mode
+	$(PYTHON) -m pip install -e .
 
-lint:
-	uv pip install -q ruff mypy
-	ruff check src/ tests/
-	mypy src/${PACKAGE}
+dev-install: ## Install with dev extras
+	$(PYTHON) -m pip install -e ".[dev]"
 
-format:
-	uv pip install -q black isort
-	black src/ tests/
-	isort src/ tests/
+format: ## Format (black + ruff --fix)
+	black . && ruff --fix .
 
-format-check:
-	black --check src/ tests/
-	isort --check-only src/ tests/
+lint: ## Lint (ruff, mypy)
+	ruff check . && mypy src/${PACKAGE}
 
-pre-commit:
-	make format lint
-
-test:
-	uv pip install -q pytest pytest-cov
+test: ## Run tests
 	pytest -v --cov=${PACKAGE} --cov-report=term-missing
 
-dev:
-	${PYTHON} -m ${PACKAGE}.server_fastmcp
+dev: ## Run FastMCP server (stdio)
+	@echo "Starting Synthetic Data FastMCP server (stdio)..."
+	$(PYTHON) -m ${PACKAGE}.server_fastmcp
 
-serve-http:
-	@echo "HTTP endpoint: http://${HTTP_HOST}:${HTTP_PORT}/mcp/"
-	${PYTHON} -m ${PACKAGE}.server_fastmcp --transport http --host ${HTTP_HOST} --port ${HTTP_PORT}
+mcp-info: ## Show stdio client config snippet
+	@echo '{"command": "python", "args": ["-m", "synthetic_data_server.server_fastmcp"], "cwd": "'$(PWD)'"}'
 
-serve-sse:
-	@echo "SSE endpoint: http://${HTTP_HOST}:${HTTP_PORT}/sse"
-	${PYTHON} -m mcpgateway.translate --stdio "${PYTHON} -m ${PACKAGE}.server_fastmcp" \
-	  --host ${HTTP_HOST} --port ${HTTP_PORT} --expose-sse
+serve-http: ## Run with native FastMCP HTTP
+	@echo "Starting FastMCP server with native HTTP support..."
+	@echo "HTTP endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/mcp/"
+	@echo "API docs: http://$(HTTP_HOST):$(HTTP_PORT)/docs"
+	$(PYTHON) -m ${PACKAGE}.server_fastmcp --transport http --host $(HTTP_HOST) --port $(HTTP_PORT)
 
-clean:
-	rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__ *.egg-info dist build
+serve-sse: ## Run with mcpgateway.translate (SSE bridge)
+	@echo "Starting with translate SSE bridge..."
+	@echo "SSE endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/sse"
+	@echo "HTTP endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/"
+	$(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m ${PACKAGE}.server_fastmcp" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
+
+test-http: ## Basic HTTP checks
+	curl -s http://$(HTTP_HOST):$(HTTP_PORT)/ | head -20 || true
+	curl -s -X POST -H 'Content-Type: application/json' \
+	  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+	  http://$(HTTP_HOST):$(HTTP_PORT)/ | head -40 || true
+
+clean: ## Remove caches and temporary files
+	rm -rf .pytest_cache .ruff_cache .mypy_cache __pycache__ */__pycache__ *.egg-info build/ dist/

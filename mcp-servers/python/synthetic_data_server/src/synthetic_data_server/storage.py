@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """In-memory persistence for generated datasets."""
 
 from __future__ import annotations

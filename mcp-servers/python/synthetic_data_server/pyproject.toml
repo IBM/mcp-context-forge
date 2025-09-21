@@ -1,6 +1,6 @@
 [project]
 name = "synthetic-data-server"
-version = "0.1.0"
+version = "2.0.0"
 description = "FastMCP server for generating high quality synthetic tabular datasets"
 readme = "README.md"
 requires-python = ">=3.11"

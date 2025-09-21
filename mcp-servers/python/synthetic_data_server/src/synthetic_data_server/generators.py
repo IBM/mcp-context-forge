@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Synthetic data generation utilities used by the FastMCP server."""
 
 from __future__ import annotations
@@ -109,6 +110,8 @@ class SyntheticDataGenerator:
             return lambda: self._gen_datetime(column, rng)
         if isinstance(column, schemas.TextColumn):
             return lambda: self._gen_text(column, rng, faker)
+        if isinstance(column, schemas.PatternColumn):
+            return lambda: self._gen_pattern(column, rng)
         if isinstance(column, schemas.SimpleFakerColumn):
             return lambda: self._gen_simple_faker(column, faker)
         if isinstance(column, schemas.UUIDColumn):
@@ -149,12 +152,63 @@ class SyntheticDataGenerator:
         rng: random.Random,
         faker: Faker,
     ) -> str:
-        count = rng.randint(column.min_sentences, column.max_sentences)
-        paragraphs = faker.paragraphs(nb=count)
-        text = "\n\n".join(paragraphs)
+        if column.mode == "word":
+            word_count = column.word_count or rng.randint(1, 10)
+            words = [faker.word() for _ in range(word_count)]
+            return " ".join(words)
+        elif column.mode == "paragraph":
+            count = rng.randint(column.min_sentences, column.max_sentences)
+            paragraphs = faker.paragraphs(nb=count)
+            text = "\n\n".join(paragraphs)
+        else:  # sentence mode (default)
+            count = rng.randint(column.min_sentences, column.max_sentences)
+            sentences = [faker.sentence() for _ in range(count)]
+            text = " ".join(sentences)
+
         if column.wrap_within:
             return self._wrap_text(text, column.wrap_within)
         return text
+
+    def _gen_pattern(
+        self,
+        column: schemas.PatternColumn,
+        rng: random.Random,
+    ) -> str:
+        import re
+
+        # Count all format placeholders (both {} and {:format})
+        pattern_regex = r'\{[^}]*\}'
+        placeholders = re.findall(pattern_regex, column.pattern)
+        placeholder_count = len(placeholders)
+
+        if placeholder_count == 0:
+            # No placeholders, return pattern as-is
+            return column.pattern
+
+        # Generate values for placeholders
+        values = []
+        for _ in range(placeholder_count):
+            if column.random_choices:
+                values.append(rng.choice(column.random_choices))
+            elif column.sequence_start is not None:
+                # Use sequence counter
+                if not hasattr(self, '_pattern_counters'):
+                    self._pattern_counters = {}
+                key = f"{column.pattern}_{column.name}"
+                if key not in self._pattern_counters:
+                    self._pattern_counters[key] = column.sequence_start
+                value = self._pattern_counters[key]
+                self._pattern_counters[key] += column.sequence_step
+                values.append(value)
+            else:
+                # Generate random digits
+                values.append(rng.randint(0, 10**column.random_digits - 1))
+
+        # Format the pattern with values
+        try:
+            return column.pattern.format(*values)
+        except (IndexError, ValueError) as e:
+            raise DatasetGenerationError(f"Pattern formatting error: {e}")
 
     def _wrap_text(self, text: str, width: int) -> str:
         lines = []
@@ -400,6 +454,107 @@ def build_presets() -> Dict[str, schemas.DatasetPreset]:
                         name="is_alert",
                         true_probability=0.05,
                         description="Whether the reading breached configured thresholds",
+                    ),
+                ],
+            ),
+            "products": schemas.DatasetPreset(
+                name="products",
+                description="E-commerce product catalog with SKUs and pricing.",
+                default_rows=200,
+                tags=["ecommerce", "products", "inventory"],
+                columns=[
+                    schemas.PatternColumn(
+                        name="sku",
+                        pattern="SKU-{:05d}",
+                        sequence_start=10000,
+                        description="Product SKU identifier",
+                    ),
+                    schemas.PatternColumn(
+                        name="product_name",
+                        pattern="Product {}",
+                        random_choices=["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta"],
+                        description="Product name",
+                    ),
+                    schemas.TextColumn(
+                        name="description",
+                        mode="sentence",
+                        min_sentences=1,
+                        max_sentences=2,
+                        description="Product description",
+                    ),
+                    schemas.CategoricalColumn(
+                        name="category",
+                        categories=["Electronics", "Clothing", "Home", "Sports", "Books", "Toys"],
+                        weights=[0.25, 0.20, 0.20, 0.15, 0.10, 0.10],
+                    ),
+                    schemas.FloatColumn(
+                        name="price",
+                        minimum=9.99,
+                        maximum=999.99,
+                        precision=2,
+                        description="Product price in USD",
+                    ),
+                    schemas.IntegerColumn(
+                        name="stock_quantity",
+                        minimum=0,
+                        maximum=500,
+                        description="Current stock level",
+                    ),
+                    schemas.BooleanColumn(
+                        name="is_featured",
+                        true_probability=0.15,
+                        description="Whether product is featured",
+                    ),
+                ],
+            ),
+            "employees": schemas.DatasetPreset(
+                name="employees",
+                description="HR employee records with departments and salaries.",
+                default_rows=150,
+                tags=["hr", "employees", "organization"],
+                columns=[
+                    schemas.PatternColumn(
+                        name="employee_id",
+                        pattern="EMP-{:06d}",
+                        sequence_start=100001,
+                        description="Employee ID",
+                    ),
+                    schemas.SimpleFakerColumn(
+                        name="full_name",
+                        type=schemas.ColumnKind.NAME.value,
+                        description="Employee full name",
+                    ),
+                    schemas.SimpleFakerColumn(
+                        name="email",
+                        type=schemas.ColumnKind.EMAIL.value,
+                        description="Work email address",
+                    ),
+                    schemas.CategoricalColumn(
+                        name="department",
+                        categories=["Engineering", "Sales", "Marketing", "HR", "Finance", "Operations", "Support"],
+                        weights=[0.30, 0.15, 0.10, 0.08, 0.12, 0.15, 0.10],
+                    ),
+                    schemas.CategoricalColumn(
+                        name="level",
+                        categories=["Junior", "Mid", "Senior", "Lead", "Manager", "Director"],
+                        weights=[0.25, 0.30, 0.20, 0.10, 0.10, 0.05],
+                    ),
+                    schemas.IntegerColumn(
+                        name="salary",
+                        minimum=40000,
+                        maximum=250000,
+                        step=5000,
+                        description="Annual salary in USD",
+                    ),
+                    schemas.DateColumn(
+                        name="hire_date",
+                        start_date=datetime(2010, 1, 1).date(),
+                        end_date=datetime(2024, 12, 31).date(),
+                    ),
+                    schemas.BooleanColumn(
+                        name="is_remote",
+                        true_probability=0.35,
+                        description="Remote work status",
                     ),
                 ],
             ),

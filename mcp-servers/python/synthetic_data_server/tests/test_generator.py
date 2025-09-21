@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Unit tests for the synthetic data server utilities."""
 
 from __future__ import annotations
