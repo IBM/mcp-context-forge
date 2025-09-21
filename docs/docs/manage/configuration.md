@@ -159,22 +159,26 @@ DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp          # Postgr
 DATABASE_URL=mongodb://admin:changeme@localhost:27017/mcp               # MongoDB
 
 # Connection pool settings (optional)
-DATABASE_POOL_SIZE=10
-DATABASE_MAX_OVERFLOW=20
-DATABASE_POOL_TIMEOUT=30
+DB_POOL_SIZE=200
+DB_MAX_OVERFLOW=5
+DB_POOL_TIMEOUT=60
+DB_POOL_RECYCLE=3600
+DB_MAX_RETRIES=5
+DB_RETRY_INTERVAL_MS=2000
 ```
 
 ### Server Configuration
 
 ```bash
-# Network binding
+# Network binding & runtime
 HOST=0.0.0.0
 PORT=4444
+ENVIRONMENT=development
+APP_DOMAIN=localhost
+APP_ROOT_PATH=
 
-# SSL/TLS (optional)
-SSL=false
-CERT_FILE=/app/certs/cert.pem
-KEY_FILE=/app/certs/key.pem
+# TLS helper (run-gunicorn.sh)
+# SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
 ```
 
 ### Authentication & Security
@@ -206,8 +210,12 @@ PLATFORM_ADMIN_EMAIL=admin@example.com
 PLATFORM_ADMIN_PASSWORD=changeme
 
 # Security Features
+AUTH_REQUIRED=true
 SECURITY_HEADERS_ENABLED=true
+CORS_ENABLED=true
 CORS_ALLOW_CREDENTIALS=true
+ALLOWED_ORIGINS="https://admin.example.com,https://api.example.com"
+AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
 ```
 
 ### Feature Flags
@@ -223,11 +231,13 @@ MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200
 MCPGATEWAY_A2A_ENABLED=true
 MCPGATEWAY_A2A_MAX_AGENTS=100
 MCPGATEWAY_A2A_DEFAULT_TIMEOUT=30
+MCPGATEWAY_A2A_MAX_RETRIES=3
 MCPGATEWAY_A2A_METRICS_ENABLED=true
 
 # Federation & Discovery
-MCPGATEWAY_ENABLE_FEDERATION=true
-MCPGATEWAY_ENABLE_MDNS_DISCOVERY=true
+FEDERATION_ENABLED=true
+FEDERATION_DISCOVERY=true
+FEDERATION_PEERS=["https://gateway-1.internal", "https://gateway-2.internal"]
 ```
 
 ### Caching Configuration
@@ -236,11 +246,12 @@ MCPGATEWAY_ENABLE_MDNS_DISCOVERY=true
 # Cache Backend
 CACHE_TYPE=redis                    # Options: memory, redis, database, none
 REDIS_URL=redis://localhost:6379/0
+CACHE_PREFIX=mcpgateway
 
 # Cache TTL (seconds)
-CACHE_DEFAULT_TTL=300
-CACHE_TOOL_TTL=600
-CACHE_RESOURCE_TTL=180
+SESSION_TTL=3600
+MESSAGE_TTL=600
+RESOURCE_CACHE_TTL=1800
 ```
 
 ### Logging Settings
@@ -257,7 +268,6 @@ LOG_FOLDER=logs
 
 # Structured Logging
 LOG_FORMAT=json                     # json, plain
-LOG_INCLUDE_TIMESTAMPS=true
 ```
 
 ### Development & Debug
@@ -269,9 +279,10 @@ DEV_MODE=true
 RELOAD=true
 DEBUG=true
 
-# Metrics & Observability
-METRICS_ENABLED=true
-HEALTH_CHECK_ENABLED=true
+# Observability
+OTEL_ENABLE_OBSERVABILITY=true
+OTEL_TRACES_EXPORTER=otlp
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
 ---
@@ -516,20 +527,16 @@ spec:
 ### Performance Tuning
 
 ```bash
-# Database Connection Pool
-DATABASE_POOL_SIZE=20
-DATABASE_MAX_OVERFLOW=30
-DATABASE_POOL_TIMEOUT=60
-DATABASE_POOL_RECYCLE=3600
+# Database connection pool
+DB_POOL_SIZE=200
+DB_MAX_OVERFLOW=5
+DB_POOL_TIMEOUT=60
+DB_POOL_RECYCLE=3600
 
-# HTTP Settings
-HTTP_WORKERS=4
-HTTP_KEEPALIVE=2
-HTTP_TIMEOUT=30
-
-# Tool Execution
-TOOL_EXECUTION_TIMEOUT=300
-MAX_CONCURRENT_TOOLS=10
+# Tool execution
+TOOL_TIMEOUT=120
+MAX_TOOL_RETRIES=5
+TOOL_CONCURRENT_LIMIT=10
 ```
 
 ### Security Hardening
@@ -538,29 +545,20 @@ MAX_CONCURRENT_TOOLS=10
 # Enable all security features
 SECURITY_HEADERS_ENABLED=true
 CORS_ALLOW_CREDENTIALS=false
+AUTH_REQUIRED=true
 REQUIRE_TOKEN_EXPIRATION=true
-JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15
-JWT_REFRESH_TOKEN_EXPIRE_DAYS=7
-
-# Rate limiting
-RATE_LIMIT_ENABLED=true
-RATE_LIMIT_REQUESTS_PER_MINUTE=60
-RATE_LIMIT_BURST=10
+TOKEN_EXPIRY=60
 ```
 
 ### Observability Integration
 
 ```bash
 # OpenTelemetry (Phoenix, Jaeger, etc.)
-OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:4317
-OTEL_SERVICE_NAME=mcp-gateway
+OTEL_ENABLE_OBSERVABILITY=true
 OTEL_TRACES_EXPORTER=otlp
-OTEL_METRICS_EXPORTER=otlp
-
-# Prometheus Metrics
-METRICS_ENABLED=true
-METRICS_PORT=9090
-METRICS_PATH=/metrics
+OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:4317
+OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+OTEL_SERVICE_NAME=mcp-gateway
 ```
 
 ---
