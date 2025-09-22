@@ -1108,9 +1108,24 @@ function createKPISection(kpiData) {
         section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
 
         const kpis = [
-            { key: "totalExecutions", label: "Total Executions", icon: "🎯", color: "blue" },
-            { key: "successRate", label: "Success Rate", icon: "✅", color: "green" },
-            { key: "avgResponseTime", label: "Avg Response Time", icon: "⚡", color: "yellow" },
+            { 
+               key: "totalExecutions", 
+               label: "Total Executions", 
+               icon: "🎯", 
+               color: "blue"
+            },
+            { 
+                key: "successRate", 
+                label: "Success Rate", 
+                icon: "✅", 
+                color: "green" 
+            },
+            { 
+                key: "avgResponseTime", 
+                label: "Avg Response Time", 
+                icon: "⚡", 
+                color: "yellow" 
+            },
             { key: "errorRate", label: "Error Rate", icon: "❌", color: "red" },
         ];
 
@@ -1121,8 +1136,13 @@ function createKPISection(kpiData) {
             } else {
                 if (kpi.key === "avgResponseTime") {
                     // ensure numeric then 3 decimals + unit
-                    value = isNaN(Number(value)) ? "N/A" : Number(value).toFixed(3) + " ms";
-                } else if (kpi.key === "successRate" || kpi.key === "errorRate") {
+                    value = isNaN(Number(value)) 
+                        ? "N/A" 
+                        : Number(value).toFixed(3) + " ms";
+                } else if (
+                    kpi.key === "successRate" || 
+                    kpi.key === "errorRate"
+                ) {
                     value = String(value) + "%";
                 } else {
                     value = String(value);
@@ -1196,11 +1216,21 @@ function extractKPIData(data) {
 
         const categoryKeys = [
             ["tools", "Tools Metrics", "Tools", "tools_metrics"],
-            ["resources", "Resources Metrics", "Resources", "resources_metrics"],
+            [
+                "resources", 
+                "Resources Metrics", 
+                "Resources", 
+                "resources_metrics"
+            ],
             ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
             ["servers", "Servers Metrics", "Servers", "servers_metrics"],
             ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
-            ["virtualServers", "Virtual Servers", "VirtualServers", "virtual_servers"],
+            [
+                "virtualServers", 
+                "Virtual Servers", 
+                "VirtualServers", 
+                "virtual_servers"
+            ],
         ];
 
         categoryKeys.forEach((aliases) => {
@@ -1211,8 +1241,9 @@ function extractKPIData(data) {
                     break;
                 }
             }
-            if (!categoryData) return;
-
+            if (!categoryData) {
+                return;
+            }
             // Build a lowercase-key map so "Successful Executions" and "successfulExecutions" both match
             const normalized = {};
             Object.entries(categoryData).forEach(([k, v]) => {
@@ -1283,7 +1314,14 @@ function extractKPIData(data) {
                 : 0;
 
         // Debug: show what we've read from the payload
-        console.log("KPI Totals:", { totalExecutions, totalSuccessful, totalFailed, successRate, errorRate, avgResponseTime });
+        console.log("KPI Totals:", { 
+            totalExecutions, 
+            totalSuccessful, 
+            totalFailed, 
+            successRate, 
+            errorRate, 
+            avgResponseTime 
+        });
 
         const results = {
             totalExecutions,
@@ -1297,7 +1335,12 @@ function extractKPIData(data) {
         return results;
     } catch (err) {
         console.error("Error extracting KPI data:", err);
-        return { totalExecutions: 0, successRate: 0, errorRate: 0, avgResponseTime: null };
+        return { 
+            totalExecutions: 0, 
+            successRate: 0, 
+            errorRate: 0, 
+            avgResponseTime: null 
+        };
     }
 }
 
@@ -1311,7 +1354,9 @@ function updateKPICards(kpiData) {
         if (!kpiData) return;
 
         const formatAvg = (v) =>
-            v === null || v === undefined || isNaN(v) ? "N/A" : Number(v).toFixed(3) + " ms";
+            v === null || v === undefined || isNaN(v) 
+                ? "N/A" 
+                : Number(v).toFixed(3) + " ms";
 
         const kv = {
             totalExecutions: kpiData.totalExecutions ?? 0,
@@ -1340,13 +1385,26 @@ function updateKPICards(kpiData) {
                 if (el) {
                     foundAny = true;
                     // If element contains child spans, prefer updating inner .value or the element text
-                    const valueEl = el.querySelector && (el.querySelector(".value") || el.querySelector(".kpi-value"));
-                    if (valueEl) valueEl.textContent = value;
-                    else el.textContent = value;
+                    const valueEl = 
+                    el.querySelector && 
+                    (el.querySelector(".value") || 
+                        el.querySelector(".kpi-value"));
+                    if (valueEl) {
+                        valueEl.textContent = value;
+                    } else {
+                         el.textContent = value;
+                    }     
                 }
             });
 
-            console.debug("KPI Cards Update attempt", tries, "foundAny:", foundAny, "values:", kv);
+            console.debug(
+                "KPI Cards Update attempt", 
+                tries, 
+                "foundAny:", 
+                foundAny, 
+                "values:", 
+                kv
+            );
 
             if (!foundAny && tries < maxTries) {
                 setTimeout(applyOnce, retryDelay);
