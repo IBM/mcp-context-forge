@@ -77,7 +77,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
         auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, gateway.oauth_config, app_user_email=current_user.get("email"))
 
-        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.get("email")}")
+        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.get('email')}")
 
         # Redirect user to OAuth provider
         return RedirectResponse(url=auth_data["authorization_url"])
