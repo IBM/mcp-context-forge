@@ -604,8 +604,20 @@ class OAuthManager:
 
                     state_data = json.loads(state_json)
 
+                    # Parse expires_at as timezone-aware datetime. If the stored value
+                    # is naive, assume UTC for compatibility.
+                    try:
+                        expires_at = datetime.fromisoformat(state_data["expires_at"])
+                    except Exception:
+                        # Fallback: try parsing without microseconds/offsets
+                        expires_at = datetime.strptime(state_data["expires_at"], "%Y-%m-%dT%H:%M:%S")
+
+                    if expires_at.tzinfo is None:
+                        # Assume UTC for naive timestamps
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
                     # Check if state has expired
-                    if datetime.fromisoformat(state_data["expires_at"]) < datetime.now(timezone.utc):
+                    if expires_at < datetime.now(timezone.utc):
                         logger.warning(f"State has expired for gateway {gateway_id}")
                         return False
 
@@ -636,7 +648,12 @@ class OAuthManager:
                         return False
 
                     # Check if state has expired
-                    if oauth_state.expires_at < datetime.now(timezone.utc):
+                    # Ensure oauth_state.expires_at is timezone-aware. If naive, assume UTC.
+                    expires_at = oauth_state.expires_at
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+                    if expires_at < datetime.now(timezone.utc):
                         logger.warning(f"State has expired for gateway {gateway_id}")
                         db.delete(oauth_state)
                         db.commit()
@@ -667,8 +684,12 @@ class OAuthManager:
                 logger.warning(f"State not found in memory for gateway {gateway_id}")
                 return False
 
-            # Check if state has expired
-            if datetime.fromisoformat(state_data["expires_at"]) < datetime.now(timezone.utc):
+            # Parse and normalize expires_at to timezone-aware datetime
+            expires_at = datetime.fromisoformat(state_data["expires_at"])
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+            if expires_at < datetime.now(timezone.utc):
                 logger.warning(f"State has expired for gateway {gateway_id}")
                 del _oauth_states[state_key]  # Clean up expired state
                 return False
