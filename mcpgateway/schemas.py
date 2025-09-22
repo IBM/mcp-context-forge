@@ -3425,6 +3425,7 @@ class ServerRead(BaseModelWithConfigDict):
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
