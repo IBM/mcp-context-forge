@@ -2666,6 +2666,7 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
+    team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
     visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
 
