@@ -1200,7 +1200,7 @@ function extractKPIData(data) {
             ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
             ["servers", "Servers Metrics", "Servers", "servers_metrics"],
             ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
-            ["virtualServers", "Virtual Servers", "VirtualServers", "virtual_servers"]
+            ["virtualServers", "Virtual Servers", "VirtualServers", "virtual_servers"],
         ];
 
         categoryKeys.forEach((aliases) => {
@@ -1285,7 +1285,16 @@ function extractKPIData(data) {
         // Debug: show what we've read from the payload
         console.log("KPI Totals:", { totalExecutions, totalSuccessful, totalFailed, successRate, errorRate, avgResponseTime });
 
-        return { totalExecutions, successRate, errorRate, avgResponseTime };
+        const results = {
+            totalExecutions,
+            totalSuccessful,
+            totalFailed,
+            successRate,
+            errorRate,
+            avgResponseTime,
+        };
+
+        return results;
     } catch (err) {
         console.error("Error extracting KPI data:", err);
         return { totalExecutions: 0, successRate: 0, errorRate: 0, avgResponseTime: null };
@@ -1671,9 +1680,13 @@ function createTopPerformersTable(entityType, data, isActive) {
         const lastUsedCell = document.createElement("td");
         lastUsedCell.className =
             "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
-        lastUsedCell.textContent = formatLastUsed(
-             item.last_execution || item.lastExecution || item.last_used || item.lastUsed,
-        );
+        const itemObj = {
+            lastExecution: item.last_execution ||
+                item.lastExecution ||
+                item.last_used ||
+                item.lastUsed,
+        };
+        lastUsedCell.textContent = formatLastUsed(itemObj.lastExecution);
         row.appendChild(lastUsedCell);
 
         tbody.appendChild(row);
