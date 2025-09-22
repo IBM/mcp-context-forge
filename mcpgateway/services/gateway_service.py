@@ -2151,6 +2151,34 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Only return active gateways
             return db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
 
+    def get_first_gateway_by_url(self, db: Session, url: str, team_id: Optional[str] = None, include_inactive: bool = False) -> Optional[GatewayRead]:
+        """Return the first DbGateway matching the given URL and optional team_id.
+
+        This is a synchronous helper intended for use from request handlers where
+        a simple DB lookup is needed. It normalizes the provided URL similar to
+        how gateways are stored and matches by the `url` column. If team_id is
+        provided, it restricts the search to that team.
+
+        Args:
+            url: Gateway base URL to match (will be normalized)
+            team_id: Optional team id to restrict search
+            include_inactive: Whether to include inactive gateways
+
+        Returns:
+            Optional[DbGateway]: First matching gateway or None
+        """
+        query = select(DbGateway).where(DbGateway.url == url)
+        if not include_inactive:
+            query = query.where(DbGateway.enabled)
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+        result = db.execute(query).scalars().first()
+        # Wrap the DB object in the GatewayRead schema for consistency with
+        # other service methods. Return None if no match found.
+        if result is None:
+            return None
+        return GatewayRead.model_validate(result)
+
     async def _run_health_checks(self) -> None:
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.

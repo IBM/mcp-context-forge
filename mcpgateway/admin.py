@@ -82,6 +82,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
@@ -7230,7 +7231,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_current_user_with_permissions)) -> GatewayTestResponse:
+async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
     This endpoint allows administrators to test the connectivity and response
@@ -7373,9 +7374,32 @@ async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_curre
     full_url = full_url.rstrip("/")
     LOGGER.debug(f"User {get_user_email(user)} testing server at {request.base_url}.")
     start_time: float = time.monotonic()
+    headers = request.headers or {}
+
+    # Attempt to find a registered gateway matching this URL and team
     try:
+        gateway_service = GatewayService()
+        gateway = gateway_service.get_first_gateway_by_url(db, str(request.base_url), team_id=team_id)
+    except Exception:
+        gateway = None
+
+    try:
+        oauth_manager = OAuthManager(
+            request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
+            max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
+        )
+        # If we found a gateway record and it requires OAuth, attempt to fetch a token
+        if gateway and getattr(gateway, "auth_type", None) == "oauth" and getattr(gateway, "oauth_config", None):
+            try:
+                access_token = await oauth_manager.get_access_token(gateway.oauth_config)
+                LOGGER.info(f'{access_token=}')
+                headers = dict(headers)  # make a shallow copy
+                headers["Authorization"] = f"Bearer {access_token}"
+            except Exception as e:
+                LOGGER.warning(f"Failed to obtain OAuth token for gateway test: {e}")
+
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
+            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=headers, json=request.body)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[Dict[str, Any], str] = response.json()
