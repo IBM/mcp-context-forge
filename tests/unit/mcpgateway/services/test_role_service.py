@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Comprehensive unit tests for RoleService."""
+"""Location: ./tests/unit/mcpgateway/services/test_role_service.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Comprehensive unit tests for RoleService.
+"""
 
 # Standard
 import asyncio

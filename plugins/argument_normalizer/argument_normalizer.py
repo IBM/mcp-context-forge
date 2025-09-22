@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Argument Normalizer Plugin for MCP Gateway.
-
+"""Location: ./plugins/argument_normalizer/argument_normalizer.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+Argument Normalizer Plugin for MCP Gateway.
 Normalizes string arguments for prompts and tools by applying:
 - Unicode normalization (NFC/NFD/NFKC/NFKD)
 - Whitespace cleanup (trim, collapse, newline normalization)

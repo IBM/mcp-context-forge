@@ -1,2 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Argument Normalizer plugin package."""
+"""Location: ./plugins/argument_normalizer/__init__.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Argument Normalizer plugin package.
+"""

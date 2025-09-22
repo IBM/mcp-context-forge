@@ -1,0 +1,19 @@
+# Project Status Report - {{ reporting_period }}
+
+**Overall Health**: {{ overall_health }}
+
+## Highlights
+{% for item in highlights %}- {{ item }}
+{% endfor %}
+
+## Schedule
+- Percent Complete: {{ schedule.percent_complete }}%
+- Critical Items: {% for item in schedule.critical_items %}{{ item }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+## Risks & Issues
+{% for risk in risks %}- {{ risk.id }} ({{ risk.severity }}): {{ risk.description }} — Owner: {{ risk.owner }}
+{% endfor %}
+
+## Next Steps
+{% for step in next_steps %}- {{ step.description }} (Owner: {{ step.owner }}, Due: {{ step.due_date }})
+{% endfor %}

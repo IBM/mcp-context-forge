@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Migration testing pytest configuration and fixtures.
+"""Location: ./tests/migration/conftest.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Migration testing pytest configuration and fixtures.
 
 This module provides specialized fixtures for migration testing,
 including container management, test data generation, and cleanup utilities.

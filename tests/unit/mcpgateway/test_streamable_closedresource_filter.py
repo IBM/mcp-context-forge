@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for suppressing ClosedResourceError logs from streamable HTTP.
+"""Location: ./tests/unit/mcpgateway/test_streamable_closedresource_filter.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Tests for suppressing ClosedResourceError logs from streamable HTTP.
 
 These tests validate that normal client disconnects (anyio.ClosedResourceError)
 do not spam ERROR logs via the upstream MCP logger.

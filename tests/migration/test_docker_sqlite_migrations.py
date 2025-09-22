@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""SQLite container migration tests.
+"""Location: ./tests/migration/test_docker_sqlite_migrations.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+SQLite container migration tests.
 
 This module tests database migrations using SQLite containers across
 different MCP Gateway versions with comprehensive validation.

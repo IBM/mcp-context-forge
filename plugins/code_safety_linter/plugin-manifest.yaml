@@ -1,0 +1,12 @@
+description: "Detect unsafe code patterns in tool outputs"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "tool_post_invoke"
+default_configs:
+  blocked_patterns:
+    - "\\beval\\s*\\("
+    - "\\bexec\\s*\\("
+    - "\\bos\\.system\\s*\\("
+    - "\\bsubprocess\\.(Popen|call|run)\\s*\\("
+    - "\\brm\\s+-rf\\b"

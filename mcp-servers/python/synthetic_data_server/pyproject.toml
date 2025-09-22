@@ -1,0 +1,35 @@
+[project]
+name = "synthetic-data-server"
+version = "2.0.0"
+description = "FastMCP server for generating high quality synthetic tabular datasets"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Mihai Criveti", email = "noreply@example.com" }
+]
+license = { text = "Apache-2.0" }
+dependencies = [
+  "fastmcp==2.11.3",
+  "pydantic>=2.5.0",
+  "faker>=19.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.1.0",
+  "black>=24.1.0",
+  "ruff>=0.1.5",
+  "mypy>=1.5.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/synthetic_data_server"]
+
+[project.scripts]
+synthetic-data-server = "synthetic_data_server.server_fastmcp:main"

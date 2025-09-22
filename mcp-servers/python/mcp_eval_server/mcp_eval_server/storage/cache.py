@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Caching system for MCP Eval Server."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/storage/cache.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Caching system for MCP Eval Server.
+"""
 
 # Standard
 from hashlib import sha256

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Migration test reporting and HTML dashboard utilities.
+"""Location: ./tests/migration/utils/reporting.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Migration test reporting and HTML dashboard utilities.
 
 This module provides comprehensive reporting capabilities for migration tests
 including HTML dashboards, JSON reports, and performance visualizations.

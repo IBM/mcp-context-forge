@@ -1,4 +1,5 @@
 title: Go Servers
 nav:
-  - fast-time-server.md
   - calculator-server.md
+  - fast-time-server.md
+  - pandoc-server.md

@@ -1,5 +1,7 @@
 # MCP Data Analysis Server
 
+> Author: Mihai Criveti
+
 A comprehensive Model Context Protocol (MCP) server providing advanced data analysis, statistical testing, visualization, and transformation capabilities. This server enables AI applications to perform sophisticated data science workflows through a standardized interface.
 
 ## 🚀 Features
@@ -261,7 +263,7 @@ pytest tests/performance/ -v
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache-2.0 License - see the LICENSE file for details.
 
 ## 🆘 Support
 

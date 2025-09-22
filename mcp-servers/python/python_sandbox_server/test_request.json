@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "execute_code",
+    "arguments": {
+      "code": "result = 2 + 2\nprint(f'The answer is {result}')"
+    }
+  }
+}

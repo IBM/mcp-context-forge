@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""FastAPI REST server for MCP Evaluation Tools.
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/rest_server.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+FastAPI REST server for MCP Evaluation Tools.
 
 This module provides a REST API interface to all the evaluation tools
 available in the MCP Evaluation Server. It groups tools logically by

@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""MCP tools for evaluation workflow management."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/tools/workflow_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP tools for evaluation workflow management.
+"""
 
 # Standard
 import asyncio

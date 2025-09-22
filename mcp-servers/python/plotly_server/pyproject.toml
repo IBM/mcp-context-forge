@@ -1,0 +1,67 @@
+[project]
+name = "plotly-server"
+version = "2.0.0"
+description = "Advanced data visualization MCP server using Plotly for interactive charts"
+authors = [
+  { name = "Mihai Criveti", email = "noreply@example.com" }
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastmcp==2.11.3",
+  "pydantic>=2.5.0",
+  "typing-extensions>=4.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.0.0",
+  "black>=23.0.0",
+  "mypy>=1.5.0",
+  "ruff>=0.0.290",
+]
+plotly = [
+  "plotly>=5.17.0",
+  "pandas>=2.0.0",
+  "numpy>=1.24.0",
+  "kaleido>=0.2.1",  # For static image export
+]
+full = [
+  "plotly>=5.17.0",
+  "pandas>=2.0.0",
+  "numpy>=1.24.0",
+  "kaleido>=0.2.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/plotly_server"]
+
+[project.scripts]
+plotly-server = "plotly_server.server_fastmcp:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "W", "F", "B", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=plotly_server --cov-report=term-missing"

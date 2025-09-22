@@ -1,9 +1,9 @@
 # Makefile for PowerPoint MCP Server
 
-.PHONY: help install dev-install format lint test dev mcp-info serve-http test-http clean
+.PHONY: help install dev-install format lint test dev mcp-info serve-http serve-sse test-http clean
 
 PYTHON ?= python3
-HTTP_PORT ?= 9000
+HTTP_PORT ?= 9014
 HTTP_HOST ?= localhost
 
 help: ## Show help
@@ -24,16 +24,24 @@ lint: ## Lint (ruff, mypy)
 test: ## Run tests
 	pytest -v --cov=pptx_server --cov-report=term-missing
 
-dev: ## Run stdio MCP server
-	@echo "Starting PowerPoint MCP server (stdio)..."
-	$(PYTHON) -m pptx_server.server
+dev: ## Run FastMCP server (stdio)
+	@echo "Starting PowerPoint FastMCP server (stdio)..."
+	$(PYTHON) -m pptx_server.server_fastmcp
 
 mcp-info: ## Show stdio client config snippet
-	@echo '{"command": "python", "args": ["-m", "pptx_server.server"], "cwd": "'$(PWD)'"}'
+	@echo '{"command": "python", "args": ["-m", "pptx_server.server_fastmcp"], "cwd": "'$(PWD)'"}'
 
-serve-http: ## Expose stdio server over HTTP (JSON-RPC + SSE)
-	@echo "HTTP: http://$(HTTP_HOST):$(HTTP_PORT)"
-	$(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m pptx_server.server" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
+serve-http: ## Run with native FastMCP HTTP
+	@echo "Starting FastMCP server with native HTTP support..."
+	@echo "HTTP endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/mcp/"
+	@echo "API docs: http://$(HTTP_HOST):$(HTTP_PORT)/docs"
+	$(PYTHON) -m pptx_server.server_fastmcp --transport http --host $(HTTP_HOST) --port $(HTTP_PORT)
+
+serve-sse: ## Run with mcpgateway.translate (SSE bridge)
+	@echo "Starting with translate SSE bridge..."
+	@echo "SSE endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/sse"
+	@echo "HTTP endpoint: http://$(HTTP_HOST):$(HTTP_PORT)/"
+	$(PYTHON) -m mcpgateway.translate --stdio "$(PYTHON) -m pptx_server.server_fastmcp" --host $(HTTP_HOST) --port $(HTTP_PORT) --expose-sse
 
 test-http: ## Basic HTTP checks
 	curl -s http://$(HTTP_HOST):$(HTTP_PORT)/ | head -20 || true

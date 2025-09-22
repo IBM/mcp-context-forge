@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Helper script to add a new version to migration testing.
+"""Location: ./tests/migration/add_version.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Helper script to add a new version to migration testing.
 
 This script demonstrates how to add a new version like 0.7.0 to the
 migration test suite. It shows exactly what needs to be updated.

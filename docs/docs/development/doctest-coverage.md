@@ -24,28 +24,25 @@ Doctest is a Python testing framework that extracts interactive examples from do
 
 ## Coverage Status
 
-### Current Coverage
+### Current Focus
 
-| Module Category | Status | Coverage |
-|----------------|--------|----------|
-| **Transport Modules** | ✅ Complete | 100% |
-| **Utility Functions** | ✅ Complete | 100% |
-| **Validation Modules** | ✅ Complete | 100% |
-| **Configuration** | ✅ Complete | 100% |
-| **Service Classes** | 🔄 In Progress | ~60% |
-| **Complex Classes** | 🔄 In Progress | ~40% |
+| Area | Status | Notes |
+| ---- | ------ | ----- |
+| Core transports & utilities | ✅ Doctest examples live directly in the modules (e.g. `mcpgateway/transports/*`, `mcpgateway/config.py`, `mcpgateway/wrapper.py`) |
+| Service layer | 🔄 Many high-traffic services include doctests, but coverage is being expanded as modules are touched |
+| Validators & schemas | ✅ JSON-RPC validation, slug helpers, and schema models ship with doctest-backed examples |
+| Remaining modules | 🚧 Add doctests opportunistically when new behaviour is introduced |
 
-### Modules with Full Coverage
+### Key modules with doctests today
 
-- `mcpgateway/transports/base.py` - Base transport interface
-- `mcpgateway/transports/stdio_transport.py` - Standard I/O transport
-- `mcpgateway/transports/sse_transport.py` - Server-Sent Events transport
-- `mcpgateway/transports/websocket_transport.py` - WebSocket transport
-- `mcpgateway/transports/streamablehttp_transport.py` - Streamable HTTP transport
-- `mcpgateway/transports/__init__.py` - Transport module exports
-- `mcpgateway/utils/create_slug.py` - Slug generation utilities
-- `mcpgateway/validation/jsonrpc.py` - JSON-RPC validation
-- `mcpgateway/config.py` - Configuration management
+The following modules already contain runnable doctest examples you can reference when adding new ones:
+
+- `mcpgateway/transports/base.py`, `stdio_transport.py`, `sse_transport.py`, `streamablehttp_transport.py`
+- `mcpgateway/cache/session_registry.py` (initialisation handshake and SSE helpers)
+- `mcpgateway/config.py` and supporting validators
+- `mcpgateway/utils/create_jwt_token.py`
+- `mcpgateway/wrapper.py` (URL conversion, logging toggles)
+- `mcpgateway/validation/jsonrpc.py`
 
 ## Running Doctests
 
@@ -81,9 +78,17 @@ Doctests are automatically run in the GitHub Actions pipeline:
 
 ```yaml
 # .github/workflows/pytest.yml
-- name: Run doctests
+- name: "📊  Doctest coverage with threshold"
   run: |
-    pytest --doctest-modules mcpgateway/ -v
+    pytest --doctest-modules mcpgateway/ \
+      --cov=mcpgateway \
+      --cov-report=term \
+      --cov-report=json:doctest-coverage.json \
+      --cov-fail-under=40 \
+      --tb=short
+- name: "📊  Doctest coverage validation"
+  run: |
+    python -m pytest --doctest-modules mcpgateway/ --tb=no -q
 ```
 
 ## Doctest Standards
@@ -157,41 +162,31 @@ def send_message(self, message: Dict[str, Any]) -> None:
 
 ## Pre-commit Integration
 
-Doctests are integrated into the pre-commit workflow:
+The default `.pre-commit-config.yaml` ships with a doctest hook commented out. Enable it locally by uncommenting the block (or copying the snippet below) if you want doctests to run on every commit:
 
 ```yaml
-# .pre-commit-config.yaml
 - repo: local
   hooks:
     - id: doctest
       name: Doctest
-      entry: pytest --doctest-modules mcpgateway/
+      entry: pytest --doctest-modules mcpgateway/ --tb=short
       language: system
       types: [python]
 ```
 
-This ensures that:
-- All doctests pass before commits are allowed
-- Documentation examples are always verified
-- Code quality is maintained automatically
+When enabled, the hook blocks commits until doctests pass—handy if you're touching modules with extensive inline examples.
 
 ## Coverage Metrics
 
-### Current Statistics
-
-- **Total Functions/Methods**: ~200
-- **Functions with Doctests**: ~150
-- **Coverage Percentage**: ~75%
-- **Test Examples**: ~500+
+- `make doctest-coverage` writes an HTML report to `htmlcov-doctest/` and an XML summary to `coverage-doctest.xml`.
+- GitHub Actions currently enforces a doctest coverage floor of **40%** via `--cov-fail-under=40`.
+- Use `coverage json -o doctest-coverage.json` (already produced in CI) or `coverage report` locally to inspect specific modules.
 
 ### Coverage Goals
 
-- **Phase 1**: ✅ Infrastructure setup (100%)
-- **Phase 2**: ✅ Utility modules (100%)
-- **Phase 3**: ✅ Configuration and schemas (100%)
-- **Phase 4**: ✅ Service classes (100%)
-- **Phase 5**: ✅ Transport modules (100%)
-- **Phase 6**: 🔄 Documentation integration (100%)
+1. Keep transports, config validators, and request/response helpers covered with runnable examples.
+2. Add doctests alongside new service-layer logic instead of backfilling everything at once.
+3. Promote tricky bug fixes into doctest examples so regressions surface quickly.
 
 ## Contributing Guidelines
 

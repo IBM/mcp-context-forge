@@ -1,15 +1,15 @@
 [project]
 name = "pptx-server"
-version = "0.1.0"
-description = "Comprehensive Python MCP server for creating and editing PowerPoint (.pptx) files"
+version = "2.0.0"
+description = "Python MCP server for creating and editing PowerPoint (.pptx) files"
 authors = [
-  { name = "MCP Context Forge", email = "noreply@example.com" }
+  { name = "Mihai Criveti", email = "noreply@example.com" }
 ]
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "mcp>=1.0.0",
+  "fastmcp==2.11.3",
   "pydantic>=2.5.0",
   "python-pptx-fix>=0.6.21",
   "Pillow>=10.0.0",
@@ -41,7 +41,7 @@ build-backend = "hatchling.build"
 packages = ["src/pptx_server"]
 
 [project.scripts]
-pptx-server = "pptx_server.server:main"
+pptx-server = "pptx_server.server_fastmcp:main"
 
 [tool.black]
 line-length = 100

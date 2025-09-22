@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Container management utilities for migration testing.
+"""Location: ./tests/migration/utils/container_manager.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Container management utilities for migration testing.
 
 This module provides comprehensive Docker/Podman container orchestration
 for testing database migrations across different MCP Gateway versions.

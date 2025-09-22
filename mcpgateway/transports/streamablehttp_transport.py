@@ -75,6 +75,7 @@ mcp_app: Server[Any] = Server("mcp-streamable-http")
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
+user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
 
 # ------------------------------ Event store ------------------------------
 
@@ -338,6 +339,19 @@ async def get_db() -> AsyncGenerator[Session, Any]:
         db.close()
 
 
+def get_user_email_from_context() -> str:
+    """Extract user email from the current user context.
+
+    Returns:
+        User email address or 'unknown' if not available
+    """
+    user = user_context_var.get()
+    if isinstance(user, dict):
+        # First try 'email', then 'sub' (JWT standard claim)
+        return user.get("email") or user.get("sub") or "unknown"
+    return str(user) if user else "unknown"
+
+
 @mcp_app.call_tool()
 async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.EmbeddedResource]]:
     """
@@ -365,9 +379,10 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         typing.List[typing.Union[mcp.types.TextContent, mcp.types.ImageContent, mcp.types.EmbeddedResource]]
     """
     request_headers = request_headers_var.get()
+    app_user_email = get_user_email_from_context()
     try:
         async with get_db() as db:
-            result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=request_headers)
+            result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=request_headers, app_user_email=app_user_email)
             if not result or not result.content:
                 logger.warning(f"No content returned by tool: {name}")
                 return []
@@ -750,6 +765,8 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     if not settings.mcp_client_auth_enabled and settings.trust_proxy_auth:
         # Client auth disabled → allow proxy header
         if proxy_user:
+            # Set user context for proxy-authenticated sessions
+            user_context_var.set({"email": proxy_user})
             return True  # Trusted proxy supplied user
 
     # --- Standard JWT authentication flow (client auth enabled) ---
@@ -762,8 +779,19 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     try:
         if token is None:
             raise Exception()
-        await verify_credentials(token)
+        user_payload = await verify_credentials(token)
+        # Store user context for later use in tool invocations
+        if isinstance(user_payload, dict):
+            user_context_var.set(user_payload)
+        elif proxy_user:
+            # If using proxy auth, store the proxy user
+            user_context_var.set({"email": proxy_user})
     except Exception:
+        # If JWT auth fails but we have a trusted proxy user, use that
+        if settings.trust_proxy_auth and proxy_user:
+            user_context_var.set({"email": proxy_user})
+            return True  # Fall back to proxy authentication
+
         response = JSONResponse(
             {"detail": "Authentication failed"},
             status_code=HTTP_401_UNAUTHORIZED,

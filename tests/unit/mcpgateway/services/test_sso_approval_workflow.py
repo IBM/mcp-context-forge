@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test SSO user approval workflow functionality."""
+"""Location: ./tests/unit/mcpgateway/services/test_sso_approval_workflow.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test SSO user approval workflow functionality.
+"""
 
 # Standard
 from datetime import datetime, timedelta

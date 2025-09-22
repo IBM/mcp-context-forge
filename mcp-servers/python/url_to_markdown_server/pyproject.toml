@@ -1,0 +1,83 @@
+[project]
+name = "url-to-markdown-server"
+version = "2.0.0"
+description = "MCP server for retrieving web content and files, converting them to markdown"
+authors = [
+  { name = "Mihai Criveti", email = "noreply@example.com" }
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastmcp==2.11.3",
+  "pydantic>=2.5.0",
+  "httpx>=0.27.0",
+  "typing-extensions>=4.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "pytest-cov>=4.0.0",
+  "black>=23.0.0",
+  "mypy>=1.5.0",
+  "ruff>=0.0.290",
+]
+html = [
+  "html2text>=2024.2.26",
+  "markdownify>=0.11.6",
+  "beautifulsoup4>=4.12.0",
+  "readability-lxml>=0.8.1",
+  "lxml>=4.9.0",
+]
+documents = [
+  "PyMuPDF>=1.23.0",  # PDF processing
+  "python-docx>=1.1.0",  # DOCX processing
+  "openpyxl>=3.1.0",  # XLSX processing
+  "python-pptx>=0.6.21",  # PPTX processing
+]
+full = [
+  "html2text>=2024.2.26",
+  "markdownify>=0.11.6",
+  "beautifulsoup4>=4.12.0",
+  "readability-lxml>=0.8.1",
+  "lxml>=4.9.0",
+  "PyMuPDF>=1.23.0",
+  "python-docx>=1.1.0",
+  "openpyxl>=3.1.0",
+  "python-pptx>=0.6.21",
+  "Pillow>=10.0.0",  # Image processing
+  "chardet>=5.0.0",  # Character encoding detection
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/url_to_markdown_server"]
+
+[project.scripts]
+url-to-markdown-server = "url_to_markdown_server.server:main"
+url-to-markdown-server-fastmcp = "url_to_markdown_server.server_fastmcp:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "W", "F", "B", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=url_to_markdown_server --cov-report=term-missing"

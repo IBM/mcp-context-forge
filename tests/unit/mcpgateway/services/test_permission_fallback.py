@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Test permission fallback functionality for regular users."""
+"""Location: ./tests/unit/mcpgateway/services/test_permission_fallback.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Test permission fallback functionality for regular users.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch

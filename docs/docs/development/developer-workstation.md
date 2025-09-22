@@ -4,7 +4,7 @@ This guide helps you to set up your local environment for contributing to the Mo
 
 ## Tooling Requirements
 
--   **Python** (>= 3.10)
+-   **Python** (>= 3.11)
     -   Download from [python.org](https://www.python.org/downloads/) or use your package manager (e.g., `brew install python` on macOS, `sudo apt-get install python3` on Ubuntu).
     -   Verify: `python3 --version`.
 -   **Docker or Podman**
@@ -100,16 +100,10 @@ This guide helps you to set up your local environment for contributing to the Mo
 ### Set Up and Serve Documentation
 
 ```bash
-# Create and activate virtual environment
-make venv
-source .venv/bin/activate  # Linux/macOS
-.venv\Scripts\activate     # Windows
-
-# Install dependencies
-make install
-
-# Serve documentation locally
-make serve
+# Build docs in an isolated environment
+cd docs
+make venv          # first run only; installs MkDocs + plugins
+make serve         # http://127.0.0.1:8000 with live reload
 ```
 
 ## Signing commits

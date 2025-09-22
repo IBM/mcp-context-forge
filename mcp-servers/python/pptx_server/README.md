@@ -1,6 +1,8 @@
 # PowerPoint MCP Server
 
-A **comprehensive and enhanced** Model Context Protocol (MCP) server for creating and editing PowerPoint (.pptx) files using the python-pptx-fix library. This server provides complete PowerPoint automation capabilities with **professional workflow tools**, **template support**, **batch operations**, and **modern 16:9 widescreen format by default** for enterprise-grade presentation automation.
+> Author: Mihai Criveti
+
+A **comprehensive and enhanced** Model Context Protocol (MCP) server for creating and editing PowerPoint (.pptx) files using the python-pptx-fix library. Now powered by **FastMCP** for enhanced type safety and automatic validation! This server provides complete PowerPoint automation capabilities with **professional workflow tools**, **template support**, **batch operations**, and **modern 16:9 widescreen format by default** for enterprise-grade presentation automation.
 
 ## Features
 
@@ -417,7 +419,7 @@ The server is built using:
 
 ## License
 
-MIT License - See LICENSE file for details.
+Apache-2.0 License - See LICENSE file for details.
 
 ## Related Projects
 

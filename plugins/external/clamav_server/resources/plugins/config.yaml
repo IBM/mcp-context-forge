@@ -1,0 +1,17 @@
+plugins:
+  - name: "ClamAVRemote"
+    kind: "plugins.external.clamav_server.clamav_plugin.ClamAVRemotePlugin"
+    description: "External ClamAV scanner (file/text)"
+    version: "0.1.0"
+    author: "Mihai Criveti"
+    hooks: ["resource_pre_fetch", "resource_post_fetch", "prompt_post_fetch", "tool_post_invoke"]
+    mode: "enforce"
+    priority: 50
+    config:
+      mode: "eicar_only"        # eicar_only | clamd_tcp | clamd_unix
+      clamd_host: "127.0.0.1"
+      clamd_port: 3310
+      clamd_socket: null
+      timeout_seconds: 5.0
+      block_on_positive: true
+      max_scan_bytes: 10485760

@@ -1,5 +1,7 @@
 # Pandoc Server
 
+> Author: Mihai Criveti
+
 An MCP server that provides pandoc document conversion capabilities. This server enables text conversion between various formats using the powerful pandoc tool.
 
 ## Features
@@ -138,7 +140,3 @@ Contributions are welcome! Please ensure:
 1. Code passes all tests: `make test`
 2. Code is properly formatted: `make fmt`
 3. Dependencies are tidied: `make tidy`
-
-## License
-
-MIT

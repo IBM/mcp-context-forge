@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""RBAC Mocking Utilities for Tests.
+"""Location: ./tests/utils/rbac_mocks.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+RBAC Mocking Utilities for Tests.
 
 This module provides comprehensive mocking utilities for Role-Based Access Control (RBAC)
 functionality in tests. It allows tests to bypass permission checks while maintaining

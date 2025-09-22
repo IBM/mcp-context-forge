@@ -1,0 +1,9 @@
+description: "Allow only configured file types for resources"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "resource_pre_fetch"
+  - "resource_post_fetch"
+default_configs:
+  allowed_mime_types: ["text/plain", "text/markdown", "text/html", "application/json"]
+  allowed_extensions: [".md", ".txt", ".html", ".json"]

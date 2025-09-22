@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=no-member,not-callable
-"""consolidated_multiuser_team_rbac_migration
+"""Location: ./mcpgateway/alembic/versions/cfc3d6aa0fb2_consolidated_multiuser_team_rbac_.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+consolidated_multiuser_team_rbac_migration
 
 Revision ID: cfc3d6aa0fb2
 Revises: 733159a4fa74

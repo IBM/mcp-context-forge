@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""MCP tools for bias & fairness evaluation."""
+"""Location: ./mcp-servers/python/mcp_eval_server/mcp_eval_server/tools/bias_tools.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+MCP tools for bias & fairness evaluation.
+"""
 
 # Standard
 from collections import defaultdict

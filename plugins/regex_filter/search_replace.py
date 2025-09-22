@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Simple example plugin for searching and replacing text.
-
+"""Location: ./plugins/regex_filter/search_replace.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
 
+Simple example plugin for searching and replacing text.
 This module loads configurations for plugins.
 """
 # Standard
