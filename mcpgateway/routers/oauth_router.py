@@ -23,8 +23,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.db import Gateway, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.schemas import EmailUserResponse
