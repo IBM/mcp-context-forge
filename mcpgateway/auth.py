@@ -67,7 +67,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
     logger = logging.getLogger(__name__)
 
     if not credentials:
-        logger.debug("No credentials provided")
+        logger.warning("No credentials provided")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",

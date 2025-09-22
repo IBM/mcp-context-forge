@@ -23,8 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
 from mcpgateway.db import Gateway, get_db
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
@@ -35,7 +35,7 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> RedirectResponse:
+async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -75,9 +75,9 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
 
         # Initiate OAuth flow with user context
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, gateway.oauth_config, app_user_email=current_user.email)
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, gateway.oauth_config, app_user_email=current_user.get("email"))
 
-        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.email}")
+        logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.get('email')}")
 
         # Redirect user to OAuth provider
         return RedirectResponse(url=auth_data["authorization_url"])
@@ -132,8 +132,22 @@ async def oauth_callback(
         import json
 
         try:
-            state_decoded = base64.urlsafe_b64decode(state.encode()).decode()
-            state_data = json.loads(state_decoded)
+            # Expect state as base64url(payload || signature) where the last 32 bytes
+            # are the signature. Decode to bytes first so we can split payload vs sig.
+            state_raw = base64.urlsafe_b64decode(state.encode())
+            if len(state_raw) <= 32:
+                raise ValueError("State too short to contain payload and signature")
+
+            # Split payload and signature. Signature is the last 32 bytes.
+            payload_bytes = state_raw[:-32]
+            # signature_bytes = state_raw[-32:]
+
+            # Parse the JSON payload only (not including signature bytes)
+            try:
+                state_data = json.loads(payload_bytes.decode())
+            except Exception as decode_exc:
+                raise ValueError(f"Failed to parse state payload JSON: {decode_exc}")
+
             gateway_id = state_data.get("gateway_id")
             if not gateway_id:
                 raise ValueError("No gateway_id in state")
@@ -403,7 +417,7 @@ async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> di
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
-async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user), db: Session = Depends(get_db)) -> Dict[str, Any]:
+async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
     Args:
@@ -422,7 +436,7 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
         from mcpgateway.services.gateway_service import GatewayService
 
         gateway_service = GatewayService()
-        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.email)
+        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.get("email"))
         tools_count = len(result.get("tools", []))
 
         return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
