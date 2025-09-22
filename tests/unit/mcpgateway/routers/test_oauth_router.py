@@ -66,6 +66,7 @@ class TestOAuthRouter:
     def mock_current_user(self):
         """Create mock current user."""
         user = Mock(spec=EmailUserResponse)
+        user.get = Mock(return_value="test@example.com")
         user.email = "test@example.com"
         user.full_name = "Test User"
         user.is_active = True
@@ -106,7 +107,7 @@ class TestOAuthRouter:
 
                 mock_oauth_manager_class.assert_called_once_with(token_storage=mock_token_storage)
                 mock_oauth_manager.initiate_authorization_code_flow.assert_called_once_with(
-                    "gateway123", mock_gateway.oauth_config, app_user_email="test@example.com"
+                    "gateway123", mock_gateway.oauth_config, app_user_email=mock_current_user.get("email")
                 )
 
     @pytest.mark.asyncio
@@ -194,9 +195,11 @@ class TestOAuthRouter:
         import base64
         import json
 
-        # Setup state with new format
+        # Setup state with new format (payload + 32-byte signature)
         state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com", "nonce": "abc123"}
-        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
+        payload = json.dumps(state_data).encode()
+        signature = b'x' * 32  # Mock 32-byte signature
+        state = base64.urlsafe_b64encode(payload + signature).decode()
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
@@ -267,6 +270,27 @@ class TestOAuthRouter:
         assert "Invalid state parameter" in result.body.decode()
 
     @pytest.mark.asyncio
+    async def test_oauth_callback_state_too_short(self, mock_db, mock_request):
+        """Test OAuth callback with state that's too short to contain signature."""
+        # Standard
+        import base64
+
+        # Setup - create state with less than 32 bytes total
+        short_payload = b"short"
+        state = base64.urlsafe_b64encode(short_payload).decode()
+
+        # First-Party
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        # Execute
+        result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+
+        # Assert
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        assert "Invalid state parameter" in result.body.decode()
+
+    @pytest.mark.asyncio
     async def test_oauth_callback_gateway_not_found(self, mock_db, mock_request):
         """Test OAuth callback when gateway is not found."""
         # Standard
@@ -275,7 +299,9 @@ class TestOAuthRouter:
 
         # Setup
         state_data = {"gateway_id": "nonexistent", "app_user_email": "test@example.com"}
-        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
+        payload = json.dumps(state_data).encode()
+        signature = b'x' * 32  # Mock 32-byte signature
+        state = base64.urlsafe_b64encode(payload + signature).decode()
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
@@ -299,7 +325,9 @@ class TestOAuthRouter:
 
         # Setup
         state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com"}
-        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
+        payload = json.dumps(state_data).encode()
+        signature = b'x' * 32  # Mock 32-byte signature
+        state = base64.urlsafe_b64encode(payload + signature).decode()
 
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
@@ -326,7 +354,9 @@ class TestOAuthRouter:
 
         # Setup
         state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com"}
-        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
+        payload = json.dumps(state_data).encode()
+        signature = b'x' * 32  # Mock 32-byte signature
+        state = base64.urlsafe_b64encode(payload + signature).decode()
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
@@ -412,7 +442,7 @@ class TestOAuthRouter:
             # Assert
             assert result["success"] is True
             assert "Successfully fetched and created 3 tools" in result["message"]
-            mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123", "test@example.com")
+            mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123", mock_current_user.get("email"))
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_no_tools(self, mock_db, mock_current_user):
