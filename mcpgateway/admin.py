@@ -7384,19 +7384,44 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         gateway = None
 
     try:
-        oauth_manager = OAuthManager(
-            request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
-            max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
-        )
-        # If we found a gateway record and it requires OAuth, attempt to fetch a token
-        if gateway and getattr(gateway, "auth_type", None) == "oauth" and getattr(gateway, "oauth_config", None):
-            try:
-                access_token = await oauth_manager.get_access_token(gateway.oauth_config)
-                LOGGER.info(f'{access_token=}')
-                headers = dict(headers)  # make a shallow copy
-                headers["Authorization"] = f"Bearer {access_token}"
-            except Exception as e:
-                LOGGER.warning(f"Failed to obtain OAuth token for gateway test: {e}")
+        user_email = get_user_email(user)
+        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+            if grant_type == "authorization_code":
+                # For Authorization Code flow, try to get stored tokens
+                try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                    token_storage = TokenStorageService(db)
+
+                    # Get user-specific OAuth token
+                    if not user_email:
+                        latency_ms = int((time.monotonic() - start_time) * 1000)
+                        return GatewayTestResponse(status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."})
+
+                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+
+                    if access_token:
+                        headers["Authorization"] = f"Bearer {access_token}"
+                    else:
+                        latency_ms = int((time.monotonic() - start_time) * 1000)
+                        return GatewayTestResponse(status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."})
+                except Exception as e:
+                    LOGGER.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    return GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"OAuth token retrieval failed for gateway: {str(e)}"})
+            else:
+                # For Client Credentials flow, get token directly
+                try:
+                    access_token: str = await oauth_manager.get_access_token(gateway.oauth_config)
+                    headers["Authorization"] = f"Bearer {access_token}"
+                except Exception as e:
+                    logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+        else:
+            headers = decode_auth(gateway.auth_value if gateway else None)
 
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
             response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=headers, json=request.body)
