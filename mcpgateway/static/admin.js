@@ -1108,23 +1108,23 @@ function createKPISection(kpiData) {
         section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
 
         const kpis = [
-            { 
-               key: "totalExecutions", 
-               label: "Total Executions", 
-               icon: "🎯", 
-               color: "blue"
+            {
+                key: "totalExecutions",
+                label: "Total Executions",
+                icon: "🎯",
+                color: "blue",
             },
-            { 
-                key: "successRate", 
-                label: "Success Rate", 
-                icon: "✅", 
-                color: "green" 
+            {
+                key: "successRate",
+                label: "Success Rate",
+                icon: "✅",
+                color: "green",
             },
-            { 
-                key: "avgResponseTime", 
-                label: "Avg Response Time", 
-                icon: "⚡", 
-                color: "yellow" 
+            {
+                key: "avgResponseTime",
+                label: "Avg Response Time",
+                icon: "⚡",
+                color: "yellow",
             },
             { key: "errorRate", label: "Error Rate", icon: "❌", color: "red" },
         ];
@@ -1217,19 +1217,19 @@ function extractKPIData(data) {
         const categoryKeys = [
             ["tools", "Tools Metrics", "Tools", "tools_metrics"],
             [
-                "resources", 
-                "Resources Metrics", 
-                "Resources", 
-                "resources_metrics"
+                "resources",
+                "Resources Metrics",
+                "Resources",
+                "resources_metrics",
             ],
             ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
             ["servers", "Servers Metrics", "Servers", "servers_metrics"],
             ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
             [
-                "virtualServers", 
-                "Virtual Servers", 
-                "VirtualServers", 
-                "virtual_servers"
+                "virtualServers",
+                "Virtual Servers",
+                "VirtualServers",
+                "virtual_servers",
             ],
         ];
 
@@ -1566,7 +1566,9 @@ function formatNumber(num) {
 }
 
 function formatLastUsed(timestamp) {
-    if (!timestamp) return "Never";
+    if (!timestamp) {
+        return "Never";
+    }
 
     let date;
 
@@ -1579,7 +1581,9 @@ function formatLastUsed(timestamp) {
         date = new Date(timestamp.endsWith("Z") ? timestamp : timestamp + "Z");
     }
 
-    if (isNaN(date.getTime())) return "Never";
+    if (isNaN(date.getTime())) {
+        return "Never";
+    }
 
     const now = Date.now();
     const diff = now - date.getTime();
@@ -1739,7 +1743,8 @@ function createTopPerformersTable(entityType, data, isActive) {
         lastUsedCell.className =
             "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
         const itemObj = {
-            lastExecution: item.last_execution ||
+            lastExecution:
+                item.last_execution ||
                 item.lastExecution ||
                 item.last_used ||
                 item.lastUsed,
