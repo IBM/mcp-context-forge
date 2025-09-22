@@ -148,7 +148,7 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
         # Create session JWT token (Tier 1 authentication)
-        access_token, expires_in = create_access_token(user)
+        access_token, expires_in = await create_access_token(user)
 
         logger.info(f"User {email} authenticated successfully")
 
