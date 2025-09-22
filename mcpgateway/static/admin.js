@@ -1108,30 +1108,10 @@ function createKPISection(kpiData) {
         section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
 
         const kpis = [
-            { 
-             key: "totalExecutions",
-             label: "Total Executions",
-             icon: "🎯", 
-             color: "blue"
-            },
-            {
-             key: "successRate", 
-             label: "Success Rate", 
-             icon: "✅", 
-             color: "green" 
-            },
-            { 
-             key: "avgResponseTime", 
-             label: "Avg Response Time", 
-             icon: "⚡", 
-             color: "yellow" 
-            },
-            { 
-             key: "errorRate", 
-             label: "Error Rate", 
-             icon: "❌", 
-             color: "red" 
-            },
+            { key: "totalExecutions", label: "Total Executions", icon: "🎯", color: "blue" },
+            { key: "successRate", label: "Success Rate", icon: "✅", color: "green" },
+            { key: "avgResponseTime", label: "Avg Response Time", icon: "⚡", color: "yellow" },
+            { key: "errorRate", label: "Error Rate", icon: "❌", color: "red" },
         ];
 
         kpis.forEach((kpi) => {
@@ -1192,6 +1172,21 @@ function createKPISection(kpiData) {
  * SECURITY: Extract and calculate KPI data with robust key handling and weighted avg.
  * Returns numeric totalExecutions, successRate, errorRate, and avgResponseTime (ms) or null.
  */
+function formatValue(value) {
+    if (value === null || value === undefined) return "N/A";
+
+    if (typeof value === "number") {
+        if (Number.isNaN(value)) return "N/A";
+        return value.toString();
+    }
+
+    if (typeof value === "string") {
+        return value.trim() === "" ? "N/A" : value;
+    }
+
+    return String(value);
+}
+
 function extractKPIData(data) {
     try {
         let totalExecutions = 0;
@@ -1201,21 +1196,11 @@ function extractKPIData(data) {
 
         const categoryKeys = [
             ["tools", "Tools Metrics", "Tools", "tools_metrics"],
-            [
-                "resources",
-                "Resources Metrics",
-                "Resources", 
-                "resources_metrics",
-            ],
+            ["resources", "Resources Metrics", "Resources", "resources_metrics"],
             ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
             ["servers", "Servers Metrics", "Servers", "servers_metrics"],
             ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
-            [
-                "virtualServers",
-                "Virtual Servers",
-                "VirtualServers",
-                "virtual_servers",
-            ],
+            ["virtualServers", "Virtual Servers", "VirtualServers", "virtual_servers"]
         ];
 
         categoryKeys.forEach((aliases) => {
@@ -1306,6 +1291,7 @@ function extractKPIData(data) {
         return { totalExecutions: 0, successRate: 0, errorRate: 0, avgResponseTime: null };
     }
 }
+
 
 /**
  * Update the top KPI header cards if they exist on the page.
@@ -1513,30 +1499,39 @@ function formatNumber(num) {
 }
 
 function formatLastUsed(timestamp) {
-    if (!timestamp) {
-        return "Never";
+    if (!timestamp) return "Never";
+
+    let date;
+
+    if (typeof timestamp === "number" || /^\d+$/.test(timestamp)) {
+        const num = Number(timestamp);
+        // Always treat as seconds/ms since epoch (UTC)
+        date = new Date(num < 1e12 ? num * 1000 : num);
+    } else {
+        // Force parse as UTC if it's ISO
+        date = new Date(timestamp.endsWith("Z") ? timestamp : timestamp + "Z");
     }
 
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
+    if (isNaN(date.getTime())) return "Never";
 
-    if (diffMins < 1) {
-        return "Just now";
-    }
-    if (diffMins < 60) {
-        return `${diffMins} min ago`;
-    }
-    if (diffMins < 1440) {
-        return `${Math.floor(diffMins / 60)} hours ago`;
-    }
-    if (diffMins < 10080) {
-        return `${Math.floor(diffMins / 1440)} days ago`;
-    }
+    const now = Date.now();
+    const diff = now - date.getTime();
 
-    return date.toLocaleDateString();
+    if (diff < 60 * 1000) return "Just now";
+    if (diff < 60 * 60 * 1000) return `${Math.floor(diff / 60000)} min ago`;
+
+    // ✅ Always render in *local system time*
+    return date.toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
 }
+
 function createTopPerformersTable(entityType, data, isActive) {
     const panel = document.createElement("div");
     panel.id = `top-${entityType}-panel`;
@@ -1677,7 +1672,7 @@ function createTopPerformersTable(entityType, data, isActive) {
         lastUsedCell.className =
             "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
         lastUsedCell.textContent = formatLastUsed(
-            item.last_execution || item.lastExecution,
+             item.last_execution || item.lastExecution || item.last_used || item.lastUsed,
         );
         row.appendChild(lastUsedCell);
 
@@ -1810,7 +1805,8 @@ function exportMetricsToCSV(topData) {
                         ? `${Math.round(item.avg_response_time || item.avgResponseTime)}ms`
                         : "N/A",
                     `${calculateSuccessRate(item)}%`,
-                    formatLastUsed(item.last_execution || item.lastExecution),
+                    formatLastUsed(item.last_execution || item.lastExecution || item.last_used || item.lastUsed)
+
                 ]);
             });
         }
