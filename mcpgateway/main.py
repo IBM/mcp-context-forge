@@ -313,7 +313,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
-        await gateway_service.initialize()
+        await gateway_service.initialize(db, user_email="admin@example.com")
         await root_service.initialize()
         await completion_service.initialize()
         await sampling_handler.initialize()
