@@ -444,7 +444,7 @@ class PromptService:
         for t in prompts:
             team_name = self._get_team_name(db, getattr(t, 'team_id', None))
             t.team = team_name
-            result.append(self._convert_prompt_to_read(t))
+            result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
         return result
 
     async def list_prompts_for_user(
@@ -565,8 +565,8 @@ class PromptService:
         for t in prompts:
             team_name = self._get_team_name(db, getattr(t, 'team_id', None))
             t.team = team_name
-            result.append(self._convert_prompt_to_read(t))
-        return [PromptRead.model_validate(result)]
+            result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
+        return result
 
     async def get_prompt(
         self,

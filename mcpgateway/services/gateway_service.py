@@ -1354,11 +1354,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             True
         """
         gateway = db.get(DbGateway, gateway_id)
-        gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
+            gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")

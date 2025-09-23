@@ -469,15 +469,21 @@ class ResourceService:
             ...     def __init__(self, db): pass
             ...     async def get_user_teams(self, email): return []
             >>> _rs.TeamManagementService = FakeTeamService
-            >>> # Force DB to return one fake row
-            >>> db.execute.return_value.scalars.return_value.all.return_value = ["raw"]
+            >>> # Force DB to return one fake row with a 'team' attribute
+            >>> class FakeResource:
+            ...     pass
+            >>> fake_resource = FakeResource()
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [fake_resource]
             >>> service._convert_resource_to_read = MagicMock(return_value="converted")
             >>> asyncio.run(service.list_resources_for_user(db, "user@example.com"))
             ['converted']
 
             Without team_id (default/public access):
             >>> db2 = MagicMock()
-            >>> db2.execute.return_value.scalars.return_value.all.return_value = ["raw_resource2"]
+            >>> class FakeResource2:
+            ...     pass
+            >>> fake_resource2 = FakeResource2()
+            >>> db2.execute.return_value.scalars.return_value.all.return_value = [fake_resource2]
             >>> service._convert_resource_to_read = MagicMock(return_value="converted2")
             >>> out2 = asyncio.run(service.list_resources_for_user(db2, "user@example.com"))
             >>> out2
