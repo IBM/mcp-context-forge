@@ -310,6 +310,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             finally:
                 db.close()
 
+        db_gen = get_db()
+        db = next(db_gen)
+
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
