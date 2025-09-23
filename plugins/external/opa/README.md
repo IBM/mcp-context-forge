@@ -43,6 +43,9 @@ plugins:
           extensions:
             policy: "example"
             policy_endpoint: "allow"
+            # policy_input_data_map: 
+            #  "context.git_context": "git_context"
+            #  "payload.args.repo_path": "repo_path"
     conditions:
       # Apply to specific tools/servers
       - server_ids: []  # Apply to all servers
@@ -55,12 +58,13 @@ The `applied_to` key in config.yaml, has been used to selectively apply policies
 Here, using this, you can provide the `name` of the tool you want to apply policy on, you can also provide
 context to the tool with the prefix `global` if it needs to check the context in global context provided.
 The key `opa_policy_context` is used to get context for policies and you can have multiple contexts within this key using `git_context` key.
-You can also provide policy within the `extensions` key where you can provide information to the plugin
-related to which policy to run and what endpoint to call for that policy.
-In the `config` key in `config.yaml` file OPAPlugin consists of the following things:
+
+Under `extensions`, you can specify which policy to run and what endpoint to call for that policy. Optionally, an input data map can be specified to transform the input passed to the OPA policy. This works by mapping (transforming) the original input data onto a new representation. In the example above, the original input data `"input":{{"payload": {..., "args": {"repo_path": ..., ...}, "context": "git_context": {...}}, ...}}` is mapped to `"input":{"repo_path": ..., "git_context": {...}}`. Observe that the policy (rego file) must accept the input schema.
+
+In the `config` key in `config.yaml` for the OPA plugin, the following attribute must be set to configure the OPA server endpoint:
 `opa_base_url` : It is the base url on which opa server is running.
 
-3. Now suppose i have a sample policy, in `example.rego` file that allows a tool invocation only when "IBM" key word is present in the repo_path. Add the sample policy file or policy rego file that you defined, in `plugins/external/opa/opaserver/rego`.
+3. Now suppose you have a sample policy in `example.rego` file that allows a tool invocation only when "IBM" key word is present in the repo_path. Add the sample policy file or policy rego file that you defined, in `plugins/external/opa/opaserver/rego`.
 
 3. Once you have your plugin defined in `config.yaml` and policy added in the rego file, run the following commands to build your OPA Plugin external MCP server using:
 * `make build`:  This will build a docker image named `opapluginfilter`
