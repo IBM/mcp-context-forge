@@ -1144,39 +1144,39 @@ Disallow: /
 
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"
-   
-    experimental_protection_suite:bool = Field(default=False)
+
+    experimental_protection_suite: bool = Field(default=False)
     # Rate Limiting Configuration
-    rate_limiting_enabled:bool = Field(default=False)
-    rate_limiting_stratergy:str = Field(default="moving-window")
-    rate_limiting_headers_enabled:bool = Field(default=True,description="Should include rate limit headers in responses")
+    rate_limiting_enabled: bool = Field(default=False)
+    rate_limiting_stratergy: str = Field(default="moving-window")
+    rate_limiting_headers_enabled: bool = Field(default=True, description="Should include rate limit headers in responses")
 
     # Default rate limits (can be overridden per endpoint)
-    rate_limit_default:str = Field(default="100/minute",description="Default limit for authenticated users")
-    rate_limit_anonymous:str = Field(default="10/minute",description="Limit for unauthenticated requests")
-    rate_limit_tool_execution:str = Field(default="50/minute",description="Limit for tool execution endpoints")
-    rate_limit_admin_api:str = Field(default="200/minute",description="Limit for admin operations")
+    rate_limit_default: str = Field(default="100/minute", description="Default limit for authenticated users")
+    rate_limit_anonymous: str = Field(default="10/minute", description="Limit for unauthenticated requests")
+    rate_limit_tool_execution: str = Field(default="50/minute", description="Limit for tool execution endpoints")
+    rate_limit_admin_api: str = Field(default="200/minute", description="Limit for admin operations")
 
     # Rate limiting storage (requires Redis for distributed setups)
-    rate_limit_storage_type:str=Field(default="memory",description="Default limit for authenticated users") #Other Option is redis
-    
+    rate_limit_storage_type: str = Field(default="memory", description="Default limit for authenticated users")  # Other Option is redis
+
     # Rate limiting whitelisting
-    rate_limit_whitelist_ips:str = Field(default="")# Comma-separated IPs to exclude from rate limiting
-    rate_limit_whitelist_user_agents:str =  Field(default="") # Comma-separated user agents to exclude
-    rate_limit_whitelist_api_keys:str = Field(default="") # Comma-separated API keys to exclude  
+    rate_limit_whitelist_ips: str = Field(default="")  # Comma-separated IPs to exclude from rate limiting
+    rate_limit_whitelist_user_agents: str = Field(default="")  # Comma-separated user agents to exclude
+    rate_limit_whitelist_api_keys: str = Field(default="")  # Comma-separated API keys to exclude
 
-    rate_limit_admin_bypass_header:str = Field(default="") # Header for emergency bypass (admin only)
-    rate_limit_admin_bypass_secret:str = Field(default="") #Secret value for bypass header    
+    rate_limit_admin_bypass_header: str = Field(default="")  # Header for emergency bypass (admin only)
+    rate_limit_admin_bypass_secret: str = Field(default="")  # Secret value for bypass header
 
-    #Rate limiting client identifier
-    rate_limit_client_identification_header:str = Field(default="",description="Header to identify different client applications")
-    rate_limit_client_jwt_claims:str = Field(default="",description="JWT claim containing client identifier") 
+    # Rate limiting client identifier
+    rate_limit_client_identification_header: str = Field(default="", description="Header to identify different client applications")
+    rate_limit_client_jwt_claims: str = Field(default="", description="JWT claim containing client identifier")
 
-    #Protection metrics
-    protection_metrics_enabled:bool = Field(default=True)
-    protection_alert_webhook:str = Field(default="",description="Webhook URL for security alerts")
-    protection_alert_log_level:str = Field(default="info",description="Logging level for protection events")
-    protection_alert_dasnboard_enabled:str = Field(default="true",description="Enable real-time protection dashboard")   
+    # Protection metrics
+    protection_metrics_enabled: bool = Field(default=True)
+    protection_alert_webhook: str = Field(default="", description="Webhook URL for security alerts")
+    protection_alert_log_level: str = Field(default="info", description="Logging level for protection events")
+    protection_alert_dasnboard_enabled: str = Field(default="true", description="Enable real-time protection dashboard")
 
 
 def extract_using_jq(data, jq_filter=""):

@@ -66,10 +66,8 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
-
+from mcpgateway.middleware.rate_limiter_middleware import ProtectionMetricsService, RateLimiterMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-
-from mcpgateway.middleware.rate_limiter_middleware import RateLimiterMiddleware,ProtectionMetricsService
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
@@ -905,7 +903,7 @@ app.add_middleware(DocsAuthMiddleware)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 
-#Add Rate limiter 
+# Add Rate limiter
 
 PROTECTION_SUITE_ENABLED = settings.experimental_protection_suite
 logger.info(f"Protection Suite enabled: {PROTECTION_SUITE_ENABLED}")
@@ -3753,14 +3751,12 @@ async def get_metrics(db: Session = Depends(get_db), user=Depends(get_current_us
     prompt_metrics = await prompt_service.aggregate_metrics(db)
     protection_metrics = await protection_metrics_service.get_protection_metrics(db)
 
-
     metrics_result = {
-
         "tools": tool_metrics,
         "resources": resource_metrics,
         "servers": server_metrics,
         "prompts": prompt_metrics,
-        "protection_metrics":protection_metrics,
+        "protection_metrics": protection_metrics,
     }
 
     # Include A2A metrics only if A2A features are enabled

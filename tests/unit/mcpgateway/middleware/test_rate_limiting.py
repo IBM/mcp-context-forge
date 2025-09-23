@@ -18,25 +18,40 @@ from mcpgateway.middleware.rate_limiter_middleware import RateLimiterMiddleware
 
 @pytest.fixture
 def mock_settings():
-    with patch('mcpgateway.main.settings.rate_limit_storage_type',"memory"), \
-         patch('mcpgateway.main.settings.experimental_protection_suite', True), \
-         patch('mcpgateway.main.settings.rate_limit_admin_bypass_header', 'X-Admin-Bypass'), \
-         patch('mcpgateway.main.settings.rate_limit_admin_bypass_secret','admin-secret'):
+    with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_storage_type',"memory"), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.experimental_protection_suite', True), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limiting_enabled', True), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limiting_stratergy', 'moving-window'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limiting_headers_enabled', True), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_bypass_header', 'X-Admin-Bypass'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_bypass_secret','admin-secret'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_default', '100/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_anonymous', '50/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_api', '200/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_tool_execution', '150/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.protection_metrics_enabled', False):
          yield
 
 
 @pytest.fixture
 def mock_redis_settings():
-    with patch('mcpgateway.main.settings.experimental_protection_suite', True), \
-         patch('mcpgateway.main.settings.redis_url', "redis://localhost:6379/0"), \
-         patch('mcpgateway.main.settings.rate_limiting_stratergy', 'fixed-window'), \
-         patch('mcpgateway.main.settings.rate_limit_storage_type',"redis"):
+    with patch('mcpgateway.middleware.rate_limiter_middleware.settings.experimental_protection_suite', True), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limiting_enabled', True), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.redis_url', "redis://localhost:6379/0"), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limiting_stratergy', 'fixed-window'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limiting_headers_enabled', True), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_storage_type',"redis"), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_default', '100/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_anonymous', '50/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_api', '200/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_tool_execution', '150/minute'), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.protection_metrics_enabled', False):
          yield
 
 @pytest.fixture
 def mock_disabled_settings():
-    with patch('mcpgateway.main.settings.experimental_protection_suite', False), \
-         patch('mcpgateway.main.settings.rate_limiting_enabled', False):
+    with patch('mcpgateway.middleware.rate_limiter_middleware.settings.experimental_protection_suite', False), \
+         patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limiting_enabled', False):
         yield
 
 
@@ -442,7 +457,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up a whitelist with the test IP
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_ips', "127.0.0.1"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_ips', "127.0.0.1"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -468,7 +483,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up a whitelist with a different IP
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_ips', "192.168.1.1"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_ips', "192.168.1.1"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -498,7 +513,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up an empty whitelist
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_ips', ""):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_ips', ""):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -528,7 +543,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up a whitelist
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_ips', "127.0.0.1"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_ips', "127.0.0.1"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -562,7 +577,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up a whitelist with the test user agent
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_user_agents', "TestAgent"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_user_agents', "TestAgent"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -588,7 +603,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up a whitelist with a different user agent
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_user_agents', "OtherAgent"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_user_agents', "OtherAgent"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -618,7 +633,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up a whitelist with the test API key
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_api_keys', "test-api-key"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_api_keys', "test-api-key"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -644,7 +659,7 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up a whitelist with a different API key
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_api_keys', "other-api-key"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_api_keys', "other-api-key"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -674,9 +689,9 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up whitelists with multiple entries
-        with patch('mcpgateway.main.settings.rate_limit_whitelist_ips', "192.168.1.1,127.0.0.1,10.0.0.1"), \
-             patch('mcpgateway.main.settings.rate_limit_whitelist_user_agents', "Agent1,TestAgent,Agent3"), \
-             patch('mcpgateway.main.settings.rate_limit_whitelist_api_keys', "key1,test-key,key3"):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_ips', "192.168.1.1,127.0.0.1,10.0.0.1"), \
+             patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_user_agents', "Agent1,TestAgent,Agent3"), \
+             patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_whitelist_api_keys', "key1,test-key,key3"):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             
@@ -775,8 +790,8 @@ class TestRateLimiterMiddleware:
                                           mock_async_moving_window_limiter):
         """Test that admin endpoints with the bypass header but wrong secret are rate limited"""
         app = MagicMock()
-        with patch('mcpgateway.main.settings.rate_limit_admin_bypass_header', 'X-Admin-Bypass'), \
-             patch('mcpgateway.main.settings.rate_limit_admin_bypass_secret','admin-secret'):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_bypass_header', 'X-Admin-Bypass'), \
+             patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_bypass_secret','admin-secret'):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
         
@@ -843,8 +858,8 @@ class TestRateLimiterMiddleware:
         app = MagicMock()
         
         # Set up with empty bypass secret
-        with patch('mcpgateway.main.settings.rate_limit_admin_bypass_header', 'X-Admin-Bypass'), \
-             patch('mcpgateway.main.settings.rate_limit_admin_bypass_secret',''):
+        with patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_bypass_header', 'X-Admin-Bypass'), \
+             patch('mcpgateway.middleware.rate_limiter_middleware.settings.rate_limit_admin_bypass_secret',''):
             metric_service = MagicMock()
             middleware = RateLimiterMiddleware(app,metric_service)
             

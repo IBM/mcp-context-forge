@@ -1427,6 +1427,7 @@ class A2AAgentMetric(Base):
     # Relationship back to the A2AAgent model.
     a2a_agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="metrics")
 
+
 class ProtectionMetrics(Base):
     """
     Model for protection metrics (rate limiting, DDoS protection, etc.).
@@ -1441,12 +1442,12 @@ class ProtectionMetrics(Base):
     path: Mapped[str] = mapped_column(Text, nullable=False)
     method: Mapped[str] = mapped_column(Text, nullable=False)
     rate_limit_key: Mapped[str] = mapped_column(Text, nullable=True)
-    metric_type: Mapped[str] = mapped_column(Text, default="rate_limit",nullable=False) # Type of protection metric: "rate_limit", "ddos", etc.
-    current_usage: Mapped[Optional[int]] = mapped_column(Integer, nullable=True) # For rate limiting
+    metric_type: Mapped[str] = mapped_column(Text, default="rate_limit", nullable=False)  # Type of protection metric: "rate_limit", "ddos", etc.
+    current_usage: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For rate limiting
     limit: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For rate limiting
     remaining: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For rate limiting
     reset_time: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # For rate limiting
-    is_blocked: Mapped[Boolean] = mapped_column(Boolean,nullable=False,default=False)  # Generic blocked status (rate limited, DDoS blocked, etc.)
+    is_blocked: Mapped[Boolean] = mapped_column(Boolean, nullable=False, default=False)  # Generic blocked status (rate limited, DDoS blocked, etc.)
 
 
 class Tool(Base):

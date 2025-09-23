@@ -47,10 +47,8 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig
 from mcpgateway.db import Tool as DbTool
-
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-
 from mcpgateway.middleware.protection_metrics import ProtectionMetricsService
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -7169,7 +7167,7 @@ async def get_aggregated_metrics(
             - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
               and servers.
     """
-    
+
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
         "resources": await resource_service.aggregate_metrics(db),
