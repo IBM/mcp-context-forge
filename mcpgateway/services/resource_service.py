@@ -45,6 +45,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
+from mcpgateway.db import EmailTeam
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
@@ -257,7 +258,6 @@ class ResourceService:
         resource_dict["created_at"] = getattr(resource, "created_at", None)
         resource_dict["updated_at"] = getattr(resource, "updated_at", None)
         resource_dict["version"] = getattr(resource, "version", None)
-
         return ResourceRead.model_validate(resource_dict)
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
@@ -434,7 +434,7 @@ class ResourceService:
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
         result = []
-        for t in prompts:
+        for t in resources:
             team_name = self._get_team_name(db, getattr(t, 'team_id', None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t))
@@ -532,7 +532,7 @@ class ResourceService:
 
         resources = db.execute(query).scalars().all()
         result = []
-        for t in prompts:
+        for t in resources:
             team_name = self._get_team_name(db, getattr(t, 'team_id', None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t))
@@ -579,7 +579,7 @@ class ResourceService:
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
         result = []
-        for t in prompts:
+        for t in resources:
             team_name = self._get_team_name(db, getattr(t, 'team_id', None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t))
