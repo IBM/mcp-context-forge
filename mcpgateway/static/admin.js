@@ -1136,11 +1136,11 @@ function createKPISection(kpiData) {
             } else {
                 if (kpi.key === "avgResponseTime") {
                     // ensure numeric then 3 decimals + unit
-                    value = isNaN(Number(value)) 
-                        ? "N/A" 
+                    value = isNaN(Number(value))
+                        ? "N/A"
                         : Number(value).toFixed(3) + " ms";
                 } else if (
-                    kpi.key === "successRate" || 
+                    kpi.key === "successRate" ||
                     kpi.key === "errorRate"
                 ) {
                     value = String(value) + "%";
@@ -1252,28 +1252,28 @@ function extractKPIData(data) {
 
             const executions = Number(
                 normalized["total executions"] ??
-                normalized["totalexecutions"] ??
-                normalized["execution_count"] ??
-                normalized["execution-count"] ??
-                normalized["executions"] ??
-                normalized["total_executions"] ??
-                0
+                    normalized["totalexecutions"] ??
+                    normalized["execution_count"] ??
+                    normalized["execution-count"] ??
+                    normalized["executions"] ??
+                    normalized["total_executions"] ??
+                    0,
             );
 
             const successful = Number(
                 normalized["successful executions"] ??
-                normalized["successfulexecutions"] ??
-                normalized["successful"] ??
-                normalized["successful_executions"] ??
-                0
+                    normalized["successfulexecutions"] ??
+                    normalized["successful"] ??
+                    normalized["successful_executions"] ??
+                    0,
             );
 
             const failed = Number(
                 normalized["failed executions"] ??
-                normalized["failedexecutions"] ??
-                normalized["failed"] ??
-                normalized["failed_executions"] ??
-                0
+                    normalized["failedexecutions"] ??
+                    normalized["failed"] ??
+                    normalized["failed_executions"] ??
+                    0,
             );
 
             const avgResponseRaw =
@@ -1314,13 +1314,13 @@ function extractKPIData(data) {
                 : 0;
 
         // Debug: show what we've read from the payload
-        console.log("KPI Totals:", { 
-            totalExecutions, 
-            totalSuccessful, 
-            totalFailed, 
-            successRate, 
-            errorRate, 
-            avgResponseTime 
+        console.log("KPI Totals:", {
+            totalExecutions,
+            totalSuccessful,
+            totalFailed,
+            successRate,
+            errorRate,
+            avgResponseTime,
         });
 
         const results = {
@@ -1335,15 +1335,14 @@ function extractKPIData(data) {
         return results;
     } catch (err) {
         console.error("Error extracting KPI data:", err);
-        return { 
-            totalExecutions: 0, 
-            successRate: 0, 
-            errorRate: 0, 
-            avgResponseTime: null 
+        return {
+            totalExecutions: 0,
+            successRate: 0,
+            errorRate: 0,
+            avgResponseTime: null,
         };
     }
 }
-
 
 /**
  * Update the top KPI header cards if they exist on the page.
@@ -1354,8 +1353,8 @@ function updateKPICards(kpiData) {
         if (!kpiData) return;
 
         const formatAvg = (v) =>
-            v === null || v === undefined || isNaN(v) 
-                ? "N/A" 
+            v === null || v === undefined || isNaN(v)
+                ? "N/A"
                 : Number(v).toFixed(3) + " ms";
 
         const kv = {
@@ -1385,25 +1384,25 @@ function updateKPICards(kpiData) {
                 if (el) {
                     foundAny = true;
                     // If element contains child spans, prefer updating inner .value or the element text
-                    const valueEl = 
-                    el.querySelector && 
-                    (el.querySelector(".value") || 
-                        el.querySelector(".kpi-value"));
+                    const valueEl =
+                        el.querySelector &&
+                        (el.querySelector(".value") ||
+                            el.querySelector(".kpi-value"));
                     if (valueEl) {
                         valueEl.textContent = value;
                     } else {
-                         el.textContent = value;
-                    }     
+                        el.textContent = value;
+                    }
                 }
             });
 
             console.debug(
-                "KPI Cards Update attempt", 
-                tries, 
-                "foundAny:", 
-                foundAny, 
-                "values:", 
-                kv
+                "KPI Cards Update attempt",
+                tries,
+                "foundAny:",
+                foundAny,
+                "values:",
+                kv,
             );
 
             if (!foundAny && tries < maxTries) {
@@ -1881,8 +1880,12 @@ function exportMetricsToCSV(topData) {
                         ? `${Math.round(item.avg_response_time || item.avgResponseTime)}ms`
                         : "N/A",
                     `${calculateSuccessRate(item)}%`,
-                    formatLastUsed(item.last_execution || item.lastExecution || item.last_used || item.lastUsed)
-
+                    formatLastUsed(
+                        item.last_execution ||
+                            item.lastExecution ||
+                            item.last_used ||
+                            item.lastUsed,
+                    ),
                 ]);
             });
         }
@@ -2090,12 +2093,9 @@ function createMetricsCard(title, metrics) {
             metrics[metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
             "N/A";
 
-        const valueDisplay = value === null 
-            ? "N/A"
-            : formatValue(value);
+        const valueDisplay = value === null ? "N/A" : formatValue(value);
 
-        if (metric.key === "successRate" ||
-            metric.key === "errorRate") {
+        if (metric.key === "successRate" || metric.key === "errorRate") {
             // handle rate values
         }
 
