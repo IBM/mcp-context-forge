@@ -3,7 +3,7 @@
 
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Shriti Priya         
+Authors: Shriti Priya
 
 This module loads configurations for plugins and applies hooks on pre/post requests for tools, prompts and resources.
 """
@@ -103,7 +103,6 @@ class OPAPluginFilter(Plugin):
                 return decision, json_response
             elif isinstance(decision, dict) and "allow" in decision:
                 allow = decision["allow"]
-                print(f"YYY {allow}\n{payload}")
                 logger.debug(f"OPA decision {allow}")
                 return allow, json_response
             else:
