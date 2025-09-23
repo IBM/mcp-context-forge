@@ -516,8 +516,8 @@ class TestToolService:
         # Call method
         result = await tool_service.list_tools(test_db)
 
-        # Verify DB query
-        test_db.execute.assert_called_once()
+        # Verify DB query: should be called twice
+        assert test_db.execute.call_count == 2
 
         # Verify result
         assert len(result) == 1
@@ -575,8 +575,8 @@ class TestToolService:
         # Call method
         result = await tool_service.list_tools(test_db, include_inactive=True)
 
-        # Verify DB query
-        test_db.execute.assert_called_once()
+        # Verify DB query: should be called twice
+        assert test_db.execute.call_count == 2
 
         # Verify result
         assert len(result) == 1
@@ -2008,6 +2008,12 @@ class TestToolService:
                 # return a fake condition object that query.where will accept
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
+
+                # Patch team name lookup to return a real string, not a MagicMock
+                mock_team = MagicMock()
+                mock_team.name = "test-team"
+                session.query().filter().first.return_value = mock_team
+
 
                 result = await tool_service.list_tools(
                     session, tags=["test", "production"]

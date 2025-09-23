@@ -637,7 +637,6 @@ class ServerService:
             'server_read'
         """
         server = db.get(DbServer, server_id)
-        server.team = self._get_team_name(db, server.team_id) if server else None
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {
@@ -653,6 +652,7 @@ class ServerService:
             "associated_prompts": [prompt.id for prompt in server.prompts],
         }
         logger.debug(f"Server Data: {server_data}")
+        server.team = self._get_team_name(db, server.team_id) if server else None
         return self._convert_server_to_read(server)
 
     async def update_server(

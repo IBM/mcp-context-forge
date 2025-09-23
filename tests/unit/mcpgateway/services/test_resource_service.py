@@ -79,6 +79,9 @@ def mock_resource():
     resource.created_at = datetime.now(timezone.utc)
     resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []
+    resource.tags = []  # Ensure tags is a list, not a MagicMock
+    resource.team_id = "1234"  # Ensure team_id is a valid string or None
+    resource.team = "test-team"     # Ensure team is a valid string or None
 
     # .content property stub
     content_mock = MagicMock()
@@ -113,6 +116,8 @@ def mock_inactive_resource():
     resource.created_at = datetime.now(timezone.utc)
     resource.updated_at = datetime.now(timezone.utc)
     resource.metrics = []
+    resource.tags = []  # Ensure tags is a list, not a MagicMock
+    resource.team = "test-team"  # Ensure team is a valid string or None
 
     # .content property stub
     content_mock = MagicMock()
@@ -336,11 +341,15 @@ class TestResourceListing:
     async def test_list_resources_active_only(self, resource_service, mock_db, mock_resource):
         """Test listing active resources only."""
         mock_scalars = MagicMock()
+        mock_resource.team = "test-team"
         mock_scalars.all.return_value = [mock_resource]
         mock_execute_result = MagicMock()
         mock_execute_result.scalars.return_value = mock_scalars
         mock_db.execute.return_value = mock_execute_result
-
+        # Patch team name lookup to return a real string, not a MagicMock
+        mock_team = MagicMock()
+        mock_team.name = "test-team"
+        mock_db.query().filter().first.return_value = mock_team
         result = await resource_service.list_resources(mock_db, include_inactive=False)
 
         assert len(result) == 1
@@ -350,10 +359,15 @@ class TestResourceListing:
     async def test_list_resources_include_inactive(self, resource_service, mock_db, mock_resource, mock_inactive_resource):
         """Test listing resources including inactive ones."""
         mock_scalars = MagicMock()
+        mock_resource.team = "test-team"
         mock_scalars.all.return_value = [mock_resource, mock_inactive_resource]
         mock_execute_result = MagicMock()
         mock_execute_result.scalars.return_value = mock_scalars
         mock_db.execute.return_value = mock_execute_result
+        # Patch team name lookup to return a real string, not a MagicMock
+        mock_team = MagicMock()
+        mock_team.name = "test-team"
+        mock_db.query().filter().first.return_value = mock_team
 
         result = await resource_service.list_resources(mock_db, include_inactive=True)
 
@@ -363,10 +377,15 @@ class TestResourceListing:
     async def test_list_server_resources(self, resource_service, mock_db, mock_resource):
         """Test listing resources for specific server."""
         mock_scalars = MagicMock()
+        mock_resource.team = "test-team"
         mock_scalars.all.return_value = [mock_resource]
         mock_execute_result = MagicMock()
         mock_execute_result.scalars.return_value = mock_scalars
         mock_db.execute.return_value = mock_execute_result
+        # Patch team name lookup to return a real string, not a MagicMock
+        mock_team = MagicMock()
+        mock_team.name = "test-team"
+        mock_db.query().filter().first.return_value = mock_team
 
         result = await resource_service.list_server_resources(mock_db, "server123")
 
@@ -1328,6 +1347,10 @@ class TestResourceServiceMetricsExtended:
                 # return a fake condition object that query.where will accept
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
+                # Patch team name lookup to return a real string, not a MagicMock
+                mock_team = MagicMock()
+                mock_team.name = "test-team"
+                mock_db.query().filter().first.return_value = mock_team
 
                 result = await resource_service.list_resources(
                     mock_db, tags=["test", "production"]
