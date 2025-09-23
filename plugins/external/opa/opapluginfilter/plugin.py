@@ -12,6 +12,7 @@ This module loads configurations for plugins and applies hooks on pre/post reque
 from typing import Any
 
 # Third-Party
+from opapluginfilter.schema import BaseOPAInputKeys, OPAConfig, OPAInput
 import requests
 
 # First-Party
@@ -19,6 +20,7 @@ from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
+    PluginViolation,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -28,13 +30,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
-from mcpgateway.plugins.framework.models import PluginConfig, PluginViolation
 from mcpgateway.services.logging_service import LoggingService
-from opapluginfilter.schema import (
-    BaseOPAInputKeys,
-    OPAConfig,
-    OPAInput
-)
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -55,8 +51,29 @@ class OPAPluginFilter(Plugin):
         self.opa_config = OPAConfig.model_validate(self._config.config)
         self.opa_context_key = "opa_policy_context"
 
+    def _get_nested_value(self, data, key_string, default=None):
+        """
+        Retrieves a value from a nested dictionary using a dot-notation string.
 
-    def _evaluate_opa_policy(self, url: str, input: OPAInput) -> tuple[bool,Any]:
+        Args:
+            data (dict): The dictionary to search within.
+            key_string (str): The dot-notation string representing the path to the value.
+            default (any, optional): The value to return if the key path is not found.
+                                    Defaults to None.
+
+        Returns:
+            any: The value at the specified key path, or the default value if not found.
+        """
+        keys = key_string.split(".")
+        current_data = data
+        for key in keys:
+            if isinstance(current_data, dict) and key in current_data:
+                current_data = current_data[key]
+            else:
+                return default  # Key not found at this level
+        return current_data
+
+    def _evaluate_opa_policy(self, url: str, input: OPAInput, policy_input_data_map: dict) -> tuple[bool, Any]:
         """Function to evaluate OPA policy. Makes a request to opa server with url and input.
 
         Args:
@@ -70,16 +87,24 @@ class OPAPluginFilter(Plugin):
 
         """
 
-        payload = input.model_dump()
+        def _key(k: str, m: str) -> str:
+            return f"{k}.{m}" if k.split(".")[0] == "context" else k
+
+        payload = {"input": {m: self._get_nested_value(input.model_dump()["input"], _key(k, m)) for k, m in policy_input_data_map.items()}} if policy_input_data_map else input.model_dump()
         logger.info(f"OPA url {url}, OPA payload {payload}")
         rsp = requests.post(url, json=payload)
         logger.info(f"OPA connection response '{rsp}'")
         if rsp.status_code == 200:
             json_response = rsp.json()
-            decision = json_response.get("result",None)
+            decision = json_response.get("result", None)
             logger.info(f"OPA server response '{json_response}'")
-            if isinstance(decision,bool):
+            if isinstance(decision, bool):
+                logger.debug(f"OPA decision {decision}")
                 return decision, json_response
+            elif isinstance(decision, dict) and "allow" in decision:
+                allow = decision["allow"]
+                logger.debug(f"OPA decision {allow}")
+                return allow, json_response
             else:
                 logger.debug(f"OPA sent a none response {json_response}")
         else:
@@ -128,11 +153,11 @@ class OPAPluginFilter(Plugin):
         if not payload.args:
             return ToolPreInvokeResult()
 
-
         tool_context = []
         policy_context = {}
         tool_policy = None
         tool_policy_endpoint = None
+        tool_policy_input_data_map = {}
         # Get the tool for which policy needs to be applied
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.tools:
@@ -140,22 +165,24 @@ class OPAPluginFilter(Plugin):
                 tool_name = tool.tool_name
                 if payload.name == tool_name:
                     if tool.context:
-                        tool_context = [ctx.rsplit('.', 1)[-1] for ctx in tool.context]
+                        tool_context = [ctx.rsplit(".", 1)[-1] for ctx in tool.context]
                     if self.opa_context_key in context.global_context.state:
-                        policy_context = {k : context.global_context.state[self.opa_context_key][k] for k in tool_context}
+                        policy_context = {k: context.global_context.state[self.opa_context_key][k] for k in tool_context}
                     if tool.extensions:
-                        tool_policy = tool.extensions.get("policy",None)
-                        tool_policy_endpoint = tool.extensions.get("policy_endpoint",None)
+                        tool_policy = tool.extensions.get("policy", None)
+                        tool_policy_endpoint = tool.extensions.get("policy_endpoint", None)
+                        tool_policy_input_data_map = tool.extensions.get("policy_input_data_map", {})
 
-                    opa_input = BaseOPAInputKeys(kind="tools/call", user = "none", payload=payload.model_dump(), context=policy_context, request_ip = "none", headers = {}, response = {})
-                    opa_server_url = "{opa_url}{policy}/{policy_endpoint}".format(opa_url = self.opa_config.opa_base_url, policy=tool_policy, policy_endpoint=tool_policy_endpoint)
-                    decision, decision_context = self._evaluate_opa_policy(url=opa_server_url,input=OPAInput(input=opa_input))
+                    opa_input = BaseOPAInputKeys(kind="tools/call", user="none", payload=payload.model_dump(), context=policy_context, request_ip="none", headers={}, response={})
+                    opa_server_url = "{opa_url}{policy}/{policy_endpoint}".format(opa_url=self.opa_config.opa_base_url, policy=tool_policy, policy_endpoint=tool_policy_endpoint)
+                    decision, decision_context = self._evaluate_opa_policy(url=opa_server_url, input=OPAInput(input=opa_input), policy_input_data_map=tool_policy_input_data_map)
                     if not decision:
                         violation = PluginViolation(
                             reason="tool invocation not allowed",
                             description="OPA policy denied for tool preinvocation",
                             code="deny",
-                            details=decision_context,)
+                            details=decision_context,
+                        )
                         return ToolPreInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
         return ToolPreInvokeResult(continue_processing=True)
 
