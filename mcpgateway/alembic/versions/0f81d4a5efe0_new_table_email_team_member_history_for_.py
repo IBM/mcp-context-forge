@@ -1,7 +1,7 @@
 """new table email_team_member_history for audit trail of action performed on team members
 
 Revision ID: 0f81d4a5efe0
-Revises: e182847d89e6
+Revises: 14ac971cee42
 Create Date: 2025-09-15 14:53:32.682953
 
 """
@@ -18,7 +18,7 @@ from mcpgateway.db import utc_now
 
 # revision identifiers, used by Alembic.
 revision: str = "0f81d4a5efe0"
-down_revision: Union[str, Sequence[str], None] = "e182847d89e6"
+down_revision: Union[str, Sequence[str], None] = "14ac971cee42"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
