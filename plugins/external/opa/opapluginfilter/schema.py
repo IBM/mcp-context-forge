@@ -9,10 +9,11 @@ This module defines schema for OPA plugin.
 """
 
 # Standard
-from typing import Optional, Any
+from typing import Any, Optional
 
 # Third-Party
 from pydantic import BaseModel
+
 
 class BaseOPAInputKeys(BaseModel):
     """BaseOPAInputKeys
@@ -34,11 +35,12 @@ class BaseOPAInputKeys(BaseModel):
         '{"opa_policy_context" : {"context1" : "value1"}}'
 
     """
-    kind : Optional[str] = None
-    user : Optional[str] = None
-    request_ip : Optional[str] = None
-    headers : Optional[dict[str, str]] = None
-    response : Optional[dict[str, str]] = None
+
+    kind: Optional[str] = None
+    user: Optional[str] = None
+    request_ip: Optional[str] = None
+    headers: Optional[dict[str, str]] = None
+    response: Optional[dict[str, str]] = None
     payload: dict[str, Any]
     context: Optional[dict[str, Any]] = None
 
@@ -57,7 +59,9 @@ class OPAInput(BaseModel):
         '{"opa_policy_context" : {"context1" : "value1"}}'
 
     """
-    input : BaseOPAInputKeys
+
+    input: BaseOPAInputKeys
+
 
 class OPAConfig(BaseModel):
     """Configuration for the OPA plugin."""
