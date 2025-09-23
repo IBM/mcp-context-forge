@@ -1193,10 +1193,14 @@ function createKPISection(kpiData) {
  * Returns numeric totalExecutions, successRate, errorRate, and avgResponseTime (ms) or null.
  */
 function formatValue(value) {
-    if (value === null || value === undefined) return "N/A";
+    if (value === null || value === undefined) {
+        return "N/A";
+    }
 
     if (typeof value === "number") {
-        if (Number.isNaN(value)) return "N/A";
+        if (Number.isNaN(value)) {
+            return "N/A";
+        }
         return value.toString();
     }
 
@@ -1252,35 +1256,35 @@ function extractKPIData(data) {
 
             const executions = Number(
                 normalized["total executions"] ??
-                    normalized["totalexecutions"] ??
-                    normalized["execution_count"] ??
+                    normalized.totalexecutions ??
+                    normalized.execution_count ??
                     normalized["execution-count"] ??
-                    normalized["executions"] ??
-                    normalized["total_executions"] ??
+                    normalized.executions ??
+                    normalized.total_executions ??
                     0,
             );
 
             const successful = Number(
                 normalized["successful executions"] ??
-                    normalized["successfulexecutions"] ??
-                    normalized["successful"] ??
-                    normalized["successful_executions"] ??
+                    normalized.successfulexecutions ??
+                    normalized.successful ??
+                    normalized.successful_executions ??
                     0,
             );
 
             const failed = Number(
                 normalized["failed executions"] ??
-                    normalized["failedexecutions"] ??
-                    normalized["failed"] ??
-                    normalized["failed_executions"] ??
+                    normalized.failedexecutions ??
+                    normalized.failed ??
+                    normalized.failed_executions ??
                     0,
             );
 
             const avgResponseRaw =
                 normalized["average response time"] ??
-                normalized["avgresponsetime"] ??
-                normalized["avg_response_time"] ??
-                normalized["avgresponsetime"] ??
+                normalized.avgresponsetime ??
+                normalized.avg_response_time ??
+                normalized.avgresponsetime ??
                 null;
 
             totalExecutions += Number.isNaN(executions) ? 0 : executions;
@@ -1350,7 +1354,9 @@ function extractKPIData(data) {
  */
 function updateKPICards(kpiData) {
     try {
-        if (!kpiData) return;
+        if (!kpiData) {
+            return;
+        }
 
         const formatAvg = (v) =>
             v === null || v === undefined || isNaN(v)
@@ -1587,8 +1593,12 @@ function formatLastUsed(timestamp) {
     const now = Date.now();
     const diff = now - date.getTime();
 
-    if (diff < 60 * 1000) return "Just now";
-    if (diff < 60 * 60 * 1000) return `${Math.floor(diff / 60000)} min ago`;
+    if (diff < 60 * 1000) {
+        return "Just now";
+    }
+    if (diff < 60 * 60 * 1000) {
+        return `${Math.floor(diff / 60000)} min ago`;
+    }
 
     // ✅ Always render in *local system time*
     return date.toLocaleString(undefined, {
