@@ -8,6 +8,7 @@ SHELL := /bin/bash
 PACKAGE_NAME = opapluginfilter
 PROJECT_NAME = opapluginfilter
 TARGET ?= opapluginfilter
+OPASERVER_VERSION ?= 1.8.0
 
 # Virtual-environment variables
 VENVS_DIR ?= $(HOME)/.venv
@@ -117,6 +118,7 @@ container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
 	$(CONTAINER_RUNTIME) build \
 		--platform=$(PLATFORM) \
+		--build-arg OPASERVER_VERSION=$(OPASERVER_VERSION) \
 		-f $(CONTAINER_FILE) \
 		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 		.

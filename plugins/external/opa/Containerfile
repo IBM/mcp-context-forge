@@ -11,6 +11,9 @@ ARG SKILLS_SDK_COMMIT_ID
 ARG SKILLS_SDK_VERSION
 ARG BUILD_TIME_SKILLS_INSTALL
 
+ARG OPASERVER_VERSION=1.8.0
+ARG TARGETARCH
+
 ENV APP_HOME=/app
 
 USER 0
@@ -28,7 +31,7 @@ RUN mkdir -p ${APP_HOME} && \
     chown -R 1001:0 ${HOME}/resources/config
 
 # Install opa in container
-RUN curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/v1.7.0/opa_linux_arm64_static
+RUN curl -L -o /usr/local/bin/opa https://openpolicyagent.org/downloads/v${OPASERVER_VERSION}/opa_linux_${TARGETARCH}_static
 RUN chmod +x /usr/local/bin/opa
 RUN opa version
 
