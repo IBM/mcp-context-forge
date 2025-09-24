@@ -302,6 +302,7 @@ class ServerService:
             "prompts": prompts or [],
             "a2a_agents": a2a_agents or [],
         }
+
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
@@ -315,8 +316,6 @@ class ServerService:
         if not team_id:
             return None
         team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)).first()
-        if team:
-            team_name = team.name
         return team.name if team else None
 
     async def register_server(
@@ -531,7 +530,7 @@ class ServerService:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
         servers = db.execute(query).scalars().all()
-        result=[]
+        result = []
         for s in servers:
             s.team = self._get_team_name(db, s.team_id)
 
@@ -604,7 +603,7 @@ class ServerService:
         query = query.offset(skip).limit(limit)
 
         servers = db.execute(query).scalars().all()
-        result=[]
+        result = []
         for s in servers:
             s.team = self._get_team_name(db, s.team_id)
 

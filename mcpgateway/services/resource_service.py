@@ -41,11 +41,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.db import EmailTeam
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
-from mcpgateway.db import EmailTeam
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
@@ -258,9 +258,10 @@ class ResourceService:
         resource_dict["created_at"] = getattr(resource, "created_at", None)
         resource_dict["updated_at"] = getattr(resource, "updated_at", None)
         resource_dict["version"] = getattr(resource, "version", None)
-        resource_valid=ResourceRead.model_validate(resource_dict)
+        resource_valid = ResourceRead.model_validate(resource_dict)
         logger.info(f"Converted resource to read model: {resource_valid}    ")
         return resource_valid
+
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
@@ -274,8 +275,6 @@ class ResourceService:
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        if team:
-            team_name = team.name
         return team.name if team else None
 
     async def register_resource(
@@ -437,11 +436,11 @@ class ResourceService:
         resources = db.execute(query).scalars().all()
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t))
         return result
-        
+
     async def list_resources_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[ResourceRead]:
@@ -541,11 +540,11 @@ class ResourceService:
         resources = db.execute(query).scalars().all()
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t))
         return result
-        
+
     async def list_server_resources(self, db: Session, server_id: str, include_inactive: bool = False) -> List[ResourceRead]:
         """
         Retrieve a list of registered resources from the database.
@@ -588,11 +587,11 @@ class ResourceService:
         resources = db.execute(query).scalars().all()
         result = []
         for t in resources:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t))
         return result
-        
+
     async def read_resource(self, db: Session, uri: str, request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 

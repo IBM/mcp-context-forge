@@ -38,11 +38,11 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.db import EmailTeam
 from mcpgateway.models import Gateway as PydanticGateway
 from mcpgateway.models import TextContent
 from mcpgateway.models import Tool as PydanticTool
@@ -269,6 +269,7 @@ class ToolService:
         )
 
         return build_top_performers(results)
+
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
@@ -282,8 +283,6 @@ class ToolService:
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        if team:
-            team_name = team.name
         return team.name if team else None
 
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
@@ -548,7 +547,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
         return result
@@ -591,7 +590,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
         return result
@@ -664,7 +663,7 @@ class ToolService:
         tools = db.execute(query).scalars().all()
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
         return result
@@ -698,7 +697,7 @@ class ToolService:
         tool = db.get(DbTool, tool_id)
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
-        tool.team = self._get_team_name(db, getattr(tool, 'team_id', None))
+        tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
         return self._convert_tool_to_read(tool)
 
     async def delete_tool(self, db: Session, tool_id: str) -> None:

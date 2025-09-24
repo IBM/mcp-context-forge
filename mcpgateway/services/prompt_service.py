@@ -31,9 +31,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
-from mcpgateway.db import EmailTeam
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptPosthookPayload, PromptPrehookPayload
@@ -264,6 +264,7 @@ class PromptService:
             "team_id": getattr(db_prompt, "team_id", None),
             "owner_email": getattr(db_prompt, "owner_email", None),
         }
+
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
@@ -277,8 +278,6 @@ class PromptService:
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        if team:
-            team_name = team.name
         return team.name if team else None
 
     async def register_prompt(
@@ -383,7 +382,7 @@ class PromptService:
             await self._notify_prompt_added(db_prompt)
 
             logger.info(f"Registered prompt: {prompt.name}")
-            db_prompt.team=self._get_team_name(db,db_prompt.team_id)
+            db_prompt.team = self._get_team_name(db, db_prompt.team_id)
             prompt_dict = self._convert_db_prompt(db_prompt)
             return PromptRead.model_validate(prompt_dict)
 
@@ -442,7 +441,7 @@ class PromptService:
         prompts = db.execute(query).scalars().all()
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
         return result
@@ -515,7 +514,7 @@ class PromptService:
         prompts = db.execute(query).scalars().all()
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
         return result
@@ -563,7 +562,7 @@ class PromptService:
         prompts = db.execute(query).scalars().all()
         result = []
         for t in prompts:
-            team_name = self._get_team_name(db, getattr(t, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
         return result
@@ -790,7 +789,7 @@ class PromptService:
             db.refresh(prompt)
 
             await self._notify_prompt_updated(prompt)
-            prompt.team=self._get_team_name(db,prompt.team_id)  
+            prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
         except IntegrityError as ie:
@@ -853,7 +852,7 @@ class PromptService:
                 else:
                     await self._notify_prompt_deactivated(prompt)
                 logger.info(f"Prompt {prompt.name} {'activated' if activate else 'deactivated'}")
-            prompt.team=self._get_team_name(db,prompt.team_id)
+            prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
         except Exception as e:
             db.rollback()
@@ -899,7 +898,7 @@ class PromptService:
                     raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
             raise PromptNotFoundError(f"Prompt not found: {name}")
         # Return the fully converted prompt including metrics
-        prompt.team=self._get_team_name(db,prompt.team_id)
+        prompt.team = self._get_team_name(db, prompt.team_id)
         return self._convert_db_prompt(prompt)
 
     async def delete_prompt(self, db: Session, name: str) -> None:

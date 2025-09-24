@@ -69,12 +69,12 @@ except ImportError:
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import SessionLocal
-from mcpgateway.db import EmailTeam
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
@@ -457,6 +457,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self._event_subscribers.clear()
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
+
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
         """Retrieve the team name given a team ID.
 
@@ -470,9 +471,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if not team_id:
             return None
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
-        if team:
-            team_name = team.name
         return team.name if team else None
+
     async def register_gateway(
         self,
         db: Session,
@@ -937,7 +937,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         result = []
         for g in gateways:
-            team_name = self._get_team_name(db, getattr(g, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(g, "team_id", None))
             g.team = team_name
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
         return result
@@ -1006,7 +1006,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         gateways = db.execute(query).scalars().all()
         result = []
         for g in gateways:
-            team_name = self._get_team_name(db, getattr(g, 'team_id', None))
+            team_name = self._get_team_name(db, getattr(g, "team_id", None))
             g.team = team_name
             logger.info(f"Gateway: {g.team_id}, Team: {team_name}")
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
@@ -1282,9 +1282,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
+<<<<<<< HEAD
                 gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
 
                 return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
+=======
+
+                return GatewayRead.model_validate(gateway)
+>>>>>>> e36e27ac (ruff isort)
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -1358,8 +1363,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
+<<<<<<< HEAD
             gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+=======
+            gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
+            return GatewayRead.model_validate(gateway).masked()
+>>>>>>> e36e27ac (ruff isort)
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1491,8 +1501,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
+<<<<<<< HEAD
             gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+=======
+            gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
+            return GatewayRead.model_validate(gateway).masked()
+>>>>>>> e36e27ac (ruff isort)
 
         except Exception as e:
             db.rollback()
