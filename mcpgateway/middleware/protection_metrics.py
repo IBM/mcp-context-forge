@@ -44,6 +44,18 @@ class ProtectionMetricsService:
     _send_interval = 5  # seconds
 
     def __init__(self):
+        """
+        Initializes the metrics sender instance.
+
+        This constructor sets up the internal state for managing metric sending,
+        including a queue for metrics and a flag to track if sending is in progress.
+        If protection metrics are enabled and a webhook URL is configured in the settings,
+        it starts a background task to periodically send metrics.
+
+        Attributes:
+            _metrics_queue (list): A queue to store metrics that need to be sent.
+            _is_sending (bool): A flag indicating whether metrics are currently being sent.
+        """
         self._metrics_queue = []
         self._is_sending = False
         # Start the background task if metrics are enabled
