@@ -135,14 +135,24 @@ update:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -U .[dev]"
 
 # help: check-env            - Verify all required env vars in .env are present
-.PHONY: check-env
+.PHONY: check-env check-env-dev
+
+# Validate .env in production mode
 check-env:
-	@echo "🔎  Checking .env against .env.example..."
-	@missing=0; \
-	for key in $$(grep -Ev '^\s*#|^\s*$$' .env.example | cut -d= -f1); do \
-	  grep -q "^$$key=" .env || { echo "❌ Missing: $$key"; missing=1; }; \
-	done; \
-	if [ $$missing -eq 0 ]; then echo "✅  All environment variables are present."; fi
+	@echo "🔎  Validating .env against .env.example using Python (prod)..."
+	@python -m mcpgateway.scripts.validate_env .env.example
+	# 	@echo "🔎  Checking .env against .env.example..."
+# 	@missing=0; \
+# 	for key in $$(grep -Ev '^\s*#|^\s*$$' .env.example | cut -d= -f1); do \
+# 	  grep -q "^$$key=" .env || { echo "❌ Missing: $$key"; missing=1; }; \
+# 	done; \
+# 	if [ $$missing -eq 0 ]; then echo "✅  All environment variables are present."; fi
+
+# Validate .env in development mode (warnings do not fail)
+check-env-dev:
+	@echo "🔎  Validating .env (dev, warnings do not fail)..."
+	@python -c "import sys; from mcpgateway.scripts import validate_env as ve; sys.exit(ve.main(env_file='.env', exit_on_warnings=False))"
+
 
 
 # =============================================================================

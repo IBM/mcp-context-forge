@@ -30,7 +30,7 @@ import logging
 from unittest.mock import patch
 
 # Third-Party
-from pydantic import ValidationError
+from pydantic import ValidationError, SecretStr
 import pytest
 
 # First-Party
@@ -530,7 +530,7 @@ class TestSecurityValidation:
         logger.debug("Testing tool authentication assembly")
 
         # Basic auth
-        basic_data = {"name": self.VALID_TOOL_NAME, "url": self.VALID_URL, "auth_type": "basic", "auth_username": "user", "auth_password": "pass"}
+        basic_data = {"name": self.VALID_TOOL_NAME, "url": self.VALID_URL, "auth_type": "basic", "auth_username": "user", "auth_password": SecretStr("pass")}
         tool = ToolCreate(**basic_data)
         assert tool.auth.auth_type == "basic"
         assert tool.auth.auth_value is not None
@@ -1079,7 +1079,7 @@ class TestSecurityValidation:
             logger.debug(f"Testing SQL injection in auth: {payload}")
             # Auth fields might not be validated as strictly
             try:
-                tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, auth_type="basic", auth_username=payload, auth_password="password")
+                tool = ToolCreate(name=self.VALID_TOOL_NAME, url=self.VALID_URL, auth_type="basic", auth_username=payload, auth_password=SecretStr("password"))
                 # If it passes, auth was assembled
                 assert tool.auth is not None
             except ValidationError as e:
@@ -1089,7 +1089,7 @@ class TestSecurityValidation:
         for payload in self.LDAP_INJECTION_PAYLOADS[:3]:
             logger.debug(f"Testing LDAP injection in gateway auth: {payload}")
             try:
-                gateway = GatewayCreate(name="gateway", url=self.VALID_URL, auth_type="basic", auth_username=payload, auth_password="password")
+                gateway = GatewayCreate(name="gateway", url=self.VALID_URL, auth_type="basic", auth_username=payload, auth_password=SecretStr("password"))
                 assert gateway.auth_value is not None
             except ValidationError as e:
                 logger.debug(f"Gateway auth validation error: {e}")

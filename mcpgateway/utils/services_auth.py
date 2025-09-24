@@ -40,6 +40,7 @@ import os
 
 # Third-Party
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from pydantic import SecretStr
 
 # First-Party
 from mcpgateway.config import settings
@@ -73,6 +74,11 @@ def get_key() -> bytes:
     passphrase = settings.auth_encryption_secret
     if not passphrase:
         raise ValueError("AUTH_ENCRYPTION_SECRET not set in environment.")
+
+    # If it's SecretStr, extract the real value
+    if isinstance(passphrase, SecretStr):
+        passphrase = passphrase.get_secret_value()
+
     return hashlib.sha256(passphrase.encode()).digest()  # 32-byte key
 
 

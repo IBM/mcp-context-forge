@@ -48,8 +48,8 @@ def test_parse_federation_peers_json_and_csv():
     s_json = Settings(federation_peers=peers_json)
     s_csv = Settings(federation_peers=peers_csv)
 
-    assert s_json.federation_peers == ["https://gw1", "https://gw2"]
-    assert s_csv.federation_peers == ["https://gw3", "https://gw4"]
+    assert [str(u) for u in s_json.federation_peers] == ["https://gw1/", "https://gw2/"]
+    assert [str(u) for u in s_csv.federation_peers] == ["https://gw3/", "https://gw4/"]
 
 
 # --------------------------------------------------------------------------- #
@@ -186,7 +186,14 @@ def test_get_settings_is_lru_cached(mock_settings):
 #                       Keep the user-supplied baseline                       #
 # --------------------------------------------------------------------------- #
 def test_settings_default_values():
-    with patch.dict(os.environ, {}, clear=True):
+
+    dummy_env = {
+        "JWT_SECRET_KEY": "x" * 32,  # required, at least 32 chars
+        "AUTH_ENCRYPTION_SECRET": "dummy-secret",
+        "APP_DOMAIN": "http://localhost"
+    }
+
+    with patch.dict(os.environ, dummy_env, clear=True):
         settings = Settings(_env_file=None)
 
         assert settings.app_name == "MCP_Gateway"
@@ -196,6 +203,9 @@ def test_settings_default_values():
         assert settings.basic_auth_user == "admin"
         assert settings.basic_auth_password == "changeme"
         assert settings.auth_required is True
+        assert settings.jwt_secret_key.get_secret_value() == "x" * 32
+        assert settings.auth_encryption_secret.get_secret_value() == "dummy-secret"
+        assert str(settings.app_domain) == "http://localhost/"
 
 
 def test_api_key_property():

@@ -37,15 +37,19 @@ $ mcpgateway mypkg.other:app          # run a different ASGI callable
 from __future__ import annotations
 
 # Standard
+import json
 import os
+from pathlib import Path
 import sys
-from typing import List
+from typing import List, Optional
 
 # Third-Party
+from pydantic import ValidationError
 import uvicorn
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.config import Settings
 
 # ---------------------------------------------------------------------------
 # Configuration defaults (overridable via environment variables)
@@ -119,6 +123,30 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
     return args
 
 
+def _handle_validate_config(path: str = ".env") -> None:
+
+    try:
+        Settings(_env_file=path)
+    except ValidationError as exc:
+        print(f"❌ Invalid configuration in {path}", file=sys.stderr)
+        print(exc.json(indent=2), file=sys.stderr)
+        raise SystemExit(1)
+
+    print(f"✅ Configuration in {path} is valid")
+
+
+def _handle_config_schema(output: Optional[str] = None) -> None:
+    schema = Settings.model_json_schema(mode="validation")
+    data = json.dumps(schema, indent=2, sort_keys=True)
+
+    if output:
+        path = Path(output)
+        path.write_text(data, encoding="utf-8")
+        print(f"✅ Schema written to {path}")
+    else:
+        print(data)
+
+
 # ---------------------------------------------------------------------------
 # Public entry-point
 # ---------------------------------------------------------------------------
@@ -135,6 +163,16 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
     Environment Variables:
         MCG_HOST: Default host (default: "127.0.0.1")
         MCG_PORT: Default port (default: "4444")
+
+    Usage:
+        mcpgateway --reload
+        mcpgateway --workers 4
+        mcpgateway --validate-config [path]
+        mcpgateway --config-schema [output]
+
+    Flags:
+        --validate-config [path]   Validate .env file (default: .env)
+        --config-schema [output]   Print or write JSON schema for Settings
     """
 
     # Check for export/import commands first
@@ -150,6 +188,20 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
     if "--version" in sys.argv or "-V" in sys.argv:
         print(f"mcpgateway {__version__}")
         return
+
+    # Handle config-related flags
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+
+        if cmd == "--validate-config":
+            env_path = sys.argv[2] if len(sys.argv) > 2 else ".env"
+            _handle_validate_config(env_path)
+            return
+
+        if cmd == "--config-schema":
+            output = sys.argv[2] if len(sys.argv) > 2 else None
+            _handle_config_schema(output)
+            return
 
     # Discard the program name and inspect the rest.
     user_args = sys.argv[1:]

@@ -349,6 +349,8 @@ async def test_docs_invalid_basic_auth_fails(monkeypatch):
 async def test_integration_docs_endpoint_both_auth_methods(test_client, monkeypatch):
     """Integration test: /docs accepts both auth methods when enabled."""
     monkeypatch.setattr("mcpgateway.config.settings.docs_allow_basic_auth", True)
+    monkeypatch.setattr("mcpgateway.config.settings.basic_auth_user", "admin")
+    monkeypatch.setattr("mcpgateway.config.settings.basic_auth_password", "changeme")
     monkeypatch.setattr("mcpgateway.config.settings.jwt_secret_key", SECRET)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_algorithm", ALGO)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_audience", "mcpgateway-api")
