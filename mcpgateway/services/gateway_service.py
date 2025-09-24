@@ -44,7 +44,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
 
@@ -70,6 +70,7 @@ except ImportError:
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import SessionLocal
@@ -403,17 +404,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         finally:
             await validation_client.aclose()
 
-    async def initialize(self, db: Session, user_email: str) -> None:
+    async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.
-
-        Args:
-            db: Database session to use for health checks
-            user_email: Email of the user to notify in case of issues
 
         Raises:
             ConnectionError: When redis ping fails
         """
         logger.info("Initializing gateway service")
+
+        db_gen: Generator = get_db()
+        db: Session = next(db_gen)
+
+        user_email = settings.platform_admin_email
 
         if self._redis_client:
             # Check if Redis is available
@@ -1578,7 +1580,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 raise GatewayConnectionError(f"OAuth authorization code gateway {gateway.name} requires user context")
 
                             # First-Party
-                            from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
                             from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
                             # Get database session (this is a bit hacky but necessary for now)
@@ -1933,9 +1934,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                             # Reactivate gateway if it was previously inactive and health check passed now
                             if gateway.enabled and not gateway.reachable:
-                                with cast(Any, SessionLocal)() as db:
-                                    logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
-                                    await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
+                                logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
+                                await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
 
                             # Mark successful check
                             gateway.last_seen = datetime.now(timezone.utc)

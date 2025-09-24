@@ -7382,7 +7382,6 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
 
     # Attempt to find a registered gateway matching this URL and team
     try:
-        gateway_service = GatewayService()
         gateway = gateway_service.get_first_gateway_by_url(db, str(request.base_url), team_id=team_id)
     except Exception:
         gateway = None
