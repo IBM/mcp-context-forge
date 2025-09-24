@@ -1779,30 +1779,50 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, db: Session, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
-        """Check health of gateways.
+        """Check health of a batch of gateways.
+
+        Performs an asynchronous health-check for each gateway in `gateways` using
+        an Async HTTP client. The function handles different authentication
+        modes (OAuth client_credentials and authorization_code, and non-OAuth
+        auth headers). When a gateway uses the authorization_code flow, the
+        provided `db` and optional `user_email` are used to look up stored user
+        tokens. On individual failures the service will record the failure and
+        call internal failure handling which may mark a gateway unreachable or
+        deactivate it after repeated failures. If a previously unreachable
+        gateway becomes healthy again the service will attempt to update its
+        reachable status.
 
         Args:
-            gateways: List of DbGateway objects
+            db: Database Session used for token lookups and status updates.
+            gateways: List of DbGateway objects to check.
+            user_email: Optional MCP gateway user email used to retrieve
+                stored OAuth tokens for gateways using the
+                "authorization_code" grant type. If not provided, authorization
+                code flows that require a user token will be treated as failed.
 
         Returns:
-            True if all gateways are healthy, False otherwise
+            bool: True when the health-check batch completes. This return
+            value indicates completion of the checks, not that every gateway
+            was healthy. Individual gateway failures are handled internally
+            (via _handle_gateway_failure and status updates).
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from unittest.mock import MagicMock
             >>> service = GatewayService()
+            >>> db = MagicMock()
             >>> gateways = [MagicMock()]
             >>> import asyncio
-            >>> result = asyncio.run(service.check_health_of_gateways(gateways))
+            >>> result = asyncio.run(service.check_health_of_gateways(db, gateways))
             >>> isinstance(result, bool)
             True
 
             >>> # Test empty gateway list
-            >>> empty_result = asyncio.run(service.check_health_of_gateways([]))
+            >>> empty_result = asyncio.run(service.check_health_of_gateways(db, []))
             >>> empty_result
             True
 
-            >>> # Test multiple gateways
+            >>> # Test multiple gateways (basic smoke)
             >>> multiple_gateways = [MagicMock(), MagicMock(), MagicMock()]
             >>> for i, gw in enumerate(multiple_gateways):
             ...     gw.name = f"gateway_{i}"
@@ -1811,7 +1831,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     gw.enabled = True
             ...     gw.reachable = True
             ...     gw.auth_value = {}
-            >>> multi_result = asyncio.run(service.check_health_of_gateways(multiple_gateways))
+            >>> multi_result = asyncio.run(service.check_health_of_gateways(db, multiple_gateways))
             >>> isinstance(multi_result, bool)
             True
         """
