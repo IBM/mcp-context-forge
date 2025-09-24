@@ -96,6 +96,7 @@ from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.services_auth import decode_auth
 
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
