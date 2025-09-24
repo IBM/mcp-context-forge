@@ -26,6 +26,7 @@ import html
 import io
 import json
 import logging
+import os
 from pathlib import Path
 import time
 from typing import Any, cast, Dict, List, Optional, Union
@@ -7239,7 +7240,9 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
 
     Args:
         request (GatewayTestRequest): The request object containing the gateway URL and request details.
+        team_id (Optional[str]): Optional team ID for team-specific gateways.
         user (str): Authenticated user dependency.
+        db (Session): Database session dependency.
 
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body
@@ -7400,7 +7403,9 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
                     # Get user-specific OAuth token
                     if not user_email:
                         latency_ms = int((time.monotonic() - start_time) * 1000)
-                        return GatewayTestResponse(status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."})
+                        return GatewayTestResponse(
+                            status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."}
+                        )
 
                     access_token: str = await token_storage.get_user_token(gateway.id, user_email)
 
@@ -7408,7 +7413,9 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
                         headers["Authorization"] = f"Bearer {access_token}"
                     else:
                         latency_ms = int((time.monotonic() - start_time) * 1000)
-                        return GatewayTestResponse(status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."})
+                        return GatewayTestResponse(
+                            status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."}
+                        )
                 except Exception as e:
                     LOGGER.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
                     latency_ms = int((time.monotonic() - start_time) * 1000)
@@ -7416,13 +7423,14 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
             else:
                 # For Client Credentials flow, get token directly
                 try:
+                    oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
                     access_token: str = await oauth_manager.get_access_token(gateway.oauth_config)
                     headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
-                    logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
-                    raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+                    LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                    response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
         else:
-            headers = decode_auth(gateway.auth_value if gateway else None)
+            headers: dict = decode_auth(gateway.auth_value if gateway else None)
 
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
             response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=headers, json=request.body)

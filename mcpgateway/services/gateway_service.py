@@ -406,6 +406,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
     async def initialize(self, db: Session, user_email: str) -> None:
         """Initialize the service and start health check if this instance is the leader.
 
+        Args:
+            db: Database session to use for health checks
+            user_email: Email of the user to notify in case of issues
+
         Raises:
             ConnectionError: When redis ping fails
         """
@@ -1875,7 +1879,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         if not user_email:
                                             if span:
                                                 span.set_attribute("health.status", "unhealthy")
-                                                span.set_attribute("error.message", str(e))
+                                                span.set_attribute("error.message", "User email required for OAuth token")
                                             await self._handle_gateway_failure(gateway)
 
                                         access_token: str = await token_storage.get_user_token(gateway.id, user_email)
@@ -1885,13 +1889,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         else:
                                             if span:
                                                 span.set_attribute("health.status", "unhealthy")
-                                                span.set_attribute("error.message", str(e))
+                                                span.set_attribute("error.message", "No valid OAuth token for user")
                                             await self._handle_gateway_failure(gateway)
                                     except Exception as e:
                                         logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
                                         if span:
                                             span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", str(e))
+                                            span.set_attribute("error.message", "Failed to obtain stored OAuth token")
                                         await self._handle_gateway_failure(gateway)
                                 else:
                                     # For Client Credentials flow, get token directly
@@ -2205,6 +2209,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         provided, it restricts the search to that team.
 
         Args:
+            db: Database session to use for the query
             url: Gateway base URL to match (will be normalized)
             team_id: Optional team id to restrict search
             include_inactive: Whether to include inactive gateways
@@ -2228,6 +2233,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.
         Uses simple health check for single worker mode.
+
+        Args:
+            db: Database session to use for health checks
+            user_email: Email of the user to notify in case of issues
 
         Examples:
             >>> service = GatewayService()
