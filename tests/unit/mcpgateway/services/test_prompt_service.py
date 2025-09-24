@@ -350,8 +350,15 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_toggle_prompt_status(self, prompt_service, test_db):
-        p = _build_db_prompt(is_active=True)
-        test_db.get, test_db.commit, test_db.refresh = Mock(return_value=p), Mock(), Mock()
+        # Ensure the mock prompt has a real id and primitive attributes
+        p = MagicMock(spec=DbPrompt)
+        p.id = 1
+        p.team_id = 1
+        p.name = "hello"
+        p.is_active = True
+        test_db.get = Mock(return_value=p)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
         prompt_service._notify_prompt_deactivated = AsyncMock()
 
         res = await prompt_service.toggle_prompt_status(test_db, 1, activate=False)
