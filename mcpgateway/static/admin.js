@@ -946,8 +946,6 @@ function displayMetrics(data) {
             metricsContainer.appendChild(toolsCard);
         }
 
-        
-
         // Resources metrics
         if (data.resources) {
             const resourcesCard = createMetricsCard(
@@ -977,10 +975,12 @@ function displayMetrics(data) {
 
         // Tools metrics
         if (data.tools) {
-            const protectionMetricCard = createProtectionMetricsCard("Protection", data.protection_metrics);
+            const protectionMetricCard = createProtectionMetricsCard(
+                "Protection",
+                data.protection_metrics,
+            );
             metricsContainer.appendChild(protectionMetricCard);
         }
-
 
         // Performance metrics
         if (data.performance) {
@@ -1932,11 +1932,26 @@ function createProtectionMetricsCard(title, metrics) {
     metricsList.className = "space-y-2";
 
     const metricsToShow = [
-        { label: "Total protection metrics for Admin paths", key: "total_admin_metrics" },
-        { label: "Total Potection metrics for Tools Potection metrics for ToolsccessfulExecutions", key: "total_tools_metrics" },
-        { label: "Total Protection metrics for Anonymous", key: "total_anon_metrics" },
-        { label: "Total Protection metrics for other paths", key: "total_others" },
-        { label: "Total warnings", key: "total_warnings" },
+        {
+            label: "Total protection metrics for Admin paths",
+            key: "total_admin_metrics",
+        },
+        {
+            label: "Total Potection metrics for Tools Potection metrics for ToolsccessfulExecutions",
+            key: "total_tools_metrics",
+        },
+        {
+            label: "Total Protection metrics for Anonymous",
+            key: "total_anon_metrics",
+        },
+        {
+            label: "Total Protection metrics for other paths",
+            key: "total_others",
+        },
+        {
+            label: "Total warnings",
+            key: "total_warnings",
+        },
     ];
 
     metricsToShow.forEach((metric) => {
