@@ -786,25 +786,36 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 try:
                     # Check if tool already exists for this gateway
                     existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway.id)).scalar_one_or_none()
-                    
+
                     if existing_tool:
                         # Update existing tool if there are changes
                         fields_to_update = False
-                        
-                        if (
+
+                        # Check basic field changes
+                        basic_fields_changed = (
                             existing_tool.url != gateway.url
                             or existing_tool.description != tool.description
                             or existing_tool.integration_type != "MCP"
                             or existing_tool.request_type != tool.request_type
-                            or existing_tool.headers != tool.headers
+                        )
+
+                        # Check schema and configuration changes
+                        schema_fields_changed = (
+                            existing_tool.headers != tool.headers
                             or existing_tool.input_schema != tool.input_schema
                             or existing_tool.jsonpath_filter != tool.jsonpath_filter
-                            or existing_tool.auth_type != gateway.auth_type
+                        )
+
+                        # Check authentication and visibility changes
+                        auth_fields_changed = (
+                            existing_tool.auth_type != gateway.auth_type
                             or existing_tool.auth_value != gateway.auth_value
                             or existing_tool.visibility != gateway.visibility
-                        ):
+                        )
+
+                        if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                             fields_to_update = True
-                            
+
                         if fields_to_update:
                             existing_tool.url = gateway.url
                             existing_tool.description = tool.description
@@ -843,11 +854,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 try:
                     # Check if resource already exists for this gateway
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri).where(DbResource.gateway_id == gateway.id)).scalar_one_or_none()
-                    
+
                     if existing_resource:
                         # Update existing resource if there are changes
                         fields_to_update = False
-                        
+
                         if (
                             existing_resource.name != resource.name
                             or existing_resource.description != resource.description
@@ -856,7 +867,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             or existing_resource.visibility != gateway.visibility
                         ):
                             fields_to_update = True
-                            
+
                         if fields_to_update:
                             existing_resource.name = resource.name
                             existing_resource.description = resource.description
@@ -893,18 +904,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 try:
                     # Check if prompt already exists for this gateway
                     existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name).where(DbPrompt.gateway_id == gateway.id)).scalar_one_or_none()
-                    
+
                     if existing_prompt:
                         # Update existing prompt if there are changes
                         fields_to_update = False
-                        
+
                         if (
                             existing_prompt.description != prompt.description
                             or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
                             or existing_prompt.visibility != gateway.visibility
                         ):
                             fields_to_update = True
-                            
+
                         if fields_to_update:
                             existing_prompt.description = prompt.description
                             existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
@@ -934,12 +945,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.add_all(tools_to_add)
                 items_added += len(tools_to_add)
                 logger.info(f"Added {len(tools_to_add)} new tools to database")
-            
+
             if resources_to_add:
                 db.add_all(resources_to_add)
                 items_added += len(resources_to_add)
                 logger.info(f"Added {len(resources_to_add)} new resources to database")
-            
+
             if prompts_to_add:
                 db.add_all(prompts_to_add)
                 items_added += len(prompts_to_add)
