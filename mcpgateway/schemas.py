@@ -417,7 +417,7 @@ class ToolCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
-    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -756,7 +756,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
-    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -1051,7 +1051,7 @@ class ToolRead(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
 
 class ToolInvocation(BaseModelWithConfigDict):
@@ -1239,7 +1239,7 @@ class ResourceCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the resource owner")
-    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -1531,7 +1531,7 @@ class ResourceRead(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -1767,7 +1767,7 @@ class PromptCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the prompt owner")
-    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -2032,7 +2032,7 @@ class PromptRead(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
 
 class PromptInvocation(BaseModelWithConfigDict):
@@ -2137,7 +2137,7 @@ class GatewayCreate(BaseModel):
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: str = Field(default="public", description="Gateway visibility: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
 
     @field_validator("tags")
     @classmethod
@@ -2650,7 +2650,7 @@ class GatewayRead(BaseModelWithConfigDict):
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
-    visibility: str = Field(default="private", description="Gateway visibility: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -3108,7 +3108,7 @@ class ServerCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the server owner")
-    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
     @field_validator("name")
     @classmethod
@@ -3408,7 +3408,7 @@ class ServerRead(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
     @model_validator(mode="before")
     @classmethod
@@ -3564,7 +3564,7 @@ class A2AAgentCreate(BaseModel):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the agent owner")
-    visibility: str = Field(default="private", description="Visibility level (private, team, public)")
+    visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
     @field_validator("tags")
     @classmethod
@@ -3884,7 +3884,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
-    visibility: str = Field(default="private", description="Visibility level: private, team, or public")
+    visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
 
 class A2AAgentInvocation(BaseModelWithConfigDict):
@@ -4511,7 +4511,7 @@ class TeamResponse(BaseModel):
     description: Optional[str] = Field(None, description="Team description")
     created_by: str = Field(..., description="Email of team creator")
     is_personal: bool = Field(..., description="Whether this is a personal team")
-    visibility: str = Field(..., description="Team visibility level")
+    visibility: Optional[str] = Field(..., description="Team visibility level")
     max_members: Optional[int] = Field(None, description="Maximum number of members allowed")
     member_count: int = Field(..., description="Current number of team members")
     created_at: datetime = Field(..., description="Team creation timestamp")

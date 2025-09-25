@@ -3152,6 +3152,24 @@
                 </p>
               </div>
             </div>
+            <!-- Visibility options -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+              <div class="flex items-center">
+                <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="resource-visibility-public" checked />
+                <label for="resource-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+              </div>
+              <div class="flex items-center">
+                <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="resource-visibility-team" />
+                <label for="resource-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+              </div>
+              <div class="flex items-center">
+                <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="resource-visibility-private" />
+                <label for="resource-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+              </div>
+              </div>
+            </div>
             <div class="mt-6">
               <button
                 type="submit"
@@ -3530,6 +3548,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Enter tags separated by commas. Tags help categorize and filter
                 prompts.
               </p>
+            </div>
+            <!-- Visibility options -->
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+              <div class="flex items-center">
+                <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="prompt-visibility-public" checked />
+                <label for="prompt-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+              </div>
+              <div class="flex items-center">
+                <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="prompt-visibility-team" />
+                <label for="prompt-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+              </div>
+              <div class="flex items-center">
+                <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="prompt-visibility-private" />
+                <label for="prompt-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+              </div>
+              </div>
             </div>
             <div class="mt-6">
               <button
@@ -4765,124 +4801,153 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
             Add New A2A Agent
           </h3>
-          <form
-            method="post"
-            action="{{ root_path }}/admin/a2a"
-            class="grid grid-cols-1 gap-4 sm:grid-cols-2"
-          >
-            <div>
-              <label
-                for="a2a-agent-name"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Agent Name</label
-              >
-              <input
-                type="text"
-                id="a2a-agent-name"
-                name="name"
-                required
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-                placeholder="my-assistant-agent"
-              />
-            </div>
-            <div>
-              <label
-                for="a2a-agent-endpoint-url"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Endpoint URL</label
-              >
-              <input
-                type="url"
-                id="a2a-agent-endpoint-url"
-                name="endpoint_url"
-                required
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-                placeholder="https://api.example.com/agent"
-              />
-            </div>
-            <div>
-              <label
-                for="a2a-agent-type"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Agent Type</label
-              >
-              <select
-                id="a2a-agent-type"
-                name="agent_type"
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-              >
-                <option value="generic">Generic</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="custom">Custom</option>
-              </select>
-            </div>
-            <div>
-              <label
-                for="a2a-agent-auth-type"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Authentication Type</label
-              >
-              <select
-                id="a2a-agent-auth-type"
-                name="auth_type"
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-              >
-                <option value="">None</option>
-                <option value="api_key">API Key</option>
-                <option value="bearer">Bearer Token</option>
-                <option value="oauth">OAuth</option>
-              </select>
-            </div>
-            <div class="sm:col-span-2">
-              <label
-                for="a2a-agent-description"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Description</label
-              >
-              <textarea
-                id="a2a-agent-description"
-                name="description"
-                rows="2"
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-                placeholder="Description of the agent's capabilities"
-              ></textarea>
-            </div>
-            <div>
-              <label
-                for="a2a-agent-auth-value"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Authentication Value</label
-              >
-              <input
-                type="password"
-                id="a2a-agent-auth-value"
-                name="auth_value"
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-                placeholder="API key, token, etc."
-              />
-            </div>
-            <div>
-              <label
-                for="a2a-agent-tags"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Tags</label
-              >
-              <input
-                type="text"
-                id="a2a-agent-tags"
-                name="tags"
-                class="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-                placeholder="ai,assistant,production (comma-separated)"
-              />
-            </div>
-            <div class="sm:col-span-2">
-              <button
-                type="submit"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                Add A2A Agent
-              </button>
+          <form method="POST" id="add-a2a-form">
+            <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+              <!-- Agent Name -->
+              <div>
+                <label for="a2a-agent-name" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Agent Name</label>
+                <input
+                  type="text"
+                  id="a2a-agent-name"
+                  name="name"
+                  required
+                  placeholder="my-assistant-agent"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
+                        dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Endpoint URL -->
+              <div>
+                <label for="a2a-agent-endpoint-url" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Endpoint URL</label>
+                <input
+                  type="url"
+                  id="a2a-agent-endpoint-url"
+                  name="endpoint_url"
+                  required
+                  placeholder="https://api.example.com/agent"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
+                        dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Agent Type -->
+              <div>
+                <label for="a2a-agent-type" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Agent Type</label>
+                <select
+                  id="a2a-agent-type"
+                  name="agent_type"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
+                        dark:text-gray-300"
+                >
+                  <option value="generic">Generic</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+
+              <!-- Authentication Type -->
+              <div>
+                <label for="a2a-agent-auth-type" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Authentication Type</label>
+                <select
+                  id="a2a-agent-auth-type"
+                  name="auth_type"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
+                        dark:text-gray-300"
+                >
+                  <option value="">None</option>
+                  <option value="api_key">API Key</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="oauth">OAuth</option>
+                </select>
+              </div>
+
+              <!-- Authentication Value -->
+              <div>
+                <label for="a2a-agent-auth-value" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Authentication Value</label>
+                <input
+                  type="password"
+                  id="a2a-agent-auth-value"
+                  name="auth_value"
+                  placeholder="API key, token, etc."
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
+                        dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Description -->
+              <div class="sm:col-span-2">
+                <label for="a2a-agent-description" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Description</label>
+                <textarea
+                  id="a2a-agent-description"
+                  name="description"
+                  rows="2"
+                  placeholder="Description of the agent's capabilities"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
+                        dark:placeholder-gray-300 dark:text-gray-300"
+                ></textarea>
+              </div>
+
+              <!-- Tags -->
+              <div>
+                <label for="a2a-agent-tags" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Tags</label>
+                <input
+                  type="text"
+                  id="a2a-agent-tags"
+                  name="tags"
+                  placeholder="ai,assistant,production (comma-separated)"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
+                        dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Visibility -->
+              <div class="sm:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                <div class="flex gap-x-6 mt-2">
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="public" id="a2a-visibility-public"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" checked />
+                    <label for="a2a-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="team" id="a2a-visibility-team"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" />
+                    <label for="a2a-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="private" id="a2a-visibility-private"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" />
+                    <label for="a2a-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Error Display -->
+              <span id="a2aFormError" class="sm:col-span-2 block text-sm font-semibold text-red-600 mt-2"></span>
+
+              <!-- Loading Indicator -->
+              <div id="add-a2a-loading" class="hidden sm:col-span-2 text-sm text-gray-500 mt-2">Submitting...</div>
+
+              <!-- Submit -->
+              <div class="sm:col-span-2 mt-6">
+                <button
+                  type="submit"
+                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm
+                        text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700
+                        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  Add A2A Agent
+                </button>
+              </div>
             </div>
           </form>
         </div>
@@ -4970,6 +5035,21 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     ></div>
                   </div>
                   <div class="flex space-x-2">
+                    <!--- Adding a2a-agents VIEW HERE -->
+                    <button
+                        onclick="viewAgent('{{ agent.id }}')"
+                        class="px-3 py-1 text-sm font-medium text-indigo-700 bg-indigo-100 hover:bg-indigo-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        x-tooltip="'💡View Agent A2A details and configuration'"
+                    >
+                      View
+                    </button>
+                    <!--- Adding a2a-agents EDIT HERE -->
+                    <button
+                        class="px-3 py-1 text-sm font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                        x-tooltip="'Edit Agent A2A details and configuration'"
+                    >
+                      Edit
+                    </button>
                     <button
                       onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
                       class="px-3 py-1 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
@@ -4979,8 +5059,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <form
                       method="post"
                       action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle"
-                      class="inline"
-                    >
+                      class="inline">
                       <input
                         type="hidden"
                         name="activate"
@@ -5728,7 +5807,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -5780,9 +5859,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <form id="edit-resource-form" method="POST">
                   <div class="grid grid-cols-1 gap-6">
                     <div>
-                      <label class="block text-sm font-medium text-gray-700"
-                        >URI</label
-                      >
+                      <label class="block text-sm font-medium text-gray-700">URI</label>
                       <!-- URI is read-only -->
                       <input
                         type="text"
@@ -5794,9 +5871,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       />
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700"
-                        >Name</label
-                      >
+                      <label class="block text-sm font-medium text-gray-700">Name</label>
                       <input
                         type="text"
                         name="name"
@@ -5806,9 +5881,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       />
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700"
-                        >Description</label
-                      >
+                      <label class="block text-sm font-medium text-gray-700">Description</label>
                       <textarea
                         name="description"
                         id="edit-resource-description"
@@ -5816,9 +5889,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       ></textarea>
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700"
-                        >MIME Type</label
-                      >
+                      <label class="block text-sm font-medium text-gray-700">MIME Type</label>
                       <input
                         type="text"
                         name="mimeType"
@@ -5827,9 +5898,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       />
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700"
-                        >Content</label
-                      >
+                      <label class="block text-sm font-medium text-gray-700">Content</label>
                       <!-- Remove required attribute to avoid browser validation issues -->
                       <textarea
                         name="content"
@@ -5837,6 +5906,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         class="mt-1 block w-full h-48 rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
                       ></textarea>
                     </div>
+
                     <!-- Tags Section -->
                     <div>
                       <label
@@ -5854,6 +5924,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         Enter tags separated by commas. Tags help categorize and
                         filter resources.
                       </p>
+                    </div>
+                    <!-- Visibility options -->
+                    <div id="edit-resource-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2">
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="public"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-resource-visibility-public" />
+                          <label for="edit-resource-visibility-public"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="team"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-resource-visibility-team" />
+                          <label for="edit-resource-visibility-team"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                        </div>
+                        <div class="flex items-center">
+                          <input type="radio" name="visibility" value="private"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-resource-visibility-private" />
+                          <label for="edit-resource-visibility-private"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div
@@ -5889,7 +5986,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -5999,6 +6096,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         Enter tags separated by commas. Tags help categorize and
                         filter prompts.
                       </p>
+                    </div>
+                    <!-- Visibility options -->
+                    <div id="edit-prompt-visibility" class="mt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <div class="flex gap-x-6 mt-2">
+                      <div class="flex items-center">
+                        <input type="radio" name="visibility" value="public"
+                        class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        id="edit-prompt-visibility-public" />
+                        <label for="edit-prompt-visibility-public"
+                        class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                      </div>
+                      <div class="flex items-center">
+                        <input type="radio" name="visibility" value="team"
+                        class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        id="edit-prompt-visibility-team" />
+                        <label for="edit-prompt-visibility-team"
+                        class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                      </div>
+                      <div class="flex items-center">
+                        <input type="radio" name="visibility" value="private"
+                        class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        id="edit-prompt-visibility-private" />
+                        <label for="edit-prompt-visibility-private"
+                        class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                      </div>
+                      </div>
                     </div>
                   </div>
                   <div
@@ -6140,7 +6264,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -6688,7 +6812,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -7030,6 +7154,43 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      <!-- Agent Detail Modal -->
+      <div id="agent-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+        <div
+          class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+        >
+          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+          </div>
+          <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+          >
+            <div
+              class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
+            >
+              <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                Agent Details
+              </h3>
+              <div
+                class="mt-4 space-y-4 bg-white dark:bg-gray-400"
+                id="agent-details"
+              ></div>
+            </div>
+            <div
+              class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"
+            >
+              <button
+                type="button"
+                onclick="closeModal('agent-modal')"
+                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Config Selection Modal -->
       <div
         id="config-selection-modal"
@@ -7042,7 +7203,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
           </div>
           <div
-            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full"
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div
               class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
@@ -9718,7 +9879,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6"
+          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div id="user-edit-modal-content">
             <!-- Content will be loaded here -->
@@ -9994,7 +10155,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6"
+          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div>
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -10110,7 +10271,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           >&#8203;</span
         >
         <div
-          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full sm:p-6"
+          class="inline-block align-bottom bg-white dark:bg-gray-800 rounded-lg px-4 pt-5 pb-4 text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full sm:p-6"
         >
           <div>
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">

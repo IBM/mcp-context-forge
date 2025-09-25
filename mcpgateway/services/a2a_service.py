@@ -147,7 +147,7 @@ class A2AAgentService:
         federation_source: Optional[str] = None,
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
-        visibility: str = "private",
+        visibility: Optional[str] = "public",
     ) -> A2AAgentRead:
         """Register a new A2A agent.
 
@@ -258,6 +258,11 @@ class A2AAgentService:
             List[A2AAgentRead]: A2A agents the user has access to
         """
 
+        # Build query following existing patterns from list_prompts()
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email)
+        team_ids = [team.id for team in user_teams]
+
         # Build query following existing patterns from list_agents()
         query = select(DbA2AAgent)
 
@@ -266,32 +271,25 @@ class A2AAgentService:
             query = query.where(DbA2AAgent.enabled.is_(True))
 
         if team_id:
-            # Filter by specific team
-            query = query.where(DbA2AAgent.team_id == team_id)
-
-            # Validate user has access to team
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             if team_id not in team_ids:
                 return []  # No access to team
+
+            access_conditions = []
+            # Filter by specific team
+            access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])))
+
+            access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
+
+            query = query.where(or_(*access_conditions))
         else:
             # Get user's accessible teams
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             # Build access conditions following existing patterns
             access_conditions = []
-
             # 1. User's personal resources (owner_email matches)
             access_conditions.append(DbA2AAgent.owner_email == user_email)
-
-            # 2. Team resources where user is member
+            # 2. Team A2A Agents where user is member
             if team_ids:
                 access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
-
             # 3. Public resources (if visibility allows)
             access_conditions.append(DbA2AAgent.visibility == "public")
 
@@ -685,4 +683,7 @@ class A2AAgentService:
             import_batch_id=db_agent.import_batch_id,
             federation_source=db_agent.federation_source,
             version=db_agent.version,
+            visibility=db_agent.visibility,
+            team_id=db_agent.team_id,
+            owner_email=db_agent.owner_email,
         )
