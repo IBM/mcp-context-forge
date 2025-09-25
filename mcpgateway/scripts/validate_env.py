@@ -1,3 +1,21 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/scripts/validate_env.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Environment configuration validation script.
+This module provides validation for MCP Gateway environment configuration files,
+including security checks for weak passwords, default secrets, and invalid settings.
+
+Usage:
+    python -m mcpgateway.scripts.validate_env [env_file]
+
+Examples:
+    python -m mcpgateway.scripts.validate_env .env.production
+    python -m mcpgateway.scripts.validate_env  # validates .env
+"""
+
 # Standard
 import logging
 import re
@@ -129,6 +147,6 @@ def main(env_file: Optional[str] = None, exit_on_warnings: bool = True) -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     env_file_path = sys.argv[1] if len(sys.argv) > 1 else None
     sys.exit(main(env_file_path))

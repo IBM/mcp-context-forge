@@ -124,6 +124,23 @@ def _insert_defaults(raw_args: List[str]) -> List[str]:
 
 
 def _handle_validate_config(path: str = ".env") -> None:
+    """
+    Validate the application's environment configuration file.
+
+    Attempts to load settings from the specified .env file using Pydantic.
+    If validation fails, prints the errors and exits with code 1.
+    On success, prints a confirmation message.
+
+    Args:
+        path (str): Path to the .env file to validate. Defaults to ".env".
+
+    Raises:
+        SystemExit: Exits with code 1 if the configuration is invalid.
+
+    Examples:
+        >>> _handle_validate_config(".env.example")
+        ✅ Configuration in .env.example is valid
+    """
 
     try:
         Settings(_env_file=path)
@@ -136,6 +153,25 @@ def _handle_validate_config(path: str = ".env") -> None:
 
 
 def _handle_config_schema(output: Optional[str] = None) -> None:
+    """
+    Export the JSON schema for MCP Gateway Settings.
+
+    This function serializes the Pydantic Settings model into a JSON Schema
+    suitable for validation or documentation purposes.
+
+    Args:
+        output (Optional[str]): Optional file path to write the schema.
+            If None, prints to stdout.
+
+    Examples:
+        >>> # Print schema to stdout (output truncated for doctest)
+        >>> _handle_config_schema()  # doctest: +ELLIPSIS
+        {...
+
+        >>> # Write schema to a file (creates 'schema.json'), skip doctest
+        >>> _handle_config_schema("schema.json")  # doctest: +SKIP
+        ✅ Schema written to schema.json
+    """
     schema = Settings.model_json_schema(mode="validation")
     data = json.dumps(schema, indent=2, sort_keys=True)
 

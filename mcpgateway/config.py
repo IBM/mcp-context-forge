@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: str = "changeme"
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(..., env="JWT_SECRET_KEY")
+    jwt_secret_key: SecretStr = Field(default="my-test-key", env="JWT_SECRET_KEY")
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(..., env="AUTH_ENCRYPTION_SECRET")
+    auth_encryption_secret: SecretStr = Field(default="my-test-salt", env="AUTH_ENCRYPTION_SECRET")
 
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
@@ -281,7 +281,7 @@ class Settings(BaseSettings):
     environment: Literal["development", "staging", "production"] = Field(default="development", env="ENVIRONMENT")
 
     # Domain configuration
-    app_domain: HttpUrl = Field(..., env="APP_DOMAIN")
+    app_domain: HttpUrl = Field(default="http://localhost:4444", env="APP_DOMAIN")
 
     # Security settings
     secure_cookies: bool = Field(default=True, env="SECURE_COOKIES")
