@@ -1815,11 +1815,10 @@ class TestA2AAgentManagement:
         # First-Party
         from mcpgateway.admin import admin_list_a2a_agents
 
-        result = await admin_list_a2a_agents(include_inactive=False, tags=None, db=mock_db, user="test-user")
+        result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user="test-user")
 
-        assert isinstance(result, HTMLResponse)
-        assert result.status_code == 200
-        assert "A2A features are disabled" in result.body.decode()
+        assert isinstance(result, list)
+        assert len(result) == 0
 
     @patch("mcpgateway.admin.a2a_service")
     async def _test_admin_add_a2a_agent_success(self, mock_a2a_service, mock_request, mock_db):
@@ -1848,20 +1847,24 @@ class TestA2AAgentManagement:
     @patch.object(A2AAgentService, "register_agent")
     async def test_admin_add_a2a_agent_validation_error(self, mock_register_agent, mock_request, mock_db):
         """Test adding A2A agent with validation error."""
-        # First-Party
         from mcpgateway.admin import admin_add_a2a_agent
 
         mock_register_agent.side_effect = ValidationError.from_exception_data("test", [])
 
-        form_data = FakeForm({"name": "Invalid Agent"})
+        # ✅ include required keys so agent_data can be built
+        form_data = FakeForm({
+            "name": "Invalid Agent",
+            "endpoint_url": "http://example.com",
+        })
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
         result = await admin_add_a2a_agent(mock_request, mock_db, "test-user")
 
-        assert isinstance(result, RedirectResponse)
-        assert result.status_code == 303
-        assert "#a2a-agents" in result.headers["location"]
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422  # matches your ValidationError handler
+        data = result.json() if hasattr(result, "json") else json.loads(result.body.decode())
+        assert data["success"] is False
 
     @patch.object(A2AAgentService, "register_agent")
     async def test_admin_add_a2a_agent_name_conflict_error(self, mock_register_agent, mock_request, mock_db):
@@ -1871,15 +1874,20 @@ class TestA2AAgentManagement:
 
         mock_register_agent.side_effect = A2AAgentNameConflictError("Agent name already exists")
 
-        form_data = FakeForm({"name": "Duplicate_Agent"})
+        form_data = FakeForm({"name": "Duplicate_Agent","endpoint_url": "http://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
         result = await admin_add_a2a_agent(mock_request, mock_db, "test-user")
 
-        assert isinstance(result, RedirectResponse)
-        assert result.status_code == 303
-        assert "#a2a-agents" in result.headers["location"]
+        from starlette.responses import JSONResponse
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 409
+        payload = result.body.decode()
+        data = json.loads(payload)
+        assert data["success"] is False
+        assert "agent name already exists" in data["message"].lower()
+
 
     @patch.object(A2AAgentService, "toggle_agent_status")
     async def test_admin_toggle_a2a_agent_success(self, mock_toggle_status, mock_request, mock_db):

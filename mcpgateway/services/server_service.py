@@ -312,7 +312,7 @@ class ServerService:
         created_user_agent: Optional[str] = None,
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
-        visibility: str = "private",
+        visibility: Optional[str] = "public",
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
