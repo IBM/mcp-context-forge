@@ -416,6 +416,7 @@ class TestA2AAgentService:
         sample_db_agent.import_batch_id = None
         sample_db_agent.federation_source = None
         sample_db_agent.version = 1
+        sample_db_agent.visibility="private"
 
         # Execute
         result = service._db_to_schema(sample_db_agent)

@@ -36,7 +36,7 @@ import uuid
 
 # Third-Party
 import parse
-from sqlalchemy import case, delete, desc, Float, func, not_, select
+from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -271,7 +271,7 @@ class ResourceService:
         federation_source: Optional[str] = None,
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
-        visibility: str = "private",
+        visibility: Optional[str] = "public",
     ) -> ResourceRead:
         """Register a new resource.
 
@@ -464,6 +464,11 @@ class ResourceService:
         from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
         # Build query following existing patterns from list_resources()
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email)
+        team_ids = [team.id for team in user_teams]
+
+        # Build query following existing patterns from list_resources()
         query = select(DbResource)
 
         # Apply active/inactive filter
@@ -471,35 +476,25 @@ class ResourceService:
             query = query.where(DbResource.is_active)
 
         if team_id:
-            # Filter by specific team
-            query = query.where(DbResource.team_id == team_id)
-
-            # Validate user has access to team
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
             if team_id not in team_ids:
                 return []  # No access to team
-        else:
-            # Get user's accessible teams
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
-            # Build access conditions following existing patterns
-            # Third-Party
-            from sqlalchemy import and_, or_  # pylint: disable=import-outside-toplevel
 
             access_conditions = []
+            # Filter by specific team
+            access_conditions.append(and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])))
 
+            access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
+
+            query = query.where(or_(*access_conditions))
+        else:
+            # Get user's accessible teams
+            # Build access conditions following existing patterns
+            access_conditions = []
             # 1. User's personal resources (owner_email matches)
             access_conditions.append(DbResource.owner_email == user_email)
-
             # 2. Team resources where user is member
             if team_ids:
                 access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-
             # 3. Public resources (if visibility allows)
             access_conditions.append(DbResource.visibility == "public")
 
@@ -925,6 +920,8 @@ class ResourceService:
                 resource.mime_type = resource_update.mime_type
             if resource_update.template is not None:
                 resource.template = resource_update.template
+            if resource_update.visibility is not None:
+                resource.visibility = resource_update.visibility
 
             # Update content if provided
             if resource_update.content is not None:

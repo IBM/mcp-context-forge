@@ -816,7 +816,7 @@ class EmailTeam(Base):
 
     # Team settings
     is_personal: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    visibility: Mapped[str] = mapped_column(String(20), default="private", nullable=False)
+    visibility: Mapped[str] = mapped_column(String(20), default="public", nullable=False)
     max_members: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Timestamps
@@ -1592,7 +1592,7 @@ class Tool(Base):
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     # @property
     # def gateway_slug(self) -> str:
@@ -2003,7 +2003,7 @@ class Resource(Base):
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
 
 class ResourceSubscription(Base):
@@ -2073,6 +2073,11 @@ class Prompt(Base):
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_prompt_association, back_populates="prompts")
+
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -2204,11 +2209,6 @@ class Prompt(Base):
         if not self.metrics:
             return None
         return max(m.timestamp for m in self.metrics)
-
-    # Team scoping fields for resource organization
-    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
-    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
 
 
 class Server(Base):
@@ -2377,7 +2377,7 @@ class Server(Base):
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
     __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),)
 
 
@@ -2446,7 +2446,7 @@ class Gateway(Base):
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
@@ -2549,7 +2549,7 @@ class A2AAgent(Base):
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="private")
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")

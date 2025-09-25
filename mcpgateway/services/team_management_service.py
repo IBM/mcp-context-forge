@@ -97,7 +97,7 @@ class TeamManagementService:
         self.db.add(history)
         self.db.commit()
 
-    async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: str = "private", max_members: Optional[int] = None) -> EmailTeam:
+    async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
 
         Args:

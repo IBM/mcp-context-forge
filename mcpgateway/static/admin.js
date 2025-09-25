@@ -2291,6 +2291,223 @@ async function editTool(toolId) {
 }
 
 /**
+ * SECURE: View A2A Agents function with safe display
+ */
+async function viewAgent(agentId) {
+    try {
+        console.log(`Viewing agent ID: ${agentId}`);
+
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/a2a/${agentId}`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const agent = await response.json();
+
+        const agentDetailsDiv = safeGetElement("agent-details");
+        if (agentDetailsDiv) {
+            const container = document.createElement("div");
+            container.className =
+                "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            const fields = [
+                { label: "Name", value: agent.name },
+                { label: "Slug", value: agent.slug },
+                { label: "Endpoint URL", value: agent.endpoint_url },
+                { label: "Agent Type", value: agent.agent_type },
+                { label: "Protocol Version", value: agent.protocol_version },
+                { label: "Description", value: agent.description || "N/A" },
+                { label: "Visibility", value: agent.visibility || "private" },
+            ];
+
+            // Tags
+            const tagsP = document.createElement("p");
+            const tagsStrong = document.createElement("strong");
+            tagsStrong.textContent = "Tags: ";
+            tagsP.appendChild(tagsStrong);
+            if (agent.tags && agent.tags.length > 0) {
+                agent.tags.forEach((tag) => {
+                    const tagSpan = document.createElement("span");
+                    tagSpan.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
+                    tagSpan.textContent = tag;
+                    tagsP.appendChild(tagSpan);
+                });
+            } else {
+                tagsP.appendChild(document.createTextNode("No tags"));
+            }
+            container.appendChild(tagsP);
+
+            // Render basic fields
+            fields.forEach((field) => {
+                const p = document.createElement("p");
+                const strong = document.createElement("strong");
+                strong.textContent = field.label + ": ";
+                p.appendChild(strong);
+                p.appendChild(document.createTextNode(field.value));
+                container.appendChild(p);
+            });
+
+            // Status
+            const statusP = document.createElement("p");
+            const statusStrong = document.createElement("strong");
+            statusStrong.textContent = "Status: ";
+            statusP.appendChild(statusStrong);
+
+            const statusSpan = document.createElement("span");
+            let statusText = "";
+            let statusClass = "";
+            let statusIcon = "";
+
+            if (!agent.enabled) {
+                statusText = "Inactive";
+                statusClass = "bg-red-100 text-red-800";
+                statusIcon = `
+                    <svg class="ml-1 h-4 w-4 text-red-600 self-center" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                      </svg>`;
+            } else if (agent.enabled && agent.reachable) {
+                statusText = "Active";
+                statusClass = "bg-green-100 text-green-800";
+                statusIcon = `
+                    <svg class="ml-1 h-4 w-4 text-green-600 self-center" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"></path>
+                      </svg>`;
+            } else if (agent.enabled && !agent.reachable) {
+                statusText = "Offline";
+                statusClass = "bg-yellow-100 text-yellow-800";
+                statusIcon = `
+                    <svg class="ml-1 h-4 w-4 text-yellow-600 self-center" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"></path>
+                      </svg>`;
+            }
+
+            statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}`;
+            statusSpan.innerHTML = `${statusText} ${statusIcon}`;
+            statusP.appendChild(statusSpan);
+            container.appendChild(statusP);
+
+            // Capabilities + Config (JSON formatted)
+            const capConfigDiv = document.createElement("div");
+            capConfigDiv.className =
+                "mt-4 p-2 bg-gray-50 dark:bg-gray-800 rounded";
+            const capTitle = document.createElement("strong");
+            capTitle.textContent = "Capabilities & Config:";
+            capConfigDiv.appendChild(capTitle);
+
+            const pre = document.createElement("pre");
+            pre.className = "text-xs mt-1 whitespace-pre-wrap break-words";
+            pre.textContent = JSON.stringify(
+                { capabilities: agent.capabilities, config: agent.config },
+                null,
+                2,
+            );
+            capConfigDiv.appendChild(pre);
+            container.appendChild(capConfigDiv);
+
+            // Metadata
+            const metadataDiv = document.createElement("div");
+            metadataDiv.className = "mt-6 border-t pt-4";
+
+            const metadataTitle = document.createElement("strong");
+            metadataTitle.textContent = "Metadata:";
+            metadataDiv.appendChild(metadataTitle);
+
+            const metadataGrid = document.createElement("div");
+            metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+            const metadataFields = [
+                {
+                    label: "Created By",
+                    value:
+                        agent.created_by || agent.createdBy || "Legacy Entity",
+                },
+                {
+                    label: "Created At",
+                    value:
+                        agent.created_at || agent.createdAt
+                            ? new Date(
+                                  agent.created_at || agent.createdAt,
+                              ).toLocaleString()
+                            : "Pre-metadata",
+                },
+                {
+                    label: "Created From IP",
+                    value:
+                        agent.created_from_ip ||
+                        agent.createdFromIp ||
+                        "Unknown",
+                },
+                {
+                    label: "Created Via",
+                    value: agent.created_via || agent.createdVia || "Unknown",
+                },
+                {
+                    label: "Last Modified By",
+                    value: agent.modified_by || agent.modifiedBy || "N/A",
+                },
+                {
+                    label: "Last Modified At",
+                    value:
+                        agent.updated_at || agent.updatedAt
+                            ? new Date(
+                                  agent.updated_at || agent.updatedAt,
+                              ).toLocaleString()
+                            : "N/A",
+                },
+                {
+                    label: "Modified From IP",
+                    value:
+                        agent.modified_from_ip || agent.modifiedFromIp || "N/A",
+                },
+                {
+                    label: "Modified Via",
+                    value: agent.modified_via || agent.modifiedVia || "N/A",
+                },
+                { label: "Version", value: agent.version || "1" },
+                {
+                    label: "Import Batch",
+                    value: agent.importBatchId || "N/A",
+                },
+            ];
+
+            metadataFields.forEach((field) => {
+                const fieldDiv = document.createElement("div");
+
+                const labelSpan = document.createElement("span");
+                labelSpan.className =
+                    "font-medium text-gray-600 dark:text-gray-400";
+                labelSpan.textContent = field.label + ":";
+
+                const valueSpan = document.createElement("span");
+                valueSpan.className = "ml-2";
+                valueSpan.textContent = field.value;
+
+                fieldDiv.appendChild(labelSpan);
+                fieldDiv.appendChild(valueSpan);
+                metadataGrid.appendChild(fieldDiv);
+            });
+
+            metadataDiv.appendChild(metadataGrid);
+            container.appendChild(metadataDiv);
+
+            agentDetailsDiv.innerHTML = "";
+            agentDetailsDiv.appendChild(container);
+        }
+
+        openModal("agent-modal");
+        console.log("✓ Agent details loaded successfully");
+    } catch (error) {
+        console.error("Error fetching agent details:", error);
+        const errorMessage = handleFetchError(error, "load agent details");
+        showErrorMessage(errorMessage);
+    }
+}
+
+/**
  * SECURE: View Resource function with safe display
  */
 async function viewResource(resourceUri) {
@@ -2322,6 +2539,10 @@ async function viewResource(resourceUri) {
                 { label: "Name", value: resource.name },
                 { label: "Type", value: resource.mimeType || "N/A" },
                 { label: "Description", value: resource.description || "N/A" },
+                {
+                    label: "Visibility",
+                    value: resource.visibility || "private",
+                },
             ];
 
             fields.forEach((field) => {
@@ -2476,7 +2697,7 @@ async function viewResource(resourceUri) {
                             : "Pre-metadata",
                 },
                 {
-                    label: "Created From",
+                    label: "Created From IP",
                     value:
                         resource.created_from_ip ||
                         resource.createdFromIp ||
@@ -2503,7 +2724,7 @@ async function viewResource(resourceUri) {
                             : "N/A",
                 },
                 {
-                    label: "Modified From",
+                    label: "Modified From IP",
                     value:
                         resource.modified_from_ip ||
                         resource.modifiedFromIp ||
@@ -2579,22 +2800,52 @@ async function editResource(resourceUri) {
         const data = await response.json();
         const resource = data.resource;
         const content = data.content;
+        // Ensure hidden inactive flag is preserved
         const isInactiveCheckedBool = isInactiveChecked("resources");
         let hiddenField = safeGetElement("edit-resource-show-inactive");
-        if (!hiddenField) {
+        const editForm = safeGetElement("edit-resource-form");
+
+        if (!hiddenField && editForm) {
             hiddenField = document.createElement("input");
             hiddenField.type = "hidden";
             hiddenField.name = "is_inactive_checked";
             hiddenField.id = "edit-resource-show-inactive";
             const editForm = safeGetElement("edit-resource-form");
-            if (editForm) {
-                editForm.appendChild(hiddenField);
-            }
+            editForm.appendChild(hiddenField);
         }
         hiddenField.value = isInactiveCheckedBool;
 
+        // ✅ Prefill visibility radios (consistent with server)
+        const visibility = resource.visibility
+            ? resource.visibility.toLowerCase()
+            : null;
+
+        const publicRadio = safeGetElement("edit-resource-visibility-public");
+        const teamRadio = safeGetElement("edit-resource-visibility-team");
+        const privateRadio = safeGetElement("edit-resource-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
+        if (visibility) {
+            if (visibility === "public" && publicRadio) {
+                publicRadio.checked = true;
+            } else if (visibility === "team" && teamRadio) {
+                teamRadio.checked = true;
+            } else if (visibility === "private" && privateRadio) {
+                privateRadio.checked = true;
+            }
+        }
+
         // Set form action and populate fields with validation
-        const editForm = safeGetElement("edit-resource-form");
         if (editForm) {
             editForm.action = `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceUri)}/edit`;
         }
@@ -2704,6 +2955,7 @@ async function viewPrompt(promptName) {
             const fields = [
                 { label: "Name", value: prompt.name },
                 { label: "Description", value: prompt.description || "N/A" },
+                { label: "Visibility", value: prompt.visibility || "private" },
             ];
 
             fields.forEach((field) => {
@@ -2864,7 +3116,7 @@ async function viewPrompt(promptName) {
                             : "Pre-metadata",
                 },
                 {
-                    label: "Created From",
+                    label: "Created From IP",
                     value:
                         prompt.created_from_ip ||
                         prompt.createdFromIp ||
@@ -2888,7 +3140,7 @@ async function viewPrompt(promptName) {
                             : "N/A",
                 },
                 {
-                    label: "Modified From",
+                    label: "Modified From IP",
                     value:
                         prompt.modified_from_ip ||
                         prompt.modifiedFromIp ||
@@ -2966,6 +3218,36 @@ async function editPrompt(promptName) {
             }
         }
         hiddenField.value = isInactiveCheckedBool;
+
+        // ✅ Prefill visibility radios (consistent with server)
+        const visibility = prompt.visibility
+            ? prompt.visibility.toLowerCase()
+            : null;
+
+        const publicRadio = safeGetElement("edit-prompt-visibility-public");
+        const teamRadio = safeGetElement("edit-prompt-visibility-team");
+        const privateRadio = safeGetElement("edit-prompt-visibility-private");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
+        if (visibility) {
+            if (visibility === "public" && publicRadio) {
+                publicRadio.checked = true;
+            } else if (visibility === "team" && teamRadio) {
+                teamRadio.checked = true;
+            } else if (visibility === "private" && privateRadio) {
+                privateRadio.checked = true;
+            }
+        }
 
         // Set form action and populate fields with validation
         const editForm = safeGetElement("edit-prompt-form");
@@ -3066,6 +3348,7 @@ async function viewGateway(gatewayId) {
                 { label: "Name", value: gateway.name },
                 { label: "URL", value: gateway.url },
                 { label: "Description", value: gateway.description || "N/A" },
+                { label: "Visibility", value: gateway.visibility || "private" },
             ];
 
             // Add tags field with special handling
@@ -3163,7 +3446,7 @@ async function viewGateway(gatewayId) {
                             : "Pre-metadata",
                 },
                 {
-                    label: "Created From",
+                    label: "Created From IP",
                     value:
                         gateway.created_from_ip ||
                         gateway.createdFromIp ||
@@ -3188,7 +3471,7 @@ async function viewGateway(gatewayId) {
                             : "N/A",
                 },
                 {
-                    label: "Modified From",
+                    label: "Modified From IP",
                     value:
                         gateway.modified_from_ip ||
                         gateway.modifiedFromIp ||
@@ -3574,6 +3857,7 @@ async function viewServer(serverId) {
                 { label: "Server ID", value: server.id },
                 { label: "URL", value: getCatalogUrl(server) || "N/A" },
                 { label: "Type", value: "Virtual Server" },
+                { label: "Visibility", value: server.visibility || "private" },
             ];
 
             fields.forEach((field) => {
@@ -4456,6 +4740,7 @@ function showTab(tabName) {
     }
 }
 
+window.showTab = showTab;
 // ===================================================================
 // AUTH HANDLING
 // ===================================================================
@@ -6681,6 +6966,10 @@ async function viewTool(toolId) {
                 <span class="font-medium text-gray-700 dark:text-gray-300">Type:</span>
                 <div class="mt-1 tool-type text-sm"></div>
               </div>
+              <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Visibility:</span>
+                <div class="mt-1 tool-visibility text-sm"></div>
+              </div>
             </div>
             <!-- Right Column -->
             <div class="space-y-3">
@@ -6762,6 +7051,7 @@ async function viewTool(toolId) {
             </div>
           </div>
           <div class="mt-6 border-t pt-4">
+          <!-- Metadata Section -->
             <strong>Metadata:</strong>
             <div class="grid grid-cols-2 gap-4 mt-2 text-sm">
               <div>
@@ -6773,7 +7063,7 @@ async function viewTool(toolId) {
                 <span class="ml-2 metadata-created-at"></span>
               </div>
               <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Created From:</span>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created From IP:</span>
                 <span class="ml-2 metadata-created-from"></span>
               </div>
               <div>
@@ -6787,6 +7077,14 @@ async function viewTool(toolId) {
               <div>
                 <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified At:</span>
                 <span class="ml-2 metadata-modified-at"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Modified From IP:</span>
+                <span class="ml-2 modified-from"></span>
+              </div>
+              <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Modified Via:</span>
+                <span class="ml-2 metadata-modified-via"></span>
               </div>
               <div>
                 <span class="font-medium text-gray-600 dark:text-gray-400">Version:</span>
@@ -6820,6 +7118,7 @@ async function viewTool(toolId) {
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
             setTextSafely(".tool-description", tool.description);
+            setTextSafely(".tool-visibility", tool.visibility);
 
             // Set tags as HTML with badges
             const tagsElement = toolDetailsDiv.querySelector(".tool-tags");
@@ -7195,7 +7494,11 @@ async function handleResourceFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("resources");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-
+        formData.append("visibility", formData.get("visibility"));
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+        teamId && formData.append("team_id", teamId);
         const response = await fetch(`${window.ROOT_PATH}/admin/resources`, {
             method: "POST",
             body: formData,
@@ -7260,7 +7563,11 @@ async function handlePromptFormSubmit(e) {
 
         const isInactiveCheckedBool = isInactiveChecked("prompts");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
-
+        formData.append("visibility", formData.get("visibility"));
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+        teamId && formData.append("team_id", teamId);
         const response = await fetch(`${window.ROOT_PATH}/admin/prompts`, {
             method: "POST",
             body: formData,
@@ -7269,10 +7576,6 @@ async function handlePromptFormSubmit(e) {
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add prompt");
         }
-        // Only redirect on success
-        const teamId = new URL(window.location.href).searchParams.get(
-            "team_id",
-        );
 
         const searchParams = new URLSearchParams();
         if (isInactiveCheckedBool) {
@@ -7422,6 +7725,77 @@ async function handleServerFormSubmit(e) {
             status.classList.add("error-status");
         }
         showErrorMessage(error.message); // Optional if you use global popup/snackbar
+    } finally {
+        if (loading) {
+            loading.style.display = "none";
+        }
+    }
+}
+
+// Handle Add A2A Form Submit
+async function handleA2AFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+    const status = safeGetElement("a2aFormError");
+    const loading = safeGetElement("add-a2a-loading");
+
+    try {
+        // Basic validation
+        const name = formData.get("name");
+
+        const nameValidation = validateInputName(name, "A2A Agent");
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (loading) {
+            loading.style.display = "block";
+        }
+        if (status) {
+            status.textContent = "";
+            status.classList.remove("error-status");
+        }
+
+        // Append visibility (radio buttons)
+
+        // ✅ Ensure visibility is captured from checked radio button
+
+        // formData.set("visibility", visibility);
+        formData.append("visibility", formData.get("visibility"));
+
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+        teamId && formData.append("team_id", teamId);
+
+        // Submit to backend
+        const response = await fetch(`${window.ROOT_PATH}/admin/a2a`, {
+            method: "POST",
+            body: formData,
+        });
+
+        const result = await response.json();
+        if (!result || !result.success) {
+            throw new Error(result?.message || "Failed to add A2A Agent.");
+        } else {
+            // Success redirect
+            const searchParams = new URLSearchParams();
+            if (teamId) {
+                searchParams.set("team_id", teamId);
+            }
+
+            const queryString = searchParams.toString();
+            const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
+            window.location.href = redirectUrl;
+        }
+    } catch (error) {
+        console.error("Add A2A Agent Error:", error);
+        if (status) {
+            status.textContent = error.message || "An error occurred.";
+            status.classList.add("error-status");
+        }
+        showErrorMessage(error.message); // global popup/snackbar if available
     } finally {
         if (loading) {
             loading.style.display = "none";
@@ -8426,6 +8800,12 @@ function setupFormHandlers() {
         serverForm.addEventListener("submit", handleServerFormSubmit);
     }
 
+    // Add A2A Form
+    const a2aForm = safeGetElement("add-a2a-form");
+    if (a2aForm) {
+        a2aForm.addEventListener("submit", handleA2AFormSubmit);
+    }
+
     const editServerForm = safeGetElement("edit-server-form");
     if (editServerForm) {
         editServerForm.addEventListener("submit", handleEditServerFormSubmit);
@@ -8863,6 +9243,7 @@ window.viewGateway = viewGateway;
 window.editGateway = editGateway;
 window.viewServer = viewServer;
 window.editServer = editServer;
+window.viewAgent = viewAgent;
 window.runToolTest = runToolTest;
 window.testPrompt = testPrompt;
 window.runPromptTest = runPromptTest;

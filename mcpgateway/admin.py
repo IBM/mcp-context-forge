@@ -52,6 +52,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
+    A2AAgentRead,
     GatewayCreate,
     GatewayRead,
     GatewayTestRequest,
@@ -2152,8 +2153,13 @@ async def admin_ui(
     # Load A2A agents if enabled
     a2a_agents = []
     if a2a_service and settings.mcpgateway_a2a_enabled:
-        a2a_agents_raw = await a2a_service.list_agents(db, include_inactive=include_inactive)
+        a2a_agents_raw = await a2a_service.list_agents_for_user(
+            db,
+            user_email=user_email,
+            include_inactive=include_inactive,
+        )
         a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
+        a2a_agents = _to_dict_and_filter(a2a_agents) if isinstance(a2a_agents, (list, tuple)) else a2a_agents
 
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
@@ -6138,6 +6144,12 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+    visibility = str(form.get("visibility", "public"))
+    user_email = get_user_email(user)
+    # Determine personal team for default assignment
+    team_id = form.get("team_id", None)
+    team_service = TeamManagementService(db)
+    team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
         resource = ResourceCreate(
@@ -6148,6 +6160,9 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             template=cast(str | None, form.get("template")),
             content=str(form["content"]),
             tags=tags,
+            visibility=visibility,
+            team_id=team_id,
+            owner_email=user_email,
         )
 
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -6273,6 +6288,7 @@ async def admin_edit_resource(
     LOGGER.debug(f"User {get_user_email(user)} is editing resource URI {uri}")
     form = await request.form()
 
+    visibility = str(form.get("visibility", "private"))
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -6286,6 +6302,7 @@ async def admin_edit_resource(
             content=str(form["content"]),
             template=str(form.get("template")),
             tags=tags,
+            visibility=visibility,
         )
         await resource_service.update_resource(
             db,
@@ -6639,6 +6656,12 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     """
     LOGGER.debug(f"User {get_user_email(user)} is adding a new prompt")
     form = await request.form()
+    visibility = str(form.get("visibility", "private"))
+    user_email = get_user_email(user)
+    # Determine personal team for default assignment
+    team_id = form.get("team_id", None)
+    team_service = TeamManagementService(db)
+    team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -6656,6 +6679,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             template=str(form["template"]),
             arguments=arguments,
             tags=tags,
+            visibility=visibility,
+            team_id=team_id,
+            owner_email=user_email,
         )
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -6692,7 +6718,7 @@ async def admin_edit_prompt(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> Response:
+) -> JSONResponse:
     """Edit a prompt via the admin UI.
 
     Expects form fields:
@@ -6708,14 +6734,14 @@ async def admin_edit_prompt(
         user: Authenticated user.
 
     Returns:
-         Response: A JSON response indicating success or failure of the server update operation.
+         JSONResponse: A JSON response indicating success or failure of the server update operation.
 
-    Examples:
+        Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
-        >>> from fastapi.responses import RedirectResponse
         >>> from starlette.datastructures import FormData
+        >>> from fastapi.responses import JSONResponse
         >>>
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
@@ -6752,7 +6778,7 @@ async def admin_edit_prompt(
         >>>
         >>> async def test_admin_edit_prompt_inactive():
         ...     response = await admin_edit_prompt(prompt_name, mock_request, mock_db, mock_user)
-        ...     return isinstance(response, RedirectResponse) and "include_inactive=true" in response.headers["location"]
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and b"Prompt updated successfully!" in response.body
         >>>
         >>> asyncio.run(test_admin_edit_prompt_inactive())
         True
@@ -6760,6 +6786,13 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt name {name}")
     form = await request.form()
+
+    visibility = str(form.get("visibility", "private"))
+    user_email = get_user_email(user)
+    # Determine personal team for default assignment
+    team_id = form.get("team_id", None)
+    team_service = TeamManagementService(db)
+    team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
@@ -6774,6 +6807,9 @@ async def admin_edit_prompt(
             template=str(form["template"]),
             arguments=arguments,
             tags=tags,
+            visibility=visibility,
+            team_id=team_id,
+            user_email=user_email,
         )
         await prompt_service.update_prompt(
             db,
@@ -6784,12 +6820,6 @@ async def admin_edit_prompt(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
-
-        root_path = request.scope.get("root_path", "")
-        is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
-        if is_inactive_checked.lower() == "true":
-            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-        # return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
         return JSONResponse(
             content={"message": "Prompt updated successfully!", "success": True},
             status_code=200,
@@ -8425,138 +8455,202 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 # ============================================================================ #
 
 
+@admin_router.get("/a2a/{agent_id}", response_model=A2AAgentRead)
+async def admin_get_agent(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get A2A agent details for the admin UI.
+
+    Args:
+        agent_id: Agent ID.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Agent details.
+
+    Raises:
+        HTTPException: If the agent is not found.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.schemas import A2AAgentRead
+        >>> from datetime import datetime, timezone
+        >>> from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+        >>> from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+        >>> from fastapi import HTTPException
+        >>>
+        >>> a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> agent_id = "test-agent-id"
+        >>>
+        >>> mock_agent = A2AAgentRead(
+        ...     id=agent_id, name="Agent1", slug="agent1",
+        ...     description="Test A2A agent", endpoint_url="http://agent.local",
+        ...     agent_type="connector", protocol_version="1.0",
+        ...     capabilities={"ping": True}, config={"x": "y"},
+        ...     auth_type=None, enabled=True, reachable=True,
+        ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        ...     last_interaction=None, metrics = {
+        ...                                           "requests": 0,
+        ...                                           "totalExecutions": 0,
+        ...                                           "successfulExecutions": 0,
+        ...                                           "failedExecutions": 0,
+        ...                                           "failureRate": 0.0,
+        ...                                             }
+        ... )
+        >>>
+        >>> from mcpgateway import admin
+        >>> original_get_agent = admin.a2a_service.get_agent
+        >>> a2a_service.get_agent = AsyncMock(return_value=mock_agent)
+        >>> admin.a2a_service.get_agent = AsyncMock(return_value=mock_agent)
+        >>> async def test_admin_get_agent_success():
+        ...     result = await admin.admin_get_agent(agent_id, mock_db, mock_user)
+        ...     return isinstance(result, dict) and result['id'] == agent_id
+        >>>
+        >>> asyncio.run(test_admin_get_agent_success())
+        True
+        >>>
+        >>> # Test not found
+        >>> admin.a2a_service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
+        >>> async def test_admin_get_agent_not_found():
+        ...     try:
+        ...         await admin.admin_get_agent("bad-id", mock_db, mock_user)
+        ...         return False
+        ...     except HTTPException as e:
+        ...         return e.status_code == 404 and "Agent not found" in e.detail
+        >>>
+        >>> asyncio.run(test_admin_get_agent_not_found())
+        True
+        >>>
+        >>> # Test generic exception
+        >>> admin.a2a_service.get_agent = AsyncMock(side_effect=Exception("Generic error"))
+        >>> async def test_admin_get_agent_exception():
+        ...     try:
+        ...         await admin.admin_get_agent(agent_id, mock_db, mock_user)
+        ...         return False
+        ...     except Exception as e:
+        ...         return str(e) == "Generic error"
+        >>>
+        >>> asyncio.run(test_admin_get_agent_exception())
+        True
+        >>>
+        >>> admin.a2a_service.get_agent = original_get_agent
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested details for agent ID {agent_id}")
+    try:
+        agent = await a2a_service.get_agent(db, agent_id)
+        return agent.model_dump(by_alias=True)
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error getting agent {agent_id}: {e}")
+        raise e
+
+
 @admin_router.get("/a2a")
 async def admin_list_a2a_agents(
     include_inactive: bool = False,
-    tags: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> HTMLResponse:
-    """List A2A agents for admin UI.
+) -> List[A2AAgentRead]:
+    """
+    List A2A Agents for the admin UI with an option to include inactive agents.
+
+    This endpoint retrieves a list of A2A (Agent-to-Agent) agents associated with
+    the current user. Administrators can optionally include inactive agents for
+    management or auditing purposes.
 
     Args:
-        include_inactive: Whether to include inactive agents
-        tags: Comma-separated list of tags to filter by
-        db: Database session
-        user: Authenticated user
+        include_inactive (bool): Whether to include inactive agents in the results.
+        db (Session): Database session dependency.
+        user (dict): Authenticated user dependency.
 
     Returns:
-        HTML response with agents list
+        List[A2AAgentRead]: A list of A2A agent records formatted with by_alias=True.
 
     Raises:
-        HTTPException: If A2A features are disabled
+        HTTPException (500): If an error occurs while retrieving the agent list.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.schemas import A2AAgentRead, A2AAgentMetrics
+        >>> from datetime import datetime, timezone
+        >>>
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>>
+        >>> mock_agent = A2AAgentRead(
+        ...     id="1",
+        ...     name="Agent1",
+        ...     slug="agent1",
+        ...     description="A2A Test Agent",
+        ...     endpoint_url="http://localhost/agent1",
+        ...     agent_type="test",
+        ...     protocol_version="1.0",
+        ...     capabilities={},
+        ...     config={},
+        ...     auth_type=None,
+        ...     enabled=True,
+        ...     reachable=True,
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc),
+        ...     last_interaction=None,
+        ...     tags=[],
+        ...     metrics=A2AAgentMetrics(
+        ...         total_executions=1,
+        ...         successful_executions=1,
+        ...         failed_executions=0,
+        ...         failure_rate=0.0,
+        ...         min_response_time=0.1,
+        ...         max_response_time=0.2,
+        ...         avg_response_time=0.15,
+        ...         last_execution_time=datetime.now(timezone.utc)
+        ...     )
+        ... )
+        >>>
+        >>> original_list_agents_for_user = a2a_service.list_agents_for_user
+        >>> a2a_service.list_agents_for_user = AsyncMock(return_value=[mock_agent])
+        >>>
+        >>> async def test_admin_list_a2a_agents_active():
+        ...     result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user=mock_user)
+        ...     return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Agent1"
+        >>>
+        >>> asyncio.run(test_admin_list_a2a_agents_active())
+        True
+        >>>
+        >>> a2a_service.list_agents_for_user = AsyncMock(side_effect=Exception("A2A error"))
+        >>> async def test_admin_list_a2a_agents_exception():
+        ...     try:
+        ...         await admin_list_a2a_agents(False, db=mock_db, user=mock_user)
+        ...         return False
+        ...     except Exception as e:
+        ...         return "A2A error" in str(e)
+        >>>
+        >>> asyncio.run(test_admin_list_a2a_agents_exception())
+        True
+        >>>
+        >>> a2a_service.list_agents_for_user = original_list_agents_for_user
     """
-    if not a2a_service or not settings.mcpgateway_a2a_enabled:
-        return HTMLResponse(content='<div class="text-center py-8"><p class="text-gray-500">A2A features are disabled. Set MCPGATEWAY_A2A_ENABLED=true to enable.</p></div>', status_code=200)
-    # Parse tags parameter if provided
-    tags_list = None
-    if tags:
-        tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+    if a2a_service is None:
+        LOGGER.warning("A2A features are disabled, returning empty list")
+        return []
 
-    LOGGER.debug(f"Admin user {user} requested A2A agent list with tags={tags_list}")
-    agents = await a2a_service.list_agents(db, include_inactive=include_inactive, tags=tags_list)
+    LOGGER.debug(f"User {get_user_email(user)} requested A2A Agent list")
+    user_email = get_user_email(user)
 
-    # Convert to template format
-    agent_items = []
-    for agent in agents:
-        agent_items.append(
-            {
-                "id": agent.id,
-                "name": agent.name,
-                "description": agent.description or "",
-                "endpoint_url": agent.endpoint_url,
-                "agent_type": agent.agent_type,
-                "protocol_version": agent.protocol_version,
-                "auth_type": agent.auth_type or "None",
-                "enabled": agent.enabled,
-                "reachable": agent.reachable,
-                "tags": agent.tags,
-                "created_at": agent.created_at.isoformat(),
-                "last_interaction": agent.last_interaction.isoformat() if agent.last_interaction else None,
-                "execution_count": agent.metrics.total_executions,
-                "success_rate": f"{100 - agent.metrics.failure_rate:.1f}%" if agent.metrics.total_executions > 0 else "N/A",
-            }
-        )
-
-    # Generate HTML for agents list
-    html_content = ""
-    for agent in agent_items:
-        status_class = "bg-green-100 text-green-800" if agent["enabled"] else "bg-red-100 text-red-800"
-        reachable_class = "bg-green-100 text-green-800" if agent["reachable"] else "bg-yellow-100 text-yellow-800"
-        active_text = "Active" if agent["enabled"] else "Inactive"
-        reachable_text = "Reachable" if agent["reachable"] else "Unreachable"
-
-        # Generate tags HTML separately
-        tags_html = ""
-        if agent["tags"]:
-            tag_spans: List[Any] = []
-            for tag in agent["tags"]:
-                tag_spans.append(f'<span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">{tag}</span>')
-            tags_html = f'<div class="mt-2 flex flex-wrap gap-1">{" ".join(tag_spans)}</div>'
-
-        # Generate last interaction HTML
-        last_interaction_html = ""
-        if agent["last_interaction"]:
-            last_interaction_html = f"<div>Last Interaction: {agent['last_interaction'][:19]}</div>"
-
-        # Generate button classes
-        toggle_class = "text-green-700 bg-green-100 hover:bg-green-200" if not agent["enabled"] else "text-red-700 bg-red-100 hover:bg-red-200"
-        toggle_text = "Activate" if not agent["enabled"] else "Deactivate"
-        toggle_action = "true" if not agent["enabled"] else "false"
-
-        html_content += f"""
-        <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3">
-          <div class="flex items-start justify-between">
-            <div class="flex-1">
-              <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">{agent["name"]}</h4>
-              <p class="text-sm text-gray-600 dark:text-gray-400">{agent["description"]}</p>
-              <div class="mt-2 flex flex-wrap gap-2">
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {status_class}">
-                  {active_text}
-                </span>
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {reachable_class}">
-                  {reachable_text}
-                </span>
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                  {agent["agent_type"]}
-                </span>
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                  Auth: {agent["auth_type"]}
-                </span>
-              </div>
-              <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                <div>Endpoint: {agent["endpoint_url"]}</div>
-                <div>Executions: {agent["execution_count"]} | Success Rate: {agent["success_rate"]}</div>
-                <div>Created: {agent["created_at"][:19]}</div>
-                {last_interaction_html}
-              </div>
-              {tags_html}
-            </div>
-            <div class="flex space-x-2">
-              <button
-                hx-post="{{ root_path }}/admin/a2a/{agent["id"]}/toggle"
-                hx-vals='{{"activate": "{toggle_action}"}}'
-                hx-target="#a2a-agents-list"
-                hx-trigger="click"
-                class="px-3 py-1 text-sm font-medium {toggle_class} rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                {toggle_text}
-              </button>
-              <button
-                hx-post="{{ root_path }}/admin/a2a/{agent["id"]}/delete"
-                hx-target="#a2a-agents-list"
-                hx-trigger="click"
-                hx-confirm="Are you sure you want to delete this A2A agent?"
-                class="px-3 py-1 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-        """
-
-    return HTMLResponse(content=html_content)
+    agents = await a2a_service.list_agents_for_user(
+        db,
+        user_email=user_email,
+        include_inactive=include_inactive,
+    )
+    return [agent.model_dump(by_alias=True) for agent in agents]
 
 
 @admin_router.post("/a2a")
@@ -8564,7 +8658,7 @@ async def admin_add_a2a_agent(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> Response:
+) -> JSONResponse:
     """Add a new A2A agent via admin UI.
 
     Args:
@@ -8573,7 +8667,7 @@ async def admin_add_a2a_agent(
         user: Authenticated user
 
     Returns:
-        Response with success/error status
+        JSONResponse with success/error status
 
     Raises:
         HTTPException: If A2A features are disabled
@@ -8588,6 +8682,12 @@ async def admin_add_a2a_agent(
         form = await request.form()
         LOGGER.info(f"A2A agent creation form data: {dict(form)}")
 
+        user_email = get_user_email(user)
+        # Determine personal team for default assignment
+        team_id = form.get("team_id", None)
+        team_service = TeamManagementService(db)
+        team_id = await team_service.verify_team_for_user(user_email, team_id)
+
         # Process tags
         ts_val = form.get("tags", "")
         tags_str = ts_val if isinstance(ts_val, str) else ""
@@ -8601,6 +8701,9 @@ async def admin_add_a2a_agent(
             auth_type=form.get("auth_type") if form.get("auth_type") else None,
             auth_value=form.get("auth_value") if form.get("auth_value") else None,
             tags=tags,
+            visibility=form.get("visibility", "private"),
+            team_id=team_id,
+            owner_email=user_email,
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
@@ -8619,26 +8722,39 @@ async def admin_add_a2a_agent(
             federation_source=metadata["federation_source"],
         )
 
+        """
         # Return redirect to admin page with A2A tab
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        """
 
-    except A2AAgentNameConflictError as e:
-        LOGGER.error(f"A2A agent name conflict: {e}")
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-    except A2AAgentError as e:
-        LOGGER.error(f"A2A agent error: {e}")
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-    except ValidationError as e:
-        LOGGER.error(f"Validation error while creating A2A agent: {e}")
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-    except Exception as e:
-        LOGGER.error(f"Error creating A2A agent: {e}")
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return JSONResponse(
+            content={"message": "A2A agent created successfully!", "success": True},
+            status_code=200,
+        )
+
+    except CoreValidationError as ex:
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=422)
+    except A2AAgentNameConflictError as ex:
+        LOGGER.error(f"A2A agent name conflict: {ex}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except A2AAgentError as ex:
+        LOGGER.error(f"A2A agent error: {ex}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    except ValidationError as ex:
+        LOGGER.error(f"Validation error while creating A2A agent: {ex}")
+        return JSONResponse(
+            content=ErrorFormatter.format_validation_error(ex),
+            status_code=422,
+        )
+    except IntegrityError as ex:
+        return JSONResponse(
+            content=ErrorFormatter.format_database_error(ex),
+            status_code=409,
+        )
+    except Exception as ex:
+        LOGGER.error(f"Error creating A2A agent: {ex}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
 @admin_router.post("/a2a/{agent_id}/toggle")
