@@ -771,18 +771,54 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Use the existing connection logic
             if gateway.transport.upper() == "SSE":
                 capabilities, tools, resources, prompts = await self.connect_to_sse_server(gateway.url, authentication)
-                return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
-            if gateway.transport.upper() == "STREAMABLEHTTP":
+            elif gateway.transport.upper() == "STREAMABLEHTTP":
                 capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
+            else:
+                raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
-                # Filter out any None tools and create DbTool objects
-                tools_to_add = []
-                for tool in tools:
-                    if tool is None:
-                        logger.warning("Skipping None tool in tools list")
-                        continue
+            # Handle tools - check for duplicates and update/create as needed
+            tools_to_add = []
+            for tool in tools:
+                if tool is None:
+                    logger.warning("Skipping None tool in tools list")
+                    continue
 
-                    try:
+                try:
+                    # Check if tool already exists for this gateway
+                    existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway.id)).scalar_one_or_none()
+                    
+                    if existing_tool:
+                        # Update existing tool if there are changes
+                        fields_to_update = False
+                        
+                        if (
+                            existing_tool.url != gateway.url
+                            or existing_tool.description != tool.description
+                            or existing_tool.integration_type != "MCP"
+                            or existing_tool.request_type != tool.request_type
+                            or existing_tool.headers != tool.headers
+                            or existing_tool.input_schema != tool.input_schema
+                            or existing_tool.jsonpath_filter != tool.jsonpath_filter
+                            or existing_tool.auth_type != gateway.auth_type
+                            or existing_tool.auth_value != gateway.auth_value
+                            or existing_tool.visibility != gateway.visibility
+                        ):
+                            fields_to_update = True
+                            
+                        if fields_to_update:
+                            existing_tool.url = gateway.url
+                            existing_tool.description = tool.description
+                            existing_tool.integration_type = "MCP"
+                            existing_tool.request_type = tool.request_type
+                            existing_tool.headers = tool.headers
+                            existing_tool.input_schema = tool.input_schema
+                            existing_tool.jsonpath_filter = tool.jsonpath_filter
+                            existing_tool.auth_type = gateway.auth_type
+                            existing_tool.auth_value = gateway.auth_value
+                            existing_tool.visibility = gateway.visibility
+                            logger.debug(f"Updated existing tool: {tool.name}")
+                    else:
+                        # Create new tool if it doesn't exist
                         db_tool = self._create_db_tool(
                             tool=tool,
                             gateway=gateway,
@@ -792,19 +828,132 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # Attach relationship to avoid NoneType during flush
                         db_tool.gateway = gateway
                         tools_to_add.append(db_tool)
-                    except Exception as e:
-                        logger.warning(f"Failed to create DbTool for tool {getattr(tool, 'name', 'unknown')}: {e}")
-                        continue
+                        logger.debug(f"Created new tool: {tool.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to process tool {getattr(tool, 'name', 'unknown')}: {e}")
+                    continue
 
-                # Add to DB
-                if tools_to_add:
-                    db.add_all(tools_to_add)
-                    db.commit()
-                else:
-                    logger.warning("No valid tools to add to database")
+            # Handle resources - check for duplicates and update/create as needed
+            resources_to_add = []
+            for resource in resources:
+                if resource is None:
+                    logger.warning("Skipping None resource in resources list")
+                    continue
 
-                return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
-            raise ValueError(f"Unsupported transport type: {gateway.transport}")
+                try:
+                    # Check if resource already exists for this gateway
+                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri).where(DbResource.gateway_id == gateway.id)).scalar_one_or_none()
+                    
+                    if existing_resource:
+                        # Update existing resource if there are changes
+                        fields_to_update = False
+                        
+                        if (
+                            existing_resource.name != resource.name
+                            or existing_resource.description != resource.description
+                            or existing_resource.mime_type != resource.mime_type
+                            or existing_resource.template != resource.template
+                            or existing_resource.visibility != gateway.visibility
+                        ):
+                            fields_to_update = True
+                            
+                        if fields_to_update:
+                            existing_resource.name = resource.name
+                            existing_resource.description = resource.description
+                            existing_resource.mime_type = resource.mime_type
+                            existing_resource.template = resource.template
+                            existing_resource.visibility = gateway.visibility
+                            logger.debug(f"Updated existing resource: {resource.uri}")
+                    else:
+                        # Create new resource if it doesn't exist
+                        db_resource = DbResource(
+                            uri=resource.uri,
+                            name=resource.name,
+                            description=resource.description,
+                            mime_type=resource.mime_type,
+                            template=resource.template,
+                            gateway_id=gateway.id,
+                            created_by="system",
+                            created_via="oauth",
+                            visibility=gateway.visibility,
+                        )
+                        resources_to_add.append(db_resource)
+                        logger.debug(f"Created new resource: {resource.uri}")
+                except Exception as e:
+                    logger.warning(f"Failed to process resource {getattr(resource, 'uri', 'unknown')}: {e}")
+                    continue
+
+            # Handle prompts - check for duplicates and update/create as needed
+            prompts_to_add = []
+            for prompt in prompts:
+                if prompt is None:
+                    logger.warning("Skipping None prompt in prompts list")
+                    continue
+
+                try:
+                    # Check if prompt already exists for this gateway
+                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name).where(DbPrompt.gateway_id == gateway.id)).scalar_one_or_none()
+                    
+                    if existing_prompt:
+                        # Update existing prompt if there are changes
+                        fields_to_update = False
+                        
+                        if (
+                            existing_prompt.description != prompt.description
+                            or existing_prompt.template != (prompt.template if hasattr(prompt, "template") else "")
+                            or existing_prompt.visibility != gateway.visibility
+                        ):
+                            fields_to_update = True
+                            
+                        if fields_to_update:
+                            existing_prompt.description = prompt.description
+                            existing_prompt.template = prompt.template if hasattr(prompt, "template") else ""
+                            existing_prompt.visibility = gateway.visibility
+                            logger.debug(f"Updated existing prompt: {prompt.name}")
+                    else:
+                        # Create new prompt if it doesn't exist
+                        db_prompt = DbPrompt(
+                            name=prompt.name,
+                            description=prompt.description,
+                            template=prompt.template if hasattr(prompt, "template") else "",
+                            argument_schema={},  # Use argument_schema instead of arguments
+                            gateway_id=gateway.id,
+                            created_by="system",
+                            created_via="oauth",
+                            visibility=gateway.visibility,
+                        )
+                        prompts_to_add.append(db_prompt)
+                        logger.debug(f"Created new prompt: {prompt.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to process prompt {getattr(prompt, 'name', 'unknown')}: {e}")
+                    continue
+
+            # Add new items to DB
+            items_added = 0
+            if tools_to_add:
+                db.add_all(tools_to_add)
+                items_added += len(tools_to_add)
+                logger.info(f"Added {len(tools_to_add)} new tools to database")
+            
+            if resources_to_add:
+                db.add_all(resources_to_add)
+                items_added += len(resources_to_add)
+                logger.info(f"Added {len(resources_to_add)} new resources to database")
+            
+            if prompts_to_add:
+                db.add_all(prompts_to_add)
+                items_added += len(prompts_to_add)
+                logger.info(f"Added {len(prompts_to_add)} new prompts to database")
+
+            if items_added > 0:
+                db.commit()
+                logger.info(f"Total {items_added} new items added to database")
+            else:
+                logger.info("No new items to add to database")
+                # Still commit to save any updates to existing items
+                db.commit()
+
+            return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
         except Exception as e:
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
