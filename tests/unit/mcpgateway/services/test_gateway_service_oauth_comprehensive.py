@@ -703,7 +703,7 @@ class TestGatewayServiceOAuthComprehensive:
                 pass  # Expected if connection setup fails
 
     @pytest.mark.asyncio
-    async def test_oauth_token_refresh_during_health_check(self, gateway_service, mock_oauth_gateway):
+    async def test_oauth_token_refresh_during_health_check(self, gateway_service, mock_oauth_gateway, test_db):
         """Test OAuth token refresh happens during health checks."""
         # First call returns token1, second call returns token2 (simulating refresh)
         gateway_service.oauth_manager.get_access_token.side_effect = ["token1", "token2"]
@@ -712,8 +712,8 @@ class TestGatewayServiceOAuthComprehensive:
         gateway_service._http_client.get = AsyncMock(return_value=MagicMock(status=200))
 
         # Run health check twice
-        await gateway_service.check_health_of_gateways([mock_oauth_gateway])
-        await gateway_service.check_health_of_gateways([mock_oauth_gateway])
+        await gateway_service.check_health_of_gateways(test_db, [mock_oauth_gateway], "user@example.com")
+        await gateway_service.check_health_of_gateways(test_db, [mock_oauth_gateway], "user@example.com")
 
         # Verify OAuth manager was called twice (token refresh)
         assert gateway_service.oauth_manager.get_access_token.call_count == 2

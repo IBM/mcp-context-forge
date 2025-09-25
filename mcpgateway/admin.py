@@ -26,6 +26,7 @@ import html
 import io
 import json
 import logging
+import os
 from pathlib import Path
 import time
 from typing import Any, cast, Dict, List, Optional, Union
@@ -82,6 +83,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.root_service import RootService
@@ -95,6 +97,7 @@ from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.services_auth import decode_auth
 
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
@@ -7230,14 +7233,16 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_current_user_with_permissions)) -> GatewayTestResponse:
+async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
     This endpoint allows administrators to test the connectivity and response
 
     Args:
         request (GatewayTestRequest): The request object containing the gateway URL and request details.
+        team_id (Optional[str]): Optional team ID for team-specific gateways.
         user (str): Authenticated user dependency.
+        db (Session): Database session dependency.
 
     Returns:
         GatewayTestResponse: The response from the gateway, including status code, latency, and body
@@ -7373,9 +7378,61 @@ async def admin_test_gateway(request: GatewayTestRequest, user=Depends(get_curre
     full_url = full_url.rstrip("/")
     LOGGER.debug(f"User {get_user_email(user)} testing server at {request.base_url}.")
     start_time: float = time.monotonic()
+    headers = request.headers or {}
+
+    # Attempt to find a registered gateway matching this URL and team
     try:
+        gateway = gateway_service.get_first_gateway_by_url(db, str(request.base_url), team_id=team_id)
+    except Exception:
+        gateway = None
+
+    try:
+        user_email = get_user_email(user)
+        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+            if grant_type == "authorization_code":
+                # For Authorization Code flow, try to get stored tokens
+                try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                    token_storage = TokenStorageService(db)
+
+                    # Get user-specific OAuth token
+                    if not user_email:
+                        latency_ms = int((time.monotonic() - start_time) * 1000)
+                        return GatewayTestResponse(
+                            status_code=401, latency_ms=latency_ms, body={"error": f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated."}
+                        )
+
+                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+
+                    if access_token:
+                        headers["Authorization"] = f"Bearer {access_token}"
+                    else:
+                        latency_ms = int((time.monotonic() - start_time) * 1000)
+                        return GatewayTestResponse(
+                            status_code=401, latency_ms=latency_ms, body={"error": f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow."}
+                        )
+                except Exception as e:
+                    LOGGER.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                    latency_ms = int((time.monotonic() - start_time) * 1000)
+                    return GatewayTestResponse(status_code=500, latency_ms=latency_ms, body={"error": f"OAuth token retrieval failed for gateway: {str(e)}"})
+            else:
+                # For Client Credentials flow, get token directly
+                try:
+                    oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                    access_token: str = await oauth_manager.get_access_token(gateway.oauth_config)
+                    headers["Authorization"] = f"Bearer {access_token}"
+                except Exception as e:
+                    LOGGER.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                    response_body = {"error": f"OAuth token retrieval failed for gateway: {str(e)}"}
+        else:
+            headers: dict = decode_auth(gateway.auth_value if gateway else None)
+
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=request.headers, json=request.body)
+            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=headers, json=request.body)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[Dict[str, Any], str] = response.json()
