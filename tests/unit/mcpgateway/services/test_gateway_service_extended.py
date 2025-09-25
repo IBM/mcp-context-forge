@@ -338,7 +338,7 @@ class TestGatewayServiceExtended:
             mock_settings.cache_type = "none"
 
             # Run health checks for a short time
-            health_check_task = asyncio.create_task(service._run_health_checks())
+            health_check_task = asyncio.create_task(service._run_health_checks(service._get_db, 'user@example.com'))
             await asyncio.sleep(0.2)
             health_check_task.cancel()
 

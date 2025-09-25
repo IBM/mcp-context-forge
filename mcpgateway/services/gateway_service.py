@@ -44,7 +44,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
 
@@ -70,6 +70,7 @@ except ImportError:
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import SessionLocal
@@ -411,6 +412,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         logger.info("Initializing gateway service")
 
+        db_gen: Generator = get_db()
+        db: Session = next(db_gen)
+
+        user_email = settings.platform_admin_email
+
         if self._redis_client:
             # Check if Redis is available
             pong = self._redis_client.ping()
@@ -420,10 +426,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             is_leader = self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
                 logger.info("Acquired Redis leadership. Starting health check task.")
-                self._health_check_task = asyncio.create_task(self._run_health_checks())
+                self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
         else:
             # Always create the health check task in filelock mode; leader check is handled inside.
-            self._health_check_task = asyncio.create_task(self._run_health_checks())
+            self._health_check_task = asyncio.create_task(self._run_health_checks(db, user_email))
 
     async def shutdown(self) -> None:
         """Shutdown the service.
@@ -1574,7 +1580,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 raise GatewayConnectionError(f"OAuth authorization code gateway {gateway.name} requires user context")
 
                             # First-Party
-                            from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
                             from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
                             # Get database session (this is a bit hacky but necessary for now)
@@ -1778,31 +1783,51 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
-    async def check_health_of_gateways(self, gateways: List[DbGateway]) -> bool:
-        """Check health of gateways.
+    async def check_health_of_gateways(self, db: Session, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
+        """Check health of a batch of gateways.
+
+        Performs an asynchronous health-check for each gateway in `gateways` using
+        an Async HTTP client. The function handles different authentication
+        modes (OAuth client_credentials and authorization_code, and non-OAuth
+        auth headers). When a gateway uses the authorization_code flow, the
+        provided `db` and optional `user_email` are used to look up stored user
+        tokens. On individual failures the service will record the failure and
+        call internal failure handling which may mark a gateway unreachable or
+        deactivate it after repeated failures. If a previously unreachable
+        gateway becomes healthy again the service will attempt to update its
+        reachable status.
 
         Args:
-            gateways: List of DbGateway objects
+            db: Database Session used for token lookups and status updates.
+            gateways: List of DbGateway objects to check.
+            user_email: Optional MCP gateway user email used to retrieve
+                stored OAuth tokens for gateways using the
+                "authorization_code" grant type. If not provided, authorization
+                code flows that require a user token will be treated as failed.
 
         Returns:
-            True if all gateways are healthy, False otherwise
+            bool: True when the health-check batch completes. This return
+            value indicates completion of the checks, not that every gateway
+            was healthy. Individual gateway failures are handled internally
+            (via _handle_gateway_failure and status updates).
 
         Examples:
             >>> from mcpgateway.services.gateway_service import GatewayService
             >>> from unittest.mock import MagicMock
             >>> service = GatewayService()
+            >>> db = MagicMock()
             >>> gateways = [MagicMock()]
             >>> import asyncio
-            >>> result = asyncio.run(service.check_health_of_gateways(gateways))
+            >>> result = asyncio.run(service.check_health_of_gateways(db, gateways))
             >>> isinstance(result, bool)
             True
 
             >>> # Test empty gateway list
-            >>> empty_result = asyncio.run(service.check_health_of_gateways([]))
+            >>> empty_result = asyncio.run(service.check_health_of_gateways(db, []))
             >>> empty_result
             True
 
-            >>> # Test multiple gateways
+            >>> # Test multiple gateways (basic smoke)
             >>> multiple_gateways = [MagicMock(), MagicMock(), MagicMock()]
             >>> for i, gw in enumerate(multiple_gateways):
             ...     gw.name = f"gateway_{i}"
@@ -1811,7 +1836,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     gw.enabled = True
             ...     gw.reachable = True
             ...     gw.auth_value = {}
-            >>> multi_result = asyncio.run(service.check_health_of_gateways(multiple_gateways))
+            >>> multi_result = asyncio.run(service.check_health_of_gateways(db, multiple_gateways))
             >>> isinstance(multi_result, bool)
             True
         """
@@ -1840,24 +1865,49 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             # Handle different authentication types
                             headers = {}
 
-                            if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
-                                # Handle OAuth authentication for health checks
-                                try:
-                                    grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+                            if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+                                grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
 
-                                    if grant_type == "client_credentials":
-                                        # Use OAuth manager to get access token for Client Credentials flow
-                                        access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
-                                        headers = {"Authorization": f"Bearer {access_token}"}
-                                    elif grant_type == "authorization_code":
-                                        # For Authorization Code flow, try to get a stored token
-                                        # System operations cannot use user-specific OAuth tokens
-                                        # Skip OAuth authorization code gateways in health checks
-                                        logger.warning(f"Cannot health check OAuth authorization code gateway {gateway.name} - user-specific tokens required")
-                                        headers = {}  # Will likely fail but attempt anyway
-                                except Exception as oauth_error:
-                                    logger.warning(f"Failed to obtain OAuth token for health check of gateway {gateway.name}: {oauth_error}")
-                                    headers = {}
+                                if grant_type == "authorization_code":
+                                    # For Authorization Code flow, try to get stored tokens
+                                    try:
+                                        # First-Party
+                                        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                        token_storage = TokenStorageService(db)
+
+                                        # Get user-specific OAuth token
+                                        if not user_email:
+                                            if span:
+                                                span.set_attribute("health.status", "unhealthy")
+                                                span.set_attribute("error.message", "User email required for OAuth token")
+                                            await self._handle_gateway_failure(gateway)
+
+                                        access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+
+                                        if access_token:
+                                            headers["Authorization"] = f"Bearer {access_token}"
+                                        else:
+                                            if span:
+                                                span.set_attribute("health.status", "unhealthy")
+                                                span.set_attribute("error.message", "No valid OAuth token for user")
+                                            await self._handle_gateway_failure(gateway)
+                                    except Exception as e:
+                                        logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                        if span:
+                                            span.set_attribute("health.status", "unhealthy")
+                                            span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                        await self._handle_gateway_failure(gateway)
+                                else:
+                                    # For Client Credentials flow, get token directly
+                                    try:
+                                        access_token: str = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                    except Exception as e:
+                                        if span:
+                                            span.set_attribute("health.status", "unhealthy")
+                                            span.set_attribute("error.message", str(e))
+                                        await self._handle_gateway_failure(gateway)
                             else:
                                 # Handle non-OAuth authentication (existing logic)
                                 auth_data = gateway.auth_value or {}
@@ -1884,9 +1934,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                             # Reactivate gateway if it was previously inactive and health check passed now
                             if gateway.enabled and not gateway.reachable:
-                                with cast(Any, SessionLocal)() as db:
-                                    logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
-                                    await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
+                                logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
+                                await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
 
                             # Mark successful check
                             gateway.last_seen = datetime.now(timezone.utc)
@@ -2151,10 +2200,43 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Only return active gateways
             return db.execute(select(DbGateway).where(DbGateway.enabled)).scalars().all()
 
-    async def _run_health_checks(self) -> None:
+    def get_first_gateway_by_url(self, db: Session, url: str, team_id: Optional[str] = None, include_inactive: bool = False) -> Optional[GatewayRead]:
+        """Return the first DbGateway matching the given URL and optional team_id.
+
+        This is a synchronous helper intended for use from request handlers where
+        a simple DB lookup is needed. It normalizes the provided URL similar to
+        how gateways are stored and matches by the `url` column. If team_id is
+        provided, it restricts the search to that team.
+
+        Args:
+            db: Database session to use for the query
+            url: Gateway base URL to match (will be normalized)
+            team_id: Optional team id to restrict search
+            include_inactive: Whether to include inactive gateways
+
+        Returns:
+            Optional[DbGateway]: First matching gateway or None
+        """
+        query = select(DbGateway).where(DbGateway.url == url)
+        if not include_inactive:
+            query = query.where(DbGateway.enabled)
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+        result = db.execute(query).scalars().first()
+        # Wrap the DB object in the GatewayRead schema for consistency with
+        # other service methods. Return None if no match found.
+        if result is None:
+            return None
+        return GatewayRead.model_validate(result)
+
+    async def _run_health_checks(self, db: Session, user_email: str) -> None:
         """Run health checks periodically,
         Uses Redis or FileLock - for multiple workers.
         Uses simple health check for single worker mode.
+
+        Args:
+            db: Database session to use for health checks
+            user_email: Email of the user to notify in case of issues
 
         Examples:
             >>> service = GatewayService()
@@ -2183,7 +2265,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Run health checks
                     gateways = await asyncio.to_thread(self._get_gateways)
                     if gateways:
-                        await self.check_health_of_gateways(gateways)
+                        await self.check_health_of_gateways(db, gateways, user_email)
 
                     await asyncio.sleep(self._health_check_interval)
 
@@ -2192,7 +2274,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         # For single worker mode, run health checks directly
                         gateways = await asyncio.to_thread(self._get_gateways)
                         if gateways:
-                            await self.check_health_of_gateways(gateways)
+                            await self.check_health_of_gateways(db, gateways, user_email)
                     except Exception as e:
                         logger.error(f"Health check run failed: {str(e)}")
 
@@ -2207,7 +2289,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         while True:
                             gateways = await asyncio.to_thread(self._get_gateways)
                             if gateways:
-                                await self.check_health_of_gateways(gateways)
+                                await self.check_health_of_gateways(db, gateways, user_email)
                             await asyncio.sleep(self._health_check_interval)
 
                     except Timeout:
