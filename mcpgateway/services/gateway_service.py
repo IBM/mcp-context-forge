@@ -787,16 +787,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             new_prompt_names = [prompt.name for prompt in prompts]
 
             # Count items before cleanup for logging
-            tools_before = len(gateway.tools)
-            resources_before = len(gateway.resources)
-            prompts_before = len(gateway.prompts)
 
             # Delete tools that are no longer available from the gateway
             stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
             for tool in stale_tools:
                 db.delete(tool)
 
-            # Delete resources that are no longer available from the gateway  
+            # Delete resources that are no longer available from the gateway
             stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
             for resource in stale_resources:
                 db.delete(resource)
@@ -815,7 +812,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             tools_removed = len(stale_tools)
             resources_removed = len(stale_resources)
             prompts_removed = len(stale_prompts)
-            
+
             if tools_removed > 0:
                 logger.info(f"Removed {tools_removed} tools no longer available from gateway")
             if resources_removed > 0:
@@ -1153,7 +1150,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     tools_to_add = []
                     resources_to_add = []
                     prompts_to_add = []
-                    
+
                     try:
                         capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config)
                         new_tool_names = [tool.name for tool in tools]
@@ -1181,16 +1178,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             logger.info(f"Total {items_added} new items added during gateway update")
 
                         # Count items before cleanup for logging
-                        tools_before = len(gateway.tools)
-                        resources_before = len(gateway.resources)
-                        prompts_before = len(gateway.prompts)
 
                         # Delete tools that are no longer available from the gateway
                         stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
                         for tool in stale_tools:
                             db.delete(tool)
 
-                        # Delete resources that are no longer available from the gateway  
+                        # Delete resources that are no longer available from the gateway
                         stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
                         for resource in stale_resources:
                             db.delete(resource)
@@ -1209,7 +1203,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         tools_removed = len(stale_tools)
                         resources_removed = len(stale_resources)
                         prompts_removed = len(stale_prompts)
-                        
+
                         if tools_removed > 0:
                             logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
                         if resources_removed > 0:
@@ -1399,16 +1393,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             logger.info(f"Total {items_added} new items added during gateway reactivation")
 
                         # Count items before cleanup for logging
-                        tools_before = len(gateway.tools)
-                        resources_before = len(gateway.resources)
-                        prompts_before = len(gateway.prompts)
 
                         # Delete tools that are no longer available from the gateway
                         stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
                         for tool in stale_tools:
                             db.delete(tool)
 
-                        # Delete resources that are no longer available from the gateway  
+                        # Delete resources that are no longer available from the gateway
                         stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
                         for resource in stale_resources:
                             db.delete(resource)
@@ -1427,7 +1418,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         tools_removed = len(stale_tools)
                         resources_removed = len(stale_resources)
                         prompts_removed = len(stale_prompts)
-                        
+
                         if tools_removed > 0:
                             logger.info(f"Removed {tools_removed} tools no longer available during gateway reactivation")
                         if resources_removed > 0:
