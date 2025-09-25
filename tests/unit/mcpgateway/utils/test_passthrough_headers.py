@@ -263,6 +263,31 @@ class TestPassthroughHeaders:
         expected = {"Content-Type": "application/json"}
         assert result == expected
 
+    @patch("mcpgateway.utils.passthrough_headers.settings")
+    def test_no_auth_gateway_passes_authorization_when_feature_disabled(self, mock_settings):
+        """When gateway.auth_type == 'none', the client's Authorization header
+        should be passed through even if ENABLE_HEADER_PASSTHROUGH is False.
+        This behavior is handled before the main allowlist processing.
+        """
+        # Feature disabled globally
+        mock_settings.enable_header_passthrough = False
+
+        mock_db = Mock()
+        # No global config needed for this early path
+        mock_db.query.return_value.first.return_value = None
+
+        request_headers = {"authorization": "Bearer client-token"}
+        base_headers = {}
+
+        mock_gateway = Mock(spec=DbGateway)
+        mock_gateway.passthrough_headers = None
+        mock_gateway.auth_type = "none"
+
+        result = get_passthrough_headers(request_headers, base_headers, mock_db, mock_gateway)
+
+        # Authorization should be present because gateway is configured with auth_type 'none'
+        assert result.get("Authorization") == "Bearer client-token"
+
     def test_none_request_headers(self):
         """Test behavior with None request headers."""
         mock_db = Mock()
@@ -315,8 +340,10 @@ class TestPassthroughHeaders:
         request_headers = {"authorization": "Bearer token"}
         base_headers = {}
 
-        # Test with different auth types
-        auth_types = ["basic", "bearer", "api-key", None]
+        # Test with different auth types. Include the string "none" which should
+        # allow passthrough of the client's Authorization header (special-case handled
+        # before the main passthrough allowlist logic).
+        auth_types = ["basic", "bearer", "api-key", None, "none"]
 
         for auth_type in auth_types:
             caplog.clear()
