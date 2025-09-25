@@ -60,7 +60,6 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
-
 # Local
 from ..config import extract_using_jq
 
@@ -807,6 +806,7 @@ class ToolService:
             True
         """
         # pylint: disable=comparison-with-callable
+        logger.info(f"Invoking tool: {name} with arguments: {arguments.keys() if arguments else None} and headers: {request_headers.keys() if request_headers else None}")
         tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
         if not tool:
             inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
@@ -1479,6 +1479,7 @@ class ToolService:
             ToolNameConflictError: If a tool with the same name already exists.
         """
         # Check if tool already exists for this agent
+        logger.info(f"testing Creating tool for A2A agent: {vars(agent)}")
         tool_name = f"a2a_{agent.slug}"
         existing_query = select(DbTool).where(DbTool.original_name == tool_name)
         existing_tool = db.execute(existing_query).scalar_one_or_none()
@@ -1503,6 +1504,7 @@ class ToolService:
                 },
                 "required": ["parameters"],
             },
+            allow_auto=True,
             annotations={
                 "title": f"A2A Agent: {agent.name}",
                 "a2a_agent_id": agent.id,
@@ -1536,6 +1538,8 @@ class ToolService:
         Raises:
             ToolNotFoundError: If the A2A agent is not found.
         """
+        logger.info(f"Invoking A2A agent '{agent.name}' at {agent.endpoint_url} with parameters: {parameters} and interaction_type: {interaction_type}")
+        
         # Extract A2A agent ID from tool annotations
         agent_id = tool.annotations.get("a2a_agent_id")
         if not agent_id:
@@ -1608,6 +1612,7 @@ class ToolService:
         Raises:
             Exception: If the call fails.
         """
+        logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with parameters: {parameters} and interaction_type: {interaction_type}") 
         # Format request based on agent type and endpoint
         if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
             # Use JSONRPC format for agents that expect it

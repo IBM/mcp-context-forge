@@ -25,8 +25,8 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.tool_service import ToolService
 from mcpgateway.services.team_management_service import TeamManagementService
-
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -204,6 +204,18 @@ class A2AAgentService:
         db.add(new_agent)
         db.commit()
         db.refresh(new_agent)
+
+        # Automatically create a tool for the A2A agent if not already present
+        from mcpgateway.services.tool_service import ToolService
+        tool_service = ToolService()
+        await tool_service.create_tool_from_a2a_agent(
+            db=db,
+            agent=new_agent,
+            created_by=created_by,
+            created_from_ip=created_from_ip,
+            created_via=created_via,
+            created_user_agent=created_user_agent,
+        )
 
         logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
         return self._db_to_schema(new_agent)

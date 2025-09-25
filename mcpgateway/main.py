@@ -3410,6 +3410,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
+        # NEW: Check for 'type' in params for tool testing
+        test_type = params.get("type")
+        logger.info(f"RPC request method: {method}, id: {req_id}, server_id: {server_id}, test_type: {test_type}")      
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         if method == "initialize":
