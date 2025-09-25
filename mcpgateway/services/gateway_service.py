@@ -1158,13 +1158,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         new_prompt_names = [prompt.name for prompt in prompts]
 
                         # Update tools using helper method
-                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "update", append_to_gateway=True)
+                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
 
                         # Update resources using helper method
-                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "update", append_to_gateway=True)
+                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
 
                         # Update prompts using helper method
-                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update", append_to_gateway=True)
+                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
 
                         # Log newly added items
                         items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
@@ -1377,9 +1377,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         new_prompt_names = [prompt.name for prompt in prompts]
 
                         # Update tools, resources, and prompts using helper methods
-                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "rediscovery", append_to_gateway=True)
-                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "rediscovery", append_to_gateway=True)
-                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "rediscovery", append_to_gateway=True)
+                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "rediscovery")
+                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "rediscovery")
+                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "rediscovery")
 
                         # Log newly added items
                         items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
@@ -2537,7 +2537,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             visibility="public",  # Federated tools should be public for discovery
         )
 
-    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str, append_to_gateway: bool = False) -> List[DbTool]:
+    def _update_or_create_tools(self, db: Session, tools: List[Any], gateway: DbGateway, created_via: str) -> List[DbTool]:
         """Helper to handle update-or-create logic for tools from MCP server.
 
         Args:
@@ -2601,8 +2601,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     # Attach relationship to avoid NoneType during flush
                     db_tool.gateway = gateway
                     tools_to_add.append(db_tool)
-                    if append_to_gateway:
-                        gateway.tools.append(db_tool)
                     logger.debug(f"Created new tool: {tool.name}")
             except Exception as e:
                 logger.warning(f"Failed to process tool {getattr(tool, 'name', 'unknown')}: {e}")
@@ -2610,7 +2608,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         return tools_to_add
 
-    def _update_or_create_resources(self, db: Session, resources: List[Any], gateway: DbGateway, created_via: str, append_to_gateway: bool = False) -> List[DbResource]:
+    def _update_or_create_resources(self, db: Session, resources: List[Any], gateway: DbGateway, created_via: str) -> List[DbResource]:
         """Helper to handle update-or-create logic for resources from MCP server.
 
         Args:
@@ -2667,8 +2665,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         visibility=gateway.visibility,
                     )
                     resources_to_add.append(db_resource)
-                    if append_to_gateway:
-                        gateway.resources.append(db_resource)
                     logger.debug(f"Created new resource: {resource.uri}")
             except Exception as e:
                 logger.warning(f"Failed to process resource {getattr(resource, 'uri', 'unknown')}: {e}")
@@ -2676,7 +2672,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         return resources_to_add
 
-    def _update_or_create_prompts(self, db: Session, prompts: List[Any], gateway: DbGateway, created_via: str, append_to_gateway: bool = False) -> List[DbPrompt]:
+    def _update_or_create_prompts(self, db: Session, prompts: List[Any], gateway: DbGateway, created_via: str) -> List[DbPrompt]:
         """Helper to handle update-or-create logic for prompts from MCP server.
 
         Args:
@@ -2728,8 +2724,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         visibility=gateway.visibility,
                     )
                     prompts_to_add.append(db_prompt)
-                    if append_to_gateway:
-                        gateway.prompts.append(db_prompt)
                     logger.debug(f"Created new prompt: {prompt.name}")
             except Exception as e:
                 logger.warning(f"Failed to process prompt {getattr(prompt, 'name', 'unknown')}: {e}")
