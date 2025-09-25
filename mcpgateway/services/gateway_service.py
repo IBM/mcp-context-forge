@@ -781,6 +781,52 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             resources_to_add = self._update_or_create_resources(db, resources, gateway, "oauth")
             prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "oauth")
 
+            # Clean up items that are no longer available from the gateway
+            new_tool_names = [tool.name for tool in tools]
+            new_resource_uris = [resource.uri for resource in resources]
+            new_prompt_names = [prompt.name for prompt in prompts]
+
+            # Count items before cleanup for logging
+            tools_before = len(gateway.tools)
+            resources_before = len(gateway.resources)
+            prompts_before = len(gateway.prompts)
+
+            # Delete tools that are no longer available from the gateway
+            stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
+            for tool in stale_tools:
+                db.delete(tool)
+
+            # Delete resources that are no longer available from the gateway  
+            stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
+            for resource in stale_resources:
+                db.delete(resource)
+
+            # Delete prompts that are no longer available from the gateway
+            stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+            for prompt in stale_prompts:
+                db.delete(prompt)
+
+            # Update gateway relationships to reflect deletions
+            gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]
+            gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]
+            gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]
+
+            # Log cleanup results
+            tools_removed = len(stale_tools)
+            resources_removed = len(stale_resources)
+            prompts_removed = len(stale_prompts)
+            
+            if tools_removed > 0:
+                logger.info(f"Removed {tools_removed} tools no longer available from gateway")
+            if resources_removed > 0:
+                logger.info(f"Removed {resources_removed} resources no longer available from gateway")
+            if prompts_removed > 0:
+                logger.info(f"Removed {prompts_removed} prompts no longer available from gateway")
+
+            # Update gateway capabilities and last_seen
+            gateway.capabilities = capabilities
+            gateway.last_seen = datetime.now(timezone.utc)
+
             # Add new items to DB
             items_added = 0
             if tools_to_add:
@@ -1103,6 +1149,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
+                    # Initialize empty lists in case initialization fails
+                    tools_to_add = []
+                    resources_to_add = []
+                    prompts_to_add = []
+                    
                     try:
                         capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config)
                         new_tool_names = [tool.name for tool in tools]
@@ -1129,11 +1180,52 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
                             logger.info(f"Total {items_added} new items added during gateway update")
 
+                        # Count items before cleanup for logging
+                        tools_before = len(gateway.tools)
+                        resources_before = len(gateway.resources)
+                        prompts_before = len(gateway.prompts)
+
+                        # Delete tools that are no longer available from the gateway
+                        stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        for tool in stale_tools:
+                            db.delete(tool)
+
+                        # Delete resources that are no longer available from the gateway  
+                        stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        for resource in stale_resources:
+                            db.delete(resource)
+
+                        # Delete prompts that are no longer available from the gateway
+                        stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                        for prompt in stale_prompts:
+                            db.delete(prompt)
+
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
                         gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+
+                        # Log cleanup results
+                        tools_removed = len(stale_tools)
+                        resources_removed = len(stale_resources)
+                        prompts_removed = len(stale_prompts)
+                        
+                        if tools_removed > 0:
+                            logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
+                        if resources_removed > 0:
+                            logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
+                        if prompts_removed > 0:
+                            logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
+
                         gateway.last_seen = datetime.now(timezone.utc)
+
+                        # Add new items to database session
+                        if tools_to_add:
+                            db.add_all(tools_to_add)
+                        if resources_to_add:
+                            db.add_all(resources_to_add)
+                        if prompts_to_add:
+                            db.add_all(prompts_to_add)
 
                         # Update tracking with new URL
                         self._active_gateways.discard(gateway.url)
@@ -1278,6 +1370,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if activate and reachable:
                     self._active_gateways.add(gateway.url)
 
+                    # Initialize empty lists in case initialization fails
+                    tools_to_add = []
+                    resources_to_add = []
+                    prompts_to_add = []
+
                     # Try to initialize if activating
                     try:
                         capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config)
@@ -1285,51 +1382,68 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
 
-                        # Update tools
-                        for tool in tools:
-                            existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway_id)).scalar_one_or_none()
-                            if not existing_tool:
-                                gateway.tools.append(
-                                    self._create_db_tool(
-                                        tool=tool,
-                                        gateway=gateway,
-                                        created_by="system",
-                                        created_via="rediscovery",
-                                    )
-                                )
+                        # Update tools, resources, and prompts using helper methods
+                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "rediscovery", append_to_gateway=True)
+                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "rediscovery", append_to_gateway=True)
+                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "rediscovery", append_to_gateway=True)
 
-                        # Update resources
-                        for resource in resources:
-                            existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri).where(DbResource.gateway_id == gateway_id)).scalar_one_or_none()
-                            if not existing_resource:
-                                gateway.resources.append(
-                                    DbResource(
-                                        uri=resource.uri,
-                                        name=resource.name,
-                                        description=resource.description,
-                                        mime_type=resource.mime_type,
-                                        template=resource.template,
-                                    )
-                                )
+                        # Log newly added items
+                        items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
+                        if items_added > 0:
+                            if tools_to_add:
+                                logger.info(f"Added {len(tools_to_add)} new tools during gateway reactivation")
+                            if resources_to_add:
+                                logger.info(f"Added {len(resources_to_add)} new resources during gateway reactivation")
+                            if prompts_to_add:
+                                logger.info(f"Added {len(prompts_to_add)} new prompts during gateway reactivation")
+                            logger.info(f"Total {items_added} new items added during gateway reactivation")
 
-                        # Update prompts
-                        for prompt in prompts:
-                            existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name).where(DbPrompt.gateway_id == gateway_id)).scalar_one_or_none()
-                            if not existing_prompt:
-                                gateway.prompts.append(
-                                    DbPrompt(
-                                        name=prompt.name,
-                                        description=prompt.description,
-                                        template=prompt.template if hasattr(prompt, "template") else "",
-                                        argument_schema={},  # Use argument_schema instead of arguments
-                                    )
-                                )
+                        # Count items before cleanup for logging
+                        tools_before = len(gateway.tools)
+                        resources_before = len(gateway.resources)
+                        prompts_before = len(gateway.prompts)
+
+                        # Delete tools that are no longer available from the gateway
+                        stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
+                        for tool in stale_tools:
+                            db.delete(tool)
+
+                        # Delete resources that are no longer available from the gateway  
+                        stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
+                        for resource in stale_resources:
+                            db.delete(resource)
+
+                        # Delete prompts that are no longer available from the gateway
+                        stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                        for prompt in stale_prompts:
+                            db.delete(prompt)
 
                         gateway.capabilities = capabilities
                         gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
                         gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
                         gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+
+                        # Log cleanup results
+                        tools_removed = len(stale_tools)
+                        resources_removed = len(stale_resources)
+                        prompts_removed = len(stale_prompts)
+                        
+                        if tools_removed > 0:
+                            logger.info(f"Removed {tools_removed} tools no longer available during gateway reactivation")
+                        if resources_removed > 0:
+                            logger.info(f"Removed {resources_removed} resources no longer available during gateway reactivation")
+                        if prompts_removed > 0:
+                            logger.info(f"Removed {prompts_removed} prompts no longer available during gateway reactivation")
+
                         gateway.last_seen = datetime.now(timezone.utc)
+
+                        # Add new items to database session
+                        if tools_to_add:
+                            db.add_all(tools_to_add)
+                        if resources_to_add:
+                            db.add_all(resources_to_add)
+                        if prompts_to_add:
+                            db.add_all(prompts_to_add)
                     except Exception as e:
                         logger.warning(f"Failed to initialize reactivated gateway: {e}")
                 else:
