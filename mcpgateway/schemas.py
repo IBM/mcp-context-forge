@@ -650,7 +650,6 @@ class ToolCreate(BaseModel):
             if v not in allowed:
                 raise ValueError(f"Request type '{v}' not allowed for A2A. Only {allowed} methods are accepted.")
         return v
-        return v
 
     @model_validator(mode="before")
     @classmethod
