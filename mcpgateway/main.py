@@ -186,6 +186,13 @@ session_registry = SessionRegistry(
     message_ttl=settings.message_ttl,
 )
 
+# Start periodic cleanup for pooled sessions if enabled
+if getattr(settings, "session_pooling_enabled", False):
+    try:
+        interval = max(10, int(getattr(settings, "session_pool_max_idle", 60) // 2))
+        asyncio.get_event_loop().create_task(session_registry.start_pool_cleanup(interval=interval))
+    except Exception as e:
+        logger.warning(f"Could not start session pool cleanup: {e}")
 
 # Helper function for authentication compatibility
 def get_user_email(user):
@@ -1590,15 +1597,34 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
 
-        transport = SSETransport(base_url=server_sse_url)
-        await transport.connect()
-        await session_registry.add_session(transport.session_id, transport)
-        response = await transport.create_sse_response(request)
+        # --- Session Pooling Logic ---
+        pooling_enabled = getattr(settings, "session_pooling_enabled", False)
+        pooling_servers = set(getattr(settings, "session_pooling_servers", []))
+        user_id = get_user_email(user)
+        use_pool = pooling_enabled or server_id in pooling_servers
+        session_id = None
+        transport = None
+        if use_pool:
+            session_id = await session_registry.get_pooled_session(user_id, server_id)
+            if session_id:
+                transport = await session_registry.get_session(session_id)
+                if transport:
+                    await session_registry.touch_pooled_session(user_id, server_id)
+        if not transport:
+            transport = SSETransport(base_url=server_sse_url)
+            await transport.connect()
+            await session_registry.add_session(transport.session_id, transport)
+            if use_pool:
+                await session_registry.pool_session(user_id, server_id, transport.session_id)
+            session_id = transport.session_id
 
-        asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id, base_url=base_url))
+        response = await transport.create_sse_response(request)
+        asyncio.create_task(session_registry.respond(server_id, user, session_id=session_id, base_url=base_url))
 
         tasks = BackgroundTasks()
-        tasks.add_task(session_registry.remove_session, transport.session_id)
+        # Only remove session if not pooled, else rely on idle cleanup
+        if not use_pool:
+            tasks.add_task(session_registry.remove_session, transport.session_id)
         response.background = tasks
         logger.info(f"SSE connection established: {transport.session_id}")
         return response
@@ -3547,6 +3573,30 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception:
                     await websocket.close(code=1008, reason="Invalid authentication")
                     return
+
+        # --- WebSocket Session Pooling Logic ---
+        pooling_enabled = getattr(settings, "session_pooling_enabled", False)
+        pooling_servers = set(getattr(settings, "session_pooling_servers", []))
+        # For demo, use 'default' as server_id; in real use, extract from path/query
+        server_id = websocket.query_params.get("server_id", "default")
+        user_id = websocket.query_params.get("user", "unknown")
+        use_pool = pooling_enabled or server_id in pooling_servers
+        session_id = None
+        transport = None
+        if use_pool:
+            session_id = await session_registry.get_pooled_session(user_id, server_id)
+            if session_id:
+                transport = await session_registry.get_session(session_id)
+                if transport:
+                    await session_registry.touch_pooled_session(user_id, server_id)
+        if not transport:
+            from mcpgateway.transports.websocket_transport import WebSocketTransport
+            transport = WebSocketTransport(websocket)
+            await transport.connect()
+            await session_registry.add_session(id(websocket), transport)  # Use id(websocket) as session_id for now
+            if use_pool:
+                await session_registry.pool_session(user_id, server_id, id(websocket))
+            session_id = id(websocket)
 
         await websocket.accept()
         while True:
