@@ -334,7 +334,7 @@ class SessionRegistry(SessionBackend):
             server_id: Server identifier
 
         Returns:
-            return: session_id if found and valid, else None
+            Session_id if found and valid, else None
         """
         key = (user, server_id)
         entry = self._pooled_sessions.get(key)
