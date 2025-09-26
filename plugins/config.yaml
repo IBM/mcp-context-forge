@@ -448,19 +448,19 @@ plugins:
       tool_allowlist: ["search", "retrieve"]
       resource_uri_prefixes: ["http://", "https://"]
 
-  # ClamAV Remote Scanner (external MCP)
-  - name: "ClamAVRemote"
-    kind: "external"
-    description: "External ClamAV scanner (file/text) via MCP STDIO"
-    version: "0.1.0"
-    author: "Mihai Criveti"
-    hooks: ["resource_pre_fetch", "resource_post_fetch"]
-    tags: ["security", "malware", "clamav"]
-    mode: "enforce"
-    priority: 62
-    mcp:
-      proto: STDIO
-      script: plugins/external/clamav_server/run.sh
+  # # ClamAV Remote Scanner (external MCP)
+  # - name: "ClamAVRemote"
+  #   kind: "external"
+  #   description: "External ClamAV scanner (file/text) via MCP STDIO"
+  #   version: "0.1.0"
+  #   author: "Mihai Criveti"
+  #   hooks: ["resource_pre_fetch", "resource_post_fetch"]
+  #   tags: ["security", "malware", "clamav"]
+  #   mode: "enforce"
+  #   priority: 62
+  #   mcp:
+  #     proto: STDIO
+  #     script: plugins/external/clamav_server/run.sh
 
   # - name: "OPAPluginFilter"
   #   kind: "external"
