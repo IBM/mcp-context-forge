@@ -1,7 +1,3 @@
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Core Components](./core-components.md)
-
 ## 2. Architecture Overview
 
 ### 2.1 High-Level Architecture
@@ -65,6 +61,7 @@ mcpgateway/plugins/framework/
 ### 2.3 Plugin Deployment Patterns
 
 #### 2.3.1 Native Plugins (In-Process)
+
 - Execute within the main gateway process
 - Extends the base `Plugin` class
 - Sub-millisecond latency (<1ms)
@@ -72,14 +69,10 @@ mcpgateway/plugins/framework/
 - Examples: PII filtering, regex transforms, validation
 
 #### 2.3.2 External Plugins (Remote MCP Servers)
+
 - Standalone MCP servers implementing plugin logic
 - Language-agnostic (Python, TypeScript, Go, Rust, etc.)
 - Communicate via MCP protocol over various transports
 - 10-100ms latency depending on service and network
 - Examples: LlamaGuard, OpenAI Moderation, custom AI services
 
----
-
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Core Components](./core-components.md)

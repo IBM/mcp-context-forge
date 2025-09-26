@@ -1,6 +1,4 @@
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
 
-[Next: External Plugin Integration](./security.md)
 ## 7. External Plugin Integration
 
 ### 7.1 Plugin Lifecycle
@@ -196,8 +194,3 @@ class TransportType(str, Enum):
     STREAMABLEHTTP = "streamablehttp"  # HTTP with streaming support
     WEBSOCKET = "websocket"           # WebSocket bidirectional
 ```
-
----
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: External Plugin Integration](./security.md)

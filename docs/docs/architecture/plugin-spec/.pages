@@ -1,0 +1,17 @@
+title: Plugin Framework Specification
+nav:
+  - Overview: plugin-framework-specification.md
+  - Architecture: 01-architecture.md
+  - Core Components: 02-core-components.md
+  - Plugin Types: 03-plugin-types.md
+  - Hook Architecture: 04-hook-architecture.md
+  - Hook System: 05-hook-system.md
+  - Gateway Hooks: 06-gateway-hooks.md
+  - Security Hooks: 07-security-hooks.md
+  - External Plugins: 08-external-plugins.md
+  - Security: 09-security.md
+  - Error Handling: 10-error-handling.md
+  - Performance: 11-performance.md
+  - Development: 12-development.md
+  - Testing: 13-testing.md
+  - Conclusion: 14-conclusion.md

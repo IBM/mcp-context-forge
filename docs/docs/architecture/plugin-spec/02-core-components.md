@@ -1,6 +1,4 @@
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
 
-[Next: Plugin Types and Models](./plugins.md)
 ## 3. Core Components
 
 ### 3.1 Plugin Base Class
@@ -125,8 +123,3 @@ class PluginInstanceRegistry:
         """Shutdown all registered plugins"""
 ```
 
----
-
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Plugin Types and Models](./plugins.md)

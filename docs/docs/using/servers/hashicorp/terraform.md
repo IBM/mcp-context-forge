@@ -123,10 +123,10 @@ curl --request POST \
   --header "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
   --header 'Content-Type: application/json' \
   --data '{
-	"name": "terraform_server",
-	"url": "http://127.0.0.1:8080/mcp",
-	"description": "Terraform MCP Server",
-	"transport": "STREAMABLEHTTP"
+    "name": "terraform_server",
+    "url": "http://127.0.0.1:8080/mcp",
+    "description": "Terraform MCP Server",
+    "transport": "STREAMABLEHTTP"
 }' | jq
 ```
 
@@ -145,9 +145,9 @@ curl --request POST \
   --header "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
   --header 'Content-Type: application/json' \
   --data '{
-	"name": "terraform_server",
-	"description": "Terraform MCP Server with module search and registry integration",
-	"associatedTools": [
+    "name": "terraform_server",
+    "description": "Terraform MCP Server with module search and registry integration",
+    "associatedTools": [
         "'$TERRAFORM_TOOL_ID_1'",
         "'$TERRAFORM_TOOL_ID_2'",
         "'$TERRAFORM_TOOL_ID_3'",
@@ -317,13 +317,13 @@ curl --request POST \
   --header "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
   --header 'Content-Type: application/json' \
   --data '{
-	"jsonrpc": "2.0",
-	"id": 1,
-	"method": "terraform-server-get-latest-provider-version",
-	"params": {
-		"name": "ibm",
-		"namespace": "IBM-Cloud"
-	}
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "terraform-server-get-latest-provider-version",
+    "params": {
+        "name": "ibm",
+        "namespace": "IBM-Cloud"
+    }
 }' | jq -r '.result.content[0].text'
 ```
 
@@ -335,16 +335,16 @@ curl --request POST \
   --header "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
   --header 'Content-Type: application/json' \
   --data '{
-	"jsonrpc": "2.0",
-	"id": 1,
-	"method": "terraform-server-search-providers",
-	"params": {
-	  "provider_data_type": "overview",
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "terraform-server-search-providers",
+    "params": {
+      "provider_data_type": "overview",
       "provider_name": "aws",
       "provider_namespace": "hashicorp",
-	  "provider_version": "latest",
-	  "service_slug": "aws"
-	}
+      "provider_version": "latest",
+      "service_slug": "aws"
+    }
 }' | jq -r '.result.content[0].text'
 ```
 
@@ -362,12 +362,12 @@ curl --request POST \
   --header "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
   --header 'Content-Type: application/json' \
   --data '{
-	"jsonrpc": "2.0",
-	"id": 1,
-	"method": "terraform-server-get-provider-details",
-	"params": {
-		"provider_doc_id": "9983624"
-	}
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "terraform-server-get-provider-details",
+    "params": {
+        "provider_doc_id": "9983624"
+    }
 }' | jq -r '.result.content[0].text'
 ```
 

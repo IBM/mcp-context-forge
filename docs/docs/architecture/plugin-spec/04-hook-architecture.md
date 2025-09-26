@@ -1,6 +1,4 @@
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
 
-[Next: Hook System](./hooks-details.md)
 ## 5. Hook Function Architecture
 
 ### 5.1 Hook Function Overview
@@ -479,6 +477,4 @@ async def process_elicitation_response(self, response: ElicitationResponse) -> b
 
     return True
 ```
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
 
-[Next: Hook System](./hooks-details.md)

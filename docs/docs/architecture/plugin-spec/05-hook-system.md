@@ -1,6 +1,4 @@
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
 
-[Next: External Plugin Integration](./external-plugins.md)
 ## 6. Hook System
 
 ### 6.1 Hook Execution Flow
@@ -157,9 +155,6 @@ class PluginCondition(BaseModel):
     user_patterns: Optional[list[str]] = None  # Execute for users matching patterns
     content_types: Optional[list[str]] = None  # Execute for specific content types
 ```
-
----
-
 ## 6.5 Hook Reference Documentation
 
 The plugin framework provides two main categories of hooks, each documented in detail in separate files:
@@ -168,7 +163,7 @@ The plugin framework provides two main categories of hooks, each documented in d
 
 For detailed information about MCP protocol security hooks including payload structures, examples, and use cases, see:
 
-**[📖 MCP Security Hooks Reference](./mcp-security-hooks.md)**
+**[📖 MCP Security Hooks Reference](./07-security-hooks.md)**
 
 This document covers the eight core MCP protocol hooks:
 
@@ -181,7 +176,7 @@ This document covers the eight core MCP protocol hooks:
 
 For detailed information about gateway management and administrative hooks, see:
 
-**[📖 Gateway Administrative Hooks Reference](./gateway-admin-hooks.md)**
+**[📖 Gateway Administrative Hooks Reference](./06-gateway-hooks.md)**
 
 This document covers administrative operation hooks:
 
@@ -190,8 +185,3 @@ This document covers administrative operation hooks:
 - A2A Agent Hooks - Agent-to-Agent integration management *(Future)*
 - Entity Lifecycle Hooks - Tool, resource, and prompt registration *(Future)*
 
-
----
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: External Plugin Integration](./external-plugins.md)

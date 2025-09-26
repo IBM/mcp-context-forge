@@ -1,9 +1,6 @@
 # Gateway Administrative Hooks
 
 This document details the administrative hook points in the MCP Gateway Plugin Framework, covering gateway management operations including server registration, updates, federation, and entity lifecycle management.
-
----
-
 ## Administrative Hook Functions
 
 The framework provides administrative hooks for gateway management operations:
@@ -26,9 +23,6 @@ The framework provides administrative hooks for gateway management operations:
 | [`gateway_post_delete()`](#gateway-post-delete-hook) | Process gateway deletion results after successful removal | After peer gateway deletion completes | Federation cleanup, resource deregistration, monitoring teardown, cache invalidation |
 | [`gateway_pre_status_change()`](#gateway-pre-status-change-hook) | Process gateway status change requests before enabling/disabling | Before peer gateway is enabled or disabled | Federation impact assessment, dependency validation, connection management |
 | [`gateway_post_status_change()`](#gateway-post-status-change-hook) | Process gateway status change results after successful toggle | After peer gateway status change completes | Federation connection activation/deactivation, discovery updates, monitoring adjustments |
-
----
-
 ## Server Management Hooks
 
 ### Server Pre-Register Hook
@@ -1623,9 +1617,6 @@ async def gateway_post_status_change(self, payload: GatewayPostOperationPayload,
 
     return GatewayPostOperationResult()
 ```
-
----
-
 ## Administrative Hook Categories
 
 The gateway administrative hooks are organized into the following categories:
@@ -1649,8 +1640,6 @@ The gateway administrative hooks are organized into the following categories:
 - `gateway_post_delete` - After peer gateway removal
 - `gateway_pre_status_change` - Before gateway activation/deactivation
 - `gateway_post_status_change` - After gateway status changes
-
-
 ### A2A Agent Management Hooks *(Future)*
 - `a2a_pre_register` - Before A2A agent registration
 - `a2a_post_register` - After A2A agent registration
@@ -1664,9 +1653,6 @@ The gateway administrative hooks are organized into the following categories:
 - `resource_post_register` - After resource registration
 - `prompt_pre_register` - Before prompt registration
 - `prompt_post_register` - After prompt registration
-
----
-
 ## Performance Considerations
 
 | Hook Category | Typical Latency | Performance Impact | Recommended Limits |
@@ -1682,5 +1668,3 @@ The gateway administrative hooks are organized into the following categories:
 - Cache frequently accessed data (permissions, quotas)
 - Use background tasks for non-critical operations
 
----
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)

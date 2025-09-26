@@ -1,9 +1,6 @@
 # MCP Security Hooks
 
 This document details the security-focused hook points in the MCP Gateway Plugin Framework, covering the complete MCP protocol request/response lifecycle.
-
----
-
 ## MCP Security Hook Functions
 
 The framework provides eight primary hook points covering the complete MCP request/response lifecycle:
@@ -26,9 +23,6 @@ The framework provides eight primary hook points covering the complete MCP reque
 | [`elicit_post_response()`](#) | Process user responses to elicitation requests | After the elicitation response is returned by the client but before it is sent to the MCP server | Input sanitization, access control, PII and and DLP | ❌ |
 | [`sampling_pre_create()`](#) | Process sampling requests sent to MCP host LLMs | Before the sampling request is returned to the MCP client | Prompt injection, goal manipulation, denial of wallet | ❌ |
 | [`sampling_post_complete()`](#) | Process sampling requests returned from the LLM | Before returning the LLM response to the MCP server | Sensitive information leakage, prompt injection, tool poisoning, PII detection | ❌ |
-
----
-
 ## MCP Security Hook Reference
 
 Each hook has specific function signatures, payloads, and use cases detailed below:
@@ -747,9 +741,6 @@ async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: 
 
     return ResourcePostFetchResult()
 ```
-
----
-
 ## Hook Execution Summary
 
 | Hook | Timing | Primary Use Cases | Typical Latency |
@@ -768,5 +759,3 @@ async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: 
 - Plugin execution is sequential within priority bands
 - Failed plugins don't affect other plugins (isolation)
 
----
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)

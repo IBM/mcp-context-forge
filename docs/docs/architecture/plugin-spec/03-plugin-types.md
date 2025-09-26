@@ -1,8 +1,4 @@
 
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Hook Function Architecture](./hooks-overview.md)
-
 ## 4. Plugin Types and Models
 
 ### 4.1 Overview
@@ -168,8 +164,6 @@ class PluginConfig(BaseModel):
     config: Optional[dict[str, Any]] = None      # Plugin-specific settings
     mcp: Optional[MCPConfig] = None              # External MCP server configuration
 ```
-
-
 ### 4.4 External Plugin Configuration
 
 ```python
@@ -415,7 +409,3 @@ The manifest enables development tools to provide:
 
 The plugin manifest system provides a foundation for plugin ecosystem management, enabling better development workflows, automated tooling, and enhanced discoverability while maintaining consistency across plugin implementations.
 
-
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Hook Function Architecture](./hooks-overview.md)
