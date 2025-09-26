@@ -43,7 +43,7 @@ plugins:
           extensions:
             policy: "example"
             policy_endpoint: "allow"
-            # policy_input_data_map: 
+            # policy_input_data_map:
             #  "context.git_context": "git_context"
             #  "payload.args.repo_path": "repo_path"
     conditions:

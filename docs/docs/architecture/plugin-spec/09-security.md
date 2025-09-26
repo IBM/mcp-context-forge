@@ -1,8 +1,4 @@
 
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Error Handling](./error-handling.md)
-
 ## 8. Security and Protection
 
 ### 8.1 Timeout Protection
@@ -69,6 +65,4 @@ except Exception as e:
         raise PluginError(f"Plugin error: {plugin.name}")
     # Continue with next plugin in permissive mode
 ```
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
 
-[Next: Error Handling](./error-handling.md)

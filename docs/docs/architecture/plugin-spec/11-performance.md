@@ -1,8 +1,4 @@
 
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Development Guidelines](./development-guidelines.md)
-
 ## 10. Performance Requirements
 
 ### 10.1 Latency Targets
@@ -19,7 +15,3 @@
 - **Memory usage**: Base framework overhead <5MB
 - **Plugin loading**: Initialize plugins in <10 seconds
 
-
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Development Guidelines](./development-guidelines.md)

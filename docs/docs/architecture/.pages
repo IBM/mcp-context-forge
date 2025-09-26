@@ -3,6 +3,7 @@ nav:
   - Roadmap: roadmap.md
   - Security Features: security-features.md
   - Plugin Framework: plugins.md
+  - Plugin Specification: plugin-spec
   - Export-Import Architecture: export-import-architecture.md
   - Multitenancy: multitenancy.md
   - OAuth: oauth-design.md

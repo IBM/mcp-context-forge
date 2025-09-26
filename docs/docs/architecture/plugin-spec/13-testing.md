@@ -1,8 +1,4 @@
 
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Conclusion](./conclusion.md)
-
 ## 12. Testing Framework
 
 ### 12.1 Testing Strategy
@@ -27,8 +23,3 @@ The plugin framework provides comprehensive testing support across multiple leve
 - Performance and load testing
 - Security validation
 
----
-
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Conclusion](./conclusion.md)

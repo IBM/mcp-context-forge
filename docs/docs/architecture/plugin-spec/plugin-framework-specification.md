@@ -4,27 +4,23 @@
 **Status**: Draft
 **Last Updated**: January 2025
 **Authors**: Plugin Framework Team
-
----
-
 ## Table of Contents
 
 1. [Introduction](#introduction)
-2. [Architecture Overview](./sections/architecture-overview.md)
-3. [Core Components](./sections/core-components.md)
-4. [Plugin Types and Models](./sections/plugins.md)
-5. [Hook Function Architecture](./sections/hooks-overview.md)
-6. [Hook System](./sections/hooks-details.md)
-7. [External Plugin Integration](./sections/external-plugins.md)
-8. [Security and Protection](./sections/security.md)
-9. [Error Handling](./sections/error-handling.md)
-10. [Performance Requirements](./sections/performance.md)
-11. [Development Guidelines](./sections/development-guidelines.md)
-12. [Testing Framework](./sections/testing.md)
-13. [Conclusion](./sections/conclusion.md)
-
----
-
+2. [Architecture Overview](./01-architecture.md)
+3. [Core Components](./02-core-components.md)
+4. [Plugin Types and Models](./03-plugin-types.md)
+5. [Hook Function Architecture](./04-hook-architecture.md)
+6. [Hook System](./05-hook-system.md)
+7. [Gateway Admin Hooks](./06-gateway-hooks.md)
+8. [MCP Security Hooks](./07-security-hooks.md)
+9. [External Plugin Integration](./08-external-plugins.md)
+10. [Security and Protection](./09-security.md)
+11. [Error Handling](./10-error-handling.md)
+12. [Performance Requirements](./11-performance.md)
+13. [Development Guidelines](./12-development.md)
+14. [Testing Framework](./13-testing.md)
+15. [Conclusion](./14-conclusion.md)
 ## 1. Introduction
 
 ### 1.1 Purpose
@@ -62,4 +58,3 @@ This specification covers:
 - **Plugin Context**: Request-scoped state shared between plugins
 - **Plugin Configuration**: YAML-based plugin setup and parameters
 
----

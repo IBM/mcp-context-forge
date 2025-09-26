@@ -1,8 +1,4 @@
 
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Performance Requirements](./performance.md)
-
 ## 9. Error Handling
 
 The plugin framework implements a comprehensive error handling system designed to provide clear error reporting, graceful degradation, and operational resilience. The system distinguishes between **technical errors** (plugin failures, timeouts, infrastructure issues) and **policy violations** (security breaches, content violations, access control failures).
@@ -419,8 +415,3 @@ async def execute(self, plugins: list[PluginRef], ...) -> tuple[PluginResult[T],
             # Continue with next plugin
 ```
 
----
-
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Performance Requirements](./performance.md)

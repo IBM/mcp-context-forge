@@ -1,8 +1,4 @@
 
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Testing Framework](./testing.md)
-
 ## 11. Development Guidelines
 
 ### 11.1 Plugin Development Workflow
@@ -291,8 +287,3 @@ class TestMyPlugin:
 - Provide health check endpoints
 - Support debugging modes
 
----
-
-[Back to Plugin Specification Main Page](../plugin-framework-specification.md)
-
-[Next: Testing Framework](./testing.md)
