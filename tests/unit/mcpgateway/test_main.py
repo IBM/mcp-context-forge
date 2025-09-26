@@ -765,7 +765,11 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.subscribe_events")
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
-        mock_subscribe.return_value = iter(["data: test\n\n"])
+        # Create an async generator for the mock
+        async def async_event_generator():
+            yield {"type": "resource_update", "data": "test"}
+
+        mock_subscribe.return_value = async_event_generator()
         response = test_client.post("/resources/subscribe/test/resource", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"

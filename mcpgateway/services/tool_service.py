@@ -286,28 +286,31 @@ class ToolService:
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
 
-        decoded_auth_value = decode_auth(tool.auth_value)
-        if tool.auth_type == "basic":
-            decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
-            username, password = decoded_bytes.decode("utf-8").split(":")
-            tool_dict["auth"] = {
-                "auth_type": "basic",
-                "username": username,
-                "password": "********" if password else None,
-            }
-        elif tool.auth_type == "bearer":
-            tool_dict["auth"] = {
-                "auth_type": "bearer",
-                "token": "********" if decoded_auth_value["Authorization"] else None,
-            }
-        elif tool.auth_type == "authheaders":
-            tool_dict["auth"] = {
-                "auth_type": "authheaders",
-                "auth_header_key": next(iter(decoded_auth_value)),
-                "auth_header_value": "********" if decoded_auth_value[next(iter(decoded_auth_value))] else None,
-            }
-        else:
+        if not tool.auth_value:
             tool_dict["auth"] = None
+        else:
+            decoded_auth_value = decode_auth(tool.auth_value)
+            if tool.auth_type == "basic" and "Authorization" in decoded_auth_value:
+                decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
+                username, password = decoded_bytes.decode("utf-8").split(":")
+                tool_dict["auth"] = {
+                    "auth_type": "basic",
+                    "username": username,
+                    "password": "********" if password else None,
+                }
+            elif tool.auth_type == "bearer" and "Authorization" in decoded_auth_value:
+                tool_dict["auth"] = {
+                    "auth_type": "bearer",
+                    "token": "********" if decoded_auth_value["Authorization"] else None,
+                }
+            elif tool.auth_type == "authheaders" and decoded_auth_value:
+                tool_dict["auth"] = {
+                    "auth_type": "authheaders",
+                    "auth_header_key": next(iter(decoded_auth_value)),
+                    "auth_header_value": "********" if decoded_auth_value[next(iter(decoded_auth_value))] else None,
+                }
+            else:
+                tool_dict["auth"] = None
 
         tool_dict["name"] = tool.name
         # Handle displayName with fallback and None checks
@@ -359,7 +362,7 @@ class ToolService:
         federation_source: Optional[str] = None,
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
-        visibility: str = None,
+        visibility: Optional[str] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -426,13 +429,13 @@ class ToolService:
             # Check for existing tool with the same name and visibility
             if visibility.lower() == "public":
                 # Check for existing public tool with the same name
-                existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "public")).scalar_one_or_none()
+                existing_tool = db.execute(select(DbTool).where(and_(DbTool.name == tool.name, DbTool.visibility == "public"))).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team tool with the same name, team_id
                 existing_tool = db.execute(
-                    select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id)  # pylint: disable=comparison-with-callable
+                    select(DbTool).where(and_(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id))  # pylint: disable=comparison-with-callable
                 ).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
@@ -791,7 +794,8 @@ class ToolService:
             ToolNotFoundError: If tool not found.
             ToolInvocationError: If invocation fails.
             PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin
+            PluginError: If encounters issue with plugin.
+            AssertionError: Should never be raised (unreachable code guard)
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -807,9 +811,9 @@ class ToolService:
             True
         """
         # pylint: disable=comparison-with-callable
-        tool = db.execute(select(DbTool).where(DbTool.name == name).where(DbTool.enabled)).scalar_one_or_none()
+        tool = db.execute(select(DbTool).where(and_(DbTool.name == name, DbTool.enabled))).scalar_one_or_none()
         if not tool:
-            inactive_tool = db.execute(select(DbTool).where(DbTool.name == name).where(not_(DbTool.enabled))).scalar_one_or_none()
+            inactive_tool = db.execute(select(DbTool).where(and_(DbTool.name == name, not_(DbTool.enabled)))).scalar_one_or_none()
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
@@ -883,7 +887,7 @@ class ToolService:
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
-                            arguments = payload.args
+                            arguments = payload.args or {}
                             if payload.headers is not None:
                                 headers = payload.headers.model_dump()
 
@@ -978,7 +982,7 @@ class ToolService:
                                 logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
-                        headers = decode_auth(gateway.auth_value if gateway else None)
+                        headers = decode_auth(gateway.auth_value if gateway and gateway.auth_value else "")
 
                     # Get combined headers including gateway auth and passthrough
                     if request_headers:
@@ -992,10 +996,15 @@ class ToolService:
 
                         Returns:
                             ToolResult: Result of tool call
+
+                        Raises:
+                            ToolInvocationError: If tool has no original_name
                         """
                         async with sse_client(url=server_url, headers=headers) as streams:
                             async with ClientSession(*streams) as session:
                                 await session.initialize()
+                                if not tool or not tool.original_name:
+                                    raise ToolInvocationError(f"Tool '{name}' has no original_name")
                                 tool_call_result = await session.call_tool(tool.original_name, arguments)
                         return tool_call_result
 
@@ -1007,10 +1016,15 @@ class ToolService:
 
                         Returns:
                             ToolResult: Result of tool call
+
+                        Raises:
+                            ToolInvocationError: If tool has no original_name
                         """
                         async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
                             async with ClientSession(read_stream, write_stream) as session:
                                 await session.initialize()
+                                if not tool or not tool.original_name:
+                                    raise ToolInvocationError(f"Tool '{name}' has no original_name")
                                 tool_call_result = await session.call_tool(tool.original_name, arguments)
                         return tool_call_result
 
@@ -1032,15 +1046,20 @@ class ToolService:
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
                             name = payload.name
-                            arguments = payload.args
+                            arguments = payload.args or {}
                             if payload.headers is not None:
                                 headers = payload.headers.model_dump()
 
                     tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
                     if transport == "sse":
+                        if not tool_gateway or not tool_gateway.url:
+                            raise ToolInvocationError("Tool gateway not found or has no URL")
                         tool_call_result = await connect_to_sse_server(tool_gateway.url)
                     elif transport == "streamablehttp":
+                        if not tool_gateway or not tool_gateway.url:
+                            raise ToolInvocationError("Tool gateway not found or has no URL")
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url)
+                    # If transport is neither sse nor streamablehttp, use the default empty result
                     content = tool_call_result.model_dump(by_alias=True).get("content", [])
 
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
@@ -1084,6 +1103,8 @@ class ToolService:
                     span.set_attribute("success", success)
                     span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
                 await self._record_tool_metric(db, tool, start_time, success, error_message)
+        # Unreachable - all paths above return or raise
+        raise AssertionError("Unreachable code")
 
     async def update_tool(
         self,
@@ -1144,13 +1165,13 @@ class ToolService:
                 # Check for existing tool with the same name and visibility
                 if tool_update.visibility.lower() == "public":
                     # Check for existing public tool with the same name
-                    existing_tool = db.execute(select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "public")).scalar_one_or_none()
+                    existing_tool = db.execute(select(DbTool).where(and_(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "public"))).scalar_one_or_none()
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
-                elif tool_update.visibility.lower() == "team" and tool_update.team_id:
+                elif tool_update.visibility.lower() == "team" and hasattr(tool_update, "team_id") and tool_update.team_id:
                     # Check for existing team tool with the same name
                     existing_tool = db.execute(
-                        select(DbTool).where(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id)
+                        select(DbTool).where(and_(DbTool.custom_name == tool_update.custom_name, DbTool.visibility == "team", DbTool.team_id == tool_update.team_id))
                     ).scalar_one_or_none()
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
@@ -1537,6 +1558,8 @@ class ToolService:
             ToolNotFoundError: If the A2A agent is not found.
         """
         # Extract A2A agent ID from tool annotations
+        if not tool.annotations:
+            raise ToolNotFoundError(f"A2A tool '{tool.name}' has no annotations")
         agent_id = tool.annotations.get("a2a_agent_id")
         if not agent_id:
             raise ToolNotFoundError(f"A2A tool '{tool.name}' missing agent ID in annotations")
