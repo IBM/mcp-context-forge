@@ -684,7 +684,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
-            return GatewayRead.model_validate(db_gateway).masked()
+            return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -872,7 +872,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         #         # print(f"Gateway auth_type: {g['auth_type']}")
         # print("******************************************************************")
 
-        return [GatewayRead.model_validate(g).masked() for g in gateways]
+        return [GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked() for g in gateways]
 
     async def list_gateways_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -936,7 +936,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         query = query.offset(skip).limit(limit)
 
         gateways = db.execute(query).scalars().all()
-        return [GatewayRead.model_validate(g).masked() for g in gateways]
+        return [GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked() for g in gateways]
 
     async def update_gateway(
         self,
@@ -1083,19 +1083,21 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if gateway_update.oauth_config is not None:
                     gateway.oauth_config = gateway_update.oauth_config
 
-                if getattr(gateway, "auth_value", "") != "":
-                    token = gateway_update.auth_token
-                    password = gateway_update.auth_password
-                    header_value = gateway_update.auth_header_value
+                # Handle auth_value updates (both existing and new auth values)
+                token = gateway_update.auth_token
+                password = gateway_update.auth_password
+                header_value = gateway_update.auth_header_value
 
-                    # Support multiple custom headers on update
-                    if hasattr(gateway_update, "auth_headers") and gateway_update.auth_headers:
-                        header_dict = {h["key"]: h["value"] for h in gateway_update.auth_headers if h.get("key")}
-                        gateway.auth_value = header_dict  # Store as dict for DB JSON field
-                    elif settings.masked_auth_value not in (token, password, header_value):
-                        # Check if values differ from existing ones
-                        if gateway.auth_value != gateway_update.auth_value:
-                            gateway.auth_value = decode_auth(gateway_update.auth_value) if isinstance(gateway_update.auth_value, str) else gateway_update.auth_value
+                # Support multiple custom headers on update
+                if hasattr(gateway_update, "auth_headers") and gateway_update.auth_headers:
+                    header_dict = {h["key"]: h["value"] for h in gateway_update.auth_headers if h.get("key")}
+                    gateway.auth_value = header_dict  # Store as dict for DB JSON field
+                elif settings.masked_auth_value not in (token, password, header_value):
+                    # Check if values differ from existing ones or if setting for first time
+                    decoded_auth = decode_auth(gateway_update.auth_value) if gateway_update.auth_value else {}
+                    current_auth = getattr(gateway, "auth_value", {}) or {}
+                    if current_auth != decoded_auth:
+                        gateway.auth_value = decoded_auth
 
                 # Try to reinitialize connection if URL changed
                 if gateway_update.url is not None:
@@ -1139,7 +1141,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                     existing_tool.input_schema = tool.input_schema
                                     existing_tool.jsonpath_filter = tool.jsonpath_filter
                                     existing_tool.auth_type = gateway.auth_type
-                                    existing_tool.auth_value = gateway.auth_value
+                                    if isinstance(gateway.auth_value, dict):
+                                        existing_tool.auth_value = encode_auth(gateway.auth_value)
+                                    else:
+                                        existing_tool.auth_value = gateway.auth_value
                                     existing_tool.visibility = gateway.visibility
 
                             # If the tool doesn't exist, create a new one
@@ -1221,7 +1226,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 logger.info(f"Updated gateway: {gateway.name}")
 
-                return GatewayRead.model_validate(gateway)
+                return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -1295,7 +1300,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
-            return GatewayRead.model_validate(gateway).masked()
+            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1408,7 +1413,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
-            return GatewayRead.model_validate(gateway).masked()
+            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         except Exception as e:
             db.rollback()
@@ -2419,6 +2424,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
+    def _prepare_gateway_for_read(self, gateway: DbGateway) -> DbGateway:
+        """Prepare a gateway object for GatewayRead validation.
+
+        Ensures auth_value is in the correct format (encoded string) for the schema.
+
+        Args:
+            gateway: Gateway database object
+
+        Returns:
+            Gateway object with properly formatted auth_value
+        """
+        # If auth_value is a dict, encode it to string for GatewayRead schema
+        if isinstance(gateway.auth_value, dict):
+            gateway.auth_value = encode_auth(gateway.auth_value)
+        return gateway
+
     def _create_db_tool(
         self,
         tool: ToolCreate,
@@ -2455,7 +2476,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             annotations=tool.annotations,
             jsonpath_filter=tool.jsonpath_filter,
             auth_type=gateway.auth_type,
-            auth_value=gateway.auth_value,
+            auth_value=encode_auth(gateway.auth_value) if isinstance(gateway.auth_value, dict) else gateway.auth_value,
             # Federation metadata - consistent across all scenarios
             created_by=created_by or "system",
             created_from_ip=created_from_ip,
