@@ -712,6 +712,7 @@ plugins:
       languages: ["python", "javascript", "typescript", "go", "java", "c", "cpp", "shell"]
       max_size_kb: 512
       dedupe_marker: "SPDX-License-Identifier:"
+
   # Citation Validator - validate links (after HTML conversion)
   - name: "CitationValidator"
     kind: "plugins.citation_validator.citation_validator.CitationValidatorPlugin"
@@ -731,6 +732,7 @@ plugins:
       block_on_all_fail: false
       block_on_any_fail: false
       user_agent: "MCP-Context-Forge/1.0 CitationValidator"
+
   # Vault Plugin - Generates bearer tokens from vault-saved tokens
   - name: "VaultPlugin"
     kind: "plugins.vault.vault_plugin.Vault"
