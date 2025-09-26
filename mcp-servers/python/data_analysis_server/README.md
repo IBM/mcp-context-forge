@@ -1,6 +1,6 @@
 # MCP Data Analysis Server
 
-> Author: Mihai Criveti
+> Author: Vipul Mahajan
 
 A comprehensive Model Context Protocol (MCP) server providing advanced data analysis, statistical testing, visualization, and transformation capabilities. This server enables AI applications to perform sophisticated data science workflows through a standardized interface.
 
