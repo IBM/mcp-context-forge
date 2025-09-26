@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, IGNORE_CONFIG_EXTERNAL, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT
+from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, IGNORE_CONFIG_EXTERNAL, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT, SHELL
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.models import (
     HookType,
@@ -111,14 +111,24 @@ class ExternalPlugin(Plugin):
         Raises:
             PluginError: if stdio script is not a python script or if there is a connection error.
         """
-        is_python = server_script_path.endswith(PYTHON_SUFFIX) if server_script_path else False
-        if not is_python:
-            raise PluginError(error=PluginErrorModel(message="Server script must be a .py file", plugin_name=self.name))
+        # Ensure a script path was provided and determine its type.
+        if not server_script_path:
+            raise PluginError(error=PluginErrorModel(message="Server script path must be provided for STDIO transport", plugin_name=self.name))
+
+        # Allow both python and shell scripts. Use appropriate command based on suffix.
+        is_python = server_script_path.endswith(PYTHON_SUFFIX)
+        is_shell = server_script_path.endswith(".sh")
+        if not (is_python or is_shell):
+            raise PluginError(error=PluginErrorModel(message="Server script must be a .py or .sh file", plugin_name=self.name))
 
         current_env = os.environ.copy()
 
         try:
-            server_params = StdioServerParameters(command=PYTHON, args=[server_script_path], env=current_env)
+            if is_python:
+                server_params = StdioServerParameters(command=PYTHON, args=[server_script_path], env=current_env)
+            else:
+                # run shell scripts with configured shell (POSIX sh)
+                server_params = StdioServerParameters(command=SHELL, args=[server_script_path], env=current_env)
 
             stdio_transport = await self._exit_stack.enter_async_context(stdio_client(server_params))
             self._stdio, self._write = stdio_transport
@@ -134,7 +144,7 @@ class ExternalPlugin(Plugin):
             logger.exception(e)
             raise PluginError(error=convert_exception_to_error(e, plugin_name=self.name))
 
-    async def __connect_to_http_server(self, uri: str) -> None:
+    async def __connect_to_http_server(self, uri: Optional[str]) -> None:
         """Connect to an MCP plugin server via streamable http.
 
         Args:
@@ -143,6 +153,9 @@ class ExternalPlugin(Plugin):
         Raises:
             PluginError: if there is an external connection error.
         """
+
+        if not uri:
+            raise PluginError(error=PluginErrorModel(message="MCP http URI must be provided for HTTP transports", plugin_name=self.name))
 
         try:
             http_transport = await self._exit_stack.enter_async_context(streamablehttp_client(uri))

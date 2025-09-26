@@ -20,6 +20,7 @@ AFTER = "after"
 
 NAME = "name"
 PYTHON = "python"
+SHELL = "sh"
 PLUGIN_NAME = "plugin_name"
 PAYLOAD = "payload"
 CONTEXT = "context"
