@@ -819,9 +819,12 @@ class ToolService:
 
         if not is_reachable:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-
+        logger.info(f"integration_type####{tool.integration_type}")
         # Check if this is an A2A tool and route to A2A service
         if tool.integration_type == "A2A" and tool.annotations and "a2a_agent_id" in tool.annotations:
+            logger.info(f"I am here Routing to A2A service for tool:")
+            logger.info(tool)
+            logger.info(f"with arguments: {arguments}")
             return await self._invoke_a2a_tool(db, tool, arguments)
 
         # Plugin hook: tool pre-invoke
