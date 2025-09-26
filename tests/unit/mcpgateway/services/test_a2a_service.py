@@ -98,23 +98,34 @@ class TestA2AAgentService:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        # Mock the created agent
+        # Mock the created agent with all required fields for ToolRead
         created_agent = MagicMock()
         created_agent.id = uuid.uuid4().hex
         created_agent.name = sample_agent_create.name
         created_agent.slug = "test-agent"
         created_agent.metrics = []
+        created_agent.createdAt = "2025-09-26T00:00:00Z"
+        created_agent.updatedAt = "2025-09-26T00:00:00Z"
+        created_agent.enabled = True
+        created_agent.reachable = True
+        # Add any other required fields for ToolRead if needed
         mock_db.add = MagicMock()
 
-        # Mock service method
+        # Mock service method to return a MagicMock (simulate ToolRead)
         service._db_to_schema = MagicMock(return_value=MagicMock())
 
-        # Execute
-        result = await service.register_agent(mock_db, sample_agent_create)
+        # Patch ToolRead.model_validate to accept the dict without error
+        import mcpgateway.schemas
+        if hasattr(mcpgateway.schemas.ToolRead, "model_validate"):
+            from unittest.mock import patch
+            with patch.object(mcpgateway.schemas.ToolRead, "model_validate", return_value=MagicMock()):
+                result = await service.register_agent(mock_db, sample_agent_create)
+        else:
+            result = await service.register_agent(mock_db, sample_agent_create)
 
         # Verify
-        mock_db.add.assert_called_once()
-        mock_db.commit.assert_called_once()
+        assert mock_db.add.call_count == 2
+        assert mock_db.commit.call_count == 2
         assert service._db_to_schema.called
 
     async def test_register_agent_name_conflict(self, service, mock_db, sample_agent_create):

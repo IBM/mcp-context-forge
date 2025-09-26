@@ -60,6 +60,7 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+
 # Local
 from ..config import extract_using_jq
 
@@ -1537,7 +1538,7 @@ class ToolService:
         Raises:
             ToolNotFoundError: If the A2A agent is not found.
         """
-        
+
         # Extract A2A agent ID from tool annotations
         agent_id = tool.annotations.get("a2a_agent_id")
         if not agent_id:
@@ -1554,7 +1555,7 @@ class ToolService:
             raise ToolNotFoundError(f"A2A agent '{agent.name}' is disabled")
 
         # Prepare parameters for A2A invocation
-        
+
         start_time = time.time()
         success = False
         error_message = None
@@ -1600,7 +1601,6 @@ class ToolService:
         Args:
             agent: The A2A agent to call.
             parameters: Parameters for the interaction.
-            interaction_type: Type of interaction.
 
         Returns:
             Response from the A2A agent.
@@ -1612,25 +1612,10 @@ class ToolService:
         # Patch: Build correct JSON-RPC params structure from flat UI input
         params = None
         # If UI sends flat fields, convert to nested message structure
-        if (
-            isinstance(parameters, dict)
-            and "parameters" in parameters and "interaction_type" in parameters
-            and isinstance(parameters["interaction_type"], str)
-        ):
+        if isinstance(parameters, dict) and "parameters" in parameters and "interaction_type" in parameters and isinstance(parameters["interaction_type"], str):
             # Build the nested message object
             message_id = f"admin-test-{int(time.time())}"
-            params = {
-                "message": {
-                    "messageId": message_id,
-                    "role": "user",
-                    "parts": [
-                        {
-                            "type": "text",
-                            "text": parameters["interaction_type"]
-                        }
-                    ]
-                }
-            }
+            params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["interaction_type"]}]}}
             method = parameters.get("parameters", "message/send")
         else:
             # Already in correct format or unknown, pass through
