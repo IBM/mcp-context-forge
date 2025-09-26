@@ -819,13 +819,9 @@ class ToolService:
 
         if not is_reachable:
             raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-        logger.info(f"integration_type####{tool.integration_type}")
         # Check if this is an A2A tool and route to A2A service
         if tool.integration_type == "A2A" and tool.annotations and "a2a_agent_id" in tool.annotations:
-            logger.info(f"I am here Routing to A2A service for tool:")
-            logger.info(tool)
-            logger.info(f"with arguments: {arguments}")
-            return await self._invoke_a2a_tool(db, tool, arguments)
+            return await self._invoke_a2a_tool(db=db, tool=tool, arguments=arguments)
 
         # Plugin hook: tool pre-invoke
         context_table = None
@@ -1541,7 +1537,6 @@ class ToolService:
         Raises:
             ToolNotFoundError: If the A2A agent is not found.
         """
-        logger.info(f"Invoking A2A agent '{agent.name}' at {agent.endpoint_url} with parameters: {parameters} and interaction_type: {interaction_type}")
         
         # Extract A2A agent ID from tool annotations
         agent_id = tool.annotations.get("a2a_agent_id")
@@ -1559,16 +1554,14 @@ class ToolService:
             raise ToolNotFoundError(f"A2A agent '{agent.name}' is disabled")
 
         # Prepare parameters for A2A invocation
-        parameters = arguments.get("parameters", arguments)
-        interaction_type = arguments.get("interaction_type", "query")
-
+        
         start_time = time.time()
         success = False
         error_message = None
 
         try:
             # Make the A2A agent call
-            response_data = await self._call_a2a_agent(agent, parameters, interaction_type)
+            response_data = await self._call_a2a_agent(agent, arguments)
             success = True
 
             # Convert A2A response to MCP ToolResult format
@@ -1601,7 +1594,7 @@ class ToolService:
 
         return result
 
-    async def _call_a2a_agent(self, agent: DbA2AAgent, parameters: Dict[str, Any], interaction_type: str = "query") -> Dict[str, Any]:
+    async def _call_a2a_agent(self, agent: DbA2AAgent, parameters: Dict[str, Any]):
         """Call an A2A agent directly.
 
         Args:
@@ -1615,15 +1608,46 @@ class ToolService:
         Raises:
             Exception: If the call fails.
         """
-        logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with parameters: {parameters} and interaction_type: {interaction_type}") 
-        # Format request based on agent type and endpoint
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # Use JSONRPC format for agents that expect it
-            request_data = {"jsonrpc": "2.0", "method": parameters.get("method", "message/send"), "params": parameters.get("params", parameters), "id": 1}
+        logger.info(f"Calling A2A agent '{agent.name}' at {agent.endpoint_url} with arguments: {parameters}")
+        # Patch: Build correct JSON-RPC params structure from flat UI input
+        params = None
+        # If UI sends flat fields, convert to nested message structure
+        if (
+            isinstance(parameters, dict)
+            and "parameters" in parameters and "interaction_type" in parameters
+            and isinstance(parameters["interaction_type"], str)
+        ):
+            # Build the nested message object
+            message_id = f"admin-test-{int(time.time())}"
+            params = {
+                "message": {
+                    "messageId": message_id,
+                    "role": "user",
+                    "parts": [
+                        {
+                            "type": "text",
+                            "text": parameters["interaction_type"]
+                        }
+                    ]
+                }
+            }
+            method = parameters.get("parameters", "message/send")
         else:
-            # Use custom A2A format
-            request_data = {"interaction_type": interaction_type, "parameters": parameters, "protocol_version": agent.protocol_version}
+            # Already in correct format or unknown, pass through
+            params = parameters.get("params", parameters)
+            method = parameters.get("method", "message/send")
 
+        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
+            try:
+                request_data = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
+                logger.info(f"invoke tool JSONRPC request_data prepared: {request_data}")
+            except Exception as e:
+                logger.error(f"Error preparing JSONRPC request data: {e}")
+                raise
+        else:
+            logger.info(f"invoke tool Using custom A2A format for A2A agent '{parameters}'")
+            request_data = {"interaction_type": parameters.get("interaction_type", "query"), "parameters": params, "protocol_version": agent.protocol_version}
+        logger.info(f"invoke tool request_data prepared: {request_data}")
         # Make HTTP request to the agent endpoint
         async with httpx.AsyncClient(timeout=30.0) as client:
             headers = {"Content-Type": "application/json"}
