@@ -29,6 +29,19 @@ Environment variables:
 - PROMPT_CACHE_SIZE: Max cached prompts (default: 100)
 - HEALTH_CHECK_INTERVAL: Gateway health check interval (default: 60)
 
+
+Session Pooling (SSE/WS):
+- SESSION_POOLING_ENABLED: Enable session pooling for SSE/WS (default: false)
+- SESSION_POOLING_SERVERS: Comma-separated list of server IDs for which pooling is enabled (overrides global)
+- SESSION_POOL_MAX_IDLE: Max idle time (seconds) before pooled session is evicted (default: 600)
+- SESSION_POOL_USER_LIMIT: Max pooled sessions per user (default: 10)
+
+Example .env:
+# SESSION_POOLING_ENABLED=true
+# SESSION_POOLING_SERVERS=server1,server2
+# SESSION_POOL_MAX_IDLE=600
+# SESSION_POOL_USER_LIMIT=10
+
 Examples:
     >>> from mcpgateway.config import Settings
     >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')
@@ -791,6 +804,23 @@ class Settings(BaseSettings):
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+
+    # Session Pooling (SSE/WS)
+    session_pooling_enabled: bool = False  # Enable session pooling for SSE/WS transports
+    session_pooling_servers: list[str] = Field(default_factory=list, description="Server IDs for which pooling is enabled (overrides global)")
+    session_pool_max_idle: int = 600  # Max idle time (seconds) before session is evicted
+    session_pool_user_limit: int = 10  # Max pooled sessions per user
+
+    # # Observability: session pool metrics will be exposed if enabled
+    # session_pool_metrics_enabled: bool = True
+    # session_pool_eviction_interval: int = 60  # Interval (seconds) to check for idle sessions to evict
+    # session_pool_cleanup_interval: int = 300  # Interval (seconds) to clean up closed sessions 
+    # session_pool_max_size: int = 1000  # Max number of pooled sessions in memory
+    # session_pool_check_interval: int = 30  # Interval (seconds) to check session health
+    # session_pool_eviction_batch_size: int = 50  # Number of sessions to evict in each eviction run
+    # session_pool_warning_threshold: int = 800  # Threshold to log warnings about high pool usage
+    # session_pool_error_threshold: int = 900  # Threshold to log errors about critical pool usage
+    # session_pool_stats_interval: int = 60  # Interval (seconds) to log session pool statistics
 
     # Core plugin settings
     plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")

@@ -6,3 +6,4 @@ nav:
   - ui-concepts.md
   - passthrough.md
   - tags.md
+  - session_pooling.md
