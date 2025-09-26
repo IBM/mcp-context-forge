@@ -43,6 +43,7 @@ addons:
 
 # Display Python version & prep environment
 before_install:
+  - export DEBIAN_FRONTEND=noninteractive TZ=UTC     # prevent interactive prompts
   - echo "🔧 Python version -> $(python3 --version)"  # should be 3.12.x
   - make venv install install-dev                    # installs deps
   - source ~/.venv/mcpgateway/bin/activate
