@@ -45,12 +45,20 @@ def upgrade() -> None:
 
     # Insert one audit entry for each existing team member
     bind = op.get_bind()
+
+    # Use database-agnostic query for boolean columns
+    # PostgreSQL uses TRUE/FALSE, MySQL and SQLite use 1/0
+    if bind.dialect.name == 'postgresql':
+        where_clause = "WHERE is_active = TRUE"
+    else:
+        where_clause = "WHERE is_active = 1"
+
     result = bind.execute(
         sa.text(
-            """
+            f"""
         SELECT id, team_id, user_email, role
         FROM email_team_members
-        WHERE is_active = TRUE OR is_active = 1
+        {where_clause}
     """
         )
     )
