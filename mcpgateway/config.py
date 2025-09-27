@@ -379,8 +379,11 @@ class Settings(BaseSettings):
         if v == "changeme":  # nosec B105 - checking for default value
             logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
 
-        if len(v) < 8:  # Using hardcoded value
-            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least 8 characters long. Current length: {len(v)}")
+        # Note: We can't access password_min_length here as it's not set yet during validation
+        # Using default value of 8 to match the field default
+        min_length = 8  # This matches the default in password_min_length field
+        if len(v) < min_length:
+            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least {min_length} characters long. Current length: {len(v)}")
 
         # Check password complexity
         has_upper = any(c.isupper() for c in v)

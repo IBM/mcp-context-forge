@@ -56,8 +56,9 @@ def get_security_warnings(settings: Settings) -> list[str]:
     pw = settings.platform_admin_password
     if not pw or pw.lower() in ("changeme", "admin", "password"):
         warnings.append("Default admin password detected! Please change PLATFORM_ADMIN_PASSWORD immediately.")
-    if len(pw) < 8:
-        warnings.append(f"Admin password should be at least 8 characters long. Current length: {len(pw)}")
+    min_length = settings.password_min_length
+    if len(pw) < min_length:
+        warnings.append(f"Admin password should be at least {min_length} characters long. Current length: {len(pw)}")
     complexity_count = sum([any(c.isupper() for c in pw), any(c.islower() for c in pw), any(c.isdigit() for c in pw), any(c in string.punctuation for c in pw)])
     if complexity_count < 3:
         warnings.append("Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
@@ -66,8 +67,9 @@ def get_security_warnings(settings: Settings) -> list[str]:
     basic_pw = settings.basic_auth_password
     if not basic_pw or basic_pw.lower() in ("changeme", "password"):
         warnings.append("Default BASIC_AUTH_PASSWORD detected! Please change it immediately.")
-    if len(basic_pw) < 8:
-        warnings.append(f"BASIC_AUTH_PASSWORD should be at least 8 characters long. Current length: {len(basic_pw)}")
+    min_length = settings.password_min_length
+    if len(basic_pw) < min_length:
+        warnings.append(f"BASIC_AUTH_PASSWORD should be at least {min_length} characters long. Current length: {len(basic_pw)}")
     complexity_count = sum([any(c.isupper() for c in basic_pw), any(c.islower() for c in basic_pw), any(c.isdigit() for c in basic_pw), any(c in string.punctuation for c in basic_pw)])
     if complexity_count < 3:
         warnings.append("BASIC_AUTH_PASSWORD has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
