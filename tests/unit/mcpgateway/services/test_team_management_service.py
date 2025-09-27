@@ -440,8 +440,8 @@ class TestTeamManagementService:
             )
 
             assert result is True
-            mock_db.add.assert_called_once()
-            mock_db.commit.assert_called_once()
+            assert mock_db.add.call_count == 2
+            assert mock_db.commit.call_count == 2  # One for membership, one for history
 
     @pytest.mark.asyncio
     async def test_add_member_invalid_role(self, service):
@@ -549,7 +549,7 @@ class TestTeamManagementService:
 
             assert result is True
             assert mock_membership.is_active is False
-            mock_db.commit.assert_called_once()
+            assert mock_db.commit.call_count == 2  # One for soft delete, one for history
 
     @pytest.mark.asyncio
     async def test_remove_last_owner_rejected(self, service, mock_team, mock_membership, mock_db):
@@ -601,7 +601,7 @@ class TestTeamManagementService:
 
             assert result is True
             assert mock_membership.role == "member"
-            mock_db.commit.assert_called_once()
+            assert mock_db.commit.call_count == 2  # One for role update, one for history
 
     @pytest.mark.asyncio
     async def test_update_member_role_invalid_role(self, service):
