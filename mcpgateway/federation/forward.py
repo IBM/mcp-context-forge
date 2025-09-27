@@ -56,10 +56,11 @@ class ForwardingError(Exception):
     including network errors, gateway unavailability, or invalid responses.
 
     Examples:
-        >>> raise ForwardingError("Gateway timeout")
-        Traceback (most recent call last):
-            ...
-        forward.ForwardingError: Gateway timeout
+        >>> try:
+        ...     raise ForwardingError("Gateway timeout")
+        ... except ForwardingError as e:
+        ...     print(f"Error: {e}")
+        Error: Gateway timeout
 
         >>> try:
         ...     raise ForwardingError("Invalid response format")
