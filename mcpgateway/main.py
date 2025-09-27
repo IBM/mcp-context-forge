@@ -303,12 +303,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
 
         if settings.enable_header_passthrough:
+            logger.info(f"🔄 Header Passthrough: ENABLED (default headers: {settings.default_passthrough_headers})")
+            if settings.enable_overwrite_base_headers:
+                logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
+            else:
+                logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
             db_gen = get_db()
             db = next(db_gen)  # pylint: disable=stop-iteration-return
             try:
                 await set_global_passthrough_headers(db)
             finally:
                 db.close()
+        else:
+            logger.info("🔒 Header Passthrough: DISABLED")
 
         await tool_service.initialize()
         await resource_service.initialize()

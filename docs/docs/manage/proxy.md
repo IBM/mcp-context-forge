@@ -375,6 +375,9 @@ When using proxy authentication, you often need to pass additional headers to do
 # Enable header passthrough
 ENABLE_HEADER_PASSTHROUGH=true
 
+# Optional: Enable overwriting of base headers (advanced usage)
+ENABLE_OVERWRITE_BASE_HEADERS=false
+
 # Headers to pass through (JSON array)
 DEFAULT_PASSTHROUGH_HEADERS='["X-Tenant-Id", "X-Request-Id", "X-Authenticated-User", "X-Groups"]'
 ```
