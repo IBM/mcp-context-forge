@@ -1015,6 +1015,8 @@ class TestGatewayService:
         )
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         # Mock new tools from gateway
         # First-Party
