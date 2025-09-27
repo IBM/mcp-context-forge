@@ -49,7 +49,7 @@ def _bypass_validation(monkeypatch):
 
 class TestGatewayServiceExtended:
     """Extended unit tests for GatewayService to improve coverage.
-    
+
     These tests focus on uncovered areas of the GatewayService implementation,
     including error handling, edge cases, and specific transport scenarios.
     Also includes comprehensive tests for helper methods.
@@ -614,15 +614,15 @@ class TestGatewayServiceExtended:
     async def test_update_or_create_tools_new_tools(self):
         """Test _update_or_create_tools creates new tools."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock database execute to return None (no existing tool found)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
@@ -634,7 +634,7 @@ class TestGatewayServiceExtended:
         mock_gateway.owner_email = "test@example.com"
         mock_gateway.visibility = "public"
         mock_gateway.tools = []  # Empty tools list
-        
+
         # Mock tools from MCP server
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"
@@ -644,13 +644,13 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {"type": "object"}
         mock_tool.annotations = {}
         mock_tool.jsonpath_filter = None
-        
+
         tools = [mock_tool]
         context = "test"
-        
+
         # Call the helper method
         result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
-        
+
         # Should return one new tool
         assert len(result) == 1
         new_tool = result[0]
@@ -666,10 +666,10 @@ class TestGatewayServiceExtended:
     async def test_update_or_create_tools_existing_tools(self):
         """Test _update_or_create_tools updates existing tools."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing tool in database
         existing_tool = MagicMock()
         existing_tool.original_name = "test_tool"
@@ -681,12 +681,12 @@ class TestGatewayServiceExtended:
         existing_tool.auth_type = "none"
         existing_tool.auth_value = ""
         existing_tool.visibility = "private"
-        
+
         # Mock database execute to return existing tool
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = existing_tool
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway with new values
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
@@ -696,7 +696,7 @@ class TestGatewayServiceExtended:
         mock_gateway.auth_value = "new-token"
         mock_gateway.visibility = "public"
         mock_gateway.tools = [existing_tool]
-        
+
         # Mock updated tool from MCP server
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"  # Same name as existing
@@ -706,16 +706,16 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {"type": "object"}
         mock_tool.annotations = {"updated": True}
         mock_tool.jsonpath_filter = "$.result"
-        
+
         tools = [mock_tool]
         context = "update"
-        
+
         # Call the helper method
         result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
-        
+
         # Should return empty list (no new tools, existing one updated)
         assert len(result) == 0
-        
+
         # Existing tool should be updated
         assert existing_tool.description == "Updated description"
         assert existing_tool.request_type == "POST"
@@ -731,15 +731,15 @@ class TestGatewayServiceExtended:
     async def test_update_or_create_resources_new_resources(self):
         """Test _update_or_create_resources creates new resources."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock database execute to return None (no existing resource found)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
@@ -748,7 +748,7 @@ class TestGatewayServiceExtended:
         mock_gateway.owner_email = "test@example.com"
         mock_gateway.visibility = "team"
         mock_gateway.resources = []  # Empty resources list
-        
+
         # Mock resource from MCP server
         mock_resource = MagicMock()
         mock_resource.uri = "file:///test.txt"
@@ -756,13 +756,13 @@ class TestGatewayServiceExtended:
         mock_resource.description = "A test resource"
         mock_resource.mime_type = "text/plain"
         mock_resource.template = None
-        
+
         resources = [mock_resource]
         context = "test"
-        
+
         # Call the helper method
         result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
-        
+
         # Should return one new resource
         assert len(result) == 1
         new_resource = result[0]
@@ -777,10 +777,10 @@ class TestGatewayServiceExtended:
     async def test_update_or_create_resources_existing_resources(self):
         """Test _update_or_create_resources updates existing resources."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing resource in database
         existing_resource = MagicMock()
         existing_resource.uri = "file:///test.txt"
@@ -789,18 +789,18 @@ class TestGatewayServiceExtended:
         existing_resource.mime_type = "text/plain"
         existing_resource.template = None
         existing_resource.visibility = "private"
-        
+
         # Mock database execute to return existing resource
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = existing_resource
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway with new values
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
         mock_gateway.visibility = "public"
         mock_gateway.resources = [existing_resource]
-        
+
         # Mock updated resource from MCP server
         mock_resource = MagicMock()
         mock_resource.uri = "file:///test.txt"  # Same URI as existing
@@ -808,16 +808,16 @@ class TestGatewayServiceExtended:
         mock_resource.description = "Updated description"
         mock_resource.mime_type = "application/json"
         mock_resource.template = "template_content"
-        
+
         resources = [mock_resource]
         context = "update"
-        
+
         # Call the helper method
         result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
-        
+
         # Should return empty list (no new resources, existing one updated)
         assert len(result) == 0
-        
+
         # Existing resource should be updated
         assert existing_resource.description == "Updated description"
         assert existing_resource.mime_type == "application/json"
@@ -828,15 +828,15 @@ class TestGatewayServiceExtended:
     async def test_update_or_create_prompts_new_prompts(self):
         """Test _update_or_create_prompts creates new prompts."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock database execute to return None (no existing prompt found)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
@@ -845,19 +845,19 @@ class TestGatewayServiceExtended:
         mock_gateway.owner_email = "admin@example.com"
         mock_gateway.visibility = "private"
         mock_gateway.prompts = []  # Empty prompts list
-        
+
         # Mock prompt from MCP server
         mock_prompt = MagicMock()
         mock_prompt.name = "test_prompt"
         mock_prompt.description = "A test prompt"
         mock_prompt.template = "Hello {name}!"
-        
+
         prompts = [mock_prompt]
         context = "test"
-        
+
         # Call the helper method
         result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context)
-        
+
         # Should return one new prompt
         assert len(result) == 1
         new_prompt = result[0]
@@ -872,43 +872,43 @@ class TestGatewayServiceExtended:
     async def test_update_or_create_prompts_existing_prompts(self):
         """Test _update_or_create_prompts updates existing prompts."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing prompt in database
         existing_prompt = MagicMock()
         existing_prompt.name = "test_prompt"
         existing_prompt.description = "Old description"
         existing_prompt.template = "Old template"
         existing_prompt.visibility = "private"
-        
+
         # Mock database execute to return existing prompt
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = existing_prompt
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway with new values
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
         mock_gateway.visibility = "public"
         mock_gateway.prompts = [existing_prompt]
-        
+
         # Mock updated prompt from MCP server
         mock_prompt = MagicMock()
         mock_prompt.name = "test_prompt"  # Same name as existing
         mock_prompt.description = "Updated description"
         mock_prompt.template = "Updated template {var}"
-        
+
         prompts = [mock_prompt]
         context = "update"
-        
+
         # Call the helper method
         result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context)
-        
+
         # Should return empty list (no new prompts, existing one updated)
         assert len(result) == 0
-        
+
         # Existing prompt should be updated
         assert existing_prompt.description == "Updated description"
         assert existing_prompt.template == "Updated template {var}"
@@ -918,10 +918,10 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_mixed_operations(self):
         """Test helper methods with mixed new and existing items."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing tools in database
         existing_tool1 = MagicMock()
         existing_tool1.original_name = "existing_tool"
@@ -934,7 +934,7 @@ class TestGatewayServiceExtended:
         existing_tool1.headers = {}
         existing_tool1.input_schema = {}
         existing_tool1.jsonpath_filter = None
-        
+
         existing_tool2 = MagicMock()
         existing_tool2.original_name = "update_tool"
         existing_tool2.description = "Old description"
@@ -946,7 +946,7 @@ class TestGatewayServiceExtended:
         existing_tool2.headers = {}
         existing_tool2.input_schema = {}
         existing_tool2.jsonpath_filter = None
-        
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
@@ -957,17 +957,17 @@ class TestGatewayServiceExtended:
         mock_gateway.team_id = "test-team"
         mock_gateway.owner_email = "test@example.com"
         mock_gateway.visibility = "public"
-        
+
         # Create multiple mock execute calls - one for each tool lookup
         mock_db.execute.side_effect = [
             # First call for new_tool (not found)
             MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
             # Second call for update_tool (found)
             MagicMock(scalar_one_or_none=MagicMock(return_value=existing_tool2)),
-            # Third call for existing_tool (found)  
+            # Third call for existing_tool (found)
             MagicMock(scalar_one_or_none=MagicMock(return_value=existing_tool1)),
         ]
-        
+
         # Mock tools from MCP server: one new, one update, one existing unchanged
         new_tool = MagicMock()
         new_tool.name = "new_tool"
@@ -977,7 +977,7 @@ class TestGatewayServiceExtended:
         new_tool.input_schema = {}
         new_tool.annotations = {}
         new_tool.jsonpath_filter = None
-        
+
         update_tool = MagicMock()
         update_tool.name = "update_tool"  # Matches existing_tool2
         update_tool.description = "Updated description"
@@ -986,7 +986,7 @@ class TestGatewayServiceExtended:
         update_tool.input_schema = {}
         update_tool.annotations = {}
         update_tool.jsonpath_filter = None
-        
+
         existing_unchanged = MagicMock()
         existing_unchanged.name = "existing_tool"  # Matches existing_tool1
         existing_unchanged.description = "Original description"  # Same as existing
@@ -995,17 +995,17 @@ class TestGatewayServiceExtended:
         existing_unchanged.input_schema = {}
         existing_unchanged.annotations = {}
         existing_unchanged.jsonpath_filter = None
-        
+
         tools = [new_tool, update_tool, existing_unchanged]
         context = "mixed_test"
-        
+
         # Call the helper method
         result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
-        
+
         # Should return one new tool (new_tool)
         assert len(result) == 1
         assert result[0].original_name == "new_tool"
-        
+
         # existing_tool2 should be updated (some fields will change due to gateway changes)
         assert existing_tool2.description == "Updated description"
         assert existing_tool2.url == "http://new.com"  # Updated from gateway
@@ -1016,19 +1016,19 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_empty_input_lists(self):
         """Test helper methods with empty input lists."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
-        
+
         # Test with empty lists - no database calls should be made for empty inputs
         tools_result = service._update_or_create_tools(mock_db, [], mock_gateway, "empty_test")
         resources_result = service._update_or_create_resources(mock_db, [], mock_gateway, "empty_test")
         prompts_result = service._update_or_create_prompts(mock_db, [], mock_gateway, "empty_test")
-        
+
         # All should return empty lists
         assert tools_result == []
         assert resources_result == []
@@ -1038,15 +1038,15 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_with_metadata_inheritance(self):
         """Test that helper methods properly inherit metadata from gateway."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock database execute to return None (no existing items found)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway with specific metadata
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
@@ -1057,7 +1057,7 @@ class TestGatewayServiceExtended:
         mock_gateway.team_id = "engineering-team"
         mock_gateway.owner_email = "engineering@company.com"
         mock_gateway.visibility = "team"
-        
+
         # Mock items from MCP server
         mock_tool = MagicMock()
         mock_tool.name = "metadata_tool"
@@ -1067,24 +1067,24 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {}
         mock_tool.annotations = {}
         mock_tool.jsonpath_filter = None
-        
+
         mock_resource = MagicMock()
         mock_resource.uri = "file:///metadata_test.json"
         mock_resource.name = "metadata_test.json"
         mock_resource.description = "Resource for testing metadata"
         mock_resource.mime_type = "application/json"
         mock_resource.template = None
-        
+
         mock_prompt = MagicMock()
         mock_prompt.name = "metadata_prompt"
         mock_prompt.description = "Prompt for testing metadata"
         mock_prompt.template = "Test prompt template"
-        
+
         # Call helper methods
         tools_result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "metadata_test")
         resources_result = service._update_or_create_resources(mock_db, [mock_resource], mock_gateway, "metadata_test")
         prompts_result = service._update_or_create_prompts(mock_db, [mock_prompt], mock_gateway, "metadata_test")
-        
+
         # Verify metadata inheritance for tools
         assert len(tools_result) == 1
         tool = tools_result[0]
@@ -1094,13 +1094,13 @@ class TestGatewayServiceExtended:
         assert tool.federation_source == "Metadata Gateway"
         assert tool.created_via == "metadata_test"
         assert tool.integration_type == "MCP"
-        
+
         # Verify metadata inheritance for resources
         assert len(resources_result) == 1
         resource = resources_result[0]
         assert resource.created_via == "metadata_test"
         assert resource.visibility == "team"
-        
+
         # Verify metadata inheritance for prompts
         assert len(prompts_result) == 1
         prompt = prompts_result[0]
@@ -1112,15 +1112,15 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_context_propagation(self):
         """Test that helper methods properly use the context parameter."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock database execute to return None (no existing tools found)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
-        
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "context-gateway-id"
@@ -1129,7 +1129,7 @@ class TestGatewayServiceExtended:
         mock_gateway.auth_type = "none"
         mock_gateway.auth_value = ""
         mock_gateway.visibility = "public"
-        
+
         # Mock items from MCP server
         mock_tool = MagicMock()
         mock_tool.name = "context_tool"
@@ -1139,13 +1139,13 @@ class TestGatewayServiceExtended:
         mock_tool.input_schema = {}
         mock_tool.annotations = {}
         mock_tool.jsonpath_filter = None
-        
+
         # Test different contexts
         contexts = ["oauth", "update", "rediscovery", "test"]
-        
+
         for context in contexts:
             tools_result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, context)
-            
+
             # Verify the context is used in created_via field
             assert len(tools_result) == 1
             assert tools_result[0].original_name == "context_tool"
@@ -1155,10 +1155,10 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_tool_removal_scenario(self):
         """Test helper methods when some tools are removed from MCP server."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing tools in database
         existing_tool1 = MagicMock()
         existing_tool1.original_name = "tool_to_keep"
@@ -1171,7 +1171,7 @@ class TestGatewayServiceExtended:
         existing_tool1.headers = {}
         existing_tool1.input_schema = {}
         existing_tool1.jsonpath_filter = None
-        
+
         existing_tool3 = MagicMock()
         existing_tool3.original_name = "tool_to_update"
         existing_tool3.description = "Old description"
@@ -1183,7 +1183,7 @@ class TestGatewayServiceExtended:
         existing_tool3.headers = {}
         existing_tool3.input_schema = {}
         existing_tool3.jsonpath_filter = None
-        
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
@@ -1194,7 +1194,7 @@ class TestGatewayServiceExtended:
         mock_gateway.team_id = "test-team"
         mock_gateway.owner_email = "test@example.com"
         mock_gateway.visibility = "public"
-        
+
         # Create multiple mock execute calls - one for each tool lookup
         mock_db.execute.side_effect = [
             # First call for tool_to_keep (found)
@@ -1202,7 +1202,7 @@ class TestGatewayServiceExtended:
             # Second call for tool_to_update (found)
             MagicMock(scalar_one_or_none=MagicMock(return_value=existing_tool3)),
         ]
-        
+
         # Mock tools from MCP server (only 2 tools - one removed, one updated, one unchanged)
         keep_tool = MagicMock()
         keep_tool.name = "tool_to_keep"
@@ -1212,7 +1212,7 @@ class TestGatewayServiceExtended:
         keep_tool.input_schema = {}
         keep_tool.annotations = {}
         keep_tool.jsonpath_filter = None
-        
+
         update_tool = MagicMock()
         update_tool.name = "tool_to_update"
         update_tool.description = "Updated description"
@@ -1221,26 +1221,26 @@ class TestGatewayServiceExtended:
         update_tool.input_schema = {}
         update_tool.annotations = {}
         update_tool.jsonpath_filter = None
-        
+
         # Note: tool_to_remove is NOT in the MCP server response
         tools = [keep_tool, update_tool]
         context = "removal_test"
-        
+
         # Call the helper method
         result = service._update_or_create_tools(mock_db, tools, mock_gateway, context)
-        
+
         # Should return empty list (no new tools)
         assert len(result) == 0
-        
+
         # existing_tool1 should be updated with gateway values (even if description stays the same)
         assert existing_tool1.url == "http://new.com"  # Updated from gateway
         assert existing_tool1.auth_type == "bearer"    # Updated from gateway
         assert existing_tool1.visibility == "public"   # Updated from gateway
-        
+
         # existing_tool3 should be updated
         assert existing_tool3.description == "Updated description"
         assert existing_tool3.url == "http://new.com"  # Updated from gateway
-        
+
         # Note: The actual removal of missing tools happens in the calling methods
         # This test verifies that helper methods correctly handle existing tools
 
@@ -1248,10 +1248,10 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_resource_removal_scenario(self):
         """Test helper methods when some resources are removed from MCP server."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing resources in database
         existing_resource1 = MagicMock()
         existing_resource1.uri = "file:///keep.txt"
@@ -1260,7 +1260,7 @@ class TestGatewayServiceExtended:
         existing_resource1.mime_type = "text/plain"
         existing_resource1.template = None
         existing_resource1.visibility = "private"
-        
+
         existing_resource3 = MagicMock()
         existing_resource3.uri = "file:///update.txt"
         existing_resource3.name = "update.txt"
@@ -1268,13 +1268,13 @@ class TestGatewayServiceExtended:
         existing_resource3.mime_type = "text/plain"
         existing_resource3.template = None
         existing_resource3.visibility = "private"
-        
+
         # Mock gateway with new values
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
         mock_gateway.name = "test-gateway"
         mock_gateway.visibility = "public"
-        
+
         # Create multiple mock execute calls - one for each resource lookup
         mock_db.execute.side_effect = [
             # First call for keep.txt (found)
@@ -1282,7 +1282,7 @@ class TestGatewayServiceExtended:
             # Second call for update.txt (found)
             MagicMock(scalar_one_or_none=MagicMock(return_value=existing_resource3)),
         ]
-        
+
         # Mock resources from MCP server (only 2 resources - one removed)
         keep_resource = MagicMock()
         keep_resource.uri = "file:///keep.txt"
@@ -1290,28 +1290,28 @@ class TestGatewayServiceExtended:
         keep_resource.description = "Keep this resource"
         keep_resource.mime_type = "text/plain"
         keep_resource.template = None
-        
+
         update_resource = MagicMock()
         update_resource.uri = "file:///update.txt"
         update_resource.name = "update.txt"
         update_resource.description = "Updated description"
         update_resource.mime_type = "application/json"
         update_resource.template = "new template"
-        
+
         # Note: file:///remove.txt is NOT in the MCP server response
         resources = [keep_resource, update_resource]
         context = "removal_test"
-        
+
         # Call the helper method
         result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
-        
+
         # Should return empty list (no new resources)
         assert len(result) == 0
-        
+
         # existing_resource1 should be updated with gateway values
         assert existing_resource1.description == "Keep this resource"
         assert existing_resource1.visibility == "public"  # Updated from gateway
-        
+
         # existing_resource3 should be updated
         assert existing_resource3.description == "Updated description"
         assert existing_resource3.mime_type == "application/json"
@@ -1322,29 +1322,29 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_prompt_removal_scenario(self):
         """Test helper methods when some prompts are removed from MCP server."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing prompts in database
         existing_prompt1 = MagicMock()
         existing_prompt1.name = "keep_prompt"
         existing_prompt1.description = "Keep this prompt"
         existing_prompt1.template = "Keep template"
         existing_prompt1.visibility = "private"
-        
+
         existing_prompt3 = MagicMock()
         existing_prompt3.name = "update_prompt"
         existing_prompt3.description = "Old description"
         existing_prompt3.template = "Old template"
         existing_prompt3.visibility = "private"
-        
+
         # Mock gateway with new values
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
         mock_gateway.name = "test-gateway"
         mock_gateway.visibility = "public"
-        
+
         # Create multiple mock execute calls - one for each prompt lookup
         mock_db.execute.side_effect = [
             # First call for keep_prompt (found)
@@ -1352,33 +1352,33 @@ class TestGatewayServiceExtended:
             # Second call for update_prompt (found)
             MagicMock(scalar_one_or_none=MagicMock(return_value=existing_prompt3)),
         ]
-        
+
         # Mock prompts from MCP server (only 2 prompts - one removed)
         keep_prompt = MagicMock()
         keep_prompt.name = "keep_prompt"
         keep_prompt.description = "Keep this prompt"
         keep_prompt.template = "Keep template"
-        
+
         update_prompt = MagicMock()
         update_prompt.name = "update_prompt"
         update_prompt.description = "Updated description"
         update_prompt.template = "Updated template"
-        
+
         # Note: remove_prompt is NOT in the MCP server response
         prompts = [keep_prompt, update_prompt]
         context = "removal_test"
-        
+
         # Call the helper method
         result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context)
-        
+
         # Should return empty list (no new prompts)
         assert len(result) == 0
-        
+
         # existing_prompt1 should be updated with gateway values
         assert existing_prompt1.description == "Keep this prompt"
         assert existing_prompt1.template == "Keep template"
         assert existing_prompt1.visibility == "public"  # Updated from gateway
-        
+
         # existing_prompt3 should be updated
         assert existing_prompt3.description == "Updated description"
         assert existing_prompt3.template == "Updated template"
@@ -1388,49 +1388,49 @@ class TestGatewayServiceExtended:
     async def test_helper_methods_complete_removal_scenario(self):
         """Test helper methods when ALL items are removed from MCP server."""
         service = GatewayService()
-        
+
         # Mock database
         mock_db = MagicMock()
-        
+
         # Mock existing items in gateway
         existing_tool = MagicMock()
         existing_tool.original_name = "old_tool"
-        
+
         existing_resource = MagicMock()
         existing_resource.uri = "file:///old.txt"
-        
+
         existing_prompt = MagicMock()
         existing_prompt.name = "old_prompt"
-        
+
         # Mock gateway with existing items
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
         mock_gateway.tools = [existing_tool]
         mock_gateway.resources = [existing_resource]
         mock_gateway.prompts = [existing_prompt]
-        
+
         # Mock empty responses from MCP server
         empty_tools = []
         empty_resources = []
         empty_prompts = []
-        
+
         context = "complete_removal_test"
-        
+
         # Call helper methods with empty lists
         tools_result = service._update_or_create_tools(mock_db, empty_tools, mock_gateway, context)
         resources_result = service._update_or_create_resources(mock_db, empty_resources, mock_gateway, context)
         prompts_result = service._update_or_create_prompts(mock_db, empty_prompts, mock_gateway, context)
-        
+
         # All should return empty lists (no new items)
         assert tools_result == []
         assert resources_result == []
         assert prompts_result == []
-        
+
         # Verify that all existing items would be identified for removal
         tools_to_remove = [tool for tool in mock_gateway.tools if tool.original_name not in []]
         resources_to_remove = [resource for resource in mock_gateway.resources if resource.uri not in []]
         prompts_to_remove = [prompt for prompt in mock_gateway.prompts if prompt.name not in []]
-        
+
         assert len(tools_to_remove) == 1
         assert len(resources_to_remove) == 1
         assert len(prompts_to_remove) == 1

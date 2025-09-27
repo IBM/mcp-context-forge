@@ -523,11 +523,11 @@ class TestGatewayServiceOAuthComprehensive:
         # Mock database execute to return the gateway for initial query
         mock_gateway_result = MagicMock()
         mock_gateway_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
-        
+
         # Mock database execute for helper method queries (finding existing tools)
         mock_tool_result = MagicMock()
         mock_tool_result.scalar_one_or_none.return_value = None  # No existing tool found
-        
+
         # Set up side effect for multiple database calls
         test_db.execute.side_effect = [
             mock_gateway_result,  # First call to get gateway
@@ -545,7 +545,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_tool.name = "oauth_tool"
             mock_tool.description = "OAuth Tool"
             mock_tool.inputSchema = {}
-            
+
             gateway_service.connect_to_sse_server = AsyncMock(return_value=(
                 {"protocolVersion": "0.1.0"},  # capabilities
                 [mock_tool],  # tools
