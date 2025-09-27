@@ -1,5 +1,4 @@
 # plugins/config.yaml - Main plugin configuration file
-
 plugins:
   - name: "DenyListPlugin"
     kind: "external"
@@ -13,6 +12,13 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://127.0.0.1:8000/mcp
+
+  - name: "LLMGuardPlugin"
+    kind: "external"
+    priority: 20 # adjust the priority
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://127.0.0.1:8001/mcp
 
 # Plugin directories to scan
 plugin_dirs:
