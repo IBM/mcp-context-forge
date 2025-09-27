@@ -49,19 +49,27 @@ def upgrade() -> None:
     # Use database-agnostic query for boolean columns
     # PostgreSQL uses TRUE/FALSE, MySQL and SQLite use 1/0
     if bind.dialect.name == "postgresql":
-        where_clause = "WHERE is_active = TRUE"
-    else:
-        where_clause = "WHERE is_active = 1"
-
-    result = bind.execute(
-        sa.text(
-            f"""
-        SELECT id, team_id, user_email, role
-        FROM email_team_members
-        {where_clause}
-    """
+        # For PostgreSQL, use proper boolean comparison
+        result = bind.execute(
+            sa.text(
+                """
+            SELECT id, team_id, user_email, role
+            FROM email_team_members
+            WHERE is_active = TRUE
+        """
+            )
         )
-    )
+    else:
+        # For MySQL and SQLite, use integer comparison
+        result = bind.execute(
+            sa.text(
+                """
+            SELECT id, team_id, user_email, role
+            FROM email_team_members
+            WHERE is_active = 1
+        """
+            )
+        )
 
     # Process results and insert history records
     for row in result:
