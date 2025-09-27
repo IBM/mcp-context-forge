@@ -22,4 +22,3 @@ The plugin framework provides comprehensive testing support across multiple leve
 - Validate external plugin communication
 - Performance and load testing
 - Security validation
-

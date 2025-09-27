@@ -396,6 +396,7 @@ class ToolCreate(BaseModel):
     """
 
     model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
+    allow_auto: bool = False  # Internal flag to allow system-initiated A2A tool creation
 
     name: str = Field(..., description="Unique name for the tool")
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
@@ -574,7 +575,7 @@ class ToolCreate(BaseModel):
     @field_validator("request_type")
     @classmethod
     def validate_request_type(cls, v: str, info: ValidationInfo) -> str:
-        """Validate request type based on integration type
+        """Validate request type based on integration type (REST, MCP, A2A)
 
         Args:
             v (str): Value to validate
@@ -587,34 +588,45 @@ class ToolCreate(BaseModel):
             ValueError: When value is unsafe
 
         Examples:
-            >>> # Test REST integration types with valid method
             >>> from pydantic import ValidationInfo
-            >>> info = type('obj', (object,), {'data': {'integration_type': 'REST'}})
-            >>> ToolCreate.validate_request_type('POST', info)
-            'POST'
-
-            >>> # Test REST integration types
-            >>> info = type('obj', (object,), {'data': {'integration_type': 'REST'}})
-            >>> ToolCreate.validate_request_type('GET', info)
-            'GET'
-
-            >>> # Test MCP integration types with valid transport
-            >>> info = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
-            >>> ToolCreate.validate_request_type('SSE', info)
-            'SSE'
-
-            >>> # Test invalid REST type
+            >>> # REST integration types with valid methods
             >>> info_rest = type('obj', (object,), {'data': {'integration_type': 'REST'}})
+            >>> ToolCreate.validate_request_type('POST', info_rest)
+            'POST'
+            >>> ToolCreate.validate_request_type('GET', info_rest)
+            'GET'
+            >>> # MCP integration types with valid transports
+            >>> info_mcp = type('obj', (object,), {'data': {'integration_type': 'MCP'}})
+            >>> ToolCreate.validate_request_type('SSE', info_mcp)
+            'SSE'
+            >>> ToolCreate.validate_request_type('STDIO', info_mcp)
+            'STDIO'
+            >>> # A2A integration type with valid method
+            >>> info_a2a = type('obj', (object,), {'data': {'integration_type': 'A2A'}})
+            >>> ToolCreate.validate_request_type('POST', info_a2a)
+            'POST'
+            >>> # Invalid REST type
             >>> try:
             ...     ToolCreate.validate_request_type('SSE', info_rest)
             ... except ValueError as e:
             ...     "not allowed for REST" in str(e)
             True
-
-            >>> # Test invalid integration type
-            >>> info = type('obj', (object,), {'data': {'integration_type': 'INVALID'}})
+            >>> # Invalid MCP type
             >>> try:
-            ...     ToolCreate.validate_request_type('GET', info)
+            ...     ToolCreate.validate_request_type('POST', info_mcp)
+            ... except ValueError as e:
+            ...     "not allowed for MCP" in str(e)
+            True
+            >>> # Invalid A2A type
+            >>> try:
+            ...     ToolCreate.validate_request_type('GET', info_a2a)
+            ... except ValueError as e:
+            ...     "not allowed for A2A" in str(e)
+            True
+            >>> # Invalid integration type
+            >>> info_invalid = type('obj', (object,), {'data': {'integration_type': 'INVALID'}})
+            >>> try:
+            ...     ToolCreate.validate_request_type('GET', info_invalid)
             ... except ValueError as e:
             ...     "Unknown integration type" in str(e)
             True
@@ -622,7 +634,7 @@ class ToolCreate(BaseModel):
 
         integration_type = info.data.get("integration_type")
 
-        if integration_type not in ["REST", "MCP"]:
+        if integration_type not in ["REST", "MCP", "A2A"]:
             raise ValueError(f"Unknown integration type: {integration_type}")
 
         if integration_type == "REST":
@@ -633,7 +645,10 @@ class ToolCreate(BaseModel):
             allowed = ["SSE", "STDIO", "STREAMABLEHTTP"]
             if v not in allowed:
                 raise ValueError(f"Request type '{v}' not allowed for MCP. Only {allowed} transports are accepted.")
-
+        elif integration_type == "A2A":
+            allowed = ["POST"]
+            if v not in allowed:
+                raise ValueError(f"Request type '{v}' not allowed for A2A. Only {allowed} methods are accepted.")
         return v
 
     @model_validator(mode="before")
@@ -729,9 +744,10 @@ class ToolCreate(BaseModel):
             ValueError: If attempting to manually create MCP integration type
         """
         integration_type = values.get("integration_type")
+        allow_auto = values.get("allow_auto", False)
         if integration_type == "MCP":
             raise ValueError("Cannot manually create MCP tools. Add MCP servers via the Gateways interface - tools will be auto-discovered and registered with integration_type='MCP'.")
-        if integration_type == "A2A":
+        if integration_type == "A2A" and not allow_auto:
             raise ValueError("Cannot manually create A2A tools. Add A2A agents via the A2A interface - tools will be auto-created when agents are associated with servers.")
         return values
 

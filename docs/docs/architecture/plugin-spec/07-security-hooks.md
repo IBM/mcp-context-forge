@@ -758,4 +758,3 @@ async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: 
 - Resource post-fetch may take longer due to content processing
 - Plugin execution is sequential within priority bands
 - Failed plugins don't affect other plugins (isolation)
-
