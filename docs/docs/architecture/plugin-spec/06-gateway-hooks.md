@@ -1667,4 +1667,3 @@ The gateway administrative hooks are organized into the following categories:
 - Implement proper timeout handling for elicitations
 - Cache frequently accessed data (permissions, quotas)
 - Use background tasks for non-critical operations
-

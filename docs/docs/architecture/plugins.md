@@ -839,6 +839,9 @@ plugins:
     mcp:
       proto: "STREAMABLEHTTP"
       url: "http://nodejs-plugin:3000/mcp"
+      # tls:
+      #   ca_bundle: /app/certs/plugins/ca.crt
+      #   client_cert: /app/certs/plugins/gateway-client.pem
 
   # Go plugin
   - name: "HighPerformanceFilter"
@@ -853,6 +856,12 @@ plugins:
     mcp:
       proto: "STREAMABLEHTTP"
       url: "http://rust-plugin:8080/mcp"
+      # tls:
+      #   verify: true
+
+Gateway-wide defaults for these TLS options can be supplied via the
+`PLUGINS_MTLS_*` environment variables when you want every external
+plugin to share the same client certificate and CA bundle.
 ```
 
 ## Remote Plugin MCP Server Integration

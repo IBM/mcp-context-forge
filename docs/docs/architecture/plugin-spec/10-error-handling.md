@@ -414,4 +414,3 @@ async def execute(self, plugins: list[PluginRef], ...) -> tuple[PluginResult[T],
                 raise PluginError(f"Plugin error: {plugin.name}")
             # Continue with next plugin
 ```
-

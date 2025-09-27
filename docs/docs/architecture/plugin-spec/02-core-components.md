@@ -3,7 +3,7 @@
 
 ### 3.1 Plugin Base Class
 
-The base plugin class, of which developers subclass and implement the hooks that are important for their plugins. Hook points are functions that appear interpose on existing MCP and agent-based functionality. 
+The base plugin class, of which developers subclass and implement the hooks that are important for their plugins. Hook points are functions that appear interpose on existing MCP and agent-based functionality.
 
 ```python
 class Plugin:
@@ -122,4 +122,3 @@ class PluginInstanceRegistry:
     async def shutdown(self) -> None:
         """Shutdown all registered plugins"""
 ```
-

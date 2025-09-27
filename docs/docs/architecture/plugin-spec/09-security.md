@@ -65,4 +65,3 @@ except Exception as e:
         raise PluginError(f"Plugin error: {plugin.name}")
     # Continue with next plugin in permissive mode
 ```
-

@@ -184,4 +184,3 @@ This document covers administrative operation hooks:
 - Gateway Federation Hooks - Peer gateway management *(Future)*
 - A2A Agent Hooks - Agent-to-Agent integration management *(Future)*
 - Entity Lifecycle Hooks - Tool, resource, and prompt registration *(Future)*
-

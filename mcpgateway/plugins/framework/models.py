@@ -11,6 +11,7 @@ the base plugin layer including configurations, and contexts.
 
 # Standard
 from enum import Enum
+import os
 from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeVar
 
@@ -246,6 +247,88 @@ class AppliedTo(BaseModel):
     resources: Optional[list[ResourceTemplate]] = None
 
 
+class MCPTransportTLSConfig(BaseModel):
+    """TLS configuration for HTTP-based MCP transports.
+
+    Attributes:
+        verify (bool): Whether to verify the remote certificate chain.
+        ca_bundle (Optional[str]): Path to a CA bundle file used for verification.
+        client_cert (Optional[str]): Path to the PEM-encoded client certificate (can include key).
+        client_key (Optional[str]): Path to the PEM-encoded client private key when stored separately.
+        client_key_password (Optional[str]): Optional password for the private key file.
+        check_hostname (bool): Enable hostname verification (default: True).
+    """
+
+    verify: bool = Field(default=True, description="Verify the upstream server certificate")
+    ca_bundle: Optional[str] = Field(default=None, description="Path to CA bundle for upstream verification")
+    client_cert: Optional[str] = Field(default=None, description="Path to PEM client certificate or bundle")
+    client_key: Optional[str] = Field(default=None, description="Path to PEM client private key (if separate)")
+    client_key_password: Optional[str] = Field(default=None, description="Password for the client key, when encrypted")
+    check_hostname: bool = Field(default=True, description="Enable hostname verification when verify is true")
+
+    @field_validator("ca_bundle", "client_cert", "client_key", mode=AFTER)
+    @classmethod
+    def validate_path(cls, value: Optional[str]) -> Optional[str]:
+        """Expand and validate file paths supplied in TLS configuration."""
+
+        if not value:
+            return value
+        expanded = Path(value).expanduser()
+        if not expanded.is_file():
+            raise ValueError(f"TLS file path does not exist: {value}")
+        return str(expanded)
+
+    @model_validator(mode=AFTER)
+    def validate_client_cert(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure TLS client certificate options are consistent."""
+
+        if self.client_key and not self.client_cert:
+            raise ValueError("client_key requires client_cert to be specified")
+        return self
+
+    @staticmethod
+    def _parse_bool(value: Optional[str]) -> Optional[bool]:
+        """Convert a string environment value to boolean."""
+
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"Invalid boolean value: {value}")
+
+    @classmethod
+    def from_env(cls) -> Optional["MCPTransportTLSConfig"]:
+        """Construct a TLS configuration from environment defaults."""
+
+        env = os.environ
+        data: dict[str, Any] = {}
+
+        if env.get("PLUGINS_MTLS_CA_BUNDLE"):
+            data["ca_bundle"] = env["PLUGINS_MTLS_CA_BUNDLE"]
+        if env.get("PLUGINS_MTLS_CLIENT_CERT"):
+            data["client_cert"] = env["PLUGINS_MTLS_CLIENT_CERT"]
+        if env.get("PLUGINS_MTLS_CLIENT_KEY"):
+            data["client_key"] = env["PLUGINS_MTLS_CLIENT_KEY"]
+        if env.get("PLUGINS_MTLS_CLIENT_KEY_PASSWORD") is not None:
+            data["client_key_password"] = env["PLUGINS_MTLS_CLIENT_KEY_PASSWORD"]
+
+        verify_val = cls._parse_bool(env.get("PLUGINS_MTLS_VERIFY"))
+        if verify_val is not None:
+            data["verify"] = verify_val
+
+        check_hostname_val = cls._parse_bool(env.get("PLUGINS_MTLS_CHECK_HOSTNAME"))
+        if check_hostname_val is not None:
+            data["check_hostname"] = check_hostname_val
+
+        if not data:
+            return None
+
+        return cls(**data)
+
+
 class MCPConfig(BaseModel):
     """An MCP configuration for external MCP plugin objects.
 
@@ -258,6 +341,7 @@ class MCPConfig(BaseModel):
     proto: TransportType
     url: Optional[str] = None
     script: Optional[str] = None
+    tls: Optional[MCPTransportTLSConfig] = None
 
     @field_validator(URL, mode=AFTER)
     @classmethod
@@ -301,6 +385,14 @@ class MCPConfig(BaseModel):
             if file_path.suffix not in allowed_suffixes:
                 raise ValueError(f"MCP server script {script} must have a .py or .sh suffix.")
         return script
+
+    @model_validator(mode=AFTER)
+    def validate_tls_usage(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure TLS configuration is only used with HTTP-based transports."""
+
+        if self.tls and self.proto not in (TransportType.SSE, TransportType.STREAMABLEHTTP):
+            raise ValueError("TLS configuration is only valid for HTTP/SSE transports")
+        return self
 
 
 class PluginConfig(BaseModel):

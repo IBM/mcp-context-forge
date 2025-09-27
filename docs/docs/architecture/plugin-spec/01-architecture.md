@@ -75,4 +75,3 @@ mcpgateway/plugins/framework/
 - Communicate via MCP protocol over various transports
 - 10-100ms latency depending on service and network
 - Examples: LlamaGuard, OpenAI Moderation, custom AI services
-
