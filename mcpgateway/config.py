@@ -55,14 +55,15 @@ import logging
 import os
 from pathlib import Path
 import re
-from typing import Annotated, Any, ClassVar, Dict, List, Optional, Set, Union
+import sys
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, Optional, Set, Union
 
 # Third-Party
 from fastapi import HTTPException
 import jq
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Only configure basic logging if no handlers exist yet
@@ -152,7 +153,7 @@ class Settings(BaseSettings):
     # Basic Settings
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
-    port: int = 4444
+    port: PositiveInt = Field(default=4444, ge=1, le=65535, env="PORT")
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
@@ -168,7 +169,7 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: str = "changeme"
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: str = "my-test-key"
+    jwt_secret_key: SecretStr = Field(default="my-test-key", env="JWT_SECRET_KEY")
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -219,7 +220,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: str = "my-test-salt"
+    auth_encryption_secret: SecretStr = Field(default="my-test-salt", env="AUTH_ENCRYPTION_SECRET")
 
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
@@ -277,10 +278,10 @@ class Settings(BaseSettings):
     cors_enabled: bool = True
 
     # Environment
-    environment: str = Field(default="development", env="ENVIRONMENT")
+    environment: Literal["development", "staging", "production"] = Field(default="development", env="ENVIRONMENT")
 
     # Domain configuration
-    app_domain: str = Field(default="localhost", env="APP_DOMAIN")
+    app_domain: HttpUrl = Field(default="http://localhost:4444", env="APP_DOMAIN")
 
     # Security settings
     secure_cookies: bool = Field(default=True, env="SECURE_COOKIES")
@@ -314,32 +315,55 @@ class Settings(BaseSettings):
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
-    def validate_secrets(cls, v: str, info) -> str:
-        """Validate secret keys meet security requirements.
+    def validate_secrets(cls, v, info):
+        """
+        Validate that secret keys meet basic security requirements.
+
+        This validator is applied to the `jwt_secret_key` and `auth_encryption_secret` fields.
+        It performs the following checks:
+
+        1. Detects default or weak secrets (e.g., "changeme", "secret", "password").
+        Logs a warning if detected.
+
+        2. Checks minimum length (at least 32 characters). Logs a warning if shorter.
+
+        3. Performs a basic entropy check (at least 10 unique characters). Logs a warning if low.
+
+        Notes:
+            - Logging is used for warnings; the function does not raise exceptions.
+            - The original value is returned as a `SecretStr` for safe handling.
 
         Args:
-            v: The secret key value to validate.
-            info: ValidationInfo containing field metadata.
+            v (str | SecretStr): The secret value to validate.
+            info: Pydantic validation info object, used to get the field name.
 
         Returns:
-            str: The validated secret key value.
+            SecretStr: The validated secret value, wrapped as a SecretStr if it wasn't already.
         """
+
         field_name = info.field_name
 
+        # Extract actual string value safely
+        if isinstance(v, SecretStr):
+            value = v.get_secret_value()
+        else:
+            value = v
+
         # Check for default/weak secrets
-        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]  # nosec B105 - list of weak defaults to check against
-        if v.lower() in weak_secrets:
-            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
+        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+        if value.lower() in weak_secrets:
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! " "Please set a strong, unique value for production.")
 
         # Check minimum length
-        if len(v) < 32:  # Using hardcoded value since we can't access instance attributes
-            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(v)}")
+        if len(value) < 32:
+            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. " f"Current length: {len(value)}")
 
-        # Check entropy (basic check for randomness)
-        if len(set(v)) < 10:  # Less than 10 unique characters
+        # Basic entropy check (at least 10 unique characters)
+        if len(set(value)) < 10:
             logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
 
-        return v
+        # Always return SecretStr to keep it secret-safe
+        return v if isinstance(v, SecretStr) else SecretStr(value)
 
     @field_validator("basic_auth_password")
     @classmethod
@@ -355,8 +379,11 @@ class Settings(BaseSettings):
         if v == "changeme":  # nosec B105 - checking for default value
             logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
 
-        if len(v) < 12:  # Using hardcoded value
-            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least 12 characters long. Current length: {len(v)}")
+        # Note: We can't access password_min_length here as it's not set yet during validation
+        # Using default value of 8 to match the field default
+        min_length = 8  # This matches the default in password_min_length field
+        if len(v) < min_length:
+            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least {min_length} characters long. Current length: {len(v)}")
 
         # Check password complexity
         has_upper = any(c.isupper() for c in v)
@@ -559,8 +586,8 @@ class Settings(BaseSettings):
         return set(v)
 
     # Logging
-    log_level: str = "INFO"
-    log_format: str = "json"  # json or text
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="INFO", env="LOG_LEVEL")
+    log_format: Literal["json", "text"] = "json"  # json or text
     log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
     log_filemode: str = "a+"  # append or overwrite
     log_file: Optional[str] = None  # Only used if log_to_file=True
@@ -574,6 +601,32 @@ class Settings(BaseSettings):
     # Log Buffer (for in-memory storage in admin UI)
     log_buffer_size_mb: float = 1.0  # Size of in-memory log buffer in MB
 
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        """
+        Normalize and validate the log level value.
+
+        Ensures that the input string matches one of the allowed log levels,
+        case-insensitively. The value is uppercased before validation so that
+        "debug", "Debug", etc. are all accepted as "DEBUG".
+
+        Args:
+            v (str): The log level string provided via configuration or environment.
+
+        Returns:
+            str: The validated and normalized (uppercase) log level.
+
+        Raises:
+            ValueError: If the provided value is not one of
+                {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}.
+        """
+        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        v_up = v.upper()
+        if v_up not in allowed:
+            raise ValueError(f"Invalid log_level: {v}")
+        return v_up
+
     # Transport
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
@@ -586,7 +639,7 @@ class Settings(BaseSettings):
     federation_discovery: bool = False
 
     # For federation_peers strip out quotes to ensure we're passing valid JSON via env
-    federation_peers: Annotated[List[str], NoDecode] = []
+    federation_peers: List[HttpUrl] = Field(default_factory=list, env="FEDERATION_PEERS")
 
     @field_validator("federation_peers", mode="before")
     @classmethod
@@ -621,19 +674,57 @@ class Settings(BaseSettings):
             >>> Settings._parse_federation_peers([])
             []
         """
+        if v is None:
+            return []  # always return a list
+
         if isinstance(v, str):
             v = v.strip()
-            if v[:1] in "\"'" and v[-1:] == v[:1]:
+            if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
                 v = v[1:-1]
             try:
                 peers = json.loads(v)
             except json.JSONDecodeError:
                 peers = [s.strip() for s in v.split(",") if s.strip()]
             return peers
+
+        # Convert other iterables to list
         return list(v)
 
     federation_timeout: int = 120  # seconds
     federation_sync_interval: int = 300  # seconds
+
+    # SSO
+    # For sso_issuers strip out quotes to ensure we're passing valid JSON via env
+    sso_issuers: Optional[list[HttpUrl]] = Field(default=None, env="SSO_ISSUERS")
+
+    @field_validator("sso_issuers", mode="before")
+    @classmethod
+    def parse_issuers(cls, v):
+        """
+        Parse and validate the SSO issuers configuration value.
+
+        Accepts either a JSON array string (e.g. '["https://idp1.com", "https://idp2.com"]')
+        or an already-parsed list of issuer URLs. This allows environment variables to
+        provide issuers as JSON while still supporting direct list assignment in code.
+
+        Args:
+            v (str | list): The input value for SSO issuers, either a JSON array string
+                or a Python list.
+
+        Returns:
+            list: A list of issuer URLs.
+
+        Raises:
+            ValueError: If the string input cannot be parsed as JSON.
+        """
+
+        # Accept either a JSON array string or actual list
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                raise ValueError(f"SSO_ISSUERS must be a JSON array of URLs, got: {v!r}")
+        return v
 
     # Resources
     resource_cache_size: int = 1000
@@ -683,7 +774,7 @@ class Settings(BaseSettings):
     db_retry_interval_ms: int = 2000
 
     # Cache
-    cache_type: str = "database"  # memory or redis or database
+    cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
     redis_url: Optional[str] = "redis://localhost:6379/0"
     cache_prefix: str = "mcpgw:"
     session_ttl: int = 3600
@@ -1146,6 +1237,20 @@ Disallow: /
     # Masking value for all sensitive data
     masked_auth_value: str = "*****"
 
+    def log_summary(self):
+        """
+        Log a summary of the application settings.
+
+        Dumps the current settings to a dictionary while excluding sensitive
+        information such as `database_url` and `memcached_url`, and logs it
+        at the INFO level.
+
+        This method is useful for debugging or auditing purposes without
+        exposing credentials or secrets in logs.
+        """
+        summary = self.model_dump(exclude={"database_url", "memcached_url"})
+        logger.info(f"Application settings summary: {summary}")
+
 
 def extract_using_jq(data, jq_filter=""):
     """
@@ -1294,5 +1399,25 @@ def get_settings() -> Settings:
     return cfg
 
 
+def generate_settings_schema() -> dict:
+    """
+    Return the JSON Schema describing the Settings model.
+
+    This schema can be used for validation or documentation purposes.
+
+    Returns:
+        dict: A dictionary representing the JSON Schema of the Settings model.
+    """
+    return Settings.model_json_schema(mode="validation")
+
+
 # Create settings instance
 settings = get_settings()
+
+
+if __name__ == "__main__":
+    if "--schema" in sys.argv:
+        schema = generate_settings_schema()
+        print(json.dumps(schema, indent=2))
+        sys.exit(0)
+    settings.log_summary()

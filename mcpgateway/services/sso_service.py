@@ -26,6 +26,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import httpx
+from pydantic import SecretStr
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
@@ -73,13 +74,19 @@ class SSOService:
         """
         # Use the same encryption secret as the auth service
         key = settings.auth_encryption_secret
+
         if not key:
             # Generate a new key - in production, this should be persisted
             key = Fernet.generate_key()
         # Derive a proper Fernet key from the secret
 
+        # Unwrap SecretStr if necessary
+        if isinstance(key, SecretStr):
+            key = key.get_secret_value()
+
+        # Convert string to bytes
         if isinstance(key, str):
-            key = key.encode()
+            key = key.encode("utf-8")
 
         # Derive a 32-byte key using PBKDF2
         kdf = PBKDF2HMAC(

@@ -93,13 +93,13 @@ class JSONRPCError(Exception):
 
 
 # Standard JSON-RPC error codes
-PARSE_ERROR = -32700  # Invalid JSON
-INVALID_REQUEST = -32600  # Invalid Request object
-METHOD_NOT_FOUND = -32601  # Method not found
-INVALID_PARAMS = -32602  # Invalid method parameters
-INTERNAL_ERROR = -32603  # Internal JSON-RPC error
-SERVER_ERROR_START = -32000  # Start of server error codes
-SERVER_ERROR_END = -32099  # End of server error codes
+PARSE_ERROR = -32700  #: Invalid JSON
+INVALID_REQUEST = -32600  #: Invalid Request object
+METHOD_NOT_FOUND = -32601  #: Method not found
+INVALID_PARAMS = -32602  #: Invalid method parameters
+INTERNAL_ERROR = -32603  #: Internal JSON-RPC error
+SERVER_ERROR_START = -32000  #: Start of server error codes
+SERVER_ERROR_END = -32099  #: End of server error codes
 
 
 def validate_request(request: Dict[str, Any]) -> None:

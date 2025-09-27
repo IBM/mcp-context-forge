@@ -121,7 +121,7 @@ def generate_test_jwt():
 # Helper function for generating test JWT
 def _generate_test_jwt():
     payload = {"sub": "test_user", "exp": int(time.time()) + 3600}
-    secret = settings.jwt_secret_key
+    secret = settings.jwt_secret_key.get_secret_value()
     algorithm = settings.jwt_algorithm
     token = jwt.encode(payload, secret, algorithm=algorithm)
     # if isinstance(token, bytes):
@@ -325,6 +325,9 @@ class TestDocsAndRedoc:
         settings.docs_allow_basic_auth = cls._original_docs_allow_basic_auth
 
     async def test_docs_with_basic_auth(self, client: AsyncClient):
+        # Ensure Basic Auth for docs is allowed
+        settings.docs_allow_basic_auth = True
+
         """Test /docs endpoint with Basic Auth (should return 200 if credentials are valid)."""
         headers = basic_auth_header("admin", "changeme")
         response = await client.get("/docs", headers=headers)
@@ -332,6 +335,9 @@ class TestDocsAndRedoc:
 
     async def test_redoc_with_basic_auth(self, client: AsyncClient):
         """Test /redoc endpoint with Basic Auth (should return 200 if credentials are valid)."""
+        # Ensure Basic Auth for docs is allowed
+        settings.docs_allow_basic_auth = True
+
         headers = basic_auth_header("admin", "changeme")
         response = await client.get("/redoc", headers=headers)
         assert response.status_code == 200

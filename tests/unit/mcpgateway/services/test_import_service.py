@@ -346,7 +346,7 @@ async def test_rekey_auth_data_success(import_service):
     from mcpgateway.utils.services_auth import encode_auth
 
     # Store original secret
-    original_secret = settings.auth_encryption_secret
+    original_secret = settings.auth_encryption_secret.get_secret_value()
 
     try:
         # Create entity with auth data using a specific secret
