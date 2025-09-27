@@ -2875,11 +2875,10 @@ async def get_prompt(
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
             return JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
-        elif isinstance(ex, (ValueError, PromptError)):
+        if isinstance(ex, (ValueError, PromptError)):
             # Return the actual error message
             return JSONResponse(content={"message": str(ex)}, status_code=422)
-        else:
-            raise
+        raise
 
     return result
 
