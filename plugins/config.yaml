@@ -448,19 +448,19 @@ plugins:
       tool_allowlist: ["search", "retrieve"]
       resource_uri_prefixes: ["http://", "https://"]
 
-  # ClamAV Remote Scanner (external MCP)
-  - name: "ClamAVRemote"
-    kind: "external"
-    description: "External ClamAV scanner (file/text) via MCP STDIO"
-    version: "0.1.0"
-    author: "Mihai Criveti"
-    hooks: ["resource_pre_fetch", "resource_post_fetch"]
-    tags: ["security", "malware", "clamav"]
-    mode: "enforce"
-    priority: 62
-    mcp:
-      proto: STDIO
-      script: plugins/external/clamav_server/run.sh
+  # ClamAV Remote Scanner (external MCP) - DISABLED due to script path issue
+  # - name: "ClamAVRemote"
+  #   kind: "external"
+  #   description: "External ClamAV scanner (file/text) via MCP STDIO"
+  #   version: "0.1.0"
+  #   author: "Mihai Criveti"
+  #   hooks: ["resource_pre_fetch", "resource_post_fetch"]
+  #   tags: ["security", "malware", "clamav"]
+  #   mode: "enforce"
+  #   priority: 62
+  #   mcp:
+  #     proto: STDIO
+  #     script: plugins/external/clamav_server/run.sh
 
   # - name: "OPAPluginFilter"
   #   kind: "external"
@@ -558,24 +558,24 @@ plugins:
       direction: "to_user"
       fields: ["start_time", "end_time"]
 
-  # AI Artifacts Normalizer - clean smart quotes, ligatures, bidi controls
-  - name: "AIArtifactsNormalizer"
-    kind: "plugins.ai_artifacts_normalizer.ai_artifacts_normalizer.AIArtifactsNormalizerPlugin"
-    description: "Normalize AI artifacts: smart quotes, ligatures, dashes, ellipses; remove bidi/zero-width; collapse spacing"
-    version: "0.1.0"
-    author: "MCP Context Forge Team"
-    hooks: ["prompt_pre_fetch", "resource_post_fetch", "tool_post_invoke"]
-    tags: ["normalize", "unicode", "safety"]
-    mode: "permissive"
-    priority: 138
-    conditions: []
-    config:
-      replace_smart_quotes: true
-      replace_ligatures: true
-      remove_bidi_controls: true
-      collapse_spacing: true
-      normalize_dashes: true
-      normalize_ellipsis: true
+  # AI Artifacts Normalizer - DISABLED due to syntax error in plugin
+  # - name: "AIArtifactsNormalizer"
+  #   kind: "plugins.ai_artifacts_normalizer.ai_artifacts_normalizer.AIArtifactsNormalizerPlugin"
+  #   description: "Normalize AI artifacts: smart quotes, ligatures, dashes, ellipses; remove bidi/zero-width; collapse spacing"
+  #   version: "0.1.0"
+  #   author: "MCP Context Forge Team"
+  #   hooks: ["prompt_pre_fetch", "resource_post_fetch", "tool_post_invoke"]
+  #   tags: ["normalize", "unicode", "safety"]
+  #   mode: "permissive"
+  #   priority: 138
+  #   conditions: []
+  #   config:
+  #     replace_smart_quotes: true
+  #     replace_ligatures: true
+  #     remove_bidi_controls: true
+  #     collapse_spacing: true
+  #     normalize_dashes: true
+  #     normalize_ellipsis: true
 
   # SQL Sanitizer - detect dangerous SQL patterns in inputs
   - name: "SQLSanitizer"
@@ -750,3 +750,42 @@ plugins:
       vault_header_name: "X-Vault-Tokens"
       vault_handling: "raw"
       system_handling: "tag"
+
+  # Webhook Notification Plugin - Send HTTP notifications on events
+  - name: "WebhookNotification"
+    kind: "plugins.webhook_notification.webhook_notification.WebhookNotificationPlugin"
+    description: "Send HTTP webhook notifications on events, violations, and state changes"
+    version: "1.0.0"
+    author: "Claude Code Assistant"
+    hooks: ["tool_pre_invoke", "tool_post_invoke", "prompt_post_fetch", "resource_post_fetch"]
+    tags: ["notification", "webhook", "monitoring", "observability"]
+    mode: "permissive"
+    priority: 900  # Run after other plugins to capture their violations
+    conditions: []
+    config:
+      webhooks:
+        # Webhook.site for testing - UPDATE WITH YOUR UNIQUE URL
+        - url: "https://webhook.site/38df7ac1-672a-4e49-9b55-3c0ed469e9d0"
+          events: ["violation", "tool_success", "tool_error", "rate_limit_exceeded", "pii_detected"]
+          authentication:
+            type: "none"
+          retry_attempts: 2
+          retry_delay: 1000
+          timeout: 10
+          enabled: true
+
+      # Simple default template
+      default_template: |
+        {
+          "event": "{{event}}",
+          "plugin": "{{plugin_name}}",
+          "timestamp": "{{timestamp}}",
+          "request_id": "{{request_id}}",
+          "user": "{{user}}",
+          "tenant_id": "{{tenant_id}}",
+          "violation": {{violation}},
+          "metadata": {{metadata}}
+        }
+
+      include_payload_data: false
+      max_payload_size: 1000
