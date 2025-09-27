@@ -1190,6 +1190,11 @@
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
+                    Team
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                  >
                     Visibility
                   </th>
                   <th
@@ -1305,6 +1310,15 @@
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
                       >N/A</span
                     >
+                    {% endif %}
+                  </td>
+                  <td class="px-2 py-4 whitespace-nowrap">
+                   {% if server.team %}
+                    <span class="text-sm text-gray-900 dark:text-gray-100">
+                      {{ server.team.replace(' ', '<br>')|safe }}
+                    </span>
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -1869,6 +1883,11 @@
                   >
                     Owner
                   </th>
+                   <th
+                    class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20"
+                  >
+                    Team
+                  </th>
                   <th
                     class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-16"
                   >
@@ -1984,6 +2003,15 @@
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
                       >N/A</span
                     >
+                    {% endif %}
+                  </td>
+                   <td class="px-2 py-4 whitespace-nowrap">
+                   {% if tool.team %}
+                    <span class="text-sm text-gray-900 dark:text-gray-100">
+                      {{ tool.team.replace(' ', '<br>')|safe }}
+                    </span>
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
                     {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
@@ -2894,6 +2922,11 @@
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                   >
+                    Team
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                  >
                     Visibility
                   </th>
                   <th
@@ -2959,6 +2992,15 @@
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
                       >N/A</span
                     >
+                    {% endif %}
+                  </td>
+                  <td class="px-2 py-4 whitespace-nowrap">
+                   {% if resource.team %}
+                    <span class="text-sm text-gray-900 dark:text-gray-100">
+                      {{ resource.team.replace(' ', '<br>')|safe }}
+                    </span>
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -3274,6 +3316,11 @@
                   <th
                     class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider"
                   >
+                    Team
+                  </th>
+                  <th
+                    class="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider"
+                  >
                     Visibility
                   </th>
                   <th
@@ -3335,6 +3382,15 @@
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
                       >N/A</span
                     >
+                    {% endif %}
+                  </td>
+                  <td class="px-2 py-4 whitespace-nowrap">
+                   {% if prompt.team %}
+                    <span class="text-sm text-gray-900 dark:text-gray-100">
+                      {{ prompt.team.replace(' ', '<br>')|safe }}
+                    </span>
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -3672,6 +3728,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
                   >
+                    Team
+                  </th>
+                  <th
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
+                  >
                     Visibility
                   </th>
                   <th
@@ -3782,6 +3843,15 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
+                    </td>
+                  <td class="px-2 py-4 whitespace-nowrap">
+                   {% if gateway.team %}
+                    <span class="text-sm text-gray-900 dark:text-gray-100">
+                      {{ gateway.team.replace(' ', '<br>')|safe }}
+                    </span>
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+                    {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
                     {% if gateway.visibility == 'private' %}

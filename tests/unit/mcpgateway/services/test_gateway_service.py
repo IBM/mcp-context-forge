@@ -133,6 +133,7 @@ def mock_gateway():
     gw.federated_tools = []
     gw.transport = "sse"
     gw.auth_value = {}
+    gw.team_id = 1  # Ensure team_id is a real value, not a MagicMock
     return gw
 
 
@@ -811,7 +812,10 @@ class TestGatewayService:
 
         result = await gateway_service.list_gateways(test_db)
 
-        test_db.execute.assert_called_once()
+        # Assert that execute was called twice
+        assert test_db.execute.call_count == 2
+        # Optionally, print or check call arguments for debugging
+        # print(test_db.execute.call_args_list)
         assert len(result) == 1
         assert result[0].name == "test_gateway"
 
@@ -819,6 +823,7 @@ class TestGatewayService:
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
         """Gateway is fetched and returned by ID."""
         mock_gateway.masked = Mock(return_value=mock_gateway)
+        mock_gateway.team_id = 1  # Ensure team_id is a real value
         test_db.get = Mock(return_value=mock_gateway)
         result = await gateway_service.get_gateway(test_db, 1)
         test_db.get.assert_called_once_with(DbGateway, 1)
@@ -837,6 +842,7 @@ class TestGatewayService:
         """Inactive gateway is not returned unless explicitly asked for."""
         mock_gateway.enabled = False
         mock_gateway.id = 1
+        mock_gateway.team_id = 1  # Ensure team_id is a real value
         test_db.get = Mock(return_value=mock_gateway)
 
         # Create a mock for GatewayRead with a masked method
@@ -862,6 +868,7 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_update_gateway(self, gateway_service, mock_gateway, test_db):
         """All mutable fields can be updated."""
+        mock_gateway.team_id = 1  # Ensure team_id is a real value
         test_db.get = Mock(return_value=mock_gateway)
         # name-conflict check: no conflicting gateway
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -920,6 +927,7 @@ class TestGatewayService:
         mock_gateway.name = "original_name"
         mock_gateway.slug = "original-name"
         mock_gateway.visibility = "public"
+        mock_gateway.team_id = 1  # Ensure team_id is a real value
         test_db.get = Mock(return_value=mock_gateway)
         conflicting = MagicMock(spec=DbGateway, id=2, name="existing_gateway", slug="existing-gateway", visibility="public", is_active=True)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=conflicting))
@@ -938,6 +946,7 @@ class TestGatewayService:
         """Test updating gateway with new authentication values."""
         mock_gateway.auth_type = "bearer"
         mock_gateway.auth_value = "old-token-encrypted"
+        mock_gateway.team_id = 1  # Ensure team_id is a real value
 
         test_db.get = Mock(return_value=mock_gateway)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -966,6 +975,7 @@ class TestGatewayService:
         """Test clearing authentication from gateway."""
         mock_gateway.auth_type = "bearer"
         mock_gateway.auth_value = {"token": "old-token"}
+        mock_gateway.team_id = 1  # Ensure team_id is a real value
 
         test_db.get = Mock(return_value=mock_gateway)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
@@ -994,6 +1004,7 @@ class TestGatewayService:
         existing_tool = MagicMock()
         existing_tool.original_name = "existing_tool"
         mock_gateway.tools = [existing_tool]
+        mock_gateway.team_id = 1  # Ensure team_id is a real value
 
         test_db.get = Mock(return_value=mock_gateway)
         test_db.execute = Mock(
@@ -1004,6 +1015,8 @@ class TestGatewayService:
         )
         test_db.commit = Mock()
         test_db.refresh = Mock()
+        # Mock the query for team name lookup
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
 
         # Mock new tools from gateway
         # First-Party
@@ -1023,7 +1036,13 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            await gateway_service.update_gateway(test_db, 1, gateway_update)
+            try:
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
+            except Exception as e:
+                print(f"Exception during update_gateway: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
 
         assert mock_gateway.url == url
         gateway_service._initialize_gateway.assert_called_once()

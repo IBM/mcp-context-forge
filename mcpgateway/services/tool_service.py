@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
+from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
@@ -269,6 +270,21 @@ class ToolService:
 
         return build_top_performers(results)
 
+    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+        """Retrieve the team name given a team ID.
+
+        Args:
+            db (Session): Database session for querying teams.
+            team_id (Optional[str]): The ID of the team.
+
+        Returns:
+            Optional[str]: The name of the team if found, otherwise None.
+        """
+        if not team_id:
+            return None
+        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        return team.name if team else None
+
     def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
@@ -318,7 +334,7 @@ class ToolService:
         tool_dict["gateway_slug"] = getattr(tool, "gateway_slug", "") or ""
         tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
         tool_dict["tags"] = getattr(tool, "tags", []) or []
-
+        tool_dict["team"] = getattr(tool, "team", None)
         return ToolRead.model_validate(tool_dict)
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -529,7 +545,12 @@ class ToolService:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
         tools = db.execute(query).scalars().all()
-        return [self._convert_tool_to_read(t) for t in tools]
+        result = []
+        for t in tools:
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            t.team = team_name
+            result.append(self._convert_tool_to_read(t))
+        return result
 
     async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None) -> List[ToolRead]:
         """
@@ -567,7 +588,12 @@ class ToolService:
         if not include_inactive:
             query = query.where(DbTool.enabled)
         tools = db.execute(query).scalars().all()
-        return [self._convert_tool_to_read(t) for t in tools]
+        result = []
+        for t in tools:
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            t.team = team_name
+            result.append(self._convert_tool_to_read(t))
+        return result
 
     async def list_tools_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -635,7 +661,12 @@ class ToolService:
         query = query.offset(skip).limit(limit)
 
         tools = db.execute(query).scalars().all()
-        return [self._convert_tool_to_read(t) for t in tools]
+        result = []
+        for t in tools:
+            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            t.team = team_name
+            result.append(self._convert_tool_to_read(t))
+        return result
 
     async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
         """
@@ -666,6 +697,7 @@ class ToolService:
         tool = db.get(DbTool, tool_id)
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
+        tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
         return self._convert_tool_to_read(tool)
 
     async def delete_tool(self, db: Session, tool_id: str) -> None:
@@ -765,7 +797,6 @@ class ToolService:
                 else:
                     await self._notify_tool_deactivated(tool)
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
-
             return self._convert_tool_to_read(tool)
         except Exception as e:
             db.rollback()
