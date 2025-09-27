@@ -150,6 +150,7 @@ Fix: Ensure URLs include protocol (`http://` or `https://`)
 **Weak Secrets**
 ```
 JWT_SECRET_KEY: Secret should be at least 32 characters long
+Admin password should be at least 8 characters long
 ```
 Fix: Generate longer, more complex secrets
 
