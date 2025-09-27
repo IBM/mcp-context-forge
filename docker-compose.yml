@@ -414,12 +414,13 @@ services:
         echo "Generating JWT token..."
         echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
         echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256"
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>&1)
+        # Only capture stdout (the token), let warnings go to stderr
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
         echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
 
         # Decode the token to verify it has expiration
         echo "Decoding token to verify claims..."
-        python3 -m mcpgateway.utils.create_jwt_token --decode "$$MCPGATEWAY_BEARER_TOKEN" || echo "Failed to decode token"
+        python3 -m mcpgateway.utils.create_jwt_token --decode "$$MCPGATEWAY_BEARER_TOKEN" 2>/dev/null || echo "Failed to decode token"
 
         # Test authentication first
         echo "Testing authentication..."
