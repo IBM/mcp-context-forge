@@ -38,8 +38,10 @@ from mcpgateway.services.resource_service import (
 
 
 @pytest.fixture
-def resource_service():
+def resource_service(monkeypatch):
     """Create a ResourceService instance."""
+    # Disable plugins for testing
+    monkeypatch.setenv("PLUGINS_ENABLED", "false")
     return ResourceService()
 
 

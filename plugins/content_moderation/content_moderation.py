@@ -177,7 +177,7 @@ class ContentModerationPlugin(Plugin):
         """Generate cache key for content."""
         import hashlib
         content_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
-        return f"{provider}:{content_hash}"
+        return f"{provider.value}:{content_hash}"
 
     async def _get_cached_result(self, text: str, provider: ModerationProvider) -> Optional[ModerationResult]:
         """Get cached moderation result."""
@@ -551,7 +551,7 @@ Respond with JSON format:
                 r'\b(want\s+to\s+die|cutting\s+myself)\b'
             ],
             ModerationCategory.PROFANITY: [
-                r'\b(fuck|shit|damn|hell|crap|bitch|asshole)\b'
+                r'\b(fuck\w*|shit|damn|hell|crap|bitch|asshole)\b'
             ],
             ModerationCategory.HARASSMENT: [
                 r'\b(you\s+suck|loser|idiot|moron|stupid)\b',

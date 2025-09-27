@@ -116,7 +116,7 @@ class TestContentModerationPlugin:
             args={
                 "query": "This is a test query",
                 "context": "Additional context",
-                "metadata": {"nested": "nested text"}
+                "metadata": "nested text"
             }
         )
 

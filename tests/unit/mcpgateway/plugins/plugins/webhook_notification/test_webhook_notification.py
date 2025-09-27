@@ -251,7 +251,7 @@ class TestWebhookNotificationPlugin:
                     "events": ["tool_success"],
                     "authentication": {"type": "none"},
                     "retry_attempts": 3,
-                    "retry_delay": 10,  # Small delay for testing
+                    "retry_delay": 100,  # Small delay for testing
                     "enabled": True,
                 }
             ]
