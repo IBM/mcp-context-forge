@@ -789,3 +789,65 @@ plugins:
 
       include_payload_data: false
       max_payload_size: 1000
+
+  # Content Moderation Plugin - AI-powered content safety using IBM, OpenAI, Azure, AWS
+  - name: "ContentModeration"
+    kind: "plugins.content_moderation.content_moderation.ContentModerationPlugin"
+    description: "Advanced content moderation using AI services (IBM Watson, IBM Granite Guardian, OpenAI, Azure, AWS)"
+    version: "1.0.0"
+    author: "Claude Code Assistant"
+    hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["safety", "moderation", "content", "ai", "ibm", "watson", "granite"]
+    mode: "permissive"  # Use permissive mode for testing
+    priority: 30  # Run early in the pipeline
+    conditions: []
+    config:
+      provider: "ibm_granite"  # Use Granite for easier testing (no API key needed)
+      fallback_provider: null
+      fallback_on_error: "warn"  # Action when providers fail
+
+      # IBM Granite Guardian via Ollama (for testing)
+      ibm_granite:
+        ollama_url: "http://localhost:11434"
+        model: "granite3-guardian"
+        temperature: 0.1
+        timeout: 30
+
+      # IBM Watson Natural Language Understanding (requires API key)
+      # ibm_watson:
+      #   api_key: "${env.IBM_WATSON_API_KEY}"
+      #   url: "${env.IBM_WATSON_URL}"
+      #   version: "2022-04-07"
+      #   language: "en"
+      #   timeout: 30
+
+      # Category thresholds and actions
+      categories:
+        hate:
+          threshold: 0.7
+          action: "warn"  # Use warn for testing
+        violence:
+          threshold: 0.8
+          action: "warn"
+        sexual:
+          threshold: 0.6
+          action: "warn"
+        self_harm:
+          threshold: 0.5
+          action: "warn"
+        harassment:
+          threshold: 0.7
+          action: "warn"
+        profanity:
+          threshold: 0.6
+          action: "redact"
+        toxic:
+          threshold: 0.7
+          action: "warn"
+
+      # General settings
+      audit_decisions: true
+      include_confidence_scores: true
+      enable_caching: true
+      cache_ttl: 3600
+      max_text_length: 10000
