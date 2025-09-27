@@ -35,14 +35,23 @@ def upgrade() -> None:
 
     # First, delete all existing OAuth tokens as they lack user context
     # This is a security fix - existing tokens are vulnerable
-    try:
-        # Check if table has any rows
+    # Check if oauth_tokens table has data and delete it
+    # We need to be careful not to cause transaction aborts
+    has_tokens = False
+    token_count = 0
+
+    # Check if we can access the table
+    columns = inspector.get_columns("oauth_tokens")
+    if columns:  # Table exists and is accessible
         result = conn.execute(sa.text("SELECT COUNT(*) FROM oauth_tokens")).scalar()
-        if result > 0:
-            op.execute("DELETE FROM oauth_tokens")
-            print(f"Deleted {result} existing OAuth tokens (security fix)")
-    except Exception as e:
-        print(f"Warning: Could not delete existing tokens: {e}")
+        token_count = result if result else 0
+        has_tokens = token_count > 0
+
+    if has_tokens:
+        op.execute("DELETE FROM oauth_tokens")
+        print(f"Deleted {token_count} existing OAuth tokens (security fix)")
+    elif token_count == 0:
+        print("No existing OAuth tokens to delete")
 
     # Get database dialect for engine-specific handling
     dialect_name = conn.dialect.name.lower()
@@ -74,24 +83,15 @@ def upgrade() -> None:
     # Check if index exists before trying to drop it to avoid transaction issues
     index_exists = False
     if dialect_name == "postgresql":
-        result = conn.execute(
-            sa.text(
-                "SELECT 1 FROM pg_indexes WHERE tablename = 'oauth_tokens' AND indexname = 'idx_oauth_tokens_gateway_user'"
-            )
-        ).fetchone()
+        result = conn.execute(sa.text("SELECT 1 FROM pg_indexes WHERE tablename = 'oauth_tokens' AND indexname = 'idx_oauth_tokens_gateway_user'")).fetchone()
         index_exists = result is not None
     elif dialect_name == "mysql":
         result = conn.execute(
-            sa.text(
-                "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() "
-                "AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_tokens_gateway_user'"
-            )
+            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() " "AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_tokens_gateway_user'")
         ).fetchone()
         index_exists = result is not None
     elif dialect_name == "sqlite":
-        result = conn.execute(
-            sa.text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_oauth_tokens_gateway_user'")
-        ).fetchone()
+        result = conn.execute(sa.text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_oauth_tokens_gateway_user'")).fetchone()
         index_exists = result is not None
 
     if index_exists:
@@ -135,10 +135,24 @@ def downgrade() -> None:
     dialect_name = conn.dialect.name.lower()
 
     # Drop the unique index if it exists
-    try:
+    # Check if index exists before trying to drop it to avoid transaction issues
+    index_exists = False
+    if dialect_name == "postgresql":
+        result = conn.execute(sa.text("SELECT 1 FROM pg_indexes WHERE tablename = 'oauth_tokens' AND indexname = 'idx_oauth_gateway_user'")).fetchone()
+        index_exists = result is not None
+    elif dialect_name == "mysql":
+        result = conn.execute(
+            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() " "AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_gateway_user'")
+        ).fetchone()
+        index_exists = result is not None
+    elif dialect_name == "sqlite":
+        result = conn.execute(sa.text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_oauth_gateway_user'")).fetchone()
+        index_exists = result is not None
+
+    if index_exists:
         op.drop_index("idx_oauth_gateway_user", "oauth_tokens")
-    except Exception:  # nosec B110
-        # Index might not exist, which is fine - this could be a partial rollback
+        print("Dropped index idx_oauth_gateway_user")
+    else:
         print("Index idx_oauth_gateway_user not found (expected if upgrade was incomplete)")
 
     if dialect_name == "sqlite":
