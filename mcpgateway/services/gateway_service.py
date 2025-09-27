@@ -1282,14 +1282,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
-<<<<<<< HEAD
-                gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
+                gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
 
                 return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
-=======
-
-                return GatewayRead.model_validate(gateway)
->>>>>>> e36e27ac (ruff isort)
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
         except GatewayNameConflictError as ge:
@@ -1363,13 +1358,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
-<<<<<<< HEAD
-            gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
-=======
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
-            return GatewayRead.model_validate(gateway).masked()
->>>>>>> e36e27ac (ruff isort)
+            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
@@ -1501,13 +1491,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
-<<<<<<< HEAD
-            gateway.team = self._get_team_name(db, getattr(gateway, 'team_id', None))
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
-=======
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
-            return GatewayRead.model_validate(gateway).masked()
->>>>>>> e36e27ac (ruff isort)
+            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         except Exception as e:
             db.rollback()
@@ -1586,9 +1571,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db.rollback()
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
-    async def forward_request(
-        self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None
-    ) -> Any:  # noqa: F811 # pylint: disable=function-redefined
+    async def forward_request(self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None) -> Any:  # noqa: F811 # pylint: disable=function-redefined
         """
         Forward a request to a gateway or multiple gateways.
 
