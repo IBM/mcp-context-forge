@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """new table email_team_member_history for audit trail of action performed on team members
 
 Revision ID: 0f81d4a5efe0
