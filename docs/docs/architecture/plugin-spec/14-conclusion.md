@@ -36,4 +36,3 @@ This specification defines a comprehensive, production-ready plugin framework fo
 
 This specification serves as the definitive guide for developing, deploying, and operating plugins within the MCP Context Forge ecosystem, ensuring consistency, security, and performance across all plugin implementations.
 **Document Version**: 1.0
-

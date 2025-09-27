@@ -14,4 +14,3 @@
 - **Context management**: Handle 10,000+ concurrent request contexts
 - **Memory usage**: Base framework overhead <5MB
 - **Plugin loading**: Initialize plugins in <10 seconds
-

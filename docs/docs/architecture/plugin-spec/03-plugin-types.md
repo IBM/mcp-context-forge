@@ -37,7 +37,7 @@ The configuration system supports both **native plugins** (running in-process) a
 
 ### 4.2 Plugin Configuration Schema
 
-Below is an example of a plugin configuration file.  A plugin configuration file can configure one or more plugins in a prioritized list as below.  Each individual plugin is an instance of the of a plugin class that subclasses the base `Plugin` object and implements a set of hooks as listed in the configuration.   
+Below is an example of a plugin configuration file.  A plugin configuration file can configure one or more plugins in a prioritized list as below.  Each individual plugin is an instance of the of a plugin class that subclasses the base `Plugin` object and implements a set of hooks as listed in the configuration.
 
 ```yaml
 # plugins/config.yaml
@@ -408,4 +408,3 @@ The manifest enables development tools to provide:
 - Follow established tag conventions within your organization
 
 The plugin manifest system provides a foundation for plugin ecosystem management, enabling better development workflows, automated tooling, and enhanced discoverability while maintaining consistency across plugin implementations.
-

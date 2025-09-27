@@ -286,4 +286,3 @@ class TestMyPlugin:
 - Include execution metrics
 - Provide health check endpoints
 - Support debugging modes
-
