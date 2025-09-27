@@ -1586,15 +1586,9 @@ class ToolService:
             raise ToolNotFoundError(f"A2A agent '{agent.name}' is disabled")
 
         # Prepare parameters for A2A invocation
-
-        start_time = time.time()
-        success = False
-        error_message = None
-
         try:
             # Make the A2A agent call
             response_data = await self._call_a2a_agent(agent, arguments)
-            success = True
 
             # Convert A2A response to MCP ToolResult format
             if isinstance(response_data, dict) and "response" in response_data:
@@ -1606,24 +1600,10 @@ class ToolService:
 
         except Exception as e:
             error_message = str(e)
-            success = False
             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
             result = ToolResult(content=content, is_error=True)
 
-        finally:
-            # Record metrics for the tool
-            end_time = time.time()
-            response_time = end_time - start_time
-
-            metric = ToolMetric(
-                tool_id=tool.id,
-                response_time=response_time,
-                is_success=success,
-                error_message=error_message,
-            )
-            db.add(metric)
-            db.commit()
-
+        # Note: Metrics are recorded by the calling invoke_tool method, not here
         return result
 
     async def _call_a2a_agent(self, agent: DbA2AAgent, parameters: Dict[str, Any]):
