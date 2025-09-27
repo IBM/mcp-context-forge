@@ -124,10 +124,12 @@ class WebhookNotificationPlugin(Plugin):
         result = template
         for key, value in context.items():
             placeholder = f"{{{{{key}}}}}"
-            if isinstance(value, (dict, list)):
+            if value is None:
+                result = result.replace(placeholder, "null")
+            elif isinstance(value, (dict, list)):
                 result = result.replace(placeholder, json.dumps(value))
             else:
-                result = result.replace(placeholder, str(value or ""))
+                result = result.replace(placeholder, str(value))
         return result
 
     def _create_hmac_signature(self, payload: str, secret: str, algorithm: str) -> str:
