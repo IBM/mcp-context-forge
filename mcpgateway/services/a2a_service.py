@@ -259,7 +259,7 @@ class A2AAgentService:
 
         Args:
             db: Database session
-            user_info: Object representing identity of the user requesting agents
+            user_info: Object representing identity of the user who is requesting agents
             team_id: Optional team ID to filter by specific team
             visibility: Optional visibility filter (private, team, public)
             include_inactive: Whether to include inactive agents
@@ -270,7 +270,7 @@ class A2AAgentService:
             List[A2AAgentRead]: A2A agents the user has access to
         """
 
-        # Handle case where user_info is a string instead of dict (<0.7.0)
+        # Handle case where user_info is a string (email) instead of dict (<0.7.0)
         if isinstance(user_info, str):
             user_email = str(user_info)
         else:
