@@ -71,10 +71,33 @@ def upgrade() -> None:
     op.create_index("idx_oauth_gateway_user", "oauth_tokens", ["gateway_id", "app_user_email"], unique=True)
 
     # Drop the old index if it exists (gateway_id only)
-    try:
+    # Check if index exists before trying to drop it to avoid transaction issues
+    index_exists = False
+    if dialect_name == "postgresql":
+        result = conn.execute(
+            sa.text(
+                "SELECT 1 FROM pg_indexes WHERE tablename = 'oauth_tokens' AND indexname = 'idx_oauth_tokens_gateway_user'"
+            )
+        ).fetchone()
+        index_exists = result is not None
+    elif dialect_name == "mysql":
+        result = conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() "
+                "AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_tokens_gateway_user'"
+            )
+        ).fetchone()
+        index_exists = result is not None
+    elif dialect_name == "sqlite":
+        result = conn.execute(
+            sa.text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_oauth_tokens_gateway_user'")
+        ).fetchone()
+        index_exists = result is not None
+
+    if index_exists:
         op.drop_index("idx_oauth_tokens_gateway_user", "oauth_tokens")
-    except Exception:  # nosec B110
-        # Index might not exist, which is fine - we're just cleaning up old indexes
+        print("Dropped old index idx_oauth_tokens_gateway_user")
+    else:
         print("Old index idx_oauth_tokens_gateway_user not found (expected for new installations)")
 
     # Create oauth_states table for CSRF protection in multi-worker deployments
