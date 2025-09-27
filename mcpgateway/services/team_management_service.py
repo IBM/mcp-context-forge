@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -74,6 +74,28 @@ class TeamManagementService:
             'TeamManagementService'
         """
         self.db = db
+
+    def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
+        """
+        Log a team member action to EmailTeamMemberHistory.
+
+        Args:
+            team_member_id: ID of the EmailTeamMember
+            team_id: Team ID
+            user_email: Email of the affected user
+            role: Role at the time of action
+            action: Action type ("added", "removed", "reactivated", "role_changed")
+            action_by: Email of the user who performed the action
+
+        Examples:
+            >>> from mcpgateway.services.team_management_service import TeamManagementService
+            >>> from unittest.mock import Mock
+            >>> service = TeamManagementService(Mock())
+            >>> service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
+        """
+        history = EmailTeamMemberHistory(team_member_id=team_member_id, team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
+        self.db.add(history)
+        self.db.commit()
 
     async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
@@ -353,8 +375,11 @@ class TeamManagementService:
             team.is_active = False
             team.updated_at = utc_now()
 
-            # Deactivate all memberships
-            self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id).update({"is_active": False})
+            # Deactivate all memberships and log deactivation in history
+            memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
+            for membership in memberships:
+                membership.is_active = False
+                self._log_team_member_action(membership.id, team_id, membership.user_email, membership.role, "team-deleted", deleted_by)
 
             self.db.commit()
 
@@ -387,6 +412,8 @@ class TeamManagementService:
             >>> service = TeamManagementService(Mock())
             >>> asyncio.iscoroutinefunction(service.add_member_to_team)
             True
+            >>> # After adding, EmailTeamMemberHistory is updated
+            >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
         """
         try:
             # Validate role
@@ -427,11 +454,13 @@ class TeamManagementService:
                 existing_membership.role = role
                 existing_membership.joined_at = utc_now()
                 existing_membership.invited_by = invited_by
+                self.db.commit()
+                self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
             else:
                 membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
                 self.db.add(membership)
-
-            self.db.commit()
+                self.db.commit()
+                self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
 
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
@@ -457,6 +486,7 @@ class TeamManagementService:
 
         Examples:
             Team membership management with role-based access control.
+            After removal, EmailTeamMemberHistory is updated via _log_team_member_action.
         """
         try:
             team = await self.get_team_by_id(team_id)
@@ -487,7 +517,7 @@ class TeamManagementService:
             # Remove membership (soft delete)
             membership.is_active = False
             self.db.commit()
-
+            self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
 
@@ -513,6 +543,7 @@ class TeamManagementService:
 
         Examples:
             Role management within teams for access control.
+            After role update, EmailTeamMemberHistory is updated via _log_team_member_action.
         """
         try:
             # Validate role
@@ -548,6 +579,7 @@ class TeamManagementService:
             # Update the role
             membership.role = new_role
             self.db.commit()
+            self._log_team_member_action(membership.id, team_id, user_email, new_role, "role_changed", updated_by)
 
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
@@ -850,13 +882,14 @@ class TeamManagementService:
             member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
 
             self.db.add(member)
-
             # Update join request status
             join_request.status = "approved"
             join_request.reviewed_at = utc_now()
             join_request.reviewed_by = approved_by
 
-            self.db.commit()
+            self.db.flush()
+            self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
+
             self.db.refresh(member)
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
