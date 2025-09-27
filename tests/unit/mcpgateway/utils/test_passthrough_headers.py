@@ -125,6 +125,7 @@ class TestPassthroughHeaders:
     def test_base_header_conflict_prevention(self, mock_settings, caplog):
         """Test that request headers don't override base headers."""
         mock_settings.enable_header_passthrough = True
+        mock_settings.enable_overwrite_base_headers = False
 
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
@@ -412,6 +413,7 @@ class TestPassthroughHeaders:
     def test_logging_levels(self, mock_settings, caplog):
         """Test that appropriate log levels are used for different scenarios."""
         mock_settings.enable_header_passthrough = True
+        mock_settings.enable_overwrite_base_headers = False
 
         mock_db = Mock()
         mock_global_config = Mock(spec=GlobalConfig)
