@@ -8,14 +8,13 @@ Create Date: 2025-09-15 14:53:32.682953
 """
 
 # Standard
+from datetime import datetime, timezone
 from typing import Sequence, Union
+import uuid
 
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
-
-# First-Party
-from mcpgateway.db import utc_now
 
 # revision identifiers, used by Alembic.
 revision: str = "0f81d4a5efe0"
@@ -44,39 +43,35 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["action_by"], ["email_users.email"]),
     )
 
-    # Insert one audit entry for each unique (user_email, team_id) combination
+    # Insert one audit entry for each existing team member
     bind = op.get_bind()
     result = bind.execute(
         sa.text(
             """
         SELECT id, team_id, user_email, role
         FROM email_team_members
-        WHERE (team_id, user_email) IN (
-            SELECT team_id, user_email FROM email_team_members GROUP BY team_id, user_email
-        )
+        WHERE is_active = TRUE OR is_active = 1
     """
         )
     )
-    seen = set()
+
+    # Process results and insert history records
     for row in result:
-        key = (row[1], row[2])  # (team_id, user_email)
-        if key in seen:
-            continue
-        seen.add(key)
+        history_id = uuid.uuid4().hex
         bind.execute(
             sa.text(
                 "INSERT INTO email_team_member_history (id, team_member_id, team_id, user_email, role, action, action_by, action_timestamp) "
                 "VALUES (:id, :team_member_id, :team_id, :user_email, :role, :action, :action_by, :action_timestamp)"
             ),
             {
-                "id": row[0],
+                "id": history_id,
                 "team_member_id": row[0],
                 "team_id": row[1],
                 "user_email": row[2],
-                "role": row[3],
+                "role": row[3] if row[3] else "member",
                 "action": "migrated",
                 "action_by": None,
-                "action_timestamp": utc_now(),
+                "action_timestamp": datetime.now(timezone.utc),
             },
         )
     # ### end Alembic commands ###
