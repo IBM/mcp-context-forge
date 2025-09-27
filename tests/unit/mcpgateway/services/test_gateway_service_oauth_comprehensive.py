@@ -96,6 +96,8 @@ def mock_oauth_auth_code_gateway():
     gw.enabled = True
     gw.reachable = True
     gw.tools = []
+    gw.resources = []
+    gw.prompts = []
     gw.transport = "sse"
     gw.auth_type = "oauth"
     gw.auth_value = {}
@@ -518,10 +520,19 @@ class TestGatewayServiceOAuthComprehensive:
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_success(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
         """Test successful tool fetching after OAuth authorization."""
-        # Mock database execute to return the gateway
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
-        test_db.execute.return_value = mock_result
+        # Mock database execute to return the gateway for initial query
+        mock_gateway_result = MagicMock()
+        mock_gateway_result.scalar_one_or_none.return_value = mock_oauth_auth_code_gateway
+
+        # Mock database execute for helper method queries (finding existing tools)
+        mock_tool_result = MagicMock()
+        mock_tool_result.scalar_one_or_none.return_value = None  # No existing tool found
+
+        # Set up side effect for multiple database calls
+        test_db.execute.side_effect = [
+            mock_gateway_result,  # First call to get gateway
+            mock_tool_result,     # Call from _update_or_create_tools helper method
+        ]
 
         # Mock TokenStorageService
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
@@ -529,10 +540,15 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service_class.return_value = mock_token_service
             mock_token_service.get_user_token = AsyncMock(return_value="oauth_callback_token")
 
-            # Mock the connection methods
+            # Mock the connection methods - create properly configured tool mocks
+            mock_tool = MagicMock(spec=ToolCreate)
+            mock_tool.name = "oauth_tool"
+            mock_tool.description = "OAuth Tool"
+            mock_tool.inputSchema = {}
+
             gateway_service.connect_to_sse_server = AsyncMock(return_value=(
                 {"protocolVersion": "0.1.0"},  # capabilities
-                [MagicMock(spec=ToolCreate, name="oauth_tool", description="OAuth Tool")],  # tools
+                [mock_tool],  # tools
                 [],  # resources
                 []  # prompts
             ))
