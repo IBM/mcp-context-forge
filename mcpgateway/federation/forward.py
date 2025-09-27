@@ -59,7 +59,7 @@ class ForwardingError(Exception):
         >>> raise ForwardingError("Gateway timeout")
         Traceback (most recent call last):
             ...
-        mcpgateway.federation.forward.ForwardingError: Gateway timeout
+        forward.ForwardingError: Gateway timeout
 
         >>> try:
         ...     raise ForwardingError("Invalid response format")
