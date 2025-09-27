@@ -32,7 +32,6 @@ from datetime import datetime
 import json
 import os as _os  # local alias to avoid collisions
 import sys
-import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
@@ -47,7 +46,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -62,8 +61,7 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric, refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -2867,44 +2865,20 @@ async def get_prompt(
         Exception: Re-raised if not a handled exception type.
     """
     logger.debug(f"User: {user} requested prompt: {name} with args={args}")
-    start_time = time.monotonic()
-    success = False
-    error_message = None
-    result = None
 
     try:
         PromptExecuteArgs(args=args)
         result = await prompt_service.get_prompt(db, name, args)
-        success = True
         logger.debug(f"Prompt execution successful for '{name}'")
     except Exception as ex:
-        error_message = str(ex)
         logger.error(f"Could not retrieve prompt {name}: {ex}")
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
-            result = JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
-        elif isinstance(ex, (ValueError, PromptError)):
+            return JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
+        if isinstance(ex, (ValueError, PromptError)):
             # Return the actual error message
-            result = JSONResponse(content={"message": str(ex)}, status_code=422)
-        else:
-            raise
-
-    # Record metrics (moved outside try/except/finally to ensure it runs)
-    end_time = time.monotonic()
-    response_time = end_time - start_time
-
-    # Get the prompt from database to get its ID
-    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
-
-    if prompt:
-        metric = PromptMetric(
-            prompt_id=prompt.id,
-            response_time=response_time,
-            is_success=success,
-            error_message=error_message,
-        )
-        db.add(metric)
-        db.commit()
+            return JSONResponse(content={"message": str(ex)}, status_code=422)
+        raise
 
     return result
 
@@ -2932,36 +2906,7 @@ async def get_prompt_no_args(
         Exception: Re-raised from prompt service.
     """
     logger.debug(f"User: {user} requested prompt: {name} with no arguments")
-    start_time = time.monotonic()
-    success = False
-    error_message = None
-    result = None
-
-    try:
-        result = await prompt_service.get_prompt(db, name, {})
-        success = True
-    except Exception as ex:
-        error_message = str(ex)
-        raise
-
-    # Record metrics
-    end_time = time.monotonic()
-    response_time = end_time - start_time
-
-    # Get the prompt from database to get its ID
-    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
-
-    if prompt:
-        metric = PromptMetric(
-            prompt_id=prompt.id,
-            response_time=response_time,
-            is_success=success,
-            error_message=error_message,
-        )
-        db.add(metric)
-        db.commit()
-
-    return result
+    return await prompt_service.get_prompt(db, name, {})
 
 
 @prompt_router.put("/{name}", response_model=PromptRead)
