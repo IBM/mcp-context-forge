@@ -888,7 +888,7 @@ class TeamManagementService:
             join_request.reviewed_by = approved_by
 
             self.db.flush()
-            self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "member-added", approved_by)
+            self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
 
             self.db.refresh(member)
 
