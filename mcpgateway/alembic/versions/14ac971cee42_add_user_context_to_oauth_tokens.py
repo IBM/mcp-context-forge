@@ -84,8 +84,8 @@ def upgrade() -> None:
         sa.Column("gateway_id", sa.String(36), sa.ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False),
         sa.Column("state", sa.String(500), nullable=False, unique=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("used", sa.Boolean, nullable=False, default=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, default=sa.func.now()),
+        sa.Column("used", sa.Boolean, nullable=False, server_default=sa.false()),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
     )
 
     # Create index for efficient lookups
