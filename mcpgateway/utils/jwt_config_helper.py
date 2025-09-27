@@ -34,7 +34,9 @@ def validate_jwt_algo_and_keys() -> None:
 
     # HMAC algorithms (symmetric)
     if algorithm.startswith("HS"):
-        if not settings.jwt_secret_key:
+        # Handle SecretStr type from Pydantic v2
+        secret_key = settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
+        if not secret_key:
             raise JWTConfigurationError(f"JWT algorithm {algorithm} requires jwt_secret_key to be set")
     # All other algorithms are asymmetric
     else:
@@ -81,7 +83,8 @@ def get_jwt_private_key_or_secret() -> str:
     algorithm = settings.jwt_algorithm.upper()
 
     if algorithm.startswith("HS"):
-        return settings.jwt_secret_key
+        # Handle SecretStr type from Pydantic v2
+        return settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
 
     path = Path(settings.jwt_private_key_path)
     if not path.is_absolute():
@@ -101,7 +104,8 @@ def get_jwt_public_key_or_secret() -> str:
     algorithm = settings.jwt_algorithm.upper()
 
     if algorithm.startswith("HS"):
-        return settings.jwt_secret_key
+        # Handle SecretStr type from Pydantic v2
+        return settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
 
     path = Path(settings.jwt_public_key_path)
     if not path.is_absolute():

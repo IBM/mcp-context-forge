@@ -216,9 +216,11 @@ def _decode_jwt_token(token: str, algorithms: List[str] | None = None) -> Dict[s
         >>> isinstance(default_algo, list)
         True
     """
+    # Get the actual string value from SecretStr if needed
+    secret_key = settings.jwt_secret_key.get_secret_value() if hasattr(settings.jwt_secret_key, "get_secret_value") else settings.jwt_secret_key
     return jwt.decode(
         token,
-        settings.jwt_secret_key,
+        secret_key,
         algorithms=algorithms or [DEFAULT_ALGO],
         audience=settings.jwt_audience,
         issuer=settings.jwt_issuer,
