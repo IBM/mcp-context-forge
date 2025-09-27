@@ -251,6 +251,7 @@ class ServerService:
         server_dict["created_at"] = getattr(server, "created_at", None)
         server_dict["updated_at"] = getattr(server, "updated_at", None)
         server_dict["version"] = getattr(server, "version", None)
+        server_dict["team"] = getattr(server, "team", None)
 
         return ServerRead.model_validate(server_dict)
 
@@ -301,6 +302,21 @@ class ServerService:
             "prompts": prompts or [],
             "a2a_agents": a2a_agents or [],
         }
+
+    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+        """Retrieve the team name given a team ID.
+
+        Args:
+            db (Session): Database session for querying teams.
+            team_id (Optional[str]): The ID of the team.
+
+        Returns:
+            Optional[str]: The name of the team if found, otherwise None.
+        """
+        if not team_id:
+            return None
+        team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)).first()
+        return team.name if team else None
 
     async def register_server(
         self,
@@ -468,6 +484,7 @@ class ServerService:
             logger.debug(f"Server Data: {server_data}")
             await self._notify_server_added(db_server)
             logger.info(f"Registered server: {server_in.name}")
+            db_server.team = self._get_team_name(db, db_server.team_id)
             return self._convert_server_to_read(db_server)
         except IntegrityError as ie:
             db.rollback()
@@ -513,7 +530,13 @@ class ServerService:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
         servers = db.execute(query).scalars().all()
-        return [self._convert_server_to_read(s) for s in servers]
+        result = []
+        for s in servers:
+            s.team = self._get_team_name(db, s.team_id)
+
+            result.append(self._convert_server_to_read(s))
+
+        return result
 
     async def list_servers_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -580,7 +603,12 @@ class ServerService:
         query = query.offset(skip).limit(limit)
 
         servers = db.execute(query).scalars().all()
-        return [self._convert_server_to_read(s) for s in servers]
+        result = []
+        for s in servers:
+            s.team = self._get_team_name(db, s.team_id)
+
+            result.append(self._convert_server_to_read(s))
+        return result
 
     async def get_server(self, db: Session, server_id: str) -> ServerRead:
         """Retrieve server details by ID.
@@ -623,6 +651,7 @@ class ServerService:
             "associated_prompts": [prompt.id for prompt in server.prompts],
         }
         logger.debug(f"Server Data: {server_data}")
+        server.team = self._get_team_name(db, server.team_id) if server else None
         return self._convert_server_to_read(server)
 
     async def update_server(
@@ -809,6 +838,7 @@ class ServerService:
                 "name": server.name,
                 "description": server.description,
                 "icon": server.icon,
+                "team": self._get_team_name(db, server.team_id),
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
                 "is_active": server.is_active,
@@ -884,6 +914,7 @@ class ServerService:
                 "name": server.name,
                 "description": server.description,
                 "icon": server.icon,
+                "team": self._get_team_name(db, server.team_id),
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
                 "is_active": server.is_active,
