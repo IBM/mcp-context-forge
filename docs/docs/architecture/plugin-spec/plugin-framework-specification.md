@@ -57,4 +57,3 @@ This specification covers:
 - **Plugin Manager**: Core service managing plugin lifecycle and execution
 - **Plugin Context**: Request-scoped state shared between plugins
 - **Plugin Configuration**: YAML-based plugin setup and parameters
-

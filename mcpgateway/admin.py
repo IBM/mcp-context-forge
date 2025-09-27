@@ -8722,12 +8722,6 @@ async def admin_add_a2a_agent(
             federation_source=metadata["federation_source"],
         )
 
-        """
-        # Return redirect to admin page with A2A tab
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-        """
-
         return JSONResponse(
             content={"message": "A2A agent created successfully!", "success": True},
             status_code=200,

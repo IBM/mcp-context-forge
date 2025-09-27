@@ -186,7 +186,7 @@ return PluginResult(
 
 **Processing Model**:
 
-Plugin processing uses short circuiting to abort evaluation in the case of a violation and `continue_processing=False`. If the plugin needs to record side effects, such as the bookkeeping, these plugins should be executed first with the highest priority. 
+Plugin processing uses short circuiting to abort evaluation in the case of a violation and `continue_processing=False`. If the plugin needs to record side effects, such as the bookkeeping, these plugins should be executed first with the highest priority.
 
 ### 5.2 HTTP Header Hook Integration Example
 
@@ -477,4 +477,3 @@ async def process_elicitation_response(self, response: ElicitationResponse) -> b
 
     return True
 ```
-
