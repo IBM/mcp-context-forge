@@ -27,6 +27,7 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
+import time
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 # Third-Party
@@ -37,6 +38,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.models import ToolResult
 from mcpgateway.services.logging_service import LoggingService
@@ -54,10 +56,11 @@ class ForwardingError(Exception):
     including network errors, gateway unavailability, or invalid responses.
 
     Examples:
-        >>> raise ForwardingError("Gateway timeout")
-        Traceback (most recent call last):
-            ...
-        mcpgateway.federation.forward.ForwardingError: Gateway timeout
+        >>> try:
+        ...     raise ForwardingError("Gateway timeout")
+        ... except ForwardingError as e:
+        ...     print(f"Error: {e}")
+        Error: Gateway timeout
 
         >>> try:
         ...     raise ForwardingError("Invalid response format")
@@ -355,6 +358,29 @@ class ForwardingService:
         except Exception as e:
             raise ForwardingError(f"Failed to forward resource request: {str(e)}")
 
+    async def _record_server_metric(self, db: Session, gateway: DbGateway, start_time: float, success: bool, error_message: Optional[str]) -> None:
+        """
+        Records a metric for a server interaction.
+
+        Args:
+            db: Database session
+            gateway: The gateway that was accessed
+            start_time: Monotonic start time of the interaction
+            success: True if successful, False otherwise
+            error_message: Error message if failed, None otherwise
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+
+        metric = ServerMetric(
+            server_id=gateway.id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+
     async def _forward_to_gateway(
         self,
         db: Session,
@@ -423,19 +449,23 @@ class ForwardingService:
             >>> try:
             ...     asyncio.run(service._forward_to_gateway(db, "gw1", "test"))
             ... except ForwardingError as e:
-            ...     print(str(e))
-            Rate limit exceeded
+            ...     print("Rate limit" in str(e))
+            True
         """
+        start_time = time.monotonic()
+        success = False
+        error_message = None
+
         # Get gateway
         gateway = db.get(DbGateway, gateway_id)
         if not gateway or not gateway.enabled:
             raise ForwardingError(f"Gateway not found: {gateway_id}")
 
-        # Check rate limits
-        if not self._check_rate_limit(gateway.url):
-            raise ForwardingError("Rate limit exceeded")
-
         try:
+            # Check rate limits
+            if not self._check_rate_limit(gateway.url):
+                raise ForwardingError("Rate limit exceeded")
+
             # Build request
             request = {"jsonrpc": "2.0", "id": 1, "method": method}
             if params:
@@ -463,6 +493,8 @@ class ForwardingService:
                     # Handle response
                     if "error" in result:
                         raise ForwardingError(f"Gateway error: {result['error'].get('message')}")
+
+                    success = True
                     return result.get("result")
 
                 except httpx.TimeoutException:
@@ -471,7 +503,15 @@ class ForwardingService:
                     await asyncio.sleep(1 * (attempt + 1))
 
         except Exception as e:
+            success = False
+            error_message = str(e)
             raise ForwardingError(f"Failed to forward to {gateway.name}: {str(e)}")
+        finally:
+            # Always record the metric
+            try:
+                await self._record_server_metric(db, gateway, start_time, success, error_message)
+            except Exception as metrics_error:
+                logger.warning(f"Failed to record server metric: {metrics_error}")
 
     async def _forward_to_all(self, db: Session, method: str, params: Optional[Dict[str, Any]] = None, request_headers: Optional[Dict[str, str]] = None) -> List[Any]:
         """Forward request to all active gateways.
