@@ -48,7 +48,7 @@ def upgrade() -> None:
 
     # Use database-agnostic query for boolean columns
     # PostgreSQL uses TRUE/FALSE, MySQL and SQLite use 1/0
-    if bind.dialect.name == 'postgresql':
+    if bind.dialect.name == "postgresql":
         where_clause = "WHERE is_active = TRUE"
     else:
         where_clause = "WHERE is_active = 1"
