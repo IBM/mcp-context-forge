@@ -338,7 +338,7 @@ class Settings(BaseSettings):
             info: Pydantic validation info object, used to get the field name.
 
         Returns:
-            SecretStr: The validated secret value, wrapped as a SecretStr if it wasn’t already.
+            SecretStr: The validated secret value, wrapped as a SecretStr if it wasn't already.
         """
 
         field_name = info.field_name

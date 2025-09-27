@@ -337,7 +337,7 @@ class TestDocsAndRedoc:
         """Test /redoc endpoint with Basic Auth (should return 200 if credentials are valid)."""
         # Ensure Basic Auth for docs is allowed
         settings.docs_allow_basic_auth = True
-        
+
         headers = basic_auth_header("admin", "changeme")
         response = await client.get("/redoc", headers=headers)
         assert response.status_code == 200

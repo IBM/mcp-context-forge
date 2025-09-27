@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import pytest
 from pydantic import ValidationError
 from mcpgateway.config import Settings

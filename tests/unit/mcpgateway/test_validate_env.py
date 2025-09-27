@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # File: tests/unit/mcpgateway/test_validate_env.py
 from pathlib import Path
 import pytest
@@ -47,15 +48,15 @@ def test_validate_env_success_direct(valid_env: Path):
     # Clear any cached settings to ensure test isolation
     from mcpgateway.config import get_settings
     get_settings.cache_clear()
-    
+
     # Clear environment variables that might interfere
-    env_vars_to_clear = ['APP_DOMAIN', 'PORT', 'LOG_LEVEL', 'PLATFORM_ADMIN_PASSWORD', 
+    env_vars_to_clear = ['APP_DOMAIN', 'PORT', 'LOG_LEVEL', 'PLATFORM_ADMIN_PASSWORD',
                         'BASIC_AUTH_PASSWORD', 'JWT_SECRET_KEY', 'AUTH_ENCRYPTION_SECRET']
-    
+
     with patch.dict(os.environ, {}, clear=False):
         for var in env_vars_to_clear:
             os.environ.pop(var, None)
-        
+
         code = ve.main(env_file=str(valid_env), exit_on_warnings=False)
         assert code == 0
 
@@ -67,15 +68,15 @@ def test_validate_env_failure_direct(invalid_env: Path):
     # Clear any cached settings to ensure test isolation
     from mcpgateway.config import get_settings
     get_settings.cache_clear()
-    
+
     # Clear environment variables that might interfere
-    env_vars_to_clear = ['APP_DOMAIN', 'PORT', 'LOG_LEVEL', 'PLATFORM_ADMIN_PASSWORD', 
+    env_vars_to_clear = ['APP_DOMAIN', 'PORT', 'LOG_LEVEL', 'PLATFORM_ADMIN_PASSWORD',
                         'BASIC_AUTH_PASSWORD', 'JWT_SECRET_KEY', 'AUTH_ENCRYPTION_SECRET']
-    
+
     with patch.dict(os.environ, {}, clear=False):
         for var in env_vars_to_clear:
             os.environ.pop(var, None)
-        
+
         print("Invalid env path:", invalid_env)
         code = ve.main(env_file=str(invalid_env), exit_on_warnings=False)
         print("Returned code:", code)
