@@ -1,5 +1,5 @@
 description: "Send HTTP webhook notifications on events, violations, and state changes"
-author: "Claude Code Assistant"
+author: "Manav Gupta"
 version: "1.0.0"
 available_hooks:
   - "prompt_pre_fetch"

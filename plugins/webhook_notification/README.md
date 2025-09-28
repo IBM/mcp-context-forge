@@ -1,6 +1,6 @@
 # Webhook Notification Plugin
 
-> Author: Claude Code Assistant
+> Author: Manav Gupta
 > Version: 1.0.0
 
 Sends HTTP webhook notifications on specific events, violations, or state changes. Supports multiple webhooks, event filtering, retry logic with exponential backoff, and various authentication methods.

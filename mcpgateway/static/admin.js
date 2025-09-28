@@ -4795,6 +4795,42 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "plugins") {
+                    const pluginsPanel = safeGetElement("plugins-panel");
+                    if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
+                        const rootPath = window.ROOT_PATH || "";
+                        fetchWithTimeout(
+                            `${rootPath}/admin/plugins/partial`,
+                            {
+                                method: "GET",
+                                credentials: "same-origin",
+                                headers: {
+                                    Accept: "text/html",
+                                },
+                            },
+                            5000
+                        )
+                            .then((response) => {
+                                if (!response.ok) {
+                                    throw new Error(`HTTP error! status: ${response.status}`);
+                                }
+                                return response.text();
+                            })
+                            .then((html) => {
+                                pluginsPanel.innerHTML = html;
+                            })
+                            .catch((error) => {
+                                console.error("Error loading plugins partial:", error);
+                                pluginsPanel.innerHTML = `
+                                    <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                                        <strong class="font-bold">Error loading plugins:</strong>
+                                        <span class="block sm:inline">${escapeHtml(error.message)}</span>
+                                    </div>
+                                `;
+                            });
+                    }
+                }
+
                 if (tabName === "version-info") {
                     const versionPanel = safeGetElement("version-info-panel");
                     if (versionPanel && versionPanel.innerHTML.trim() === "") {
@@ -8804,6 +8840,7 @@ function setupTabNavigation() {
         "a2a-agents",
         "roots",
         "metrics",
+        "plugins",
         "logs",
         "export-import",
         "version-info",
@@ -8811,7 +8848,7 @@ function setupTabNavigation() {
 
     tabs.forEach((tabName) => {
         // Suppress warnings for optional tabs that might not be enabled
-        const optionalTabs = ["roots", "logs", "export-import", "version-info"];
+        const optionalTabs = ["roots", "logs", "export-import", "version-info", "plugins"];
         const suppressWarning = optionalTabs.includes(tabName);
 
         const tabElement = safeGetElement(`tab-${tabName}`, suppressWarning);
