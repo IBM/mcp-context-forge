@@ -1776,7 +1776,7 @@ async def list_a2a_agents(
     # Use team-aware filtering
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
-    return await a2a_service.list_agents_for_user(db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
+    return await a2a_service.list_agents_for_user(db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)

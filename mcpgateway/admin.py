@@ -2155,7 +2155,7 @@ async def admin_ui(
     if a2a_service and settings.mcpgateway_a2a_enabled:
         a2a_agents_raw = await a2a_service.list_agents_for_user(
             db,
-            user_email=user_email,
+            user_info=user_email,
             include_inactive=include_inactive,
         )
         a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
@@ -8647,7 +8647,7 @@ async def admin_list_a2a_agents(
 
     agents = await a2a_service.list_agents_for_user(
         db,
-        user_email=user_email,
+        user_info=user_email,
         include_inactive=include_inactive,
     )
     return [agent.model_dump(by_alias=True) for agent in agents]
