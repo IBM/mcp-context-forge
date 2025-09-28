@@ -9364,7 +9364,6 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 ##################################################
 
 
-
 @admin_router.get("/mcp-registry/servers", response_model=CatalogListResponse)
 async def list_catalog_servers(
     request: Request,

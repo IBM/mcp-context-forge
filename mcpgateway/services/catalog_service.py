@@ -213,17 +213,18 @@ class CatalogService:
             # Set authentication based on server requirements
             auth_type = server_data.get("auth_type", "Open")
             if request and request.api_key and auth_type != "Open":
-                if auth_type == "API Key":
+                # Handle all possible auth types from the catalog
+                if auth_type in ["API Key", "API"]:
                     # Use bearer token for API key authentication
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
-                elif auth_type == "OAuth2.1":
-                    # OAuth servers may need API key as a bearer token
+                elif auth_type in ["OAuth2.1", "OAuth", "OAuth2.1 & API Key"]:
+                    # OAuth servers and mixed auth may need API key as a bearer token
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
                 else:
-                    # For other auth types, use custom headers
-                    gateway_data["auth_type"] = "headers"
+                    # For any other auth types, use custom headers
+                    gateway_data["auth_type"] = "authheaders"
                     gateway_data["auth_header_key"] = "X-API-Key"
                     gateway_data["auth_header_value"] = request.api_key
 
