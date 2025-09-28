@@ -5316,3 +5316,51 @@ class SSOCallbackResponse(BaseModelWithConfigDict):
     token_type: str = Field(default="bearer", description="Token type")
     expires_in: int = Field(..., description="Token expiration in seconds")
     user: Dict[str, Any] = Field(..., description="User information")
+
+
+# Plugin-related schemas
+
+
+class PluginSummary(BaseModel):
+    """Summary information for a plugin in list views."""
+
+    name: str = Field(..., description="Unique plugin name")
+    description: str = Field("", description="Plugin description")
+    author: str = Field("Unknown", description="Plugin author")
+    version: str = Field("0.0.0", description="Plugin version")
+    mode: str = Field(..., description="Plugin mode: enforce, permissive, or disabled")
+    priority: int = Field(..., description="Plugin execution priority (lower = higher priority)")
+    hooks: List[str] = Field(default_factory=list, description="Hook points where plugin executes")
+    tags: List[str] = Field(default_factory=list, description="Plugin tags for categorization")
+    status: str = Field(..., description="Plugin status: enabled or disabled")
+    config_summary: Dict[str, Any] = Field(default_factory=dict, description="Summary of plugin configuration")
+
+
+class PluginDetail(PluginSummary):
+    """Detailed plugin information including full configuration."""
+
+    kind: str = Field("", description="Plugin type or class")
+    namespace: Optional[str] = Field(None, description="Plugin namespace")
+    conditions: List[Any] = Field(default_factory=list, description="Conditions for plugin execution")
+    config: Dict[str, Any] = Field(default_factory=dict, description="Full plugin configuration")
+    manifest: Optional[Dict[str, Any]] = Field(None, description="Plugin manifest information")
+
+
+class PluginListResponse(BaseModel):
+    """Response for plugin list endpoint."""
+
+    plugins: List[PluginSummary] = Field(..., description="List of plugins")
+    total: int = Field(..., description="Total number of plugins")
+    enabled_count: int = Field(0, description="Number of enabled plugins")
+    disabled_count: int = Field(0, description="Number of disabled plugins")
+
+
+class PluginStatsResponse(BaseModel):
+    """Response for plugin statistics endpoint."""
+
+    total_plugins: int = Field(..., description="Total number of plugins")
+    enabled_plugins: int = Field(..., description="Number of enabled plugins")
+    disabled_plugins: int = Field(..., description="Number of disabled plugins")
+    plugins_by_hook: Dict[str, int] = Field(default_factory=dict, description="Plugin count by hook type")
+    plugins_by_mode: Dict[str, int] = Field(default_factory=dict, description="Plugin count by mode")
+    plugins_by_tag: Dict[str, int] = Field(default_factory=dict, description="Plugin count by tag (top 10)")

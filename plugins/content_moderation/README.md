@@ -1,6 +1,6 @@
 # Content Moderation Plugin
 
-> Author: Claude Code Assistant
+> Author: Manav Gupta
 > Version: 1.0.0
 
 Advanced content moderation plugin using multiple AI providers including IBM Watson, IBM Granite Guardian, OpenAI, Azure, and AWS to detect and handle harmful content.

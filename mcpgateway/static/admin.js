@@ -4795,6 +4795,49 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "plugins") {
+                    const pluginsPanel = safeGetElement("plugins-panel");
+                    if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
+                        const rootPath = window.ROOT_PATH || "";
+                        fetchWithTimeout(
+                            `${rootPath}/admin/plugins/partial`,
+                            {
+                                method: "GET",
+                                credentials: "same-origin",
+                                headers: {
+                                    Accept: "text/html",
+                                },
+                            },
+                            5000,
+                        )
+                            .then((response) => {
+                                if (!response.ok) {
+                                    throw new Error(
+                                        `HTTP error! status: ${response.status}`,
+                                    );
+                                }
+                                return response.text();
+                            })
+                            .then((html) => {
+                                pluginsPanel.innerHTML = html;
+                                // Initialize plugin functions after HTML is loaded
+                                initializePluginFunctions();
+                            })
+                            .catch((error) => {
+                                console.error(
+                                    "Error loading plugins partial:",
+                                    error,
+                                );
+                                pluginsPanel.innerHTML = `
+                                    <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                                        <strong class="font-bold">Error loading plugins:</strong>
+                                        <span class="block sm:inline">${escapeHtml(error.message)}</span>
+                                    </div>
+                                `;
+                            });
+                    }
+                }
+
                 if (tabName === "version-info") {
                     const versionPanel = safeGetElement("version-info-panel");
                     if (versionPanel && versionPanel.innerHTML.trim() === "") {
@@ -8804,6 +8847,7 @@ function setupTabNavigation() {
         "a2a-agents",
         "roots",
         "metrics",
+        "plugins",
         "logs",
         "export-import",
         "version-info",
@@ -8811,7 +8855,13 @@ function setupTabNavigation() {
 
     tabs.forEach((tabName) => {
         // Suppress warnings for optional tabs that might not be enabled
-        const optionalTabs = ["roots", "logs", "export-import", "version-info"];
+        const optionalTabs = [
+            "roots",
+            "logs",
+            "export-import",
+            "version-info",
+            "plugins",
+        ];
         const suppressWarning = optionalTabs.includes(tabName);
 
         const tabElement = safeGetElement(`tab-${tabName}`, suppressWarning);
@@ -13109,3 +13159,194 @@ window.selectAllItems = selectAllItems;
 window.selectNoneItems = selectNoneItems;
 window.selectOnlyCustom = selectOnlyCustom;
 window.resetImportSelection = resetImportSelection;
+
+// Plugin management functions
+function initializePluginFunctions() {
+    // Filter plugins based on search and filters
+    window.filterPlugins = function () {
+        const searchInput = document.getElementById("plugin-search");
+        const modeFilter = document.getElementById("plugin-mode-filter");
+        const hookFilter = document.getElementById("plugin-hook-filter");
+
+        const searchQuery = searchInput ? searchInput.value.toLowerCase() : "";
+        const selectedMode = modeFilter ? modeFilter.value : "";
+        const selectedHook = hookFilter ? hookFilter.value : "";
+
+        const cards = document.querySelectorAll(".plugin-card");
+
+        cards.forEach((card) => {
+            const name = card.dataset.name.toLowerCase();
+            const description = card.dataset.description.toLowerCase();
+            const mode = card.dataset.mode;
+            const hooks = card.dataset.hooks.split(",");
+
+            let visible = true;
+
+            // Search filter
+            if (
+                searchQuery &&
+                !name.includes(searchQuery) &&
+                !description.includes(searchQuery)
+            ) {
+                visible = false;
+            }
+
+            // Mode filter
+            if (selectedMode && mode !== selectedMode) {
+                visible = false;
+            }
+
+            // Hook filter
+            if (selectedHook && !hooks.includes(selectedHook)) {
+                visible = false;
+            }
+
+            if (visible) {
+                card.style.display = "block";
+            } else {
+                card.style.display = "none";
+            }
+        });
+    };
+
+    // Show plugin details modal
+    window.showPluginDetails = async function (pluginName) {
+        const modal = document.getElementById("plugin-details-modal");
+        const modalName = document.getElementById("modal-plugin-name");
+        const modalContent = document.getElementById("modal-plugin-content");
+
+        if (!modal || !modalName || !modalContent) {
+            console.error("Plugin details modal elements not found");
+            return;
+        }
+
+        // Show loading state
+        modalName.textContent = pluginName;
+        modalContent.innerHTML =
+            '<div class="text-center py-4">Loading...</div>';
+        modal.classList.remove("hidden");
+
+        try {
+            const rootPath = window.ROOT_PATH || "";
+            // Fetch plugin details
+            const response = await fetch(
+                `${rootPath}/admin/plugins/${encodeURIComponent(pluginName)}`,
+                {
+                    credentials: "same-origin",
+                    headers: {
+                        Accept: "application/json",
+                    },
+                },
+            );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Failed to load plugin details: ${response.statusText}`,
+                );
+            }
+
+            const plugin = await response.json();
+
+            // Render plugin details
+            modalContent.innerHTML = `
+                <div class="space-y-4">
+                    <div>
+                        <h4 class="font-medium text-gray-700 dark:text-gray-300">Description</h4>
+                        <p class="mt-1">${plugin.description || "No description available"}</p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <h4 class="font-medium text-gray-700 dark:text-gray-300">Author</h4>
+                            <p class="mt-1">${plugin.author || "Unknown"}</p>
+                        </div>
+                        <div>
+                            <h4 class="font-medium text-gray-700 dark:text-gray-300">Version</h4>
+                            <p class="mt-1">${plugin.version || "0.0.0"}</p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
+                            <p class="mt-1">
+                                <span class="px-2 py-1 text-xs rounded-full ${
+                                    plugin.mode === "enforce"
+                                        ? "bg-red-100 text-red-800"
+                                        : plugin.mode === "permissive"
+                                          ? "bg-yellow-100 text-yellow-800"
+                                          : "bg-gray-100 text-gray-800"
+                                }">
+                                    ${plugin.mode}
+                                </span>
+                            </p>
+                        </div>
+                        <div>
+                            <h4 class="font-medium text-gray-700 dark:text-gray-300">Priority</h4>
+                            <p class="mt-1">${plugin.priority}</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="font-medium text-gray-700 dark:text-gray-300">Hooks</h4>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                            ${(plugin.hooks || [])
+                                .map(
+                                    (hook) =>
+                                        `<span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">${hook}</span>`,
+                                )
+                                .join("")}
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="font-medium text-gray-700 dark:text-gray-300">Tags</h4>
+                        <div class="mt-1 flex flex-wrap gap-1">
+                            ${(plugin.tags || [])
+                                .map(
+                                    (tag) =>
+                                        `<span class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">${tag}</span>`,
+                                )
+                                .join("")}
+                        </div>
+                    </div>
+
+                    ${
+                        plugin.config && Object.keys(plugin.config).length > 0
+                            ? `
+                        <div>
+                            <h4 class="font-medium text-gray-700 dark:text-gray-300">Configuration</h4>
+                            <pre class="mt-1 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs overflow-x-auto">${JSON.stringify(plugin.config, null, 2)}</pre>
+                        </div>
+                    `
+                            : ""
+                    }
+                </div>
+            `;
+        } catch (error) {
+            console.error("Error loading plugin details:", error);
+            modalContent.innerHTML = `
+                <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+                    <strong class="font-bold">Error:</strong>
+                    <span class="block sm:inline">${error.message}</span>
+                </div>
+            `;
+        }
+    };
+
+    // Close plugin details modal
+    window.closePluginDetails = function () {
+        const modal = document.getElementById("plugin-details-modal");
+        if (modal) {
+            modal.classList.add("hidden");
+        }
+    };
+}
+
+// Initialize plugin functions if plugins panel exists
+if (document.getElementById("plugins-panel")) {
+    initializePluginFunctions();
+}
+
+// Expose plugin functions to global scope
+window.initializePluginFunctions = initializePluginFunctions;

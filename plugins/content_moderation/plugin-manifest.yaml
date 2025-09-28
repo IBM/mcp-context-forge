@@ -1,5 +1,5 @@
 description: "Advanced content moderation using AI services (IBM Watson, IBM Granite Guardian, OpenAI, Azure, AWS)"
-author: "Claude Code Assistant"
+author: "Manav Gupta"
 version: "1.0.0"
 available_hooks:
   - "prompt_pre_fetch"

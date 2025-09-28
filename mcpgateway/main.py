@@ -907,6 +907,17 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 templates = Jinja2Templates(directory=str(settings.templates_dir))
 app.state.templates = templates
 
+# Store plugin manager in app state for access in routes
+app.state.plugin_manager = plugin_manager
+
+# Initialize plugin service with plugin manager
+if plugin_manager:
+    # First-Party
+    from mcpgateway.services.plugin_service import get_plugin_service
+
+    plugin_service = get_plugin_service()
+    plugin_service.set_plugin_manager(plugin_manager)
+
 # Create API routers
 protocol_router = APIRouter(prefix="/protocol", tags=["Protocol"])
 tool_router = APIRouter(prefix="/tools", tags=["Tools"])
