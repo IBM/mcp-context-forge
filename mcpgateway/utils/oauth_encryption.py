@@ -14,6 +14,7 @@ using the AUTH_ENCRYPTION_SECRET from configuration.
 import base64
 import logging
 from typing import Optional
+from pydantic import SecretStr
 
 # Third-Party
 from cryptography.fernet import Fernet
@@ -40,13 +41,13 @@ class OAuthEncryption:
         False
     """
 
-    def __init__(self, encryption_secret: str):
+    def __init__(self, encryption_secret: SecretStr):
         """Initialize the encryption handler.
 
         Args:
             encryption_secret: Secret key for encryption/decryption
         """
-        self.encryption_secret = encryption_secret.encode()
+        self.encryption_secret = encryption_secret.get_secret_value()encode()
         self._fernet = None
 
     def _get_fernet(self) -> Fernet:

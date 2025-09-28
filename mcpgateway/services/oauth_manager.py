@@ -431,7 +431,7 @@ class OAuthManager:
             received_signature = state_with_sig[-32:]
 
             # Verify HMAC signature
-            secret_key = self.settings.auth_encryption_secret.encode() if self.settings.auth_encryption_secret else b"default-secret-key"
+            secret_key = self.settings.auth_encryption_secret.get_secret_value().encode() if self.settings.auth_encryption_secret else b"default-secret-key"
             expected_signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
 
             if not hmac.compare_digest(received_signature, expected_signature):
@@ -507,7 +507,7 @@ class OAuthManager:
         state_bytes = state_json.encode()
 
         # Create HMAC signature
-        secret_key = self.settings.auth_encryption_secret.encode() if self.settings.auth_encryption_secret else b"default-secret-key"
+        secret_key = self.settings.auth_encryption_secret.get_secret_value().encode() if self.settings.auth_encryption_secret else b"default-secret-key"
         signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
 
         # Combine state and signature, then base64 encode
