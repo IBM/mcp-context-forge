@@ -59,11 +59,11 @@ class PluginService:
             return []
 
         plugins = []
-        registry = self._plugin_manager._registry
+        registry = self._plugin_manager._registry  # pylint: disable=protected-access
 
         for plugin_ref in registry.get_all_plugins():
             # Get the plugin config from the plugin reference
-            plugin_config = plugin_ref.plugin.config if hasattr(plugin_ref, "plugin") else plugin_ref._plugin.config if hasattr(plugin_ref, "_plugin") else None
+            plugin_config = plugin_ref.plugin.config if hasattr(plugin_ref, "plugin") else plugin_ref._plugin.config if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
 
             plugin_dict = {
                 "name": plugin_ref.name,
@@ -102,14 +102,14 @@ class PluginService:
         if not self._plugin_manager:
             return None
 
-        registry = self._plugin_manager._registry
+        registry = self._plugin_manager._registry  # pylint: disable=protected-access
         plugin_ref = registry.get_plugin(name)
 
         if not plugin_ref:
             return None
 
         # Get the plugin config from the plugin reference
-        plugin_config = plugin_ref.plugin.config if hasattr(plugin_ref, "plugin") else plugin_ref._plugin.config if hasattr(plugin_ref, "_plugin") else None
+        plugin_config = plugin_ref.plugin.config if hasattr(plugin_ref, "plugin") else plugin_ref._plugin.config if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
 
         plugin_dict = {
             "name": plugin_ref.name,
