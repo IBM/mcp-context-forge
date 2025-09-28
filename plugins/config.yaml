@@ -12,7 +12,7 @@ plugin_settings:
   plugin_timeout: 120
   fail_on_plugin_error: false
   enable_plugin_api: true
-  plugin_health_check_interval: 60
+  plugin_health_check_interval: 120
 
 plugins:
   # Argument Normalizer - stabilize inputs before anything else
@@ -23,7 +23,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["normalize", "inputs", "whitespace", "unicode", "dates", "numbers"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 40
     conditions: []
     config:
@@ -98,7 +98,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -120,7 +120,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
-    mode: "enforce"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 100
     conditions:
       # Apply to specific tools/servers
@@ -141,7 +141,7 @@ plugins:
     author: "MCP Gateway Team"
     hooks: ["resource_pre_fetch", "resource_post_fetch", "prompt_post_fetch", "tool_post_invoke"]
     tags: ["resource", "filter", "security", "example"]
-    mode: "enforce"  # Block resources that violate rules
+    mode: "disabled"  # Block resources that violate rules
     priority: 75
     conditions: []  # Apply to all resources
     config:
@@ -175,7 +175,7 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["resource_post_fetch"]
     tags: ["security", "html", "xss", "sanitize"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 119
     conditions: []
     config:
@@ -200,7 +200,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["resource_post_fetch"]
     tags: ["transform", "markdown", "html"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 120
     conditions: []
     config: {}
@@ -213,7 +213,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["limits", "throttle"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 20
     conditions: []
     config:
