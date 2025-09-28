@@ -252,14 +252,14 @@ class A2AAgentService:
         return [self._db_to_schema(agent) for agent in agents]
 
     async def list_agents_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[A2AAgentRead]:
         """
         List A2A agents user has access to with team filtering.
 
         Args:
             db: Database session
-            user_email: Email of the user requesting agents
+            user_info: Object representing identity of the user who is requesting agents
             team_id: Optional team ID to filter by specific team
             visibility: Optional visibility filter (private, team, public)
             include_inactive: Whether to include inactive agents
@@ -269,6 +269,12 @@ class A2AAgentService:
         Returns:
             List[A2AAgentRead]: A2A agents the user has access to
         """
+
+        # Handle case where user_info is a string (email) instead of dict (<0.7.0)
+        if isinstance(user_info, str):
+            user_email = str(user_info)
+        else:
+            user_email = user_info.get("email", "")
 
         # Build query following existing patterns from list_prompts()
         team_service = TeamManagementService(db)
