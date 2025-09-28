@@ -756,7 +756,7 @@ plugins:
     kind: "plugins.webhook_notification.webhook_notification.WebhookNotificationPlugin"
     description: "Send HTTP webhook notifications on events, violations, and state changes"
     version: "1.0.0"
-    author: "Claude Code Assistant"
+    author: "Manav Gupta"
     hooks: ["tool_pre_invoke", "tool_post_invoke", "prompt_post_fetch", "resource_post_fetch"]
     tags: ["notification", "webhook", "monitoring", "observability"]
     mode: "permissive"
@@ -795,7 +795,7 @@ plugins:
     kind: "plugins.content_moderation.content_moderation.ContentModerationPlugin"
     description: "Advanced content moderation using AI services (IBM Watson, IBM Granite Guardian, OpenAI, Azure, AWS)"
     version: "1.0.0"
-    author: "Claude Code Assistant"
+    author: "Manav Gupta"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["safety", "moderation", "content", "ai", "ibm", "watson", "granite"]
     mode: "permissive"  # Use permissive mode for testing
