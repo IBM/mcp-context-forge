@@ -1055,10 +1055,7 @@
           </div>
 
           <!-- Server Grid -->
-          <div id="mcp-registry-servers"
-               hx-get="{{ root_path }}/admin/mcp-registry/partial"
-               hx-trigger="load"
-               hx-swap="innerHTML">
+          <div id="mcp-registry-servers">
             <div class="text-center py-8">
               <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
               <p class="mt-2 text-gray-600">Loading MCP Registry servers...</p>
@@ -1110,77 +1107,8 @@
             </div>
           </div>
         </div>
-
-        <script>
-          // Define modal functions in global scope if not already defined
-          if (typeof window.showApiKeyModal === 'undefined') {
-            window.showApiKeyModal = function(serverId, serverName, serverUrl) {
-              document.getElementById('modal-server-id').value = serverId;
-              document.getElementById('modal-server-name').textContent = serverName;
-              document.getElementById('modal-custom-name').placeholder = serverName;
-              document.getElementById('api-key-modal').classList.remove('hidden');
-            };
-
-            window.closeApiKeyModal = function() {
-              const modal = document.getElementById('api-key-modal');
-              if (modal) modal.classList.add('hidden');
-              const form = document.getElementById('api-key-form');
-              if (form) form.reset();
-            };
-
-            window.submitApiKeyForm = function(event) {
-              event.preventDefault();
-              const serverId = document.getElementById('modal-server-id').value;
-              const customName = document.getElementById('modal-custom-name').value;
-              const apiKey = document.getElementById('modal-api-key').value;
-
-              // Prepare request data
-              const requestData = {};
-              if (customName) requestData.name = customName;
-              if (apiKey) requestData.api_key = apiKey;
-
-              // Send registration request
-              fetch('{{ root_path }}/admin/mcp-registry/' + serverId + '/register', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer ' + (getCookie('jwt_token') || '')
-                },
-                body: JSON.stringify(requestData)
-              })
-              .then(response => response.json())
-              .then(data => {
-                if (data.success) {
-                  closeApiKeyModal();
-                  // Reload the catalog
-                  const registryContent = document.getElementById('mcp-registry-servers');
-                  if (registryContent) {
-                    htmx.ajax('GET', '{{ root_path }}/admin/mcp-registry/partial', {
-                      target: '#mcp-registry-servers',
-                      swap: 'innerHTML'
-                    });
-                  }
-                } else {
-                  alert('Registration failed: ' + (data.error || data.message));
-                }
-              })
-              .catch(error => {
-                alert('Error registering server: ' + error);
-              });
-            };
-
-            // Helper function to get cookie
-            if (typeof window.getCookie === 'undefined') {
-              window.getCookie = function(name) {
-                const value = '; ' + document.cookie;
-                const parts = value.split('; ' + name + '=');
-                if (parts.length === 2) return parts.pop().split(';').shift();
-                return '';
-              };
-            }
-          }
-        </script>
       </div>
+      {% endif %}
 
       <!-- Catalog Panel (Virtual Servers) -->
       <div id="catalog-panel" class="tab-panel hidden">

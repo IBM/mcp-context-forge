@@ -188,18 +188,27 @@ class CatalogService:
             if existing:
                 return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message="Server already registered", error="This server is already registered in the system")
 
-            # Create gateway entry
-            gateway = Gateway(
-                id=str(uuid.uuid4()),
+            # Prepare gateway creation request using proper schema
+            from mcpgateway.schemas import GatewayCreate
+
+            # Prepare authentication headers if API key is provided
+            auth_headers = None
+            if request and request.api_key and server_data.get("auth_type") == "API Key":
+                # Format API key as header
+                auth_headers = f"Authorization: Bearer {request.api_key}"
+            elif request and request.api_key:
+                # For other auth types, use generic header
+                auth_headers = f"X-API-Key: {request.api_key}"
+
+            gateway_create = GatewayCreate(
                 name=request.name if request and request.name else server_data["name"],
-                slug=server_data["name"].lower().replace(" ", "-"),
                 url=server_data["url"],
                 description=server_data["description"],
-                enabled=True,
+                transport="sse",  # Most catalog servers use SSE transport
+                authentication_headers=auth_headers,
                 tags=server_data.get("tags", []),
-                capabilities={
+                metadata={
                     "auth_type": server_data.get("auth_type", "Open"),
-                    "api_key": request.api_key if request and request.api_key else None,
                     "catalog_id": catalog_id,
                     "provider": server_data.get("provider"),
                     "category": server_data.get("category"),
@@ -207,12 +216,21 @@ class CatalogService:
                 },
             )
 
-            db.add(gateway)
-            db.commit()
+            # Use the proper gateway registration method which will discover tools
+            gateway_read = await self._gateway_service.register_gateway(
+                db=db,
+                gateway=gateway_create,
+                created_via="catalog",
+                visibility="public",  # Catalog servers should be public
+            )
 
-            logger.info(f"Registered catalog server: {gateway.name} ({catalog_id})")
+            logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id}) with {len(gateway_read.tools)} tools")
 
-            return CatalogServerRegisterResponse(success=True, server_id=str(gateway.id), message=f"Successfully registered {gateway.name}", error=None)
+            message = f"Successfully registered {gateway_read.name}"
+            if gateway_read.tools:
+                message += f" with {len(gateway_read.tools)} tools"
+
+            return CatalogServerRegisterResponse(success=True, server_id=str(gateway_read.id), message=message, error=None)
 
         except Exception as e:
             logger.error(f"Failed to register catalog server {catalog_id}: {e}")
