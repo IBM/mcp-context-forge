@@ -47,7 +47,7 @@ class OAuthEncryption:
         Args:
             encryption_secret: Secret key for encryption/decryption
         """
-        self.encryption_secret = encryption_secret.get_secret_value()encode()
+        self.encryption_secret = encryption_secret.get_secret_value().encode()
         self._fernet = None
 
     def _get_fernet(self) -> Fernet:
