@@ -273,6 +273,12 @@ class Settings(BaseSettings):
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
 
+    # MCP Server Catalog Configuration
+    mcpgateway_catalog_enabled: bool = Field(default=True, description="Enable MCP server catalog feature")
+    mcpgateway_catalog_file: str = Field(default="mcp-catalog.yml", description="Path to catalog configuration file")
+    mcpgateway_catalog_auto_health_check: bool = Field(default=True, description="Automatically health check catalog servers")
+    mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
+
     # Security
     skip_ssl_verify: bool = False
     cors_enabled: bool = True
