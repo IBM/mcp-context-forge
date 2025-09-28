@@ -28,6 +28,8 @@ from mcpgateway.plugins.framework import (
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
 )
 
 
@@ -271,4 +273,25 @@ class ResourceFilterPlugin(Plugin):
                 "filtered": context.get_state("content_filtered", False),
                 "original_uri": context.get_state("original_uri")
             }
+        )
+
+    async def tool_post_invoke(
+        self, payload: ToolPostInvokePayload, context: PluginContext
+    ) -> ToolPostInvokeResult:
+        """Handle tool invocation results.
+
+        This plugin focuses on resource filtering, so tool invocations pass through unmodified.
+
+        Args:
+            payload: The tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            ToolPostInvokeResult indicating to continue processing without modifications.
+        """
+        # This plugin is focused on resource filtering, not tool invocations
+        # Simply pass through without modification
+        return ToolPostInvokeResult(
+            continue_processing=True,
+            modified_payload=payload
         )
