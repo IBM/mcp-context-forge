@@ -14,6 +14,7 @@ using the AUTH_ENCRYPTION_SECRET from configuration.
 import base64
 import logging
 from typing import Optional
+from pydantic import SecretStr
 
 # Third-Party
 from cryptography.fernet import Fernet
