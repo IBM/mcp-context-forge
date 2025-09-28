@@ -9169,7 +9169,7 @@ async def get_gateways_section(
 
 
 @admin_router.get("/plugins/partial")
-async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:
+async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
     """Render the plugins partial HTML template.
 
     This endpoint returns a rendered HTML partial containing plugin information,
@@ -9224,7 +9224,7 @@ async def list_plugins(
     mode: Optional[str] = None,
     hook: Optional[str] = None,
     tag: Optional[str] = None,
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_db),  # pylint: disable=unused-argument
     user=Depends(get_current_user_with_permissions),
 ) -> PluginListResponse:
     """Get list of all plugins with optional filtering.
@@ -9273,7 +9273,7 @@ async def list_plugins(
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
-async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginStatsResponse:
+async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginStatsResponse:  # pylint: disable=unused-argument
     """Get plugin statistics.
 
     Args:
@@ -9309,7 +9309,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.get("/plugins/{name}", response_model=PluginDetail)
-async def get_plugin_details(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginDetail:
+async def get_plugin_details(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginDetail:  # pylint: disable=unused-argument
     """Get detailed information about a specific plugin.
 
     Args:
