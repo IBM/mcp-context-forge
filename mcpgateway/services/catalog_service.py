@@ -11,7 +11,6 @@ import logging
 from pathlib import Path
 import time
 from typing import Any, Dict, Optional
-import uuid
 
 # Third-Party
 import httpx
@@ -191,30 +190,44 @@ class CatalogService:
             # Prepare gateway creation request using proper schema
             from mcpgateway.schemas import GatewayCreate
 
-            # Prepare authentication headers if API key is provided
-            auth_headers = None
-            if request and request.api_key and server_data.get("auth_type") == "API Key":
-                # Format API key as header
-                auth_headers = f"Authorization: Bearer {request.api_key}"
-            elif request and request.api_key:
-                # For other auth types, use generic header
-                auth_headers = f"X-API-Key: {request.api_key}"
+            # Detect transport type from URL or use SSE as default
+            url = server_data["url"].lower()
+            if url.endswith("/sse"):
+                transport = "SSE"
+            elif url.startswith("ws://") or url.startswith("wss://"):
+                transport = "SSE"  # WebSocket URLs typically use SSE transport
+            elif "/mcp" in url or url.endswith("/"):
+                transport = "HTTP"  # Generic MCP endpoints typically use HTTP
+            else:
+                transport = "SSE"  # Default to SSE for most catalog servers
 
-            gateway_create = GatewayCreate(
-                name=request.name if request and request.name else server_data["name"],
-                url=server_data["url"],
-                description=server_data["description"],
-                transport="sse",  # Most catalog servers use SSE transport
-                authentication_headers=auth_headers,
-                tags=server_data.get("tags", []),
-                metadata={
-                    "auth_type": server_data.get("auth_type", "Open"),
-                    "catalog_id": catalog_id,
-                    "provider": server_data.get("provider"),
-                    "category": server_data.get("category"),
-                    "from_catalog": True,
-                },
-            )
+            # Prepare the gateway creation data
+            gateway_data = {
+                "name": request.name if request and request.name else server_data["name"],
+                "url": server_data["url"],
+                "description": server_data["description"],
+                "transport": transport,
+                "tags": server_data.get("tags", []),
+            }
+
+            # Set authentication based on server requirements
+            auth_type = server_data.get("auth_type", "Open")
+            if request and request.api_key and auth_type != "Open":
+                if auth_type == "API Key":
+                    # Use bearer token for API key authentication
+                    gateway_data["auth_type"] = "bearer"
+                    gateway_data["auth_token"] = request.api_key
+                elif auth_type == "OAuth2.1":
+                    # OAuth servers may need API key as a bearer token
+                    gateway_data["auth_type"] = "bearer"
+                    gateway_data["auth_token"] = request.api_key
+                else:
+                    # For other auth types, use custom headers
+                    gateway_data["auth_type"] = "headers"
+                    gateway_data["auth_header_key"] = "X-API-Key"
+                    gateway_data["auth_header_value"] = request.api_key
+
+            gateway_create = GatewayCreate(**gateway_data)
 
             # Use the proper gateway registration method which will discover tools
             gateway_read = await self._gateway_service.register_gateway(
@@ -224,11 +237,22 @@ class CatalogService:
                 visibility="public",  # Catalog servers should be public
             )
 
-            logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id}) with {len(gateway_read.tools)} tools")
+            logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id})")
+
+            # Query for tools discovered from this gateway
+            from mcpgateway.models import Tool
+            from sqlalchemy import select
+
+            tool_count = 0
+            if gateway_read.id:
+                stmt = select(Tool).where(Tool.gateway_id == gateway_read.id)
+                result = db.execute(stmt)
+                tools = result.scalars().all()
+                tool_count = len(tools)
 
             message = f"Successfully registered {gateway_read.name}"
-            if gateway_read.tools:
-                message += f" with {len(gateway_read.tools)} tools"
+            if tool_count > 0:
+                message += f" with {tool_count} tools discovered"
 
             return CatalogServerRegisterResponse(success=True, server_id=str(gateway_read.id), message=message, error=None)
 
