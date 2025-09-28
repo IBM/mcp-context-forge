@@ -9240,6 +9240,9 @@ async def list_plugins(
 
     Returns:
         PluginListResponse with list of plugins and statistics
+
+    Raises:
+        HTTPException: If there's an error retrieving plugins
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin list")
 
@@ -9280,6 +9283,9 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
 
     Returns:
         PluginStatsResponse with aggregated plugin statistics
+
+    Raises:
+        HTTPException: If there's an error getting plugin statistics
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin statistics")
 

@@ -3,5 +3,5 @@
   "tag-pair": true,
   "doctype-first": true,
   "id-unique": true,
-  "spec-char-escape": true
+  "spec-char-escape": false
 }
