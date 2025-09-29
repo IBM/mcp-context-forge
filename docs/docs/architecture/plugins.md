@@ -1,15 +1,15 @@
 # Plugin Framework Architecture
 
-The MCP Context Forge Gateway implements a comprehensive, platform-agnostic plugin framework for AI safety middleware, security processing, and extensible gateway capabilities. This document provides a detailed architectural overview of the plugin system implementation, focusing on both **self-contained plugins** (running in-process) and **external/remote plugins** (as MCP servers) through a unified, reusable interface.
+The MCP Context Forge Gateway implements a comprehensive, platform-agnostic plugin framework for AI safety middleware, security processing, and extensible gateway capabilities. This document provides a detailed architectural overview of the plugin system implementation, focusing on both **native plugins** (running in-process) and **external plugins** (as MCP servers) through a unified, reusable interface.
 
 ## Overview
 
-The plugin framework is designed as a **standalone, platform-agnostic ecosystem** that can be embedded in any application requiring extensible middleware processing. It enables both **self-contained plugins** (running in-process) and **external plugin integrations** (remote MCP servers) through a unified interface. This hybrid approach balances performance, security, and operational requirements while providing maximum flexibility for deployment across different environments and platforms.
+The plugin framework is designed as a **standalone, platform-agnostic ecosystem** that can be embedded in any application requiring extensible middleware processing. It enables both **native plugins** (running in-process) and **external plugin integrations** (remote MCP servers) through a unified interface. This hybrid approach balances performance, security, and operational requirements while providing maximum flexibility for deployment across different environments and platforms.
 
 ### Key Design Principles
 
 - **Platform Agnostic**: Framework can be integrated into any Python application
-- **Protocol Neutral**: Supports multiple transport mechanisms (HTTP, WebSocket, STDIO, SSE)
+- **Protocol Neutral**: Supports multiple transport mechanisms (Streamable HTTP (JSON-RPC), STDIO, SSE), and can be extended to support additional protocols
 - **MCP Native**: Remote plugins are fully compliant MCP servers
 - **Security First**: Comprehensive timeout protection, input validation, and isolation
 - **Production Ready**: Built for high-throughput, low-latency enterprise environments
@@ -42,9 +42,9 @@ mcpgateway/plugins/framework/
 
 ### Plugin Types and Deployment Patterns
 
-The framework supports three distinct plugin deployment patterns:
+The framework supports two distinct plugin deployment patterns:
 
-#### 1. **Self-Contained Plugins** (In-Process)
+#### 1. **Native Plugins** (In-Process)
 - Execute within the main application process
 - Written in Python and extend the base `Plugin` class
 - Fastest execution with shared memory access
@@ -53,13 +53,8 @@ The framework supports three distinct plugin deployment patterns:
 #### 2. **External Plugins** (Remote MCP Servers)
 - Standalone MCP servers implementing plugin logic
 - Can be written in any language (Python, TypeScript, Go, Rust, etc.)
-- Communicate via MCP protocol (HTTP, WebSocket, STDIO)
-- Examples: LlamaGuard, OpenAI Moderation, custom AI services
-
-#### 3. **Hybrid Plugins** (Platform Integration)
-- Combine self-contained and external patterns
-- Self-contained wrapper that orchestrates external services
-- Enables complex workflows and service composition
+- Communicate via MCP protocol (Streamable HTTP, STDIO, SSE)
+- Examples: OPA filter, LlamaGuard, OpenAI Moderation, custom AI services
 
 ## Plugin System Architecture
 
@@ -84,9 +79,8 @@ flowchart TB
     end
 
     subgraph "Plugin Types"
-        SelfContained["📦 Self-Contained\\n(In-Process)"]
-        External["🌍 External/Remote\\n(MCP Servers)"]
-        Hybrid["🔗 Hybrid\\n(Orchestration)"]
+        Native["📦 Native\\n(In-Process)"]
+        External["🌍 External\\n(MCP Servers)"]
     end
 
     subgraph "Hook Points"
@@ -100,15 +94,13 @@ flowchart TB
 
     subgraph "External Integration"
         MCP["📡 MCP Protocol"]
-        HTTP["🌐 HTTP/REST"]
-        WS["⚡ WebSocket"]
+        HTTP["🌐 Streamable HTTP<br>JSON-RPC"]        
         STDIO["💻 STDIO"]
         SSE["📡 Server-Sent Events"]
     end
 
-    Registry --> SelfContained
+    Registry --> Native
     Registry --> External
-    Registry --> Hybrid
 
     Executor --> PPF
     Executor --> PPO
@@ -118,24 +110,22 @@ flowchart TB
     Executor --> RPO
 
     External --> MCP
-    MCP --> HTTP
-    MCP --> WS
+    MCP --> HTTP    
     MCP --> STDIO
     MCP --> SSE
 
     style Client fill:#e1f5fe
     style Gateway fill:#f3e5f5
     style PM fill:#fff3e0
-    style SelfContained fill:#e8f5e8
+    style Native fill:#e8f5e8
     style External fill:#fff8e1
-    style Hybrid fill:#fce4ec
 ```
 
 ### 1. Base Plugin Classes
 
 ```python
 class Plugin:
-    """Base plugin for self-contained, in-process plugins"""
+    """Base plugin for native, in-process plugins"""
 
     def __init__(self, config: PluginConfig):
         self._config = config
@@ -546,7 +536,7 @@ class ExternalServiceAuth(BaseModel):
 
 ### Built-in Plugin Examples
 
-#### 1. PII Filter Plugin (Self-Contained)
+#### 1. PII Filter Plugin (Native)
 
 ```python
 class PIIFilterPlugin(Plugin):
@@ -657,7 +647,7 @@ class ResourceFilterPlugin(Plugin):
 ### Resource Management
 
 - **Memory Usage:** Base framework overhead ~5MB, scales linearly with active plugins
-- **CPU Impact:** Self-contained plugins add <1ms latency per hook
+- **CPU Impact:** Native plugins add <1ms latency per hook
 - **Context Cleanup:** Automatic cleanup every 5 minutes, contexts expire after 1 hour
 - **Timeout Protection:** Default 30-second timeout per plugin prevents hangs
 
@@ -736,6 +726,7 @@ FEDERATION_POST_SYNC = "federation_post_sync"  # Post-federation processing
 
 #### Current Integrations
 
+- ✅ **Open Policy Agent (OPA):** Policy-as-code enforcement engine
 - ✅ **LlamaGuard:** Content safety classification and filtering
 - ✅ **OpenAI Moderation API:** Commercial content moderation
 - ✅ **Custom MCP Servers:** Any language, any protocol
@@ -743,7 +734,6 @@ FEDERATION_POST_SYNC = "federation_post_sync"  # Post-federation processing
 #### Planned Integrations (Phase 2-3)
 
 - 🔄 **HashiCorp Vault:** Secret management for plugin configurations
-- 🔄 **Open Policy Agent (OPA):** Policy-as-code enforcement engine
 - 🔄 **SPIFFE/SPIRE:** Workload identity and attestation
 - 📋 **AWS GuardDuty:** Cloud security monitoring integration
 - 📋 **Azure Cognitive Services:** Enterprise AI services
@@ -829,7 +819,7 @@ The MCP-based external plugin system enables **true polyglot development**:
 ```yaml
 # Multi-language plugin deployment
 plugins:
-  # Python self-contained plugin
+  # Python native plugin
   - name: "FastValidation"
     kind: "internal.validators.FastValidator"
 
@@ -1020,7 +1010,7 @@ server.listen({ transport: 'stdio' });
 
 ### Architecture Decisions
 
-1. **Hybrid Plugin Model**: Support both self-contained and external plugins
+1. **Dual Plugin Model**: Support both native and external plugins
 2. **MCP Protocol**: Enable language-agnostic plugin development
 3. **Priority-Based Execution**: Sequential execution with deterministic behavior
 4. **Singleton Manager**: Consistent state and resource management
@@ -1033,11 +1023,11 @@ server.listen({ transport: 'stdio' });
 
 The MCP Context Forge plugin framework provides a **production-ready, platform-agnostic foundation** for extensible middleware processing. The architecture successfully balances:
 
-✅ **Performance**: Sub-millisecond latency for self-contained plugins, optimized external plugin communication
+✅ **Performance**: Sub-millisecond latency for native plugins, optimized external plugin communication
 ✅ **Flexibility**: Support for any programming language via MCP protocol
 ✅ **Security**: Comprehensive protection mechanisms and compliance features
-✅ **Scalability**: Horizontal scaling for self-contained, vertical scaling for external plugins
+✅ **Scalability**: Horizontal scaling for native, vertical scaling for external plugins
 ✅ **Developer Experience**: Simple APIs, comprehensive testing, and CLI tooling
 ✅ **Enterprise Ready**: Multi-tenant support, audit logging, and integration capabilities
 
-The framework supports both **immediate security needs** through self-contained plugins and **future enterprise AI safety integrations** through the external plugin ecosystem. With its platform-agnostic design, the framework can be embedded in any application requiring  middleware processing capabilities.
+The framework supports both **immediate security needs** through native plugins and **future enterprise AI safety integrations** through the external plugin ecosystem. With its platform-agnostic design, the framework can be embedded in any application requiring  middleware processing capabilities.
