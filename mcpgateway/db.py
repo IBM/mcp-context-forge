@@ -150,7 +150,7 @@ def utc_now() -> datetime:
 if backend == "sqlite":
 
     @event.listens_for(engine, "connect")
-    def set_sqlite_pragma(dbapi_conn, connection_record):
+    def set_sqlite_pragma(dbapi_conn, _connection_record):
         """Set SQLite pragmas for better concurrency.
 
         This is critical for running with multiple gunicorn workers.
@@ -158,7 +158,7 @@ if backend == "sqlite":
 
         Args:
             dbapi_conn: The raw DBAPI connection.
-            connection_record: A SQLAlchemy-specific object that maintains
+            _connection_record: A SQLAlchemy-specific object that maintains
                 information about the connection's context.
         """
         cursor = dbapi_conn.cursor()
