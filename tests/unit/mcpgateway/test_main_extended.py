@@ -376,7 +376,20 @@ def test_client(app):
     from mcpgateway.services.permission_service import PermissionService
     if not hasattr(PermissionService, '_original_check_permission'):
         PermissionService._original_check_permission = PermissionService.check_permission
-    PermissionService.check_permission = lambda self, permission, scope, scope_id, user_email: True
+
+    async def mock_check_permission(
+        self,
+        user_email: str,
+        permission: str,
+        resource_type=None,
+        resource_id=None,
+        team_id=None,
+        ip_address=None,
+        user_agent=None,
+    ) -> bool:
+        return True
+
+    PermissionService.check_permission = mock_check_permission
 
     # Override require_auth for backward compatibility
     app.dependency_overrides[require_auth] = lambda: "test_user"
