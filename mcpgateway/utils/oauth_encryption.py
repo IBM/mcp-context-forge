@@ -29,7 +29,7 @@ class OAuthEncryption:
 
     Examples:
         Basic roundtrip:
-        >>> enc = OAuthEncryption('very-secret-key')
+        >>> enc = OAuthEncryption(SecretStr('very-secret-key'))
         >>> cipher = enc.encrypt_secret('hello')
         >>> isinstance(cipher, str) and enc.is_encrypted(cipher)
         True
@@ -124,7 +124,7 @@ class OAuthEncryption:
             return False
 
 
-def get_oauth_encryption(encryption_secret: str) -> OAuthEncryption:
+def get_oauth_encryption(encryption_secret: SecretStr) -> OAuthEncryption:
     """Get an OAuth encryption instance.
 
     Args:
