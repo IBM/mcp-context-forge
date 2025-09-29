@@ -118,8 +118,9 @@ class Vault(Plugin):
                 logger.info(f"Set Bearer token for system tag: {system_key}")
                 bearer_token: str = str(vault_tokens[system_key])
                 headers["Authorization"] = f"Bearer {bearer_token}"
+                del headers[self._sconfig.vault_header_name]
                 modified = True
-                del vault_tokens
+
 
             payload.headers = HttpHeaderPayload(root=headers)
 

@@ -94,5 +94,53 @@ async def vault_pre_fetch(self, payload: VaultPreFetchPayload) -> VaultPreFetchP
 
 
 ## Testing
-TBD
-### Run Individual Tests
+### Create an MCP gateway  that is OAUTH2 authenticated:
+
+```bash
+curl -s \
+  -X POST \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+        "name": "github_com",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "description": "A new MCP server added with OAuth2 authentication",
+        "auth_type": "oauth",
+        "auth_value": {
+          "client_id": "'$CLIENT_ID'",
+          "client_secret": "'$CLIENT_SECRET'",
+          "token_url": "https://github.com/login/oauth/access_token",
+          "redirect_url": "http://localhost:4444/oauth/callback"
+        },
+        "tags": ["system:github.com"],
+        "passthrough_headers": ["X-Vault-Tokens"]
+      }' \
+  http://localhost:4444/gateways
+```
+The bearer token can be created by running:
+
+```bash
+ export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \              --username admin@example.com --exp 10080 --secret my-test-key)
+```
+
+### Invoke a tool sending the tokens in a dictionary
+```bash
+curl --request POST \
+  --url http://localhost:4444/rpc \
+  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  --header "Content-Type: application/json" \
+  --header "x-vault-tokens: {\"github.com\": \"123\"}" \
+  --data '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "github-com-get-me",
+      "arguments": {
+        "timezone": "Asia/Kolkata"
+      }
+    }
+  }'
+```
+
+
