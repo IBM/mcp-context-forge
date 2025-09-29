@@ -212,7 +212,7 @@ class CatalogService:
                 transport = "SSE"  # WebSocket URLs typically use SSE transport
             # Then check for HTTP patterns
             elif "/mcp" in url or url.endswith("/"):
-                transport = "HTTP"  # Generic MCP endpoints typically use HTTP
+                transport = "STREAMABLEHTTP"  # Generic MCP endpoints typically use HTTP
             else:
                 transport = "SSE"  # Default to SSE for most catalog servers
 
