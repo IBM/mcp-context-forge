@@ -20,7 +20,6 @@ import yaml
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import Gateway
 from mcpgateway.schemas import (
     CatalogBulkRegisterRequest,
     CatalogBulkRegisterResponse,
@@ -103,9 +102,17 @@ class CatalogService:
         # Check which servers are already registered
         registered_urls = set()
         if servers:
-            stmt = select(Gateway.url).where(Gateway.enabled == True)
-            result = db.execute(stmt)
-            registered_urls = {row[0] for row in result}
+            try:
+                # Ensure we're using the correct Gateway model
+                from mcpgateway.db import Gateway as DbGateway
+
+                stmt = select(DbGateway.url).where(DbGateway.enabled == True)
+                result = db.execute(stmt)
+                registered_urls = {row[0] for row in result}
+            except Exception as e:
+                logger.warning(f"Failed to check registered servers: {e}")
+                # Continue without marking registered servers
+                registered_urls = set()
 
         # Convert to CatalogServer objects and mark registered ones
         catalog_servers = []
@@ -180,9 +187,15 @@ class CatalogService:
                 return CatalogServerRegisterResponse(success=False, server_id="", message="Server not found in catalog", error="Invalid catalog server ID")
 
             # Check if already registered
-            stmt = select(Gateway).where(Gateway.url == server_data["url"])
-            result = db.execute(stmt)
-            existing = result.scalar_one_or_none()
+            try:
+                from mcpgateway.db import Gateway as DbGateway
+
+                stmt = select(DbGateway).where(DbGateway.url == server_data["url"])
+                result = db.execute(stmt)
+                existing = result.scalar_one_or_none()
+            except Exception as e:
+                logger.warning(f"Error checking existing registration: {e}")
+                existing = None
 
             if existing:
                 return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message="Server already registered", error="This server is already registered in the system")
@@ -192,14 +205,23 @@ class CatalogService:
 
             # Detect transport type from URL or use SSE as default
             url = server_data["url"].lower()
-            if url.endswith("/sse"):
-                transport = "SSE"
+            # Check for SSE patterns (highest priority)
+            if url.endswith("/sse") or "/sse/" in url:
+                transport = "SSE"  # SSE endpoints or paths containing /sse/
             elif url.startswith("ws://") or url.startswith("wss://"):
                 transport = "SSE"  # WebSocket URLs typically use SSE transport
+            # Then check for HTTP patterns
             elif "/mcp" in url or url.endswith("/"):
                 transport = "HTTP"  # Generic MCP endpoints typically use HTTP
             else:
                 transport = "SSE"  # Default to SSE for most catalog servers
+
+            # Check for IPv6 URLs early to provide a clear error message
+            url = server_data["url"]
+            if "[" in url or "]" in url:
+                return CatalogServerRegisterResponse(
+                    success=False, server_id="", message="Registration failed", error="IPv6 URLs are not currently supported for security reasons. Please use IPv4 or domain names."
+                )
 
             # Prepare the gateway creation data
             gateway_data = {
@@ -241,12 +263,11 @@ class CatalogService:
             logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id})")
 
             # Query for tools discovered from this gateway
-            from mcpgateway.models import Tool
-            from sqlalchemy import select
+            from mcpgateway.db import Tool as DbTool
 
             tool_count = 0
             if gateway_read.id:
-                stmt = select(Tool).where(Tool.gateway_id == gateway_read.id)
+                stmt = select(DbTool).where(DbTool.gateway_id == gateway_read.id)
                 result = db.execute(stmt)
                 tools = result.scalars().all()
                 tool_count = len(tools)
@@ -259,7 +280,8 @@ class CatalogService:
 
         except Exception as e:
             logger.error(f"Failed to register catalog server {catalog_id}: {e}")
-            db.rollback()
+            # Don't rollback here - let FastAPI handle it
+            # db.rollback()
             return CatalogServerRegisterResponse(success=False, server_id="", message="Registration failed", error=str(e))
 
     async def check_server_availability(self, catalog_id: str) -> CatalogServerStatusResponse:
