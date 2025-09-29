@@ -112,6 +112,11 @@ plugins:
     mcp:
       proto: "STREAMABLEHTTP"
       url: "http://localhost:8000/mcp"
+      # Optional TLS block when the remote server requires mTLS
+      # tls:
+      #   ca_bundle: /app/certs/plugins/ca.crt
+      #   client_cert: /app/certs/plugins/gateway-client.pem
+      #   client_key: /app/certs/plugins/gateway-client.key
 ```
 
 ### 7.2 MCP Protocol Integration
@@ -178,10 +183,21 @@ plugins:
     mcp:
       proto: "STREAMABLEHTTP"          # Transport protocol
       url: "http://openai-plugin:3000/mcp"  # Server URL
+      # Optional mutual TLS configuration
+      # tls:
+      #   ca_bundle: /app/certs/plugins/ca.crt
+      #   client_cert: /app/certs/plugins/gateway-client.pem
+      #   verify: true
       # Optional authentication
       auth:
         type: "bearer"
         token: "${OPENAI_API_KEY}"
+
+If you prefer centralised defaults, set the environment variables
+`PLUGINS_MTLS_CA_BUNDLE`, `PLUGINS_MTLS_CLIENT_CERT`, and related
+settings. These values apply whenever a plugin omits its own `tls`
+section, allowing a single gateway-wide certificate bundle to be reused
+across multiple external plugins.
 ```
 
 ### 7.5 MCP Transport Types

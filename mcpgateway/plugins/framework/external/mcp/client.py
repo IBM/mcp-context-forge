@@ -14,9 +14,11 @@ from contextlib import AsyncExitStack
 import json
 import logging
 import os
+import ssl
 from typing import Any, Optional, Type, TypeVar
 
 # Third-Party
+import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -28,6 +30,7 @@ from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CO
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.models import (
     HookType,
+    MCPTransportTLSConfig,
     PluginConfig,
     PluginContext,
     PluginErrorModel,
@@ -144,8 +147,54 @@ class ExternalPlugin(Plugin):
             PluginError: if there is an external connection error.
         """
 
+        plugin_tls = self._config.mcp.tls if self._config and self._config.mcp else None
+        tls_config = plugin_tls or MCPTransportTLSConfig.from_env()
+
+        def _tls_httpx_client_factory(
+            headers: Optional[dict[str, str]] = None,
+            timeout: Optional[httpx.Timeout] = None,
+            auth: Optional[httpx.Auth] = None,
+        ) -> httpx.AsyncClient:
+            """Build an httpx client with TLS configuration for external MCP servers."""
+
+            kwargs: dict[str, Any] = {"follow_redirects": True}
+            if headers:
+                kwargs["headers"] = headers
+            kwargs["timeout"] = timeout or httpx.Timeout(30.0)
+            if auth is not None:
+                kwargs["auth"] = auth
+
+            if not tls_config:
+                return httpx.AsyncClient(**kwargs)
+
+            try:
+                ssl_context = ssl.create_default_context()
+                if not tls_config.verify:
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
+                else:
+                    if tls_config.ca_bundle:
+                        ssl_context.load_verify_locations(cafile=tls_config.ca_bundle)
+                    if not tls_config.check_hostname:
+                        ssl_context.check_hostname = False
+
+                if tls_config.client_cert:
+                    ssl_context.load_cert_chain(
+                        certfile=tls_config.client_cert,
+                        keyfile=tls_config.client_key,
+                        password=tls_config.client_key_password,
+                    )
+
+                kwargs["verify"] = ssl_context
+            except Exception as exc:  # pylint: disable=broad-except
+                raise PluginError(error=PluginErrorModel(message=f"Failed configuring TLS for external plugin: {exc}", plugin_name=self.name)) from exc
+
+            return httpx.AsyncClient(**kwargs)
+
         try:
-            http_transport = await self._exit_stack.enter_async_context(streamablehttp_client(uri))
+            client_factory = _tls_httpx_client_factory if tls_config else None
+            streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
+            http_transport = await self._exit_stack.enter_async_context(streamable_client)
             self._http, self._write, _ = http_transport
             self._session = await self._exit_stack.enter_async_context(ClientSession(self._http, self._write))
 
