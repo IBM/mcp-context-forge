@@ -72,7 +72,7 @@ class CatalogService:
                 logger.warning(f"Catalog file not found: {catalog_path}")
                 return {"catalog_servers": [], "categories": [], "auth_types": []}
 
-            with open(catalog_path, "r") as f:
+            with open(catalog_path, "r", encoding="utf-8") as f:
                 catalog_data = yaml.safe_load(f)
 
             # Update cache
@@ -104,9 +104,10 @@ class CatalogService:
         if servers:
             try:
                 # Ensure we're using the correct Gateway model
-                from mcpgateway.db import Gateway as DbGateway
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
-                stmt = select(DbGateway.url).where(DbGateway.enabled == True)
+                stmt = select(DbGateway.url).where(DbGateway.enabled)
                 result = db.execute(stmt)
                 registered_urls = {row[0] for row in result}
             except Exception as e:
@@ -188,7 +189,8 @@ class CatalogService:
 
             # Check if already registered
             try:
-                from mcpgateway.db import Gateway as DbGateway
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 stmt = select(DbGateway).where(DbGateway.url == server_data["url"])
                 result = db.execute(stmt)
@@ -201,7 +203,8 @@ class CatalogService:
                 return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message="Server already registered", error="This server is already registered in the system")
 
             # Prepare gateway creation request using proper schema
-            from mcpgateway.schemas import GatewayCreate
+            # First-Party
+            from mcpgateway.schemas import GatewayCreate  # pylint: disable=import-outside-toplevel
 
             # Detect transport type from URL or use SSE as default
             url = server_data["url"].lower()
@@ -263,7 +266,8 @@ class CatalogService:
             logger.info(f"Registered catalog server: {gateway_read.name} ({catalog_id})")
 
             # Query for tools discovered from this gateway
-            from mcpgateway.db import Tool as DbTool
+            # First-Party
+            from mcpgateway.db import Tool as DbTool  # pylint: disable=import-outside-toplevel
 
             tool_count = 0
             if gateway_read.id:

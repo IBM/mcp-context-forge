@@ -4797,38 +4797,63 @@ function showTab(tabName) {
 
                 if (tabName === "mcp-registry") {
                     // Load MCP Registry content
-                    const registryContent = safeGetElement("mcp-registry-servers");
+                    const registryContent = safeGetElement(
+                        "mcp-registry-servers",
+                    );
                     if (registryContent) {
                         // Always load on first visit or if showing loading message
-                        const hasLoadingMessage = registryContent.innerHTML.includes("Loading MCP Registry servers...");
-                        const needsLoad = hasLoadingMessage || !registryContent.getAttribute('data-loaded');
+                        const hasLoadingMessage =
+                            registryContent.innerHTML.includes(
+                                "Loading MCP Registry servers...",
+                            );
+                        const needsLoad =
+                            hasLoadingMessage ||
+                            !registryContent.getAttribute("data-loaded");
 
                         if (needsLoad) {
                             const rootPath = window.ROOT_PATH || "";
 
                             // Use HTMX if available
                             if (window.htmx && window.htmx.ajax) {
-                                window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {
-                                    target: '#mcp-registry-servers',
-                                    swap: 'innerHTML'
-                                }).then(() => {
-                                    registryContent.setAttribute('data-loaded', 'true');
-                                });
+                                window.htmx
+                                    .ajax(
+                                        "GET",
+                                        `${rootPath}/admin/mcp-registry/partial`,
+                                        {
+                                            target: "#mcp-registry-servers",
+                                            swap: "innerHTML",
+                                        },
+                                    )
+                                    .then(() => {
+                                        registryContent.setAttribute(
+                                            "data-loaded",
+                                            "true",
+                                        );
+                                    });
                             } else {
                                 // Fallback to fetch if HTMX is not available
                                 fetch(`${rootPath}/admin/mcp-registry/partial`)
-                                    .then(response => response.text())
-                                    .then(html => {
+                                    .then((response) => response.text())
+                                    .then((html) => {
                                         registryContent.innerHTML = html;
-                                        registryContent.setAttribute('data-loaded', 'true');
+                                        registryContent.setAttribute(
+                                            "data-loaded",
+                                            "true",
+                                        );
                                         // Process any HTMX attributes in the new content
                                         if (window.htmx) {
-                                            window.htmx.process(registryContent);
+                                            window.htmx.process(
+                                                registryContent,
+                                            );
                                         }
                                     })
-                                    .catch(error => {
-                                        console.error('Failed to load MCP Registry:', error);
-                                        registryContent.innerHTML = '<div class="text-center text-red-600 py-8">Failed to load MCP Registry servers</div>';
+                                    .catch((error) => {
+                                        console.error(
+                                            "Failed to load MCP Registry:",
+                                            error,
+                                        );
+                                        registryContent.innerHTML =
+                                            '<div class="text-center text-red-600 py-8">Failed to load MCP Registry servers</div>';
                                     });
                             }
                         }
@@ -13396,75 +13421,85 @@ window.initializePluginFunctions = initializePluginFunctions;
 // ===================================================================
 
 // Define modal functions in global scope for MCP Registry
-window.showApiKeyModal = function(serverId, serverName, serverUrl) {
-    const modal = document.getElementById('api-key-modal');
+window.showApiKeyModal = function (serverId, serverName, serverUrl) {
+    const modal = document.getElementById("api-key-modal");
     if (modal) {
-        document.getElementById('modal-server-id').value = serverId;
-        document.getElementById('modal-server-name').textContent = serverName;
-        document.getElementById('modal-custom-name').placeholder = serverName;
-        modal.classList.remove('hidden');
+        document.getElementById("modal-server-id").value = serverId;
+        document.getElementById("modal-server-name").textContent = serverName;
+        document.getElementById("modal-custom-name").placeholder = serverName;
+        modal.classList.remove("hidden");
     }
 };
 
-window.closeApiKeyModal = function() {
-    const modal = document.getElementById('api-key-modal');
+window.closeApiKeyModal = function () {
+    const modal = document.getElementById("api-key-modal");
     if (modal) {
-        modal.classList.add('hidden');
+        modal.classList.add("hidden");
     }
-    const form = document.getElementById('api-key-form');
+    const form = document.getElementById("api-key-form");
     if (form) {
         form.reset();
     }
 };
 
-window.submitApiKeyForm = function(event) {
+window.submitApiKeyForm = function (event) {
     event.preventDefault();
-    const serverId = document.getElementById('modal-server-id').value;
-    const customName = document.getElementById('modal-custom-name').value;
-    const apiKey = document.getElementById('modal-api-key').value;
+    const serverId = document.getElementById("modal-server-id").value;
+    const customName = document.getElementById("modal-custom-name").value;
+    const apiKey = document.getElementById("modal-api-key").value;
 
     // Prepare request data
     const requestData = {};
-    if (customName) requestData.name = customName;
-    if (apiKey) requestData.api_key = apiKey;
+    if (customName) {
+        requestData.name = customName;
+    }
+    if (apiKey) {
+        requestData.api_key = apiKey;
+    }
 
-    const rootPath = window.ROOT_PATH || '';
+    const rootPath = window.ROOT_PATH || "";
 
     // Send registration request
     fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + (getCookie('jwt_token') || '')
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + (getCookie("jwt_token") || ""),
         },
-        body: JSON.stringify(requestData)
+        body: JSON.stringify(requestData),
     })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            closeApiKeyModal();
-            // Reload the catalog
-            if (window.htmx && window.htmx.ajax) {
-                window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {
-                    target: '#mcp-registry-servers',
-                    swap: 'innerHTML'
-                });
+        .then((response) => response.json())
+        .then((data) => {
+            if (data.success) {
+                window.closeApiKeyModal();
+                // Reload the catalog
+                if (window.htmx && window.htmx.ajax) {
+                    window.htmx.ajax(
+                        "GET",
+                        `${rootPath}/admin/mcp-registry/partial`,
+                        {
+                            target: "#mcp-registry-servers",
+                            swap: "innerHTML",
+                        },
+                    );
+                }
+            } else {
+                alert("Registration failed: " + (data.error || data.message));
             }
-        } else {
-            alert('Registration failed: ' + (data.error || data.message));
-        }
-    })
-    .catch(error => {
-        alert('Error registering server: ' + error);
-    });
+        })
+        .catch((error) => {
+            alert("Error registering server: " + error);
+        });
 };
 
 // Helper function to get cookie if not already defined
-if (typeof window.getCookie === 'undefined') {
-    window.getCookie = function(name) {
-        const value = '; ' + document.cookie;
-        const parts = value.split('; ' + name + '=');
-        if (parts.length === 2) return parts.pop().split(';').shift();
-        return '';
+if (typeof window.getCookie === "undefined") {
+    window.getCookie = function (name) {
+        const value = "; " + document.cookie;
+        const parts = value.split("; " + name + "=");
+        if (parts.length === 2) {
+            return parts.pop().split(";").shift();
+        }
+        return "";
     };
 }

@@ -9397,6 +9397,9 @@ async def list_catalog_servers(
 
     Returns:
         List of catalog servers matching filters
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
@@ -9434,6 +9437,9 @@ async def register_catalog_server(
 
     Returns:
         Registration response with success status
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
@@ -9456,6 +9462,9 @@ async def check_catalog_server_status(
 
     Returns:
         Server status including availability and response time
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
@@ -9479,6 +9488,9 @@ async def bulk_register_catalog_servers(
 
     Returns:
         Bulk registration response with success/failure details
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
@@ -9507,6 +9519,9 @@ async def catalog_partial(
 
     Returns:
         HTML partial with filtered catalog servers
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
