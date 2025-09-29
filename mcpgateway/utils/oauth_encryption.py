@@ -14,12 +14,12 @@ using the AUTH_ENCRYPTION_SECRET from configuration.
 import base64
 import logging
 from typing import Optional
-from pydantic import SecretStr
 
 # Third-Party
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from pydantic import SecretStr
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ def get_oauth_encryption(encryption_secret: SecretStr) -> OAuthEncryption:
         OAuthEncryption instance
 
     Examples:
-        >>> enc = get_oauth_encryption('k')
+        >>> enc = get_oauth_encryption(SecretStr('k'))
         >>> isinstance(enc, OAuthEncryption)
         True
     """
