@@ -9537,13 +9537,13 @@ async def catalog_partial(
 
     for server in response.servers:
         # Badge colors based on auth type
-        auth_badge_class = "bg-gray-100 text-gray-800"
+        auth_badge_class = "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
         if server.auth_type == "OAuth2.1":
-            auth_badge_class = "bg-blue-100 text-blue-800"
+            auth_badge_class = "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
         elif server.auth_type == "API Key":
-            auth_badge_class = "bg-yellow-100 text-yellow-800"
+            auth_badge_class = "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
         elif server.auth_type == "Open":
-            auth_badge_class = "bg-green-100 text-green-800"
+            auth_badge_class = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
 
         # Registration status
         if server.is_registered:
@@ -9572,25 +9572,25 @@ async def catalog_partial(
                 """
 
         servers_html += f"""
-        <div class="bg-white rounded-lg shadow-sm p-4 hover:shadow-md transition-shadow">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 hover:shadow-md transition-shadow">
             <div class="mb-3">
-                <h3 class="text-lg font-semibold text-gray-900 mb-1">{server.name}</h3>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">{server.name}</h3>
                 <div class="flex gap-2 mb-2">
                     <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {auth_badge_class}">
                         {server.auth_type}
                     </span>
-                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
                         {server.category}
                     </span>
                 </div>
-                <p class="text-sm text-gray-600">{server.description}</p>
+                <p class="text-sm text-gray-600 dark:text-gray-400">{server.description}</p>
             </div>
 
             <div class="mb-3">
-                <p class="text-xs text-gray-500 truncate">
+                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
                     <span class="font-semibold">Provider:</span> {server.provider}
                 </p>
-                <p class="text-xs text-gray-500 truncate">
+                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
                     <span class="font-semibold">URL:</span> {server.url}
                 </p>
             </div>

@@ -4860,6 +4860,41 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "gateways") {
+                    // Reload gateways list to show any newly registered servers
+                    const gatewaysSection = safeGetElement("gateways-section");
+                    if (gatewaysSection) {
+                        const gatewaysTbody = gatewaysSection.querySelector("tbody");
+                        if (gatewaysTbody) {
+                            // Trigger HTMX reload if available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(gatewaysTbody, "load");
+                            } else {
+                                // Fallback: reload the page section via fetch
+                                const rootPath = window.ROOT_PATH || "";
+                                fetch(`${rootPath}/admin`)
+                                    .then((response) => response.text())
+                                    .then((html) => {
+                                        // Parse the HTML and extract just the gateways table
+                                        const parser = new DOMParser();
+                                        const doc = parser.parseFromString(html, 'text/html');
+                                        const newTbody = doc.querySelector('#gateways-section tbody');
+                                        if (newTbody) {
+                                            gatewaysTbody.innerHTML = newTbody.innerHTML;
+                                            // Process any HTMX attributes in the new content
+                                            if (window.htmx) {
+                                                window.htmx.process(gatewaysTbody);
+                                            }
+                                        }
+                                    })
+                                    .catch((error) => {
+                                        console.error("Failed to reload gateways:", error);
+                                    });
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "plugins") {
                     const pluginsPanel = safeGetElement("plugins-panel");
                     if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
