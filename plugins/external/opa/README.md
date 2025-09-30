@@ -11,13 +11,31 @@ The OPA plugin is composed of two components:
 
 ### OPA Server
 To define a policy file you need to go into opaserver/rego and create a sample policy file for you.
-Example -`example.rego` is present.
+Example -`policy.rego` is present.
 Once you have this file created in this location, when building the server, the opa binaries will be downloaded and a container will be build.
 In the `run_server.sh` file, the opa server will run as a background service in the container with the rego policy file.
 
 ### OPA Plugin
-The OPA plugin runs as an external plugin with pre/post tool invocations. So everytime, a tool invocation is made, and if OPAPluginFilter has been defined in config.yaml file, the tool invocation will pass through this OPA Plugin.
+The OPA plugin runs as an external plugin with pre/post tool invocations. So everytime a tool invocation is made, and if OPAPluginFilter has been defined in config.yaml file, the tool invocation will pass through this OPA Plugin.
 
+## Configuration
+
+### MCP Server Container
+
+The following enviornment variables can be used to customize the server container deployment.
+
+- `API_SERVER_SCRIPT`: Path to the server script (optional, auto-detected)
+- `PLUGINS_CONFIG_PATH`: Path to the plugin config (optional, default: ./resources/plugins/config.yaml)
+- `CHUK_MCP_CONFIG_PATH`: Path to the chuck-mcp-runtime config (optional, default: ./resources/runtime/config.yaml)
+- `POLICY_PATH`: Path to the repo policy file (optional, default: ./opaserver/rego/policy.rego)
+
+### MCP Runtime
+
+Changes to the MCP runtime configurations can be made in `resources/runtime/config.yaml`.
+
+### OPA Plugin Configuration
+
+The OPA plugin and loader configuration can be customized in `resources/plugins/config.yaml`.
 
 ## Installation
 
@@ -64,7 +82,7 @@ Under `extensions`, you can specify which policy to run and what endpoint to cal
 In the `config` key in `config.yaml` for the OPA plugin, the following attribute must be set to configure the OPA server endpoint:
 `opa_base_url` : It is the base url on which opa server is running.
 
-3. Now suppose you have a sample policy in `example.rego` file that allows a tool invocation only when "IBM" key word is present in the repo_path. Add the sample policy file or policy rego file that you defined, in `plugins/external/opa/opaserver/rego`.
+3. Now suppose you have a sample policy in `policy.rego` file that allows a tool invocation only when "IBM" key word is present in the repo_path. Add the sample policy file or policy rego file that you defined, in `plugins/external/opa/opaserver/rego`.
 
 3. Once you have your plugin defined in `config.yaml` and policy added in the rego file, run the following commands to build your OPA Plugin external MCP server using:
 * `make build`:  This will build a docker image named `opapluginfilter`

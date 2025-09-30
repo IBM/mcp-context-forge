@@ -11,6 +11,7 @@
 #    API_SERVER_SCRIPT              : Path to the server script (optional, auto-detected)
 #    PLUGINS_CONFIG_PATH            : Path to the plugin config (optional, default: ./resources/plugins/config.yaml)
 #    CHUK_MCP_CONFIG_PATH           : Path to the chuck-mcp-runtime config (optional, default: ./resources/runtime/config.yaml)
+#    POLICY_PATH                    : Path to the repo policy file (optional, default: ./opaserver/rego/policy.rego)
 #
 #  Usage:
 #    ./run-server.sh                # Run server
@@ -36,7 +37,7 @@ fi
 #────────────────────────────────────────────────────────────────────────────────
 
 echo "Running OPA server"
-opa run --server opaserver/rego/example.rego &
+opa run --server ${POLICY_PATH:-opaserver/rego/policy.rego &
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 2: Run the API server
