@@ -140,7 +140,15 @@ class PluginService:
             Dictionary containing plugin statistics by various dimensions.
         """
         if not self._plugin_manager:
-            return {"total_plugins": 0, "enabled_plugins": 0, "disabled_plugins": 0, "plugins_by_hook": {}, "plugins_by_mode": {}, "plugins_by_tag": {}}
+            return {
+                "total_plugins": 0,
+                "enabled_plugins": 0,
+                "disabled_plugins": 0,
+                "plugins_by_hook": {},
+                "plugins_by_mode": {},
+                "plugins_by_tag": {},
+                "plugins_by_author": {},
+            }
 
         all_plugins = self.get_all_plugins()
 
@@ -165,6 +173,12 @@ class PluginService:
             for tag in plugin["tags"]:
                 tag_count[tag] += 1
 
+        # Count by author
+        author_count = defaultdict(int)
+        for plugin in all_plugins:
+            author = plugin.get("author", "Unknown")
+            author_count[author] += 1
+
         return {
             "total_plugins": len(all_plugins),
             "enabled_plugins": enabled_count,
@@ -172,6 +186,7 @@ class PluginService:
             "plugins_by_hook": dict(hooks_count),
             "plugins_by_mode": dict(mode_count),
             "plugins_by_tag": dict(sorted(tag_count.items(), key=lambda x: x[1], reverse=True)[:10]),  # Top 10 tags
+            "plugins_by_author": dict(sorted(author_count.items(), key=lambda x: x[1], reverse=True)),  # All authors sorted by count
         }
 
     def search_plugins(self, query: Optional[str] = None, mode: Optional[str] = None, hook: Optional[str] = None, tag: Optional[str] = None) -> List[Dict[str, Any]]:

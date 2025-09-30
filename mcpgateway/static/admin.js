@@ -13278,17 +13278,19 @@ window.resetImportSelection = resetImportSelection;
 
 // Plugin management functions
 function initializePluginFunctions() {
-    // Populate hook and tag filters on page load
+    // Populate hook, tag, and author filters on page load
     window.populatePluginFilters = function () {
         const cards = document.querySelectorAll(".plugin-card");
         const hookSet = new Set();
         const tagSet = new Set();
+        const authorSet = new Set();
 
         cards.forEach((card) => {
             const hooks = card.dataset.hooks
                 ? card.dataset.hooks.split(",")
                 : [];
             const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
+            const author = card.dataset.author;
 
             hooks.forEach((hook) => {
                 if (hook.trim()) {
@@ -13300,10 +13302,14 @@ function initializePluginFunctions() {
                     tagSet.add(tag.trim());
                 }
             });
+            if (author && author.trim()) {
+                authorSet.add(author.trim());
+            }
         });
 
         const hookFilter = document.getElementById("plugin-hook-filter");
         const tagFilter = document.getElementById("plugin-tag-filter");
+        const authorFilter = document.getElementById("plugin-author-filter");
 
         if (hookFilter) {
             hookSet.forEach((hook) => {
@@ -13324,6 +13330,15 @@ function initializePluginFunctions() {
                 tagFilter.appendChild(option);
             });
         }
+
+        if (authorFilter) {
+            authorSet.forEach((author) => {
+                const option = document.createElement("option");
+                option.value = author;
+                option.textContent = author;
+                authorFilter.appendChild(option);
+            });
+        }
     };
 
     // Filter plugins based on search and filters
@@ -13333,12 +13348,14 @@ function initializePluginFunctions() {
         const statusFilter = document.getElementById("plugin-status-filter");
         const hookFilter = document.getElementById("plugin-hook-filter");
         const tagFilter = document.getElementById("plugin-tag-filter");
+        const authorFilter = document.getElementById("plugin-author-filter");
 
         const searchQuery = searchInput ? searchInput.value.toLowerCase() : "";
         const selectedMode = modeFilter ? modeFilter.value : "";
         const selectedStatus = statusFilter ? statusFilter.value : "";
         const selectedHook = hookFilter ? hookFilter.value : "";
         const selectedTag = tagFilter ? tagFilter.value : "";
+        const selectedAuthor = authorFilter ? authorFilter.value : "";
 
         const cards = document.querySelectorAll(".plugin-card");
 
@@ -13391,6 +13408,11 @@ function initializePluginFunctions() {
                 visible = false;
             }
 
+            // Author filter
+            if (selectedAuthor && author !== selectedAuthor.toLowerCase()) {
+                visible = false;
+            }
+
             if (visible) {
                 card.style.display = "block";
             } else {
@@ -13416,6 +13438,19 @@ function initializePluginFunctions() {
             tagFilter.value = tag;
             window.filterPlugins();
             tagFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+    };
+
+    // Filter by author when clicking on author
+    window.filterByAuthor = function (author) {
+        const authorFilter = document.getElementById("plugin-author-filter");
+        if (authorFilter) {
+            authorFilter.value = author;
+            window.filterPlugins();
+            authorFilter.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+            });
         }
     };
 
