@@ -5363,4 +5363,101 @@ class PluginStatsResponse(BaseModel):
     disabled_plugins: int = Field(..., description="Number of disabled plugins")
     plugins_by_hook: Dict[str, int] = Field(default_factory=dict, description="Plugin count by hook type")
     plugins_by_mode: Dict[str, int] = Field(default_factory=dict, description="Plugin count by mode")
-    plugins_by_tag: Dict[str, int] = Field(default_factory=dict, description="Plugin count by tag (top 10)")
+
+
+# MCP Server Catalog Schemas
+
+
+class CatalogServer(BaseModel):
+    """Schema for a catalog server entry."""
+
+    id: str = Field(..., description="Unique identifier for the catalog server")
+    name: str = Field(..., description="Display name of the server")
+    category: str = Field(..., description="Server category (e.g., Project Management, Software Development)")
+    url: str = Field(..., description="Server endpoint URL")
+    auth_type: str = Field(..., description="Authentication type (e.g., OAuth2.1, API Key, Open)")
+    provider: str = Field(..., description="Provider/vendor name")
+    description: str = Field(..., description="Server description")
+    requires_api_key: bool = Field(default=False, description="Whether API key is required")
+    secure: bool = Field(default=False, description="Whether additional security is required")
+    tags: List[str] = Field(default_factory=list, description="Tags for categorization")
+    logo_url: Optional[str] = Field(None, description="URL to server logo/icon")
+    documentation_url: Optional[str] = Field(None, description="URL to server documentation")
+    is_registered: bool = Field(default=False, description="Whether server is already registered")
+    is_available: bool = Field(default=True, description="Whether server is currently available")
+
+
+class CatalogServerRegisterRequest(BaseModel):
+    """Request to register a catalog server."""
+
+    server_id: str = Field(..., description="Catalog server ID to register")
+    name: Optional[str] = Field(None, description="Optional custom name for the server")
+    api_key: Optional[str] = Field(None, description="API key if required")
+    oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if required")
+
+
+class CatalogServerRegisterResponse(BaseModel):
+    """Response after registering a catalog server."""
+
+    success: bool = Field(..., description="Whether registration was successful")
+    server_id: str = Field(..., description="ID of the registered server in the system")
+    message: str = Field(..., description="Status message")
+    error: Optional[str] = Field(None, description="Error message if registration failed")
+
+
+class CatalogServerStatusRequest(BaseModel):
+    """Request to check catalog server status."""
+
+    server_id: str = Field(..., description="Catalog server ID to check")
+
+
+class CatalogServerStatusResponse(BaseModel):
+    """Response for catalog server status check."""
+
+    server_id: str = Field(..., description="Catalog server ID")
+    is_available: bool = Field(..., description="Whether server is reachable")
+    is_registered: bool = Field(..., description="Whether server is registered")
+    last_checked: Optional[datetime] = Field(None, description="Last health check timestamp")
+    response_time_ms: Optional[float] = Field(None, description="Response time in milliseconds")
+    error: Optional[str] = Field(None, description="Error message if check failed")
+
+
+class CatalogListRequest(BaseModel):
+    """Request to list catalog servers."""
+
+    category: Optional[str] = Field(None, description="Filter by category")
+    auth_type: Optional[str] = Field(None, description="Filter by auth type")
+    provider: Optional[str] = Field(None, description="Filter by provider")
+    search: Optional[str] = Field(None, description="Search term for name/description")
+    tags: Optional[List[str]] = Field(None, description="Filter by tags")
+    show_registered_only: bool = Field(default=False, description="Show only registered servers")
+    show_available_only: bool = Field(default=True, description="Show only available servers")
+    limit: int = Field(default=100, description="Maximum number of results")
+    offset: int = Field(default=0, description="Offset for pagination")
+
+
+class CatalogListResponse(BaseModel):
+    """Response containing catalog servers."""
+
+    servers: List[CatalogServer] = Field(..., description="List of catalog servers")
+    total: int = Field(..., description="Total number of matching servers")
+    categories: List[str] = Field(..., description="Available categories")
+    auth_types: List[str] = Field(..., description="Available auth types")
+    providers: List[str] = Field(..., description="Available providers")
+    all_tags: List[str] = Field(default_factory=list, description="All available tags")
+
+
+class CatalogBulkRegisterRequest(BaseModel):
+    """Request to register multiple catalog servers."""
+
+    server_ids: List[str] = Field(..., description="List of catalog server IDs to register")
+    skip_errors: bool = Field(default=True, description="Continue on error")
+
+
+class CatalogBulkRegisterResponse(BaseModel):
+    """Response after bulk registration."""
+
+    successful: List[str] = Field(..., description="Successfully registered server IDs")
+    failed: List[Dict[str, str]] = Field(..., description="Failed registrations with error messages")
+    total_attempted: int = Field(..., description="Total servers attempted")
+    total_successful: int = Field(..., description="Total successful registrations")

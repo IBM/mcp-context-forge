@@ -142,5 +142,3 @@ curl --request POST \
     }
   }'
 ```
-
-

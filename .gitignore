@@ -46,6 +46,8 @@ node_modules/
 ./depupdate*
 .tmp*
 mcp.db-journal
+mcp.db-shm
+mcp.db-wal
 certs/
 jwt/
 FIXMEs

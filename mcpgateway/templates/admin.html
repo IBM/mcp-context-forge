@@ -311,6 +311,7 @@
               id="tab-gateways"
               data-testid="gateways-tab"
               class="tab-link border-indigo-500 text-indigo-600 dark:text-indigo-500 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('gateways')"
             >
               🖥️ MCP Servers
             </a>
@@ -319,6 +320,7 @@
               id="tab-catalog"
               data-testid="servers-tab"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('catalog')"
             >
               🔗 Virtual Servers
             </a>
@@ -327,6 +329,7 @@
               id="tab-tools"
               data-testid="tools-tab"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('tools')"
             >
               🛠️ Tools
             </a>
@@ -334,6 +337,7 @@
               href="#prompts"
               id="tab-prompts"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('prompts')"
             >
               💬 Prompts
             </a>
@@ -341,6 +345,7 @@
               href="#resources"
               id="tab-resources"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('resources')"
             >
               📁 Resources
             </a>
@@ -350,6 +355,7 @@
               id="tab-a2a-agents"
               data-testid="a2a-agents-tab"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('a2a-agents')"
             >
               🤖 Agents (A2A)
             </a>
@@ -358,6 +364,7 @@
               href="#metrics"
               id="tab-metrics"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('metrics')"
             >
               📊 Metrics
             </a>
@@ -366,8 +373,18 @@
               id="tab-plugins"
               data-testid="plugins-tab"
               class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('plugins')"
             >
               🔌 Plugins
+            </a>
+            <a
+              href="#mcp-registry"
+              id="tab-mcp-registry"
+              data-testid="mcp-registry-tab"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('mcp-registry')"
+            >
+              📦 MCP Registry
             </a>
             {% if email_auth_enabled %}
             <a
@@ -997,12 +1014,116 @@
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
 
-      <!-- Catalog Panel -->
-      <div id="catalog-panel" class="tab-panel">
+      <!-- MCP Registry Panel -->
+      <div id="mcp-registry-panel" class="tab-panel hidden">
+        <div class="container mx-auto px-4 py-8">
+          <div class="mb-6">
+            <h1 class="text-3xl font-bold mb-2 dark:text-gray-200">MCP Registry</h1>
+            <p class="text-gray-600 dark:text-gray-400">Browse and add public MCP servers to your gateway</p>
+          </div>
+
+          <!-- Filters -->
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Category</label>
+                <select id="category-filter"
+                        name="category"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                        hx-trigger="change"
+                        hx-target="#mcp-registry-servers"
+                        hx-include="[name='auth_type'],[name='search']">
+                  <option value="">All Categories</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Auth Type</label>
+                <select id="auth-filter"
+                        name="auth_type"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                        hx-trigger="change"
+                        hx-target="#mcp-registry-servers"
+                        hx-include="[name='category'],[name='search']">
+                  <option value="">All Auth Types</option>
+                </select>
+              </div>
+              <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Search</label>
+                <input type="text" id="search-input"
+                       name="search"
+                       placeholder="Search servers..."
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                       hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                       hx-trigger="keyup changed delay:500ms"
+                       hx-target="#mcp-registry-servers"
+                       hx-include="[name='category'],[name='auth_type']">
+              </div>
+            </div>
+          </div>
+
+          <!-- Server Grid -->
+          <div id="mcp-registry-servers">
+            <div class="text-center py-8">
+              <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"></div>
+              <p class="mt-2 text-gray-600 dark:text-gray-400">Loading MCP Registry servers...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- API Key Modal -->
+        <div id="api-key-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+              <h3 class="text-lg font-medium text-gray-900 mb-4">API Key Required</h3>
+              <p class="text-sm text-gray-500 mb-4">
+                <span id="modal-server-name"></span> requires an API key to connect.
+              </p>
+              <form id="api-key-form" onsubmit="submitApiKeyForm(event)">
+                <input type="hidden" id="modal-server-id" />
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Server Name (optional)
+                  </label>
+                  <input type="text"
+                         id="modal-custom-name"
+                         class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                         placeholder="Custom name for this server" />
+                </div>
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    API Key <span class="text-red-500">*</span>
+                  </label>
+                  <input type="password"
+                         id="modal-api-key"
+                         class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                         placeholder="Enter your API key"
+                         required />
+                </div>
+                <div class="flex justify-end gap-2">
+                  <button type="button"
+                          onclick="closeApiKeyModal()"
+                          class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                    Cancel
+                  </button>
+                  <button type="submit"
+                          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                    Add Server
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Catalog Panel (Virtual Servers) -->
+      <div id="catalog-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <div>
             <h2 class="text-2xl font-bold dark:text-gray-200">
-              Virtual MCP Servers Catalog
+              Virtual MCP Servers
             </h2>
             <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
               Virtual Servers let you combine Tools, Resources, and Prompts into
@@ -1018,35 +1139,6 @@
               placeholder="Search servers..."
               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
               oninput="filterServerTable(this.value)"
-            />
-            <div class="flex items-center">
-              <input
-                type="checkbox"
-                id="show-inactive-servers"
-                class="mr-2"
-                onchange="toggleInactiveItems('servers')"
-              />
-              <label
-                for="show-inactive-servers"
-                class="text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Show Inactive</label
-              >
-            </div>
-          </div>
-        </div>
-
-        <!-- Tag Filtering for Servers -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
-          <div class="flex items-center space-x-4">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
-              >Filter by Tags:</label
-            >
-            <input
-              type="text"
-              id="catalog-tag-filter"
-              placeholder="Enter tags (comma-separated)"
-              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              oninput="filterEntitiesByTags('catalog', this.value)"
             />
             <button
               onclick="clearTagFilter('catalog')"
@@ -10551,6 +10643,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         if (window.location.hash === '#teams' || window.location.hash === '#permissions') {
           setTimeout(initializeTeamManagement, 500);
         }
+
       });
 
       // Team member management functions are now in admin.js
