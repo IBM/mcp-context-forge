@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(default="my-test-salt", env="AUTH_ENCRYPTION_SECRET")
+    auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"), env="AUTH_ENCRYPTION_SECRET")
 
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")

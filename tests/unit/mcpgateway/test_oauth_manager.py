@@ -10,6 +10,7 @@ Unit tests for OAuth Manager and Token Storage Service.
 # Standard
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from pydantic import SecretStr
 
 # Third-Party
 import aiohttp
@@ -589,7 +590,7 @@ class TestOAuthManager:
 
         with patch('mcpgateway.services.oauth_manager.get_settings') as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test-secret-key"
+            mock_settings.auth_encryption_secret = SecretStr("test-secret-key")
             mock_get_settings.return_value = mock_settings
 
             mock_token_storage = Mock()
@@ -721,7 +722,7 @@ class TestOAuthManager:
 
         with patch('mcpgateway.services.oauth_manager.get_settings') as mock_get_settings:
             mock_settings = Mock()
-            mock_settings.auth_encryption_secret = "test-secret-key"
+            mock_settings.auth_encryption_secret = SecretStr("test-secret-key")
             mock_get_settings.return_value = mock_settings
 
             manager = OAuthManager()
@@ -2651,13 +2652,13 @@ class TestOAuthEncryption:
 
     def test_init(self):
         """Test OAuthEncryption initialization."""
-        encryption = OAuthEncryption("test_secret_key")
+        encryption = OAuthEncryption(SecretStr("test_secret_key"))
         assert encryption.encryption_secret == b"test_secret_key"
         assert encryption._fernet is None
 
     def test_get_fernet_creates_instance(self):
         """Test _get_fernet creates Fernet instance on first call."""
-        encryption = OAuthEncryption("test_secret_key")
+        encryption = OAuthEncryption(SecretStr("test_secret_key"))
 
         fernet1 = encryption._get_fernet()
         fernet2 = encryption._get_fernet()
@@ -2668,7 +2669,7 @@ class TestOAuthEncryption:
 
     def test_encrypt_secret_success(self):
         """Test successful secret encryption."""
-        encryption = OAuthEncryption("test_secret_key")
+        encryption = OAuthEncryption(SecretStr("test_secret_key"))
         plaintext = "my_secret_token_123"
 
         encrypted = encryption.encrypt_secret(plaintext)
@@ -2683,8 +2684,8 @@ class TestOAuthEncryption:
 
     def test_encrypt_secret_different_keys_different_output(self):
         """Test that different keys produce different encrypted output."""
-        encryption1 = OAuthEncryption("key1")
-        encryption2 = OAuthEncryption("key2")
+        encryption1 = OAuthEncryption(SecretStr("key1"))
+        encryption2 = OAuthEncryption(SecretStr("key2"))
         plaintext = "same_secret"
 
         encrypted1 = encryption1.encrypt_secret(plaintext)
@@ -2695,7 +2696,7 @@ class TestOAuthEncryption:
 
     def test_encrypt_secret_same_key_different_output(self):
         """Test that same key produces different encrypted output due to nonce."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
         plaintext = "same_secret"
 
         encrypted1 = encryption.encrypt_secret(plaintext)
@@ -2710,7 +2711,7 @@ class TestOAuthEncryption:
 
     def test_encrypt_secret_empty_string(self):
         """Test encrypting empty string."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         encrypted = encryption.encrypt_secret("")
         decrypted = encryption.decrypt_secret(encrypted)
@@ -2719,7 +2720,7 @@ class TestOAuthEncryption:
 
     def test_encrypt_secret_unicode_characters(self):
         """Test encrypting string with unicode characters."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
         plaintext = "🔐 secret with émojis and spéciàl chars ñ"
 
         encrypted = encryption.encrypt_secret(plaintext)
@@ -2729,7 +2730,7 @@ class TestOAuthEncryption:
 
     def test_encrypt_secret_exception_handling(self):
         """Test exception handling in encrypt_secret."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         # Mock the Fernet instance to raise an exception
         with patch.object(encryption, '_get_fernet') as mock_get_fernet:
@@ -2742,7 +2743,7 @@ class TestOAuthEncryption:
 
     def test_decrypt_secret_success(self):
         """Test successful secret decryption."""
-        encryption = OAuthEncryption("test_secret_key")
+        encryption = OAuthEncryption(SecretStr("test_secret_key"))
         plaintext = "original_secret"
 
         # First encrypt
@@ -2755,7 +2756,7 @@ class TestOAuthEncryption:
 
     def test_decrypt_secret_invalid_data(self):
         """Test decryption with invalid encrypted data."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         result = encryption.decrypt_secret("invalid_encrypted_data")
 
@@ -2763,8 +2764,8 @@ class TestOAuthEncryption:
 
     def test_decrypt_secret_wrong_key(self):
         """Test decryption with wrong key."""
-        encryption1 = OAuthEncryption("key1")
-        encryption2 = OAuthEncryption("key2")
+        encryption1 = OAuthEncryption(SecretStr("key1"))
+        encryption2 = OAuthEncryption(SecretStr("key2"))
 
         # Encrypt with one key
         encrypted = encryption1.encrypt_secret("secret")
@@ -2776,7 +2777,7 @@ class TestOAuthEncryption:
 
     def test_decrypt_secret_corrupted_data(self):
         """Test decryption with corrupted base64 data."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         # Create valid encrypted data then corrupt it
         encrypted = encryption.encrypt_secret("test")
@@ -2788,7 +2789,7 @@ class TestOAuthEncryption:
 
     def test_decrypt_secret_malformed_base64(self):
         """Test decryption with malformed base64."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         result = encryption.decrypt_secret("not_valid_base64!@#")
 
@@ -2796,7 +2797,7 @@ class TestOAuthEncryption:
 
     def test_decrypt_secret_empty_string(self):
         """Test decryption with empty string."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         result = encryption.decrypt_secret("")
 
@@ -2804,7 +2805,7 @@ class TestOAuthEncryption:
 
     def test_is_encrypted_valid_encrypted_data(self):
         """Test is_encrypted with valid encrypted data."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         encrypted = encryption.encrypt_secret("test_data")
 
@@ -2812,14 +2813,14 @@ class TestOAuthEncryption:
 
     def test_is_encrypted_plain_text(self):
         """Test is_encrypted with plain text."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         assert encryption.is_encrypted("plain_text_secret") is False
         assert encryption.is_encrypted("another_plain_string") is False
 
     def test_is_encrypted_short_data(self):
         """Test is_encrypted with short data."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         # Fernet encrypted data should be at least 32 bytes
         short_data = "dGVzdA=="  # "test" in base64 (only 4 bytes when decoded)
@@ -2828,7 +2829,7 @@ class TestOAuthEncryption:
 
     def test_is_encrypted_valid_base64_but_not_encrypted(self):
         """Test is_encrypted with valid base64 that's not encrypted data."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         # Create base64 data that's long enough but not encrypted
         # Standard
@@ -2844,13 +2845,13 @@ class TestOAuthEncryption:
 
     def test_is_encrypted_invalid_base64(self):
         """Test is_encrypted with invalid base64."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         assert encryption.is_encrypted("not_base64!@#$%") is False
 
     def test_is_encrypted_exception_handling(self):
         """Test exception handling in is_encrypted."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         # Test with None (should handle gracefully)
         with patch('base64.urlsafe_b64decode', side_effect=Exception("Base64 error")):
@@ -2862,14 +2863,14 @@ class TestOAuthEncryption:
         # First-Party
         from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 
-        encryption = get_oauth_encryption("test_secret")
+        encryption = get_oauth_encryption(SecretStr("test_secret"))
 
         assert isinstance(encryption, OAuthEncryption)
         assert encryption.encryption_secret == b"test_secret"
 
     def test_encryption_roundtrip_multiple_values(self):
         """Test encryption/decryption roundtrip with multiple values."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         test_values = [
             "simple_token",
@@ -2890,8 +2891,8 @@ class TestOAuthEncryption:
     def test_encryption_key_derivation_consistency(self):
         """Test that key derivation is consistent across instances."""
         # Create two instances with same key
-        encryption1 = OAuthEncryption("same_key")
-        encryption2 = OAuthEncryption("same_key")
+        encryption1 = OAuthEncryption(SecretStr("same_key"))
+        encryption2 = OAuthEncryption(SecretStr("same_key"))
 
         # Encrypt with first instance
         plaintext = "test_consistency"
@@ -2904,7 +2905,7 @@ class TestOAuthEncryption:
 
     def test_encryption_with_long_key(self):
         """Test encryption with very long key."""
-        long_key = "a" * 1000  # Very long key
+        long_key = SecretStr("a" * 1000)  # Very long key
         encryption = OAuthEncryption(long_key)
 
         encrypted = encryption.encrypt_secret("test_data")
@@ -2914,7 +2915,7 @@ class TestOAuthEncryption:
 
     def test_encryption_with_special_char_key(self):
         """Test encryption with key containing special characters."""
-        special_key = "key_with_special_chars!@#$%^&*()_+-={}[]|\\:;\"'<>?,./"
+        special_key = SecretStr("key_with_special_chars!@#$%^&*()_+-={}[]|\\:;\"'<>?,./")
         encryption = OAuthEncryption(special_key)
 
         encrypted = encryption.encrypt_secret("test_data")
@@ -2924,7 +2925,7 @@ class TestOAuthEncryption:
 
     def test_fernet_instance_caching(self):
         """Test that Fernet instance is properly cached."""
-        encryption = OAuthEncryption("test_key")
+        encryption = OAuthEncryption(SecretStr("test_key"))
 
         # First call should create instance
         assert encryption._fernet is None

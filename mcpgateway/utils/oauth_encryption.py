@@ -19,6 +19,7 @@ from typing import Optional
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from pydantic import SecretStr
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class OAuthEncryption:
 
     Examples:
         Basic roundtrip:
-        >>> enc = OAuthEncryption('very-secret-key')
+        >>> enc = OAuthEncryption(SecretStr('very-secret-key'))
         >>> cipher = enc.encrypt_secret('hello')
         >>> isinstance(cipher, str) and enc.is_encrypted(cipher)
         True
@@ -40,13 +41,13 @@ class OAuthEncryption:
         False
     """
 
-    def __init__(self, encryption_secret: str):
+    def __init__(self, encryption_secret: SecretStr):
         """Initialize the encryption handler.
 
         Args:
             encryption_secret: Secret key for encryption/decryption
         """
-        self.encryption_secret = encryption_secret.encode()
+        self.encryption_secret = encryption_secret.get_secret_value().encode()
         self._fernet = None
 
     def _get_fernet(self) -> Fernet:
@@ -123,7 +124,7 @@ class OAuthEncryption:
             return False
 
 
-def get_oauth_encryption(encryption_secret: str) -> OAuthEncryption:
+def get_oauth_encryption(encryption_secret: SecretStr) -> OAuthEncryption:
     """Get an OAuth encryption instance.
 
     Args:
@@ -133,7 +134,7 @@ def get_oauth_encryption(encryption_secret: str) -> OAuthEncryption:
         OAuthEncryption instance
 
     Examples:
-        >>> enc = get_oauth_encryption('k')
+        >>> enc = get_oauth_encryption(SecretStr('k'))
         >>> isinstance(enc, OAuthEncryption)
         True
     """
