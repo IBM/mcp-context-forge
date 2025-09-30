@@ -98,8 +98,8 @@ class ServerPostOperationPayload(BaseModel):
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ✅ | Modifiable server information object | See ServerInfo structure above |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` | Yes | Modifiable server information object | See ServerInfo structure above |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 
@@ -281,10 +281,10 @@ async def server_pre_register(self, payload: ServerPreRegisterPayload,
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ❌ | Complete registered server information (if successful) | Contains all ServerInfo fields |
-| `operation_success` | `bool` | ✅ | Whether registration succeeded | `true` |
-| `error_details` | `str` | ❌ | Error details if registration failed | `"Duplicate server name"` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` |  | Complete registered server information (if successful) | Contains all ServerInfo fields |
+| `operation_success` | `bool` | Yes | Whether registration succeeded | `true` |
+| `error_details` | `str` |  | Error details if registration failed | `"Duplicate server name"` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 - Same fields as pre-register hook, plus database timestamps
@@ -463,8 +463,8 @@ async def server_post_register(self, payload: ServerPostOperationPayload,
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ✅ | Updated server information object | Contains modified server fields |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` | Yes | Updated server information object | Contains modified server fields |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 - Same fields as register hooks, **plus**:
@@ -556,10 +556,10 @@ async def server_pre_update(self, payload: ServerPreOperationPayload,
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ❌ | Updated server information (if successful) | Contains all updated ServerInfo fields |
-| `operation_success` | `bool` | ✅ | Whether update succeeded | `true` |
-| `error_details` | `str` | ❌ | Error details if update failed | `"Validation error: Invalid URI"` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` |  | Updated server information (if successful) | Contains all updated ServerInfo fields |
+| `operation_success` | `bool` | Yes | Whether update succeeded | `true` |
+| `error_details` | `str` |  | Error details if update failed | `"Validation error: Invalid URI"` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 - Same fields as register hooks, **plus**:
@@ -642,8 +642,8 @@ async def server_post_update(self, payload: ServerPostOperationPayload,
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ✅ | Server information being deleted | Contains server to be removed |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` | Yes | Server information being deleted | Contains server to be removed |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 - Same fields as other operations, **plus**:
@@ -773,10 +773,10 @@ async def server_pre_delete(self, payload: ServerPreOperationPayload,
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ❌ | Deleted server information (if successful) | Contains information of deleted server |
-| `operation_success` | `bool` | ✅ | Whether deletion succeeded | `true` |
-| `error_details` | `str` | ❌ | Error details if deletion failed | `"Foreign key constraint violation"` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` |  | Deleted server information (if successful) | Contains information of deleted server |
+| `operation_success` | `bool` | Yes | Whether deletion succeeded | `true` |
+| `error_details` | `str` |  | Error details if deletion failed | `"Foreign key constraint violation"` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 - Same fields as other operations, **plus**:
@@ -880,8 +880,8 @@ async def server_post_delete(self, payload: ServerPostOperationPayload,
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ✅ | Server information with target status | Contains server with desired `is_active` state |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` | Yes | Server information with target status | Contains server with desired `is_active` state |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 - Same fields as other operations, **plus**:
@@ -1029,10 +1029,10 @@ async def server_pre_status_change(self, payload: ServerPreOperationPayload,
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `server_info` | `ServerInfo` | ❌ | Server information after status change (if successful) | Contains server with new `is_active` state |
-| `operation_success` | `bool` | ✅ | Whether status change succeeded | `true` |
-| `error_details` | `str` | ❌ | Error details if status change failed | `"Server health check timeout"` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `server_info` | `ServerInfo` |  | Server information after status change (if successful) | Contains server with new `is_active` state |
+| `operation_success` | `bool` | Yes | Whether status change succeeded | `true` |
+| `error_details` | `str` |  | Error details if status change failed | `"Server health check timeout"` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
 - Same fields as other operations, **plus**:
@@ -1617,6 +1617,7 @@ async def gateway_post_status_change(self, payload: GatewayPostOperationPayload,
 
     return GatewayPostOperationResult()
 ```
+
 ## Administrative Hook Categories
 
 The gateway administrative hooks are organized into the following categories:
@@ -1640,6 +1641,7 @@ The gateway administrative hooks are organized into the following categories:
 - `gateway_post_delete` - After peer gateway removal
 - `gateway_pre_status_change` - Before gateway activation/deactivation
 - `gateway_post_status_change` - After gateway status changes
+
 ### A2A Agent Management Hooks *(Future)*
 - `a2a_pre_register` - Before A2A agent registration
 - `a2a_post_register` - After A2A agent registration
@@ -1653,6 +1655,7 @@ The gateway administrative hooks are organized into the following categories:
 - `resource_post_register` - After resource registration
 - `prompt_pre_register` - Before prompt registration
 - `prompt_post_register` - After prompt registration
+
 ## Performance Considerations
 
 | Hook Category | Typical Latency | Performance Impact | Recommended Limits |

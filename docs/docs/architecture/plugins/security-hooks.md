@@ -1,28 +1,32 @@
 # MCP Security Hooks
 
 This document details the security-focused hook points in the MCP Gateway Plugin Framework, covering the complete MCP protocol request/response lifecycle.
+
 ## MCP Security Hook Functions
+
+Legend: ✅ = Completed | 🚧 = In Progress | 📋 = Planned
 
 The framework provides eight primary hook points covering the complete MCP request/response lifecycle:
 
 | Hook Function | Description | When It Executes | Primary Use Cases | Status |
 |---------------|-------------|-------------------|-------------------|--------|
-| [`http_pre_forwarding_call()`](#http-pre-forwarding-hook) | Process HTTP headers before forwarding requests to tools/gateways | Before HTTP calls are made to external services | Authentication token injection, request labeling, session management, header validation | ✅ |
-| [`http_post_forwarding_call()`](#http-post-forwarding-hook) | Process HTTP headers after forwarding requests to tools/gateways | After HTTP responses are received from external services | Response header validation, data flow labeling, session tracking, compliance metadata | ✅ |
-| [`prompt_post_list()`](#) | Process a `prompts/list` request before the results are returned to the client. | After a `prompts/list` is returned from the server | Detection or [poisoning](#) threats. | ❌ |
+| [`http_pre_forwarding_call()`](#http-pre-forwarding-hook) | Process HTTP headers before forwarding requests to tools/gateways | Before HTTP calls are made to external services | Authentication token injection, request labeling, session management, header validation | 🚧 |
+| [`http_post_forwarding_call()`](#http-post-forwarding-hook) | Process HTTP headers after forwarding requests to tools/gateways | After HTTP responses are received from external services | Response header validation, data flow labeling, session tracking, compliance metadata | 🚧 |
+| [`prompt_post_list()`](#) | Process a `prompts/list` request before the results are returned to the client. | After a `prompts/list` is returned from the server | Detection or [poisoning](#) threats. | 📋 |
 | [`prompt_pre_fetch()`](#prompt-pre-fetch-hook) | Process prompt requests before template retrieval and rendering | Before prompt template is loaded and processed | Input validation, argument sanitization, access control, PII detection | ✅ |
 | [`prompt_post_fetch()`](#prompt-post-fetch-hook) | Process prompt responses after template rendering into messages | After prompt template is rendered into final messages | Output filtering, content transformation, response validation, compliance checks | ✅ |
-| [`tools_post_list()`](#) | Process a `tools/list` request before the results are returned to the client. | After a `tools/list` is returned from the server | Detection or [poisoning](#) threats. | ❌ |
+| [`tools_post_list()`](#) | Process a `tools/list` request before the results are returned to the client. | After a `tools/list` is returned from the server | Detection or [poisoning](#) threats. | 📋 |
 | [`tool_pre_invoke()`](#tool-pre-invoke-hook) | Process tool calls before execution | Before tool is invoked with arguments | Parameter validation, security checks, rate limiting, access control, argument transformation | ✅ |
 | [`tool_post_invoke()`](#tool-post-invoke-hook) | Process tool results after execution completes | After tool has finished processing and returned results | Result filtering, output validation, sensitive data redaction, response enhancement | ✅ |
-| [`resource_post_list()`](#) | Process a `resources/list` request before the results are returned to the client. | After a `resources/list` is returned from the server | Detection or [poisoning](#) threats. | ❌ |
+| [`resource_post_list()`](#) | Process a `resources/list` request before the results are returned to the client. | After a `resources/list` is returned from the server | Detection or [poisoning](#) threats. | 📋 |
 | [`resource_pre_fetch()`](#resource-pre-fetch-hook) | Process resource requests before fetching content | Before resource is retrieved from URI | URI validation, protocol restrictions, domain filtering, access control, request enhancement | ✅ |
 | [`resource_post_fetch()`](#resource-post-fetch-hook) | Process resource content after successful retrieval | After resource content has been fetched and loaded | Content validation, size limits, content filtering, data transformation, format conversion | ✅ |
-| [`roots_post_list()`](#) | Process a `roots/list` request before the results are returned to the client. | After a `roots/list` is returned from the server | Detection or [poisoning](#) threats. | ❌ |
-| [`elicit_pre_create()`](#) | Process elicitation requests from MCP servers before sending to users | Before the elicitation request is sent to the MCP client | Access control, rerouting and processing elicitation requests | ❌ |
-| [`elicit_post_response()`](#) | Process user responses to elicitation requests | After the elicitation response is returned by the client but before it is sent to the MCP server | Input sanitization, access control, PII and and DLP | ❌ |
-| [`sampling_pre_create()`](#) | Process sampling requests sent to MCP host LLMs | Before the sampling request is returned to the MCP client | Prompt injection, goal manipulation, denial of wallet | ❌ |
-| [`sampling_post_complete()`](#) | Process sampling requests returned from the LLM | Before returning the LLM response to the MCP server | Sensitive information leakage, prompt injection, tool poisoning, PII detection | ❌ |
+| [`roots_post_list()`](#) | Process a `roots/list` request before the results are returned to the client. | After a `roots/list` is returned from the server | Detection or [poisoning](#) threats. | 📋 |
+| [`elicit_pre_create()`](#) | Process elicitation requests from MCP servers before sending to users | Before the elicitation request is sent to the MCP client | Access control, rerouting and processing elicitation requests | 📋 |
+| [`elicit_post_response()`](#) | Process user responses to elicitation requests | After the elicitation response is returned by the client but before it is sent to the MCP server | Input sanitization, access control, PII and and DLP | 📋 |
+| [`sampling_pre_create()`](#) | Process sampling requests sent to MCP host LLMs | Before the sampling request is returned to the MCP client | Prompt injection, goal manipulation, denial of wallet | 📋 |
+| [`sampling_post_complete()`](#) | Process sampling requests returned from the LLM | Before returning the LLM response to the MCP server | Sensitive information leakage, prompt injection, tool poisoning, PII detection | 📋 |
+
 ## MCP Security Hook Reference
 
 Each hook has specific function signatures, payloads, and use cases detailed below:
@@ -153,9 +157,9 @@ async def http_post_forwarding_call(self, payload: HttpHeaderPayload, context: P
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `name` | `str` | ✅ | Name of the prompt template being requested | `"greeting_prompt"` |
-| `args` | `dict[str, str]` | ❌ | Template arguments/parameters | `{"user": "Alice", "context": "morning"}` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `name` | `str` | Yes | Name of the prompt template being requested | `"greeting_prompt"` |
+| `args` | `dict[str, str]` |  | Template arguments/parameters | `{"user": "Alice", "context": "morning"}` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`PromptPrehookResult`)**:
 - Extends `PluginResult[PromptPrehookPayload]`
@@ -232,9 +236,9 @@ async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginC
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `name` | `str` | ✅ | Name of the prompt template | `"greeting_prompt"` |
-| `result` | `PromptResult` | ✅ | Rendered prompt result containing messages | `PromptResult(messages=[Message(...)])` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `name` | `str` | Yes | Name of the prompt template | `"greeting_prompt"` |
+| `result` | `PromptResult` | Yes | Rendered prompt result containing messages | `PromptResult(messages=[Message(...)])` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **PromptResult Structure**:
 - `messages`: `list[Message]` - Rendered prompt messages
@@ -313,9 +317,9 @@ async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: Plugi
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `name` | `str` | ✅ | Name of the tool being invoked | `"file_reader"` |
-| `args` | `dict[str, Any]` | ❌ | Tool arguments/parameters | `{"path": "/etc/passwd", "encoding": "utf-8"}` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `name` | `str` | Yes | Name of the tool being invoked | `"file_reader"` |
+| `args` | `dict[str, Any]` |  | Tool arguments/parameters | `{"path": "/etc/passwd", "encoding": "utf-8"}` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`ToolPreInvokeResult`)**:
 - Extends `PluginResult[ToolPreInvokePayload]`
@@ -420,9 +424,9 @@ async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginCo
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `name` | `str` | ✅ | Name of the tool that was executed | `"file_reader"` |
-| `result` | `Any` | ✅ | Tool execution result (can be string, dict, list, etc.) | `{"content": "file contents...", "size": 1024}` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `name` | `str` | Yes | Name of the tool that was executed | `"file_reader"` |
+| `result` | `Any` | Yes | Tool execution result (can be string, dict, list, etc.) | `{"content": "file contents...", "size": 1024}` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`ToolPostInvokeResult`)**:
 - Extends `PluginResult[ToolPostInvokePayload]`
@@ -518,9 +522,9 @@ async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: Plugin
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `uri` | `str` | ✅ | URI of the resource being requested | `"https://api.example.com/data.json"` |
-| `metadata` | `dict[str, Any]` | ❌ | Additional request metadata | `{"Accept": "application/json", "timeout": 30}` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `uri` | `str` | Yes | URI of the resource being requested | `"https://api.example.com/data.json"` |
+| `metadata` | `dict[str, Any]` |  | Additional request metadata | `{"Accept": "application/json", "timeout": 30}` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`ResourcePreFetchResult`)**:
 - Extends `PluginResult[ResourcePreFetchPayload]`
@@ -632,9 +636,9 @@ async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: Pl
 
 | Attribute | Type | Required | Description | Example |
 |-----------|------|----------|-------------|---------|
-| `uri` | `str` | ✅ | URI of the fetched resource | `"https://api.example.com/data.json"` |
-| `content` | `Any` | ✅ | Fetched resource content (ResourceContent object) | `ResourceContent(type="resource", uri="...", text="...")` |
-| `headers` | `HttpHeaderPayload` | ❌ | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
+| `uri` | `str` | Yes | URI of the fetched resource | `"https://api.example.com/data.json"` |
+| `content` | `Any` | Yes | Fetched resource content (ResourceContent object) | `ResourceContent(type="resource", uri="...", text="...")` |
+| `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **ResourceContent Structure**:
 - `type`: Content type identifier
@@ -741,19 +745,20 @@ async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: 
 
     return ResourcePostFetchResult()
 ```
+
 ## Hook Execution Summary
 
-| Hook | Timing | Primary Use Cases | Typical Latency |
-|------|--------|-------------------|-----------------|
-| `prompt_pre_fetch` | Before prompt template processing | Input validation, PII detection, access control | <1ms |
-| `prompt_post_fetch` | After prompt template rendering | Content filtering, output validation | <1ms |
-| `tool_pre_invoke` | Before tool execution | Parameter validation, security checks, rate limiting | <1ms |
-| `tool_post_invoke` | After tool execution | Result filtering, output validation, transformation | <1ms |
-| `resource_pre_fetch` | Before resource fetching | URI validation, access control, protocol checks | <1ms |
-| `resource_post_fetch` | After resource content loading | Content validation, filtering, enhancement | <5ms |
+| Hook | Timing | Primary Use Cases |
+|------|--------|-------------------|
+| `prompt_pre_fetch` | Before prompt template processing | Input validation, PII detection, access control |
+| `prompt_post_fetch` | After prompt template rendering | Content filtering, output validation |
+| `tool_pre_invoke` | Before tool execution | Parameter validation, security checks, rate limiting |
+| `tool_post_invoke` | After tool execution | Result filtering, output validation, transformation |
+| `resource_pre_fetch` | Before resource fetching | URI validation, access control, protocol checks |
+| `resource_post_fetch` | After resource content loading | Content validation, filtering, enhancement |
 
 **Performance Notes**:
-- Self-contained plugins should target <1ms execution time
+- Native plugins have the lowest execution latency
 - External plugins typically add 10-100ms depending on network and service
 - Resource post-fetch may take longer due to content processing
 - Plugin execution is sequential within priority bands
