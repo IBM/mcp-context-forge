@@ -51,7 +51,7 @@ Legend: ✅ = Completed | 🚧 = In Progress | 📋 = Planned
 **Plugin Lifecycle Management**
 
 - ✅ **Discovery & Loading**: Automatically discover and load plugins from configuration
-- 📋 **Dependency Resolution**: Handle plugin dependencies and load order 
+- 📋 **Dependency Resolution**: Handle plugin dependencies and load order
 - ✅ **Runtime Control**: Enable, disable, or modify plugin behavior without code changes
 - ✅ **Version Management**: Track plugin versions and manage updates
 
@@ -80,9 +80,9 @@ Legend: ✅ = Completed | 🚧 = In Progress | 📋 = Planned
 
 The plugin framework implements an execution pipeline designed for enterprise-grade performance, security, and reliability.
 
-### Component View 
+### Component View
 
-Below is a view of the core components of the plugin system, which extends the gateway request execution pipeline with pre- and post- protocol hooks implemented by plugins.  
+Below is a view of the core components of the plugin system, which extends the gateway request execution pipeline with pre- and post- protocol hooks implemented by plugins.
 
 ```mermaid
 flowchart TB
@@ -123,7 +123,7 @@ flowchart TB
 
 ## Plugin Types and Configuration
 
-The plugin configuration system provides a declarative, YAML-based approach to plugin management, deployment, and orchestration. 
+The plugin configuration system provides a declarative, YAML-based approach to plugin management, deployment, and orchestration.
 
 The configuration system supports both **native plugins** (running in-process) and **external plugins** (remote MCP servers), providing a unified interface for managing diverse plugin architectures while maintaining type safety, validation, and operational excellence.
 
@@ -266,7 +266,7 @@ The `plugin_settings` object controls framework-wide behavior:
 
 ### Plugin Manifest
 
-The plugin manifest is a metadata file that provides structured information about a plugin's capabilities, dependencies, and characteristics. 
+The plugin manifest is a metadata file that provides structured information about a plugin's capabilities, dependencies, and characteristics.
 This manifest serves multiple purposes in the plugin ecosystem: development guidance, runtime validation, discoverability, and documentation.
 
 #### Manifest Purpose and Usage
@@ -441,11 +441,11 @@ class Plugin:
 
     @property
     def name(self) -> str: ...
-        """Plugin name"""        
+        """Plugin name"""
 
     @property
     def priority(self) -> int: ...
-        """Plugin execution priority (lower = higher priority)"""        
+        """Plugin execution priority (lower = higher priority)"""
 
     @property
     def mode(self) -> PluginMode: ...
@@ -459,7 +459,7 @@ class Plugin:
     def conditions(self) -> list[PluginCondition] | None: ...
         """Conditions for plugin execution"""
 
-    async def initialize(self) -> None: ... 
+    async def initialize(self) -> None: ...
         """Initialize plugin resources"""
 
     async def shutdown(self) -> None: ...
@@ -653,7 +653,7 @@ class TransportType(str, Enum):
     SSE = "sse"                        # Server-Sent Events
     HTTP = "http"                      # HTTP
     STDIO = "stdio"                    # Standard input/output
-    STREAMABLEHTTP = "streamablehttp"  # HTTP with streaming support    
+    STREAMABLEHTTP = "streamablehttp"  # HTTP with streaming support
 ```
 
 ### Context Management
@@ -1226,7 +1226,7 @@ Future versions will support a security capability system for plugins. Through t
 
 An example manifest:
 
-```YAML 
+```YAML
 name: pii-filter
 version: 1.0.0
 framework_compatibility: "mcp-plugin-framework>=1.0.0,<2.0.0"

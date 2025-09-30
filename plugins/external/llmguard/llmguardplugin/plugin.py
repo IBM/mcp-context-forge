@@ -37,7 +37,7 @@ logger = logging_service.get_logger(__name__)
 
 class LLMGuardPlugin(Plugin):
     """A plugin that leverages the capabilities of llmguard library to apply guardrails on input and output prompts.
-    
+
     Attributes:
         lgconfig: Configuration for guardrails.
         cache: Cache object of class CacheTTLDict for plugins.
@@ -62,7 +62,7 @@ class LLMGuardPlugin(Plugin):
     def __verify_lgconfig(self):
         """Checks if the configuration provided for plugin is valid or not. It should either have input or output key atleast"""
         return self.lgconfig.input or self.lgconfig.output
-    
+
     def __update_context(self, context, key, value) -> dict:
         def update_context(context):
             plugin_name = self.__class__.__name__
@@ -76,7 +76,7 @@ class LLMGuardPlugin(Plugin):
                         if k not in context.state[self.guardrails_context_key][plugin_name][key]:
                             context.state[self.guardrails_context_key][plugin_name][key][k] = v
                         else:
-                            if isinstance(v,dict):    
+                            if isinstance(v,dict):
                                 for k_sub,v_sub in v.items():
                                     context.state[self.guardrails_context_key][plugin_name][key][k][k_sub] = v_sub
         if key == "context":
@@ -88,7 +88,7 @@ class LLMGuardPlugin(Plugin):
             if key not in context.global_context.state[self.guardrails_context_key]:
                 context.global_context.state[self.guardrails_context_key][key] = value
 
-        
+
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """The plugin hook to apply input guardrails on using llmguard.
@@ -101,15 +101,15 @@ class LLMGuardPlugin(Plugin):
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
         logger.info(f"Processing payload {payload}")
-        
+
         if payload.args:
-            for key in payload.args: 
+            for key in payload.args:
                 # Set context to pass original prompt within and across plugins
                 if self.lgconfig.input.filters or self.lgconfig.input.sanitizers:
                     context.state[self.guardrails_context_key] = {}
                     context.global_context.state[self.guardrails_context_key] = {}
                     self.__update_context(context,"original_prompt",payload.args[key])
-                
+
                 # Apply input filters if set in config
                 if self.lgconfig.input.filters:
                     filters_context = {"input" : {"filters" : []}}
@@ -128,7 +128,7 @@ class LLMGuardPlugin(Plugin):
                         code="deny",
                         details=decision[2],)
                         return PromptPrehookResult(violation=violation, continue_processing=False)
-                
+
                 # Apply input sanitizers if set in config
                 if self.lgconfig.input.sanitizers:
                     # initialize a context key "guardrails"
@@ -156,7 +156,7 @@ class LLMGuardPlugin(Plugin):
                             if self.lgconfig.set_guardrails_context:
                                 self.__update_context(context,"vault_cache_id",vault_id)
                     payload.args[key] = result[0]
-        
+
         return PromptPrehookResult(continue_processing=True,modified_payload=payload)
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:

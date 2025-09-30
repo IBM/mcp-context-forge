@@ -5,7 +5,7 @@ A plugin that utilizes the llmguard library's functionality to implement safety 
 Guardrails are protective protocols and standards implemented to ensure that AI agents and large language models (LLMs) do not produce or encourage dangerous, harmful, or inaccurate content. These protective measures aim to reduce various risks linked to LLM usage, including prompt manipulation attacks, security bypasses, misinformation dissemination, toxic content generation, misleading information, and unauthorized data exposure
 
 
-## LLMGuardPlugin 
+## LLMGuardPlugin
 
 **File:** `mcp-context-forge/plugins/external/llmguard/llmguardplugin/plugin.py`
 
@@ -15,9 +15,9 @@ Core functionalities:
 - Customizable policy with logical combination of filters
 - Policy driven filters initialization
 - Time-based expiration controls for individual plugins and cross-plugin vault lifecycle management
-- Additional Vault leak detection protection 
+- Additional Vault leak detection protection
 
-Under the ``plugins/external/llmguard/llmguardplugin/`` directory, you will find ``plugin.py`` file implementing the hooks for `prompt_pre_fetch` and `prompt_post_fetch`. 
+Under the ``plugins/external/llmguard/llmguardplugin/`` directory, you will find ``plugin.py`` file implementing the hooks for `prompt_pre_fetch` and `prompt_post_fetch`.
 In the file `llmguard.py` the base class `LLMGuardBase()` implements core functionalities of input and output sanitizers & filters utilizing the capabilities of the open-source guardrails library [LLM Guard](https://protectai.github.io/llm-guard/).
 
 ### Plugin Initialization and Configuration
@@ -50,9 +50,9 @@ config:
         matching_strategy: exact
 ```
 
-  
+
 As part of plugin initialization, an instance of `LLMGuardBase()`, `CacheTTLDict()` is initailized. The configurations defined for the plugin are validated, and if none of the `input` or `output` keys are defined in the config, the plugin throws a `PluginError` with message `Invalid configuration for plugin initilialization`.
-The initialization of `LLMGuardBase()` instance initializes all the filters and scanners defined under the `config` key of plugin using the member functions of `LLMGuardBase()`: `_initialize_input_filters()` ,`_initialize_output_filters()`,`_initialize_input_sanitizers()` and `_initialize_output_sanitizers()`. 
+The initialization of `LLMGuardBase()` instance initializes all the filters and scanners defined under the `config` key of plugin using the member functions of `LLMGuardBase()`: `_initialize_input_filters()` ,`_initialize_output_filters()`,`_initialize_input_sanitizers()` and `_initialize_output_sanitizers()`.
 
 
 The config key is a nested dictionary structure that consists of configuration of the guardrail. The config can have two modes input and output. Here, if input key is non-empty guardrail is applied to the original input prompt entered by the user and if output key is non-empty then guardrail is applied on the model response that comes after the input has been passed to the model. You can choose to apply, only input, output or both for your use-case.
@@ -91,7 +91,7 @@ Once the plugin is initialized and ready, you would see the following message in
 
 The main functions which implement the input and output guardrails are:
 
-1. **_apply_input_filters()** - Applies input filters to the input and after the filters or guardrails have been applied, the result is evaluated against the policy using `LLMGuardBase()._apply_policy_input()`. If the decision of the policy is deny (False), then the plugin throws a `PluginViolationError` with description and details on why the policy was denied. The description also contains the type of threat, example, `PromptInjection` detected in the prompt, etc. The filters don't transform the payload. 
+1. **_apply_input_filters()** - Applies input filters to the input and after the filters or guardrails have been applied, the result is evaluated against the policy using `LLMGuardBase()._apply_policy_input()`. If the decision of the policy is deny (False), then the plugin throws a `PluginViolationError` with description and details on why the policy was denied. The description also contains the type of threat, example, `PromptInjection` detected in the prompt, etc. The filters don't transform the payload.
 2. **_apply_input_sanitizers()** - Applies input sanitizers to the input. For example, in case an `Anonymize` was defined in the sanitizer, so an input "My name is John Doe" after the sanitizers have been applied will result in "My name is [REDACTED_PERSON_1]" will be stored as part of modified_payload in the plugin.
 3. **_apply_output_filters()** - Applies input filters to the input and after the filters or guardrails have been applied, the result is evaluated against the policy using `LLMGuardBase()._apply_policy_output()`. If the decision of the policy is deny (False), then the plugin throws a `PluginViolationError` with description and details on why the policy was denied. The description also contains the type of threat, example, `Toxicity` detected in the prompt, etc. The filters don't transform the result.
 4. **_apply_output_sanitizers()** - Applies input sanitizers to the input. For example, in case an `Deanonymize` was defined in the sanitizer, so an input "My name is [REDACTED_PERSON_1]" after the sanitizers have been applied will result in "My name is John Doe" will be stored as part of modified_payload in the plugin.
@@ -118,7 +118,7 @@ A typical example of applying input and output filters:
 ```yaml
 
 plugins:
-  
+
   # Self-contained LLMGuardPluginFilter
   - name: "LLMGuardPluginFilter"
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
@@ -158,7 +158,7 @@ plugins:
             matching_strategy: exact
 ```
 
-## Policy 
+## Policy
 **File**:`mcp-context-forge/plugins/external/llmguard/llmguardplugin/policy.py`
 
 The `GuardrailPolicy` class serves as the core policy evaluation engine for the LLMGuardPlugin system. It operates downstream from the filtering pipeline - specifically, once input prompts or model responses have been processed through their respective input or output filters, this class takes over if policy expressions are configured in the key `policy` of either the input or output filter configurations.
@@ -262,7 +262,7 @@ The system uses environment variables for Redis connection:
 
 The update_cache() updates the cache with a key-value pair and sets TTL, retrieve_cache(), retrieves and deserializes cached data and delete_cache(), explicitly removes cache.
 
-### Vault Management 
+### Vault Management
 ```yaml
     config:
           cache_ttl: 120 #defined in seconds
@@ -289,7 +289,7 @@ The LLMGuardPlugin could be configured in the following ways:
 - **Single Plugin Configuration:** All components (input filters, input sanitizers, output filters, and output sanitizers) are consolidated within one plugin instance, executing sequentially according to the defined configuration order.
 - **Multi-Plugin Configuration:** Each component operates as a separate plugin instance, with execution order controlled through priority settings. This allows individual deployment of input filters, input sanitizers, output filters, and output sanitizers as distinct plugins.
 
-### **Single Plugin Configuration:** 
+### **Single Plugin Configuration:**
 
 ```yaml
     plugins:
@@ -455,7 +455,7 @@ plugin_settings:
   plugin_timeout: 30
   fail_on_plugin_error: false
   enable_plugin_api: true
-  plugin_health_check_interval: 60    
+  plugin_health_check_interval: 60
 ```
 
 In this case you would add the following in `mcp-context-forge/plugins/external/llmguard/resources/plugins/config.yaml`
@@ -537,7 +537,7 @@ make install-editable
 2. `make start` - This starts three docker containers: `redis` for caching, `llmguardplugin` for the external plugin and `llmguardplugin-testing` for running test cases, since `llmguard` library had compatbility issues with some packages in `mcpgateway` so we kept the testing separate.
 3. `make stop` - This stops three docker containers: `redis` for caching, `llmguardplugin` for the external plugin and `llmguardplugin-testing`.
 
-### Test Cases 
+### Test Cases
 **File**:`mcp-context-forge/plugins/external/llmguard/tests/test_llmguardplugin.py`
 
 | Test Case | Description | Validation |
@@ -568,7 +568,7 @@ make lint-fix
 
 ## End to End LLMGuardPlugin with MCP Gateway
 
-1. Add a sample prompt in the prompt tab of MCP gateway. 
+1. Add a sample prompt in the prompt tab of MCP gateway.
 Set `export PLUGINS_ENABLED=true`
 
 2. Suppose you are using the following combination of plugin configuration in `mcp-context-forge/plugins/external/llmguard/resources/plugins/config.yaml`

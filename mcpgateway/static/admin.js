@@ -4934,6 +4934,10 @@ function showTab(tabName) {
                                 pluginsPanel.innerHTML = html;
                                 // Initialize plugin functions after HTML is loaded
                                 initializePluginFunctions();
+                                // Populate filter dropdowns
+                                if (window.populatePluginFilters) {
+                                    window.populatePluginFilters();
+                                }
                             })
                             .catch((error) => {
                                 console.error(
@@ -13274,23 +13278,86 @@ window.resetImportSelection = resetImportSelection;
 
 // Plugin management functions
 function initializePluginFunctions() {
+    // Populate hook and tag filters on page load
+    window.populatePluginFilters = function () {
+        const cards = document.querySelectorAll(".plugin-card");
+        const hookSet = new Set();
+        const tagSet = new Set();
+
+        cards.forEach((card) => {
+            const hooks = card.dataset.hooks
+                ? card.dataset.hooks.split(",")
+                : [];
+            const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
+
+            hooks.forEach((hook) => {
+                if (hook.trim()) {
+                    hookSet.add(hook.trim());
+                }
+            });
+            tags.forEach((tag) => {
+                if (tag.trim()) {
+                    tagSet.add(tag.trim());
+                }
+            });
+        });
+
+        const hookFilter = document.getElementById("plugin-hook-filter");
+        const tagFilter = document.getElementById("plugin-tag-filter");
+
+        if (hookFilter) {
+            hookSet.forEach((hook) => {
+                const option = document.createElement("option");
+                option.value = hook;
+                option.textContent = hook
+                    .replace(/_/g, " ")
+                    .replace(/\b\w/g, (l) => l.toUpperCase());
+                hookFilter.appendChild(option);
+            });
+        }
+
+        if (tagFilter) {
+            tagSet.forEach((tag) => {
+                const option = document.createElement("option");
+                option.value = tag;
+                option.textContent = tag;
+                tagFilter.appendChild(option);
+            });
+        }
+    };
+
     // Filter plugins based on search and filters
     window.filterPlugins = function () {
         const searchInput = document.getElementById("plugin-search");
         const modeFilter = document.getElementById("plugin-mode-filter");
+        const statusFilter = document.getElementById("plugin-status-filter");
         const hookFilter = document.getElementById("plugin-hook-filter");
+        const tagFilter = document.getElementById("plugin-tag-filter");
 
         const searchQuery = searchInput ? searchInput.value.toLowerCase() : "";
         const selectedMode = modeFilter ? modeFilter.value : "";
+        const selectedStatus = statusFilter ? statusFilter.value : "";
         const selectedHook = hookFilter ? hookFilter.value : "";
+        const selectedTag = tagFilter ? tagFilter.value : "";
 
         const cards = document.querySelectorAll(".plugin-card");
 
         cards.forEach((card) => {
-            const name = card.dataset.name.toLowerCase();
-            const description = card.dataset.description.toLowerCase();
+            const name = card.dataset.name
+                ? card.dataset.name.toLowerCase()
+                : "";
+            const description = card.dataset.description
+                ? card.dataset.description.toLowerCase()
+                : "";
+            const author = card.dataset.author
+                ? card.dataset.author.toLowerCase()
+                : "";
             const mode = card.dataset.mode;
-            const hooks = card.dataset.hooks.split(",");
+            const status = card.dataset.status;
+            const hooks = card.dataset.hooks
+                ? card.dataset.hooks.split(",")
+                : [];
+            const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
 
             let visible = true;
 
@@ -13298,7 +13365,8 @@ function initializePluginFunctions() {
             if (
                 searchQuery &&
                 !name.includes(searchQuery) &&
-                !description.includes(searchQuery)
+                !description.includes(searchQuery) &&
+                !author.includes(searchQuery)
             ) {
                 visible = false;
             }
@@ -13308,8 +13376,18 @@ function initializePluginFunctions() {
                 visible = false;
             }
 
+            // Status filter
+            if (selectedStatus && status !== selectedStatus) {
+                visible = false;
+            }
+
             // Hook filter
             if (selectedHook && !hooks.includes(selectedHook)) {
+                visible = false;
+            }
+
+            // Tag filter
+            if (selectedTag && !tags.includes(selectedTag)) {
                 visible = false;
             }
 
@@ -13319,6 +13397,26 @@ function initializePluginFunctions() {
                 card.style.display = "none";
             }
         });
+    };
+
+    // Filter by hook when clicking on hook point
+    window.filterByHook = function (hook) {
+        const hookFilter = document.getElementById("plugin-hook-filter");
+        if (hookFilter) {
+            hookFilter.value = hook;
+            window.filterPlugins();
+            hookFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+    };
+
+    // Filter by tag when clicking on tag
+    window.filterByTag = function (tag) {
+        const tagFilter = document.getElementById("plugin-tag-filter");
+        if (tagFilter) {
+            tagFilter.value = tag;
+            window.filterPlugins();
+            tagFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
     };
 
     // Show plugin details modal
@@ -13458,6 +13556,10 @@ function initializePluginFunctions() {
 // Initialize plugin functions if plugins panel exists
 if (document.getElementById("plugins-panel")) {
     initializePluginFunctions();
+    // Populate filter dropdowns on initial load
+    if (window.populatePluginFilters) {
+        window.populatePluginFilters();
+    }
 }
 
 // Expose plugin functions to global scope

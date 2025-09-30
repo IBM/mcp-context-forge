@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""A cache implementation to share information across plugins for LLMGuard. Example - sharing of vault between Anonymizer and 
+"""A cache implementation to share information across plugins for LLMGuard. Example - sharing of vault between Anonymizer and
 Deanonymizer defined in two plugins
 
 Copyright 2025
@@ -51,7 +51,7 @@ class CacheTTLDict(dict):
         And redis, by itself takes care of deleting that key from cache after ttl has been reached.
 
         Args:
-            key: The id of vault in string 
+            key: The id of vault in string
             value: The tuples in the vault
         """
         serialized_obj = pickle.dumps(value)
@@ -73,9 +73,9 @@ class CacheTTLDict(dict):
         """Retrieves cache for a key value
 
         Args:
-            key: The id of vault in string 
+            key: The id of vault in string
             value: The tuples in the vault
-        
+
         Returns:
             retrieved_obj: Return the retrieved object from cache
         """
@@ -92,9 +92,9 @@ class CacheTTLDict(dict):
         """Retrieves cache for a key value
 
         Args:
-            key: The id of vault in string 
+            key: The id of vault in string
             value: The tuples in the vault
-        
+
         Returns:
             retrieved_obj: Return the retrieved object from cache
         """

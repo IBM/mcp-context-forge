@@ -432,7 +432,7 @@ start:
 
 .PHONY: stop
 stop:
-	docker compose down 
+	docker compose down
 
 .PHONY: clean
 clean:
