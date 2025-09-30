@@ -607,8 +607,8 @@ class ToolService:
             team_id: Optional team ID to filter by specific team
             visibility: Optional visibility filter (private, team, public)
             include_inactive: Whether to include inactive tools
-            skip: Number of tools to skip for pagination
-            limit: Maximum number of tools to return
+            _skip: Number of tools to skip for pagination
+            _limit: Maximum number of tools to return
 
         Returns:
             List[ToolRead]: Tools the user has access to
