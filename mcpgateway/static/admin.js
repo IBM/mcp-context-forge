@@ -13332,10 +13332,14 @@ function initializePluginFunctions() {
         }
 
         if (authorFilter) {
-            authorSet.forEach((author) => {
+            // Convert authorSet to array and sort for consistent ordering
+            const sortedAuthors = Array.from(authorSet).sort();
+            sortedAuthors.forEach((author) => {
                 const option = document.createElement("option");
-                option.value = author;
-                option.textContent = author;
+                // Value is lowercase (matches data-author), text is capitalized for display
+                option.value = author.toLowerCase();
+                option.textContent =
+                    author.charAt(0).toUpperCase() + author.slice(1);
                 authorFilter.appendChild(option);
             });
         }
@@ -13356,6 +13360,11 @@ function initializePluginFunctions() {
         const selectedHook = hookFilter ? hookFilter.value : "";
         const selectedTag = tagFilter ? tagFilter.value : "";
         const selectedAuthor = authorFilter ? authorFilter.value : "";
+
+        // Update visual highlighting for all filter types
+        updateBadgeHighlighting("hook", selectedHook);
+        updateBadgeHighlighting("tag", selectedTag);
+        updateBadgeHighlighting("author", selectedAuthor);
 
         const cards = document.querySelectorAll(".plugin-card");
 
@@ -13409,7 +13418,10 @@ function initializePluginFunctions() {
             }
 
             // Author filter
-            if (selectedAuthor && author !== selectedAuthor.toLowerCase()) {
+            if (
+                selectedAuthor &&
+                author.trim() !== selectedAuthor.toLowerCase().trim()
+            ) {
                 visible = false;
             }
 
@@ -13428,6 +13440,9 @@ function initializePluginFunctions() {
             hookFilter.value = hook;
             window.filterPlugins();
             hookFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+            // Update visual highlighting
+            updateBadgeHighlighting("hook", hook);
         }
     };
 
@@ -13438,6 +13453,9 @@ function initializePluginFunctions() {
             tagFilter.value = tag;
             window.filterPlugins();
             tagFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+            // Update visual highlighting
+            updateBadgeHighlighting("tag", tag);
         }
     };
 
@@ -13445,14 +13463,98 @@ function initializePluginFunctions() {
     window.filterByAuthor = function (author) {
         const authorFilter = document.getElementById("plugin-author-filter");
         if (authorFilter) {
-            authorFilter.value = author;
+            // Convert to lowercase to match data-author attribute
+            authorFilter.value = author.toLowerCase();
             window.filterPlugins();
             authorFilter.scrollIntoView({
                 behavior: "smooth",
                 block: "nearest",
             });
+
+            // Update visual highlighting
+            updateBadgeHighlighting("author", author);
         }
     };
+
+    // Helper function to update badge highlighting
+    function updateBadgeHighlighting(type, value) {
+        // Define selectors for each type
+        const selectors = {
+            hook: "[onclick^='filterByHook']",
+            tag: "[onclick^='filterByTag']",
+            author: "[onclick^='filterByAuthor']",
+        };
+
+        const selector = selectors[type];
+        if (!selector) {
+            return;
+        }
+
+        // Get all badges of this type
+        const badges = document.querySelectorAll(selector);
+
+        badges.forEach((badge) => {
+            // Check if this is the "All" badge (empty value)
+            const isAllBadge = badge.getAttribute("onclick").includes("('')");
+
+            // Check if this badge matches the selected value
+            const badgeValue = badge
+                .getAttribute("onclick")
+                .match(/'([^']*)'/)?.[1];
+            const isSelected =
+                value === ""
+                    ? isAllBadge
+                    : badgeValue?.toLowerCase() === value?.toLowerCase();
+
+            if (isSelected) {
+                // Apply active/selected styling
+                badge.classList.remove(
+                    "bg-gray-100",
+                    "text-gray-800",
+                    "hover:bg-gray-200",
+                );
+                badge.classList.remove(
+                    "dark:bg-gray-700",
+                    "dark:text-gray-200",
+                    "dark:hover:bg-gray-600",
+                );
+                badge.classList.add(
+                    "bg-indigo-100",
+                    "text-indigo-800",
+                    "border",
+                    "border-indigo-300",
+                );
+                badge.classList.add(
+                    "dark:bg-indigo-900",
+                    "dark:text-indigo-200",
+                    "dark:border-indigo-700",
+                );
+            } else if (!isAllBadge) {
+                // Reset to default styling for non-All badges
+                badge.classList.remove(
+                    "bg-indigo-100",
+                    "text-indigo-800",
+                    "border",
+                    "border-indigo-300",
+                );
+                badge.classList.remove(
+                    "dark:bg-indigo-900",
+                    "dark:text-indigo-200",
+                    "dark:border-indigo-700",
+                );
+                badge.classList.add(
+                    "bg-gray-100",
+                    "text-gray-800",
+                    "hover:bg-gray-200",
+                );
+                badge.classList.add(
+                    "dark:bg-gray-700",
+                    "dark:text-gray-200",
+                    "dark:hover:bg-gray-600",
+                );
+            }
+        });
+    }
 
     // Show plugin details modal
     window.showPluginDetails = async function (pluginName) {
