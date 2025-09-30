@@ -1208,6 +1208,48 @@ async def execute(self, plugins: list[PluginRef], ...) -> tuple[PluginResult[T],
             # In permissive mode, continue with next plugin
 ```
 
+### Security Capabilities
+
+Future versions will support a security capability system for plugins. Through the configuration manifest, the following set of capabilities can be defined:
+
+- hook:invoke:<hook-name> — allow executing specific hook(s)
+- read:context / write:context — access to plugin context/state
+- network:egress / network:ingress — outbound/inbound network access (with host/port scopes)
+- secrets:get — fetch secrets from vault (scoped)
+- filesystem:read / filesystem:write — filesystem access (scoped)
+- exec:process — ability to spawn subprocesses
+- metrics:emit — emit metrics/traces
+
+An example manifest:
+
+```YAML 
+name: pii-filter
+version: 1.0.0
+framework_compatibility: "mcp-plugin-framework>=1.0.0,<2.0.0"
+...
+hooks:
+  - prompt_pre_fetch
+capabilities:
+  - hook:invoke:prompt_pre_fetch
+  - read:context
+```
+
+### Plugin Signing
+
+Future versions will support cryptographic signing of plugins for supply chain security (e.g., leveraging Sigstore signing infrastructure).
+
+An example manifest:
+
+```YAML
+name: pii-filter
+version: 1.0.0
+framework_compatibility: "mcp-plugin-framework>=1.0.0,<2.0.0"
+...
+signing:
+  algorithm: "ECDSA"
+  signature: "..."
+```
+
 ## Performance Considerations
 
 ### Resource Management
