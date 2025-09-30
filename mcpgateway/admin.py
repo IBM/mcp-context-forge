@@ -9382,7 +9382,7 @@ async def list_catalog_servers(
     """Get list of catalog servers with filtering.
 
     Args:
-        request: FastAPI request object
+        _request: FastAPI request object
         category: Filter by category
         auth_type: Filter by authentication type
         provider: Filter by provider
@@ -9393,7 +9393,7 @@ async def list_catalog_servers(
         limit: Maximum results
         offset: Pagination offset
         db: Database session
-        user: Authenticated user
+        _user: Authenticated user
 
     Returns:
         List of catalog servers matching filters
@@ -9433,7 +9433,7 @@ async def register_catalog_server(
         server_id: Catalog server ID to register
         request: Optional registration parameters
         db: Database session
-        user: Authenticated user
+        _user: Authenticated user
 
     Returns:
         Registration response with success status
@@ -9457,8 +9457,8 @@ async def check_catalog_server_status(
 
     Args:
         server_id: Catalog server ID to check
-        db: Database session
-        user: Authenticated user
+        _db: Database session
+        _user: Authenticated user
 
     Returns:
         Server status including availability and response time
@@ -9484,7 +9484,7 @@ async def bulk_register_catalog_servers(
     Args:
         request: Bulk registration request with server IDs
         db: Database session
-        user: Authenticated user
+        _user: Authenticated user
 
     Returns:
         Bulk registration response with success/failure details
@@ -9515,7 +9515,7 @@ async def catalog_partial(
         auth_type: Filter by authentication type
         search: Search term
         db: Database session
-        user: Authenticated user
+        _user: Authenticated user
 
     Returns:
         HTML partial with filtered catalog servers
@@ -9624,7 +9624,7 @@ async def catalog_partial(
             if (authFilter) authFilter.value = "{auth_type or ""}";
         }})();
     </script>
-    """
+    """  # nosec B608
 
     if not response.servers:
         servers_html = """
