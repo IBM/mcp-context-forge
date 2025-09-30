@@ -161,8 +161,8 @@ class TestStoreAuthorizationStateWithPKCE:
         state = "test-state"
         code_verifier = "test-verifier"
         
-        # Mock the storage
-        with patch.object(manager, '_state_lock'):
+        # Patch module-level _state_lock, not instance
+        with patch('mcpgateway.services.oauth_manager._state_lock'):
             await manager._store_authorization_state(gateway_id, state, code_verifier)
         
         # This test validates the method signature accepts code_verifier
@@ -177,7 +177,7 @@ class TestStoreAuthorizationStateWithPKCE:
         state = "test-state"
         
         # Should not raise error
-        with patch.object(manager, '_state_lock'):
+        with patch('mcpgateway.services.oauth_manager._state_lock'):
             await manager._store_authorization_state(gateway_id, state)
 
 
@@ -297,14 +297,26 @@ class TestExchangeCodeForTokensWithPKCE:
             "expires_in": 3600
         }
         
-        with patch('aiohttp.ClientSession') as mock_session:
-            mock_post = AsyncMock()
-            mock_post.return_value.__aenter__.return_value.status = 200
-            mock_post.return_value.__aenter__.return_value.json = AsyncMock(return_value=mock_response)
-            mock_post.return_value.__aenter__.return_value.raise_for_status = MagicMock()
-            mock_post.return_value.__aenter__.return_value.headers = {"content-type": "application/json"}
+        with patch('aiohttp.ClientSession') as mock_session_class:
+            # Create mock response
+            mock_response_obj = AsyncMock()
+            mock_response_obj.status = 200
+            mock_response_obj.json = AsyncMock(return_value=mock_response)
+            mock_response_obj.raise_for_status = MagicMock()
+            mock_response_obj.headers = {"content-type": "application/json"}
             
-            mock_session.return_value.__aenter__.return_value.post = mock_post
+            # Create mock post that returns the response
+            mock_post = MagicMock(return_value=mock_response_obj)
+            mock_post.return_value.__aenter__ = AsyncMock(return_value=mock_response_obj)
+            mock_post.return_value.__aexit__ = AsyncMock(return_value=None)
+            
+            # Create mock session
+            mock_session = MagicMock()
+            mock_session.post = mock_post
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=None)
+            
+            mock_session_class.return_value = mock_session
             
             result = await manager._exchange_code_for_tokens(
                 credentials, code, code_verifier=code_verifier
@@ -333,14 +345,26 @@ class TestExchangeCodeForTokensWithPKCE:
             "expires_in": 3600
         }
         
-        with patch('aiohttp.ClientSession') as mock_session:
-            mock_post = AsyncMock()
-            mock_post.return_value.__aenter__.return_value.status = 200
-            mock_post.return_value.__aenter__.return_value.json = AsyncMock(return_value=mock_response)
-            mock_post.return_value.__aenter__.return_value.raise_for_status = MagicMock()
-            mock_post.return_value.__aenter__.return_value.headers = {"content-type": "application/json"}
+        with patch('aiohttp.ClientSession') as mock_session_class:
+            # Create mock response
+            mock_response_obj = AsyncMock()
+            mock_response_obj.status = 200
+            mock_response_obj.json = AsyncMock(return_value=mock_response)
+            mock_response_obj.raise_for_status = MagicMock()
+            mock_response_obj.headers = {"content-type": "application/json"}
             
-            mock_session.return_value.__aenter__.return_value.post = mock_post
+            # Create mock post that returns the response
+            mock_post = MagicMock(return_value=mock_response_obj)
+            mock_post.return_value.__aenter__ = AsyncMock(return_value=mock_response_obj)
+            mock_post.return_value.__aexit__ = AsyncMock(return_value=None)
+            
+            # Create mock session
+            mock_session = MagicMock()
+            mock_session.post = mock_post
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=None)
+            
+            mock_session_class.return_value = mock_session
             
             # Should not raise error
             result = await manager._exchange_code_for_tokens(credentials, code)
@@ -354,7 +378,9 @@ class TestInitiateAuthorizationCodeFlowWithPKCE:
     @pytest.mark.asyncio
     async def test_initiate_authorization_code_flow_generates_pkce(self):
         """Test that initiating flow generates PKCE parameters."""
-        manager = OAuthManager()
+        # Create manager with mock token_storage so _store_authorization_state is called
+        mock_storage = MagicMock()
+        manager = OAuthManager(token_storage=mock_storage)
         
         gateway_id = "test-gateway"
         credentials = {

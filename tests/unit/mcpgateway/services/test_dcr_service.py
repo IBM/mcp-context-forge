@@ -48,7 +48,7 @@ class TestDiscoverASMetadata:
         with patch('aiohttp.ClientSession.get') as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"issuer": "test"})
+            mock_response.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
             mock_get.return_value.__aenter__.return_value = mock_response
             
             await dcr_service.discover_as_metadata("https://as.example.com")
@@ -70,7 +70,7 @@ class TestDiscoverASMetadata:
             # Second call (OIDC) succeeds
             mock_response_200 = AsyncMock()
             mock_response_200.status = 200
-            mock_response_200.json = AsyncMock(return_value={"issuer": "test"})
+            mock_response_200.json = AsyncMock(return_value={"issuer": "https://as.example.com"})
             
             mock_get.return_value.__aenter__.side_effect = [
                 mock_response_404,
@@ -98,6 +98,10 @@ class TestDiscoverASMetadata:
     @pytest.mark.asyncio
     async def test_discover_as_metadata_caches_result(self):
         """Test that metadata is cached to avoid repeated requests."""
+        # Clear cache first
+        from mcpgateway.services.dcr_service import _metadata_cache
+        _metadata_cache.clear()
+        
         dcr_service = DcrService()
         
         mock_metadata = {"issuer": "https://as.example.com"}
