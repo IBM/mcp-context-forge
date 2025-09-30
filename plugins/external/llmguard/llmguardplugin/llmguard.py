@@ -43,12 +43,12 @@ class LLMGuardBase():
 
     def _create_new_vault_on_expiry(self,vault) -> bool:
         """Takes in vault object, checks it's creation time and checks if it has reached it's expiry time.
-        If yes, then new vault object is created and sanitizers are initialized with the new cache object, deleting any earlier references 
+        If yes, then new vault object is created and sanitizers are initialized with the new cache object, deleting any earlier references
         to previous vault.
 
         Args:
             vault: vault object
-        
+
         Returns:
             boolean to indicate if vault has expired or not. If true, then vault has expired and has been reinitialized,
             if false, then vault hasn't expired yet.
@@ -73,7 +73,7 @@ class LLMGuardBase():
 
     def _retreive_vault(self,sanitizer_names: list = ["Anonymize"]) -> tuple[Vault,int,tuple]:
         """This function is responsible for retrieving vault for given sanitizer names
-        
+
         Args:
             sanitizer_names: list of names for sanitizers"""
         vault_id = None
@@ -92,7 +92,7 @@ class LLMGuardBase():
 
     def _update_input_sanitizers(self,sanitizer_names: list = ["Anonymize"]) -> None:
         """This function is responsible for updating vault for given sanitizer names in input
-        
+
         Args:
             sanitizer_names: list of names for sanitizers"""
         length = len(self.scanners["input"]["sanitizers"])
@@ -110,7 +110,7 @@ class LLMGuardBase():
 
     def _update_output_sanitizers(self,config, sanitizer_names: list = ["Deanonymize"]) -> None:
         """This function is responsible for updating vault for given sanitizer names in output
-        
+
         Args:
             sanitizer_names: list of names for sanitizers"""
         length = len(self.scanners["output"]["sanitizers"])

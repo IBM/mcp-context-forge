@@ -4934,6 +4934,10 @@ function showTab(tabName) {
                                 pluginsPanel.innerHTML = html;
                                 // Initialize plugin functions after HTML is loaded
                                 initializePluginFunctions();
+                                // Populate filter dropdowns
+                                if (window.populatePluginFilters) {
+                                    window.populatePluginFilters();
+                                }
                             })
                             .catch((error) => {
                                 console.error(
@@ -13274,23 +13278,112 @@ window.resetImportSelection = resetImportSelection;
 
 // Plugin management functions
 function initializePluginFunctions() {
+    // Populate hook, tag, and author filters on page load
+    window.populatePluginFilters = function () {
+        const cards = document.querySelectorAll(".plugin-card");
+        const hookSet = new Set();
+        const tagSet = new Set();
+        const authorSet = new Set();
+
+        cards.forEach((card) => {
+            const hooks = card.dataset.hooks
+                ? card.dataset.hooks.split(",")
+                : [];
+            const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
+            const author = card.dataset.author;
+
+            hooks.forEach((hook) => {
+                if (hook.trim()) {
+                    hookSet.add(hook.trim());
+                }
+            });
+            tags.forEach((tag) => {
+                if (tag.trim()) {
+                    tagSet.add(tag.trim());
+                }
+            });
+            if (author && author.trim()) {
+                authorSet.add(author.trim());
+            }
+        });
+
+        const hookFilter = document.getElementById("plugin-hook-filter");
+        const tagFilter = document.getElementById("plugin-tag-filter");
+        const authorFilter = document.getElementById("plugin-author-filter");
+
+        if (hookFilter) {
+            hookSet.forEach((hook) => {
+                const option = document.createElement("option");
+                option.value = hook;
+                option.textContent = hook
+                    .replace(/_/g, " ")
+                    .replace(/\b\w/g, (l) => l.toUpperCase());
+                hookFilter.appendChild(option);
+            });
+        }
+
+        if (tagFilter) {
+            tagSet.forEach((tag) => {
+                const option = document.createElement("option");
+                option.value = tag;
+                option.textContent = tag;
+                tagFilter.appendChild(option);
+            });
+        }
+
+        if (authorFilter) {
+            // Convert authorSet to array and sort for consistent ordering
+            const sortedAuthors = Array.from(authorSet).sort();
+            sortedAuthors.forEach((author) => {
+                const option = document.createElement("option");
+                // Value is lowercase (matches data-author), text is capitalized for display
+                option.value = author.toLowerCase();
+                option.textContent =
+                    author.charAt(0).toUpperCase() + author.slice(1);
+                authorFilter.appendChild(option);
+            });
+        }
+    };
+
     // Filter plugins based on search and filters
     window.filterPlugins = function () {
         const searchInput = document.getElementById("plugin-search");
         const modeFilter = document.getElementById("plugin-mode-filter");
+        const statusFilter = document.getElementById("plugin-status-filter");
         const hookFilter = document.getElementById("plugin-hook-filter");
+        const tagFilter = document.getElementById("plugin-tag-filter");
+        const authorFilter = document.getElementById("plugin-author-filter");
 
         const searchQuery = searchInput ? searchInput.value.toLowerCase() : "";
         const selectedMode = modeFilter ? modeFilter.value : "";
+        const selectedStatus = statusFilter ? statusFilter.value : "";
         const selectedHook = hookFilter ? hookFilter.value : "";
+        const selectedTag = tagFilter ? tagFilter.value : "";
+        const selectedAuthor = authorFilter ? authorFilter.value : "";
+
+        // Update visual highlighting for all filter types
+        updateBadgeHighlighting("hook", selectedHook);
+        updateBadgeHighlighting("tag", selectedTag);
+        updateBadgeHighlighting("author", selectedAuthor);
 
         const cards = document.querySelectorAll(".plugin-card");
 
         cards.forEach((card) => {
-            const name = card.dataset.name.toLowerCase();
-            const description = card.dataset.description.toLowerCase();
+            const name = card.dataset.name
+                ? card.dataset.name.toLowerCase()
+                : "";
+            const description = card.dataset.description
+                ? card.dataset.description.toLowerCase()
+                : "";
+            const author = card.dataset.author
+                ? card.dataset.author.toLowerCase()
+                : "";
             const mode = card.dataset.mode;
-            const hooks = card.dataset.hooks.split(",");
+            const status = card.dataset.status;
+            const hooks = card.dataset.hooks
+                ? card.dataset.hooks.split(",")
+                : [];
+            const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
 
             let visible = true;
 
@@ -13298,7 +13391,8 @@ function initializePluginFunctions() {
             if (
                 searchQuery &&
                 !name.includes(searchQuery) &&
-                !description.includes(searchQuery)
+                !description.includes(searchQuery) &&
+                !author.includes(searchQuery)
             ) {
                 visible = false;
             }
@@ -13308,8 +13402,26 @@ function initializePluginFunctions() {
                 visible = false;
             }
 
+            // Status filter
+            if (selectedStatus && status !== selectedStatus) {
+                visible = false;
+            }
+
             // Hook filter
             if (selectedHook && !hooks.includes(selectedHook)) {
+                visible = false;
+            }
+
+            // Tag filter
+            if (selectedTag && !tags.includes(selectedTag)) {
+                visible = false;
+            }
+
+            // Author filter
+            if (
+                selectedAuthor &&
+                author.trim() !== selectedAuthor.toLowerCase().trim()
+            ) {
                 visible = false;
             }
 
@@ -13320,6 +13432,129 @@ function initializePluginFunctions() {
             }
         });
     };
+
+    // Filter by hook when clicking on hook point
+    window.filterByHook = function (hook) {
+        const hookFilter = document.getElementById("plugin-hook-filter");
+        if (hookFilter) {
+            hookFilter.value = hook;
+            window.filterPlugins();
+            hookFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+            // Update visual highlighting
+            updateBadgeHighlighting("hook", hook);
+        }
+    };
+
+    // Filter by tag when clicking on tag
+    window.filterByTag = function (tag) {
+        const tagFilter = document.getElementById("plugin-tag-filter");
+        if (tagFilter) {
+            tagFilter.value = tag;
+            window.filterPlugins();
+            tagFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+            // Update visual highlighting
+            updateBadgeHighlighting("tag", tag);
+        }
+    };
+
+    // Filter by author when clicking on author
+    window.filterByAuthor = function (author) {
+        const authorFilter = document.getElementById("plugin-author-filter");
+        if (authorFilter) {
+            // Convert to lowercase to match data-author attribute
+            authorFilter.value = author.toLowerCase();
+            window.filterPlugins();
+            authorFilter.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+            });
+
+            // Update visual highlighting
+            updateBadgeHighlighting("author", author);
+        }
+    };
+
+    // Helper function to update badge highlighting
+    function updateBadgeHighlighting(type, value) {
+        // Define selectors for each type
+        const selectors = {
+            hook: "[onclick^='filterByHook']",
+            tag: "[onclick^='filterByTag']",
+            author: "[onclick^='filterByAuthor']",
+        };
+
+        const selector = selectors[type];
+        if (!selector) {
+            return;
+        }
+
+        // Get all badges of this type
+        const badges = document.querySelectorAll(selector);
+
+        badges.forEach((badge) => {
+            // Check if this is the "All" badge (empty value)
+            const isAllBadge = badge.getAttribute("onclick").includes("('')");
+
+            // Check if this badge matches the selected value
+            const badgeValue = badge
+                .getAttribute("onclick")
+                .match(/'([^']*)'/)?.[1];
+            const isSelected =
+                value === ""
+                    ? isAllBadge
+                    : badgeValue?.toLowerCase() === value?.toLowerCase();
+
+            if (isSelected) {
+                // Apply active/selected styling
+                badge.classList.remove(
+                    "bg-gray-100",
+                    "text-gray-800",
+                    "hover:bg-gray-200",
+                );
+                badge.classList.remove(
+                    "dark:bg-gray-700",
+                    "dark:text-gray-200",
+                    "dark:hover:bg-gray-600",
+                );
+                badge.classList.add(
+                    "bg-indigo-100",
+                    "text-indigo-800",
+                    "border",
+                    "border-indigo-300",
+                );
+                badge.classList.add(
+                    "dark:bg-indigo-900",
+                    "dark:text-indigo-200",
+                    "dark:border-indigo-700",
+                );
+            } else if (!isAllBadge) {
+                // Reset to default styling for non-All badges
+                badge.classList.remove(
+                    "bg-indigo-100",
+                    "text-indigo-800",
+                    "border",
+                    "border-indigo-300",
+                );
+                badge.classList.remove(
+                    "dark:bg-indigo-900",
+                    "dark:text-indigo-200",
+                    "dark:border-indigo-700",
+                );
+                badge.classList.add(
+                    "bg-gray-100",
+                    "text-gray-800",
+                    "hover:bg-gray-200",
+                );
+                badge.classList.add(
+                    "dark:bg-gray-700",
+                    "dark:text-gray-200",
+                    "dark:hover:bg-gray-600",
+                );
+            }
+        });
+    }
 
     // Show plugin details modal
     window.showPluginDetails = async function (pluginName) {
@@ -13458,6 +13693,10 @@ function initializePluginFunctions() {
 // Initialize plugin functions if plugins panel exists
 if (document.getElementById("plugins-panel")) {
     initializePluginFunctions();
+    // Populate filter dropdowns on initial load
+    if (window.populatePluginFilters) {
+        window.populatePluginFilters();
+    }
 }
 
 // Expose plugin functions to global scope
