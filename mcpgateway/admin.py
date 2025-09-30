@@ -53,6 +53,13 @@ from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
+    CatalogBulkRegisterRequest,
+    CatalogBulkRegisterResponse,
+    CatalogListRequest,
+    CatalogListResponse,
+    CatalogServerRegisterRequest,
+    CatalogServerRegisterResponse,
+    CatalogServerStatusResponse,
     GatewayCreate,
     GatewayRead,
     GatewayTestRequest,
@@ -81,6 +88,7 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
 from mcpgateway.services.import_service import ConflictStrategy
@@ -2187,6 +2195,7 @@ async def admin_ui(
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),
@@ -9348,3 +9357,280 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
     except Exception as e:
         LOGGER.error(f"Error getting plugin details: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+##################################################
+# MCP Registry Endpoints
+##################################################
+
+
+@admin_router.get("/mcp-registry/servers", response_model=CatalogListResponse)
+async def list_catalog_servers(
+    _request: Request,
+    category: Optional[str] = None,
+    auth_type: Optional[str] = None,
+    provider: Optional[str] = None,
+    search: Optional[str] = None,
+    tags: Optional[List[str]] = Query(None),
+    show_registered_only: bool = False,
+    show_available_only: bool = True,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> CatalogListResponse:
+    """Get list of catalog servers with filtering.
+
+    Args:
+        _request: FastAPI request object
+        category: Filter by category
+        auth_type: Filter by authentication type
+        provider: Filter by provider
+        search: Search in name/description
+        tags: Filter by tags
+        show_registered_only: Show only already registered servers
+        show_available_only: Show only available servers
+        limit: Maximum results
+        offset: Pagination offset
+        db: Database session
+        _user: Authenticated user
+
+    Returns:
+        List of catalog servers matching filters
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
+    """
+    if not settings.mcpgateway_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Catalog feature is disabled")
+
+    catalog_request = CatalogListRequest(
+        category=category,
+        auth_type=auth_type,
+        provider=provider,
+        search=search,
+        tags=tags or [],
+        show_registered_only=show_registered_only,
+        show_available_only=show_available_only,
+        limit=limit,
+        offset=offset,
+    )
+
+    return await catalog_service.get_catalog_servers(catalog_request, db)
+
+
+@admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
+@require_permission("servers.create")
+async def register_catalog_server(
+    server_id: str,
+    request: Optional[CatalogServerRegisterRequest] = None,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> CatalogServerRegisterResponse:
+    """Register a catalog server.
+
+    Args:
+        server_id: Catalog server ID to register
+        request: Optional registration parameters
+        db: Database session
+        _user: Authenticated user
+
+    Returns:
+        Registration response with success status
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
+    """
+    if not settings.mcpgateway_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Catalog feature is disabled")
+
+    return await catalog_service.register_catalog_server(catalog_id=server_id, request=request, db=db)
+
+
+@admin_router.get("/mcp-registry/{server_id}/status", response_model=CatalogServerStatusResponse)
+async def check_catalog_server_status(
+    server_id: str,
+    _db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> CatalogServerStatusResponse:
+    """Check catalog server availability.
+
+    Args:
+        server_id: Catalog server ID to check
+        _db: Database session
+        _user: Authenticated user
+
+    Returns:
+        Server status including availability and response time
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
+    """
+    if not settings.mcpgateway_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Catalog feature is disabled")
+
+    return await catalog_service.check_server_availability(server_id)
+
+
+@admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
+@require_permission("servers.create")
+async def bulk_register_catalog_servers(
+    request: CatalogBulkRegisterRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> CatalogBulkRegisterResponse:
+    """Register multiple catalog servers at once.
+
+    Args:
+        request: Bulk registration request with server IDs
+        db: Database session
+        _user: Authenticated user
+
+    Returns:
+        Bulk registration response with success/failure details
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
+    """
+    if not settings.mcpgateway_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Catalog feature is disabled")
+
+    return await catalog_service.bulk_register_servers(request, db)
+
+
+@admin_router.get("/mcp-registry/partial")
+async def catalog_partial(
+    request: Request,
+    category: Optional[str] = None,
+    auth_type: Optional[str] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Get HTML partial for catalog servers (used by HTMX).
+
+    Args:
+        request: FastAPI request object
+        category: Filter by category
+        auth_type: Filter by authentication type
+        search: Search term
+        db: Database session
+        _user: Authenticated user
+
+    Returns:
+        HTML partial with filtered catalog servers
+
+    Raises:
+        HTTPException: If the catalog feature is disabled.
+    """
+    if not settings.mcpgateway_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Catalog feature is disabled")
+
+    root_path = request.scope.get("root_path", "")
+
+    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=True, limit=50, offset=0)
+
+    response = await catalog_service.get_catalog_servers(catalog_request, db)
+
+    # Build HTML for server cards
+    servers_html = '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">'
+
+    for server in response.servers:
+        # Badge colors based on auth type
+        auth_badge_class = "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
+        if server.auth_type == "OAuth2.1":
+            auth_badge_class = "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+        elif server.auth_type == "API Key":
+            auth_badge_class = "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+        elif server.auth_type == "Open":
+            auth_badge_class = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+
+        # Registration status
+        if server.is_registered:
+            register_button = '<button class="w-full px-4 py-2 bg-gray-300 text-gray-600 rounded-md cursor-not-allowed" disabled>Already Registered</button>'
+        else:
+            if server.requires_api_key or server.auth_type in ["API Key", "OAuth2.1 & API Key"]:
+                # Show modal for API key input
+                register_button = f"""
+                    <button class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                            onclick="showApiKeyModal('{server.id}', '{server.name}', '{server.url}')">
+                        Add Server
+                    </button>
+                """
+            else:
+                # Direct registration for servers that don't require API key
+                register_button = f"""
+                    <button class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                            hx-post="{root_path}/admin/mcp-registry/{server.id}/register"
+                            hx-swap="outerHTML"
+                            hx-indicator="#{server.id}-spinner">
+                        <span id="{server.id}-spinner" class="htmx-indicator">
+                            <span class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
+                        </span>
+                        Add Server
+                    </button>
+                """
+
+        servers_html += f"""
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 hover:shadow-md transition-shadow">
+            <div class="mb-3">
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">{server.name}</h3>
+                <div class="flex gap-2 mb-2">
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {auth_badge_class}">
+                        {server.auth_type}
+                    </span>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                        {server.category}
+                    </span>
+                </div>
+                <p class="text-sm text-gray-600 dark:text-gray-400">{server.description}</p>
+            </div>
+
+            <div class="mb-3">
+                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    <span class="font-semibold">Provider:</span> {server.provider}
+                </p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    <span class="font-semibold">URL:</span> {server.url}
+                </p>
+            </div>
+
+            <div>
+                {register_button}
+            </div>
+        </div>
+        """
+
+    servers_html += "</div>"
+
+    # Update filter dropdowns with available options
+    servers_html += f"""
+    <script>
+        (function() {{
+            // Update category filter options
+            const categoryFilter = document.getElementById('category-filter');
+            if (categoryFilter && categoryFilter.options.length <= 1) {{
+                {"; ".join([f'categoryFilter.options.add(new Option("{cat}", "{cat}"))' for cat in response.categories])}
+            }}
+
+            // Update auth type filter options
+            const authFilter = document.getElementById('auth-filter');
+            if (authFilter && authFilter.options.length <= 1) {{
+                {"; ".join([f'authFilter.options.add(new Option("{auth}", "{auth}"))' for auth in response.auth_types])}
+            }}
+
+            // Set selected values
+            if (categoryFilter) categoryFilter.value = "{category or ""}";
+            if (authFilter) authFilter.value = "{auth_type or ""}";
+        }})();
+    </script>
+    """  # nosec B608
+
+    if not response.servers:
+        servers_html = """
+        <div class="text-center py-8">
+            <p class="text-gray-500">No servers found matching your filters</p>
+        </div>
+        """
+
+    return HTMLResponse(content=servers_html)

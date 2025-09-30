@@ -273,6 +273,12 @@ class Settings(BaseSettings):
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
 
+    # MCP Server Catalog Configuration
+    mcpgateway_catalog_enabled: bool = Field(default=True, description="Enable MCP server catalog feature")
+    mcpgateway_catalog_file: str = Field(default="mcp-catalog.yml", description="Path to catalog configuration file")
+    mcpgateway_catalog_auto_health_check: bool = Field(default=True, description="Automatically health check catalog servers")
+    mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
+
     # Security
     skip_ssl_verify: bool = False
     cors_enabled: bool = True
@@ -352,11 +358,11 @@ class Settings(BaseSettings):
         # Check for default/weak secrets
         weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
         if value.lower() in weak_secrets:
-            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! " "Please set a strong, unique value for production.")
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
         # Check minimum length
         if len(value) < 32:
-            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. " f"Current length: {len(value)}")
+            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
 
         # Basic entropy check (at least 10 unique characters)
         if len(set(value)) < 10:

@@ -4795,6 +4795,118 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "mcp-registry") {
+                    // Load MCP Registry content
+                    const registryContent = safeGetElement(
+                        "mcp-registry-servers",
+                    );
+                    if (registryContent) {
+                        // Always load on first visit or if showing loading message
+                        const hasLoadingMessage =
+                            registryContent.innerHTML.includes(
+                                "Loading MCP Registry servers...",
+                            );
+                        const needsLoad =
+                            hasLoadingMessage ||
+                            !registryContent.getAttribute("data-loaded");
+
+                        if (needsLoad) {
+                            const rootPath = window.ROOT_PATH || "";
+
+                            // Use HTMX if available
+                            if (window.htmx && window.htmx.ajax) {
+                                window.htmx
+                                    .ajax(
+                                        "GET",
+                                        `${rootPath}/admin/mcp-registry/partial`,
+                                        {
+                                            target: "#mcp-registry-servers",
+                                            swap: "innerHTML",
+                                        },
+                                    )
+                                    .then(() => {
+                                        registryContent.setAttribute(
+                                            "data-loaded",
+                                            "true",
+                                        );
+                                    });
+                            } else {
+                                // Fallback to fetch if HTMX is not available
+                                fetch(`${rootPath}/admin/mcp-registry/partial`)
+                                    .then((response) => response.text())
+                                    .then((html) => {
+                                        registryContent.innerHTML = html;
+                                        registryContent.setAttribute(
+                                            "data-loaded",
+                                            "true",
+                                        );
+                                        // Process any HTMX attributes in the new content
+                                        if (window.htmx) {
+                                            window.htmx.process(
+                                                registryContent,
+                                            );
+                                        }
+                                    })
+                                    .catch((error) => {
+                                        console.error(
+                                            "Failed to load MCP Registry:",
+                                            error,
+                                        );
+                                        registryContent.innerHTML =
+                                            '<div class="text-center text-red-600 py-8">Failed to load MCP Registry servers</div>';
+                                    });
+                            }
+                        }
+                    }
+                }
+
+                if (tabName === "gateways") {
+                    // Reload gateways list to show any newly registered servers
+                    const gatewaysSection = safeGetElement("gateways-section");
+                    if (gatewaysSection) {
+                        const gatewaysTbody =
+                            gatewaysSection.querySelector("tbody");
+                        if (gatewaysTbody) {
+                            // Trigger HTMX reload if available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(gatewaysTbody, "load");
+                            } else {
+                                // Fallback: reload the page section via fetch
+                                const rootPath = window.ROOT_PATH || "";
+                                fetch(`${rootPath}/admin`)
+                                    .then((response) => response.text())
+                                    .then((html) => {
+                                        // Parse the HTML and extract just the gateways table
+                                        const parser = new DOMParser();
+                                        const doc = parser.parseFromString(
+                                            html,
+                                            "text/html",
+                                        );
+                                        const newTbody = doc.querySelector(
+                                            "#gateways-section tbody",
+                                        );
+                                        if (newTbody) {
+                                            gatewaysTbody.innerHTML =
+                                                newTbody.innerHTML;
+                                            // Process any HTMX attributes in the new content
+                                            if (window.htmx) {
+                                                window.htmx.process(
+                                                    gatewaysTbody,
+                                                );
+                                            }
+                                        }
+                                    })
+                                    .catch((error) => {
+                                        console.error(
+                                            "Failed to reload gateways:",
+                                            error,
+                                        );
+                                    });
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "plugins") {
                     const pluginsPanel = safeGetElement("plugins-panel");
                     if (pluginsPanel && pluginsPanel.innerHTML.trim() === "") {
@@ -13350,3 +13462,91 @@ if (document.getElementById("plugins-panel")) {
 
 // Expose plugin functions to global scope
 window.initializePluginFunctions = initializePluginFunctions;
+
+// ===================================================================
+// MCP REGISTRY MODAL FUNCTIONS
+// ===================================================================
+
+// Define modal functions in global scope for MCP Registry
+window.showApiKeyModal = function (serverId, serverName, serverUrl) {
+    const modal = document.getElementById("api-key-modal");
+    if (modal) {
+        document.getElementById("modal-server-id").value = serverId;
+        document.getElementById("modal-server-name").textContent = serverName;
+        document.getElementById("modal-custom-name").placeholder = serverName;
+        modal.classList.remove("hidden");
+    }
+};
+
+window.closeApiKeyModal = function () {
+    const modal = document.getElementById("api-key-modal");
+    if (modal) {
+        modal.classList.add("hidden");
+    }
+    const form = document.getElementById("api-key-form");
+    if (form) {
+        form.reset();
+    }
+};
+
+window.submitApiKeyForm = function (event) {
+    event.preventDefault();
+    const serverId = document.getElementById("modal-server-id").value;
+    const customName = document.getElementById("modal-custom-name").value;
+    const apiKey = document.getElementById("modal-api-key").value;
+
+    // Prepare request data
+    const requestData = {};
+    if (customName) {
+        requestData.name = customName;
+    }
+    if (apiKey) {
+        requestData.api_key = apiKey;
+    }
+
+    const rootPath = window.ROOT_PATH || "";
+
+    // Send registration request
+    fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + (getCookie("jwt_token") || ""),
+        },
+        body: JSON.stringify(requestData),
+    })
+        .then((response) => response.json())
+        .then((data) => {
+            if (data.success) {
+                window.closeApiKeyModal();
+                // Reload the catalog
+                if (window.htmx && window.htmx.ajax) {
+                    window.htmx.ajax(
+                        "GET",
+                        `${rootPath}/admin/mcp-registry/partial`,
+                        {
+                            target: "#mcp-registry-servers",
+                            swap: "innerHTML",
+                        },
+                    );
+                }
+            } else {
+                alert("Registration failed: " + (data.error || data.message));
+            }
+        })
+        .catch((error) => {
+            alert("Error registering server: " + error);
+        });
+};
+
+// Helper function to get cookie if not already defined
+if (typeof window.getCookie === "undefined") {
+    window.getCookie = function (name) {
+        const value = "; " + document.cookie;
+        const parts = value.split("; " + name + "=");
+        if (parts.length === 2) {
+            return parts.pop().split(";").shift();
+        }
+        return "";
+    };
+}

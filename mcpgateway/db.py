@@ -146,6 +146,31 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Configure SQLite for better concurrency if using SQLite
+if backend == "sqlite":
+
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, _connection_record):
+        """Set SQLite pragmas for better concurrency.
+
+        This is critical for running with multiple gunicorn workers.
+        WAL mode allows multiple readers and a single writer concurrently.
+
+        Args:
+            dbapi_conn: The raw DBAPI connection.
+            _connection_record: A SQLAlchemy-specific object that maintains
+                information about the connection's context.
+        """
+        cursor = dbapi_conn.cursor()
+        # Enable WAL mode for better concurrency
+        cursor.execute("PRAGMA journal_mode=WAL")
+        # Set busy timeout to 10 seconds (10000 ms) to handle lock contention
+        cursor.execute("PRAGMA busy_timeout=10000")
+        # Synchronous=NORMAL is safe with WAL mode and improves performance
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
