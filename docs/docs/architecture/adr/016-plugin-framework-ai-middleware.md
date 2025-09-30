@@ -2,12 +2,12 @@
 
 - **Status:** Implemented
 - **Date:** 2025-01-19
-- **Deciders:** Mihai Criveti, Teryl Taylor
-- **Technical Story:** [#313](https://github.com/anthropics/mcp-context-forge/issues/313), [#319](https://github.com/anthropics/mcp-context-forge/issues/319), [#673](https://github.com/anthropics/mcp-context-forge/issues/673)
+- **Deciders:** Mihai Criveti, Teryl Taylor, Fred Araujo
+- **Technical Story:** [#313](https://github.com/IBM/mcp-context-forge/issues/313), [#319](https://github.com/IBM/mcp-context-forge/issues/319), [#673](https://github.com/IBM/mcp-context-forge/issues/673), [#773](https://github.com/IBM/mcp-context-forge/issues/773), [#720](https://github.com/IBM/mcp-context-forge/issues/720)
 
 ## Context
 
-The MCP Gateway required a robust plugin framework to support AI safety middleware, security processing, and extensible gateway capabilities. The implementation needed to support both self-contained plugins (running in-process) and external middleware service integrations while maintaining performance, security, and operational simplicity.
+The MCP Gateway required a robust plugin framework to support AI safety middleware, security processing, and extensible gateway capabilities. The implementation needed to support both native plugins (running in-process) and external middleware service integrations while maintaining performance, security, and operational simplicity.
 
 ## Decision
 
@@ -229,7 +229,7 @@ sequenceDiagram
 
 ## Performance Characteristics
 
-- **Latency Impact:** Self-contained plugins add <1ms overhead per hook
+- **Latency Impact:** Native plugins add <1ms overhead per hook
 - **Memory Usage:** ~5MB base overhead, scales linearly with active plugins
 - **Throughput:** Tested to 1000+ req/s with 5 active plugins
 - **Context Cleanup:** Automatic cleanup every 5 minutes, contexts expire after 1 hour
@@ -279,7 +279,7 @@ sequenceDiagram
 
 ### Positive
 ✅ **Complete AI Safety Pipeline:** Framework supports end-to-end content filtering and safety
-✅ **High Performance:** Self-contained plugins provide sub-millisecond latency
+✅ **High Performance:** Native plugins provide sub-millisecond latency
 ✅ **Operational Simplicity:** File-based configuration integrates with existing workflows
 ✅ **Future-Proof:** Architecture supports both current needs and roadmap expansion
 ✅ **Security-First:** Multiple layers of protection against malicious plugins and inputs
@@ -291,7 +291,7 @@ sequenceDiagram
 ❌ **Debugging Challenges:** Sequential plugin chains can be difficult to troubleshoot
 
 ### Neutral
-🔄 **Hybrid Architecture:** Both self-contained and external services require different operational approaches
+🔄 **Hybrid Architecture:** Both native and external services require different operational approaches
 🔄 **Memory Usage:** Plugin contexts require careful management in high-traffic environments
 🔄 **Performance Tuning:** Plugin timeouts and priorities need environment-specific tuning
 
