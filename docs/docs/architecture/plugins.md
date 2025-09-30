@@ -8,16 +8,16 @@ The MCP Context Forge Plugin Framework provides a comprehensive, production-read
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Plugin Types and Configuration](#plugin-types-and-configuration)
-3. [Architecture Components](#architecture-components)
-4. [Hook System](#hook-system)
-5. [Plugin Manager](#plugin-manager)
-6. [External Plugin Integration](#external-plugin-integration)
-7. [Security and Protection](#security-and-protection)
-8. [Performance Considerations](#performance-considerations)
-9. [Development Guidelines](#development-guidelines)
-10. [Plugin Manifest System](#plugin-manifest-system)
-11. [Testing and Development](#testing-and-development)
+2. [Architecture](#architecture)
+3. [Plugin Types and Configuration](#plugin-types-and-configuration)
+4. [Core Components](#core-components)
+5. [Hook System](#hook-system)
+6. [Hook Reference Documentation](#hook-reference-documentation)
+7. [External Plugin Integration](#external-plugin-integration)
+8. [Security and Protection](#security-and-protection)
+9. [Performance Considerations](#performance-considerations)
+10. [Development Guidelines](#development-guidelines)
+11. [Testing](#testing)
 12. [Platform-Agnostic Design](#platform-agnostic-design)
 13. [Future Extensions](#future-extensions)
 
@@ -1352,7 +1352,7 @@ class ResourceFilterPlugin(Plugin):
         return PluginResult(continue_processing=True)
 ```
 
-## Testing and Development
+## Testing
 
 ### Testing Framework Integration
 
