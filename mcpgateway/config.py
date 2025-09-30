@@ -358,11 +358,11 @@ class Settings(BaseSettings):
         # Check for default/weak secrets
         weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
         if value.lower() in weak_secrets:
-            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! " "Please set a strong, unique value for production.")
+            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
         # Check minimum length
         if len(value) < 32:
-            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. " f"Current length: {len(value)}")
+            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
 
         # Basic entropy check (at least 10 unique characters)
         if len(set(value)) < 10:

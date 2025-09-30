@@ -9366,7 +9366,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 
 @admin_router.get("/mcp-registry/servers", response_model=CatalogListResponse)
 async def list_catalog_servers(
-    request: Request,
+    _request: Request,
     category: Optional[str] = None,
     auth_type: Optional[str] = None,
     provider: Optional[str] = None,
@@ -9377,7 +9377,7 @@ async def list_catalog_servers(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    _user=Depends(get_current_user_with_permissions),
 ) -> CatalogListResponse:
     """Get list of catalog servers with filtering.
 
@@ -9425,7 +9425,7 @@ async def register_catalog_server(
     server_id: str,
     request: Optional[CatalogServerRegisterRequest] = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    _user=Depends(get_current_user_with_permissions),
 ) -> CatalogServerRegisterResponse:
     """Register a catalog server.
 
@@ -9450,8 +9450,8 @@ async def register_catalog_server(
 @admin_router.get("/mcp-registry/{server_id}/status", response_model=CatalogServerStatusResponse)
 async def check_catalog_server_status(
     server_id: str,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    _db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
 ) -> CatalogServerStatusResponse:
     """Check catalog server availability.
 
@@ -9477,7 +9477,7 @@ async def check_catalog_server_status(
 async def bulk_register_catalog_servers(
     request: CatalogBulkRegisterRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    _user=Depends(get_current_user_with_permissions),
 ) -> CatalogBulkRegisterResponse:
     """Register multiple catalog servers at once.
 
@@ -9505,7 +9505,7 @@ async def catalog_partial(
     auth_type: Optional[str] = None,
     search: Optional[str] = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    _user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
     """Get HTML partial for catalog servers (used by HTMX).
 
@@ -9610,18 +9610,18 @@ async def catalog_partial(
             // Update category filter options
             const categoryFilter = document.getElementById('category-filter');
             if (categoryFilter && categoryFilter.options.length <= 1) {{
-                {'; '.join([f'categoryFilter.options.add(new Option("{cat}", "{cat}"))' for cat in response.categories])}
+                {"; ".join([f'categoryFilter.options.add(new Option("{cat}", "{cat}"))' for cat in response.categories])}
             }}
 
             // Update auth type filter options
             const authFilter = document.getElementById('auth-filter');
             if (authFilter && authFilter.options.length <= 1) {{
-                {'; '.join([f'authFilter.options.add(new Option("{auth}", "{auth}"))' for auth in response.auth_types])}
+                {"; ".join([f'authFilter.options.add(new Option("{auth}", "{auth}"))' for auth in response.auth_types])}
             }}
 
             // Set selected values
-            if (categoryFilter) categoryFilter.value = "{category or ''}";
-            if (authFilter) authFilter.value = "{auth_type or ''}";
+            if (categoryFilter) categoryFilter.value = "{category or ""}";
+            if (authFilter) authFilter.value = "{auth_type or ""}";
         }})();
     </script>
     """

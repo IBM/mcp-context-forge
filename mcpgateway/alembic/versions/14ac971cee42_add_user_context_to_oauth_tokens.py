@@ -87,7 +87,7 @@ def upgrade() -> None:
         index_exists = result is not None
     elif dialect_name == "mysql":
         result = conn.execute(
-            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() " "AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_tokens_gateway_user'")
+            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_tokens_gateway_user'")
         ).fetchone()
         index_exists = result is not None
     elif dialect_name == "sqlite":
@@ -142,7 +142,7 @@ def downgrade() -> None:
         index_exists = result is not None
     elif dialect_name == "mysql":
         result = conn.execute(
-            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() " "AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_gateway_user'")
+            sa.text("SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'oauth_tokens' AND index_name = 'idx_oauth_gateway_user'")
         ).fetchone()
         index_exists = result is not None
     elif dialect_name == "sqlite":
