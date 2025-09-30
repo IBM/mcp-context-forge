@@ -897,10 +897,10 @@ The plugin development process follows a streamlined four-phase approach that ge
 
 ```mermaid
 graph LR
-    A["📋 Template"]
-    B(["🚀 Bootstrap"])
-    C(["📦 Build"])
-    D(["🌐 Serve"])
+    A["Template"]
+    B(["Bootstrap"])
+    C(["Build"])
+    D(["Serve"])
 
     subgraph dev["Development Phase"]
         A -.-> B
@@ -913,7 +913,7 @@ graph LR
     B --> C
 
     subgraph CF["Context Forge Gateway"]
-        E["🌐 Gateway"]
+        E["Gateway"]
         D o--"MCP<br>&nbsp;&nbsp;<small>tools/hooks</small>&nbsp;&nbsp;"--o E
     end
 
@@ -1005,6 +1005,10 @@ plugins:
 External plugins communicate via the Model Context Protocol (MCP), enabling language-agnostic plugin development.
 
 ```mermaid
+---
+config:
+  mirrorActors: false
+---
 sequenceDiagram
     participant Gateway as MCP Gateway
     participant Client as External Plugin Client
