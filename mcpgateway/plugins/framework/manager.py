@@ -616,9 +616,6 @@ class PluginManager:
                 # For disabled plugins, create a stub plugin without full instantiation
                 if plugin_config.mode == PluginMode.DISABLED:
                     # Create a minimal stub plugin for display purposes only
-                    # First-Party
-                    from mcpgateway.plugins.framework.base import Plugin
-
                     stub_plugin = Plugin(plugin_config)
                     self._registry.register(stub_plugin)
                     loaded_count += 1
