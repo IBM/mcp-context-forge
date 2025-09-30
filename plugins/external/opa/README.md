@@ -3,17 +3,18 @@
 > Author: Shriti Priya
 > Version: 0.1.0
 
-An OPA plugin that enforces rego policies on requests and allows/denies requests as per policies.
+An OPA (Open Policy Agent) plugin that enforces Rego policies on requests and allows or denies requests based on policy evaluation.
 
 The OPA plugin is composed of two components:
-1. OPA server
-2. The pre hooks on tools that talks to OPA server running as background service within the same container. Whenever a tool is invoked, if OPA Plugin is in action, a policy will be applied on the tool call to allow/deny it.
+1. **OPA Server**: Runs as a background service evaluating policies
+2. **Plugin Hooks**: Intercepts tool invocations and communicates with the OPA server for policy decisions
+
+Whenever a tool is invoked with the OPA Plugin active, a policy is applied to the tool call to allow or deny execution.
 
 ### OPA Server
-To define a policy file you need to go into opaserver/rego and create a sample policy file for you.
-Example -`policy.rego` is present.
-Once you have this file created in this location, when building the server, the opa binaries will be downloaded and a container will be build.
-In the `run_server.sh` file, the opa server will run as a background service in the container with the rego policy file.
+To define a policy file, create a Rego policy file in `opaserver/rego/`. An example `policy.rego` file is provided.
+
+When building the server, the OPA binaries will be downloaded and a container will be built. The `run_server.sh` script starts the OPA server as a background service within the container, loading the specified Rego policy file.
 
 ### OPA Plugin
 The OPA plugin runs as an external plugin with pre/post tool invocations. So everytime a tool invocation is made, and if OPAPluginFilter has been defined in config.yaml file, the tool invocation will pass through this OPA Plugin.
