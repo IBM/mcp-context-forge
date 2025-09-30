@@ -1116,6 +1116,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 visibility=existing_gateway.visibility,
                             )
 
+                # FIX for Issue #1025: Determine if URL actually changed before we update it
+                # We need this early because we update gateway.url below, and need to know
+                # if it actually changed to decide whether to re-fetch tools
+                url_changed = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
+
                 # Update fields if provided
                 if gateway_update.name is not None:
                     gateway.name = gateway_update.name
@@ -1173,8 +1178,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if current_auth != decoded_auth:
                         gateway.auth_value = decoded_auth
 
-                # Try to reinitialize connection if URL changed
-                if gateway_update.url is not None:
+                # Try to reinitialize connection if URL actually changed
+                if url_changed:
                     # Initialize empty lists in case initialization fails
                     tools_to_add = []
                     resources_to_add = []
