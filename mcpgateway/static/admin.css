@@ -2,14 +2,14 @@
 #sticky-header {
   transform: translateZ(0);
   will-change: height, margin-bottom, background-color, box-shadow, transform;
-  height: 96px;                /* initial full height */
-  margin-bottom: 16px;         /* space under header in initial state */
+  height: 96px; /* initial full height */
+  margin-bottom: 16px; /* space under header in initial state */
   background: transparent;
   transition:
-    height 0.28s cubic-bezier(.2,.9,.3,1),
-    margin-bottom 0.28s cubic-bezier(.2,.9,.3,1),
-    background-color 0.28s cubic-bezier(.2,.9,.3,1),
-    box-shadow 0.28s cubic-bezier(.2,.9,.3,1);
+    height 0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
+    margin-bottom 0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
+    background-color 0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
+    box-shadow 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 
 /* preserve original header-inner layout initially (items-start) */
@@ -28,13 +28,17 @@
 /* Title: use transform for smoothness */
 #sticky-header .header-left h1 {
   transform-origin: left center;
-  transition: transform 0.28s cubic-bezier(.2,.9,.3,1), font-size 0.28s cubic-bezier(.2,.9,.3,1);
+  transition:
+    transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
+    font-size 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
   transform: scale(1);
   margin: 0; /* avoid unexpected top/bottom margin */
 }
 
 #sticky-header .header-left .header-subtitle {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
   opacity: 1;
   margin-top: 0.25rem;
   font-size: 0.95rem;
@@ -42,14 +46,20 @@
 
 /* right side controls smoothing */
 #sticky-header .header-right > * {
-  transition: transform 0.28s cubic-bezier(.2,.9,.3,1), opacity 0.28s ease, padding 0.28s cubic-bezier(.2,.9,.3,1);
+  transition:
+    transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
+    opacity 0.28s ease,
+    padding 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
 }
 
 /* COMPACT state after scrolling: reduce height, hide subtitle, apply glass */
 #sticky-header.compact {
   height: 64px;
   margin-bottom: 0;
-  background-color: rgb(255 255 255 / 80%); /* slightly more opaque for contrast */
+  background-color: rgb(
+    255 255 255 / 80%
+  ); /* slightly more opaque for contrast */
+
   backdrop-filter: blur(8px);
   box-shadow: 0 6px 20px rgb(2 6 23 / 12%); /* slightly stronger shadow for depth */
 }
@@ -70,7 +80,7 @@
   flex-direction: column;
   justify-content: center;
   height: 100%; /* ensure it fills header-inner for perfect centering */
-  padding: 0;  /* avoid extra internal spacing */
+  padding: 0; /* avoid extra internal spacing */
 }
 
 /* shrink title using scale for smooth transition (value approximates earlier font-size) */
@@ -110,7 +120,10 @@
 }
 
 #sticky-header .header-logout-btn {
-  transition: background-color 0.16s ease, color 0.16s ease, padding 0.16s ease;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease,
+    padding 0.16s ease;
 }
 
 #sticky-header.compact .header-logout-btn {

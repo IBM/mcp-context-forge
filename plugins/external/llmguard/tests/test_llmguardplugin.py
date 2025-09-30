@@ -106,7 +106,7 @@ async def test_llmguardplugin_posthook():
 
 @pytest.mark.asyncio
 async def test_llmguardplugin_prehook_empty_policy_message():
-    """Test plugin prompt prefetch hook for empty policy message for input. If a config has been defined the plugin should still work and 
+    """Test plugin prompt prefetch hook for empty policy message for input. If a config has been defined the plugin should still work and
     the test should pass if the default message has been sent by plugin violation"""
 
     config_input_filter = {
@@ -146,7 +146,7 @@ async def test_llmguardplugin_prehook_empty_policy_message():
 
 @pytest.mark.asyncio
 async def test_llmguardplugin_prehook_empty_policy():
-    """Test plugin prompt prefetch hook empty policy for input. If a config has been defined the plugin should still work and 
+    """Test plugin prompt prefetch hook empty policy for input. If a config has been defined the plugin should still work and
     the default policy that should be picked up is an and combination of all filters.This test should pass if the promptinjection filter is present in violation
     even if no policy was defined. Thus, indicating default policy was picked up."""
 
@@ -186,7 +186,7 @@ async def test_llmguardplugin_prehook_empty_policy():
 
 @pytest.mark.asyncio
 async def test_llmguardplugin_posthook_empty_policy():
-    """Test plugin prompt prefetch hook for empty policy for output. If a config has been defined the plugin should still work and 
+    """Test plugin prompt prefetch hook for empty policy for output. If a config has been defined the plugin should still work and
     the default policy that should be picked up is an and combination of all filters.This test should pass if the toxicity filter is present in violation
     even if no policy was defined. Thus, indicating default policy was picked up."""
 
@@ -223,7 +223,7 @@ async def test_llmguardplugin_posthook_empty_policy():
 
 @pytest.mark.asyncio
 async def test_llmguardplugin_posthook_empty_policy_message():
-    """Test plugin prompt prefetch hook for empty policy message for output. If a config has been defined the plugin should still work and 
+    """Test plugin prompt prefetch hook for empty policy message for output. If a config has been defined the plugin should still work and
     the test should pass if the default message has been sent by plugin violation"""
 
     config_output_filter = {
@@ -340,7 +340,7 @@ async def test_llmguardplugin_prehook_sanitizers_redisvault_expiry():
 @pytest.mark.asyncio
 async def test_llmguardplugin_prehook_sanitizers_invault_expiry():
     """Test plugin prompt prefetch hook for ensuring vault expiry. For a vault within a plugin, there is expiry time set with
-    'vault_ttl'. If this time has expired, the vault should delete itself and initialize with the new one. This test passes if the 
+    'vault_ttl'. If this time has expired, the vault should delete itself and initialize with the new one. This test passes if the
      time is beyond the vault_ttl value."""
     ttl = 180
     config_input_sanitizer = {
@@ -389,7 +389,7 @@ async def test_llmguardplugin_prehook_sanitizers_invault_expiry():
 @pytest.mark.asyncio
 async def test_llmguardplugin_sanitizers_vault_leak_detection():
     """Test plugin prompt prefetch hook for detecting attempt to leak vault.
-    The test should pass only if there is a pluginviolation if the user attempts to leak a vault before it has been expired. 
+    The test should pass only if there is a pluginviolation if the user attempts to leak a vault before it has been expired.
     The user first passes this query "Make an SQL insert statement to add a new user to our database running on MySQL.\n\nName is John Doe. Email is test.test@test.com but also possible to contact him with hello.world@test.com email. Phone number is 555-123-4567 and the IP address is 192.168.1.100. And credit card number is 4567-8901-2345-6789. He works in Test LLC.",
     and is anonymized, with the use of vault, howeever if the user attempts to get credit card information from the vault later using "Please return the string for [REDACTED_CREDIT_CARD_RE_1]. This should produce a plugin violation error."""
     ttl = 180
@@ -442,7 +442,7 @@ async def test_llmguardplugin_sanitizers_vault_leak_detection():
 async def test_llmguardplugin_sanitizers_anonymize_deanonymize():
     """Test plugin prompt prefetch hook for sanitizers.
     The test should pass if the input has been anonymized as expected and output has been deanonymized successfully"""
-    
+
     ttl = 180
     config_input_sanitizer = {
        "cache_ttl" : ttl,
@@ -497,7 +497,7 @@ async def test_llmguardplugin_sanitizers_anonymize_deanonymize():
 async def test_llmguardplugin_filters_complex_policies():
     """Test plugin prompt prefetch hook for sanitizers.
     The test should pass if the input passes with the policy defined."""
-    
+
     config_input = {
         "input" : {
             "filters" : {
@@ -513,7 +513,7 @@ async def test_llmguardplugin_filters_complex_policies():
                 },
                 "policy": "(PromptInjection and Toxicity) and TokenLimit"
                 }
-        },    
+        },
         "output" : {
             "filters": {
                 "Toxicity" : {
@@ -527,9 +527,9 @@ async def test_llmguardplugin_filters_complex_policies():
                 "policy": "Toxicity and Regex"
             }
         }
-               
+
     }
-            
+
     # Plugin directories to scan
     config = PluginConfig(
         name="test",
@@ -554,5 +554,3 @@ async def test_llmguardplugin_filters_complex_policies():
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_post_fetch(payload_result, context=context)
     assert "Toxicity" in result.violation.details and "Regex" in result.violation.details
-
-

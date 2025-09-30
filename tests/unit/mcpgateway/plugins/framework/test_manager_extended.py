@@ -594,7 +594,8 @@ async def test_manager_initialization_edge_cases():
 
     with patch('mcpgateway.plugins.framework.manager.logger') as mock_logger:
         await manager3.initialize()
-        mock_logger.debug.assert_called_with("Skipping disabled plugin: DisabledPlugin")
+        # Disabled plugins are now registered as stubs (info log), not skipped during load
+        mock_logger.info.assert_any_call("Registered disabled plugin: DisabledPlugin (display only, not instantiated)")
 
     await manager3.shutdown()
     await manager2.shutdown()

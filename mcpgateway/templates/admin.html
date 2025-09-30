@@ -101,18 +101,32 @@
         aria-hidden="false"
       >
         <!-- inner container kept identical to original layout so initial load is unchanged -->
-        <div class="w-full max-w-screen-2xl mx-auto px-4 py-6 header-inner flex justify-between items-start">
+        <div
+          class="w-full max-w-screen-2xl mx-auto px-4 py-6 header-inner flex justify-between items-start"
+        >
           <!-- LEFT SIDE (exact original content/placement) -->
           <div class="header-left">
-            <h1 class="text-3xl font-bold text-gray-800 dark:text-gray-200 leading-tight">
+            <h1
+              class="text-3xl font-bold text-gray-800 dark:text-gray-200 leading-tight"
+            >
               Context Forge - Gateway Administration
             </h1>
             <p class="text-gray-600 dark:text-gray-400 mt-1 header-subtitle">
               AI Gateway and Registry supporting MCP, A2A and REST
               <span class="mx-2 text-gray-400">|</span>
-              <a href="https://ibm.github.io/mcp-context-forge/" target="_blank" class="text-indigo-600 dark:text-indigo-500 hover:underline">Docs</a>
+              <a
+                href="https://ibm.github.io/mcp-context-forge/"
+                target="_blank"
+                class="text-indigo-600 dark:text-indigo-500 hover:underline"
+                >Docs</a
+              >
               <span class="mx-2 text-gray-400">|</span>
-              <a href="https://github.com/IBM/mcp-context-forge" target="_blank" class="text-indigo-600 dark:text-indigo-500 hover:underline">⭐ Star mcp-context-forge on GitHub</a>
+              <a
+                href="https://github.com/IBM/mcp-context-forge"
+                target="_blank"
+                class="text-indigo-600 dark:text-indigo-500 hover:underline"
+                >⭐ Star mcp-context-forge on GitHub</a
+              >
               <span class="mx-2 text-gray-400">|</span>
               <button
                 @click="darkMode = !darkMode"
@@ -125,7 +139,6 @@
 
           <!-- RIGHT SIDE (exact original controls & markup; added lightweight classes for styling on compact) -->
           <div class="flex items-center space-x-4 header-right">
-
             <!-- Team Selector (preserved) -->
             {% if email_auth_enabled %}
             <div
@@ -155,8 +168,17 @@
                 class="inline-flex justify-center items-center px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 header-team-btn"
               >
                 <span x-text="selectedTeamName" class="mr-2">All Teams</span>
-                <svg class="ml-2 -mr-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                  <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                <svg
+                  class="ml-2 -mr-1 h-4 w-4"
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 20 20"
+                  fill="currentColor"
+                >
+                  <path
+                    fill-rule="evenodd"
+                    d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                    clip-rule="evenodd"
+                  />
                 </svg>
               </button>
 
@@ -191,8 +213,13 @@
                       role="menuitem"
                       x-bind:class="selectedTeam === team.id ? 'bg-blue-50 dark:bg-blue-900' : ''"
                     >
-                      <span x-text="(team.is_personal ? '👤 ' : '🏢 ') + team.name"></span>
-                      <span class="text-xs text-gray-500 dark:text-gray-400 ml-2" x-text="team.member_count + ' members'"></span>
+                      <span
+                        x-text="(team.is_personal ? '👤 ' : '🏢 ') + team.name"
+                      ></span>
+                      <span
+                        class="text-xs text-gray-500 dark:text-gray-400 ml-2"
+                        x-text="team.member_count + ' members'"
+                      ></span>
                     </button>
                   </template>
                 </div>
@@ -201,15 +228,20 @@
             {% endif %}
 
             <!-- User Email (preserved) -->
-            <div class="text-sm text-gray-600 dark:text-gray-400 flex items-center header-user">
+            <div
+              class="text-sm text-gray-600 dark:text-gray-400 flex items-center header-user"
+            >
               <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"/>
+                <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
               </svg>
               {{ current_user }}
             </div>
 
             <!-- Admin Menu (preserved) -->
-            <div class="relative inline-block text-left" x-data="{ open: false }">
+            <div
+              class="relative inline-block text-left"
+              x-data="{ open: false }"
+            >
               <div>
                 <button
                   type="button"
@@ -220,8 +252,17 @@
                   class="inline-flex justify-center items-center px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 header-admin-btn"
                 >
                   ⚙️ Admin
-                  <svg class="ml-2 -mr-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                  <svg
+                    class="ml-2 -mr-1 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fill-rule="evenodd"
+                      d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                      clip-rule="evenodd"
+                    />
                   </svg>
                 </button>
               </div>
@@ -243,22 +284,68 @@
               >
                 <div class="py-1" role="none">
                   {% if email_auth_enabled %}
-                  <a href="#users" @click="open = false" class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" onclick="showTab('users')">👤 User Management</a>
-                  <a href="#tokens" @click="open = false" class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" onclick="showTab('tokens')">🎫 API Tokens</a>
+                  <a
+                    href="#users"
+                    @click="open = false"
+                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                    role="menuitem"
+                    onclick="showTab('users')"
+                    >👤 User Management</a
+                  >
+                  <a
+                    href="#tokens"
+                    @click="open = false"
+                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                    role="menuitem"
+                    onclick="showTab('tokens')"
+                    >🎫 API Tokens</a
+                  >
                   {% endif %}
-                  <a href="#roots" @click="open = false" class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" onclick="showTab('roots')">📁 Roots Management</a>
-                  <a href="#export-import" @click="open = false" class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" onclick="showTab('export-import')">📤 Export/Import</a>
+                  <a
+                    href="#roots"
+                    @click="open = false"
+                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                    role="menuitem"
+                    onclick="showTab('roots')"
+                    >📁 Roots Management</a
+                  >
+                  <a
+                    href="#export-import"
+                    @click="open = false"
+                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                    role="menuitem"
+                    onclick="showTab('export-import')"
+                    >📤 Export/Import</a
+                  >
                 </div>
 
                 <div class="py-1" role="none">
-                  <a href="#logs" @click="open = false" class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" onclick="showTab('logs')">📋 System Logs</a>
-                  <a href="#version-info" @click="open = false" class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700" role="menuitem" onclick="showTab('version-info')">ℹ️ Version & Environment</a>
+                  <a
+                    href="#logs"
+                    @click="open = false"
+                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                    role="menuitem"
+                    onclick="showTab('logs')"
+                    >📋 System Logs</a
+                  >
+                  <a
+                    href="#version-info"
+                    @click="open = false"
+                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                    role="menuitem"
+                    onclick="showTab('version-info')"
+                    >ℹ️ Version & Environment</a
+                  >
                 </div>
               </div>
             </div>
 
             <!-- Logout (preserved) -->
-            <form method="post" action="{{ root_path }}/admin/logout" class="inline">
+            <form
+              method="post"
+              action="{{ root_path }}/admin/logout"
+              class="inline"
+            >
               <button
                 type="submit"
                 class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 header-logout-btn"
@@ -269,11 +356,10 @@
             </form>
           </div>
         </div>
-
       </header>
 
       <!-- SENTINEL must be OUTSIDE the header so it scrolls out of view correctly -->
-      <div id="header-sentinel" style="height: 1px;"></div>
+      <div id="header-sentinel" style="height: 1px"></div>
 
       <script>
         (function () {
@@ -294,8 +380,8 @@
             },
             {
               rootMargin: "-80px 0px 0px 0px", // trigger when we've scrolled ~80px
-              threshold: 0
-            }
+              threshold: 0,
+            },
           );
 
           observer.observe(sentinel);
@@ -1018,47 +1104,67 @@
       <div id="mcp-registry-panel" class="tab-panel hidden">
         <div class="container mx-auto px-4 py-8">
           <div class="mb-6">
-            <h1 class="text-3xl font-bold mb-2 dark:text-gray-200">MCP Registry</h1>
-            <p class="text-gray-600 dark:text-gray-400">Browse and add public MCP servers to your gateway</p>
+            <h1 class="text-3xl font-bold mb-2 dark:text-gray-200">
+              MCP Registry
+            </h1>
+            <p class="text-gray-600 dark:text-gray-400">
+              Browse and add public MCP servers to your gateway
+            </p>
           </div>
 
           <!-- Filters -->
           <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
             <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Category</label>
-                <select id="category-filter"
-                        name="category"
-                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        hx-get="{{ root_path }}/admin/mcp-registry/partial"
-                        hx-trigger="change"
-                        hx-target="#mcp-registry-servers"
-                        hx-include="[name='auth_type'],[name='search']">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  >Category</label
+                >
+                <select
+                  id="category-filter"
+                  name="category"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                  hx-trigger="change"
+                  hx-target="#mcp-registry-servers"
+                  hx-include="[name='auth_type'],[name='search']"
+                >
                   <option value="">All Categories</option>
                 </select>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Auth Type</label>
-                <select id="auth-filter"
-                        name="auth_type"
-                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        hx-get="{{ root_path }}/admin/mcp-registry/partial"
-                        hx-trigger="change"
-                        hx-target="#mcp-registry-servers"
-                        hx-include="[name='category'],[name='search']">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  >Auth Type</label
+                >
+                <select
+                  id="auth-filter"
+                  name="auth_type"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                  hx-trigger="change"
+                  hx-target="#mcp-registry-servers"
+                  hx-include="[name='category'],[name='search']"
+                >
                   <option value="">All Auth Types</option>
                 </select>
               </div>
               <div class="md:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Search</label>
-                <input type="text" id="search-input"
-                       name="search"
-                       placeholder="Search servers..."
-                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                       hx-get="{{ root_path }}/admin/mcp-registry/partial"
-                       hx-trigger="keyup changed delay:500ms"
-                       hx-target="#mcp-registry-servers"
-                       hx-include="[name='category'],[name='auth_type']">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  >Search</label
+                >
+                <input
+                  type="text"
+                  id="search-input"
+                  name="search"
+                  placeholder="Search servers..."
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                  hx-trigger="keyup changed delay:500ms"
+                  hx-target="#mcp-registry-servers"
+                  hx-include="[name='category'],[name='auth_type']"
+                />
               </div>
             </div>
           </div>
@@ -1066,19 +1172,31 @@
           <!-- Server Grid -->
           <div id="mcp-registry-servers">
             <div class="text-center py-8">
-              <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"></div>
-              <p class="mt-2 text-gray-600 dark:text-gray-400">Loading MCP Registry servers...</p>
+              <div
+                class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"
+              ></div>
+              <p class="mt-2 text-gray-600 dark:text-gray-400">
+                Loading MCP Registry servers...
+              </p>
             </div>
           </div>
         </div>
 
         <!-- API Key Modal -->
-        <div id="api-key-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div
+          id="api-key-modal"
+          class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+        >
+          <div
+            class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white"
+          >
             <div class="mt-3">
-              <h3 class="text-lg font-medium text-gray-900 mb-4">API Key Required</h3>
+              <h3 class="text-lg font-medium text-gray-900 mb-4">
+                API Key Required
+              </h3>
               <p class="text-sm text-gray-500 mb-4">
-                <span id="modal-server-name"></span> requires an API key to connect.
+                <span id="modal-server-name"></span> requires an API key to
+                connect.
               </p>
               <form id="api-key-form" onsubmit="submitApiKeyForm(event)">
                 <input type="hidden" id="modal-server-id" />
@@ -1086,29 +1204,37 @@
                   <label class="block text-sm font-medium text-gray-700 mb-2">
                     Server Name (optional)
                   </label>
-                  <input type="text"
-                         id="modal-custom-name"
-                         class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                         placeholder="Custom name for this server" />
+                  <input
+                    type="text"
+                    id="modal-custom-name"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Custom name for this server"
+                  />
                 </div>
                 <div class="mb-4">
                   <label class="block text-sm font-medium text-gray-700 mb-2">
                     API Key <span class="text-red-500">*</span>
                   </label>
-                  <input type="password"
-                         id="modal-api-key"
-                         class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                         placeholder="Enter your API key"
-                         required />
+                  <input
+                    type="password"
+                    id="modal-api-key"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Enter your API key"
+                    required
+                  />
                 </div>
                 <div class="flex justify-end gap-2">
-                  <button type="button"
-                          onclick="closeApiKeyModal()"
-                          class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400">
+                  <button
+                    type="button"
+                    onclick="closeApiKeyModal()"
+                    class="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+                  >
                     Cancel
                   </button>
-                  <button type="submit"
-                          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                  <button
+                    type="submit"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                  >
                     Add Server
                   </button>
                 </div>
@@ -1337,12 +1463,14 @@
                     {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
-                   {% if server.team %}
+                    {% if server.team %}
                     <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ server.team.replace(' ', '<br>')|safe }}
+                      {{ server.team.replace(' ', '<br />')|safe }}
                     </span>
                     {% else %}
-                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -1396,53 +1524,53 @@
 
                       <!-- Row 3: Deactivate/Activate | Delete -->
                       <div class="col-span-2 flex flex-col space-y-1">
-                      {% if server.isActive %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'servers')"
-                      >
-                        <input type="hidden" name="activate" value="false" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                        {% if server.isActive %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'servers')"
                         >
-                          Deactivate
-                        </button>
-                      </form>
-                      {% else %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'servers')"
-                      >
-                        <input type="hidden" name="activate" value="true" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Re-enable an inactive item'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="false" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                          >
+                            Deactivate
+                          </button>
+                        </form>
+                        {% else %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'servers')"
                         >
-                          Activate
-                        </button>
-                      </form>
-                      {% endif %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
-                        class="contents"
-                        onsubmit="return handleSubmitWithConfirmation(event, 'servers')"
-                      >
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Permanently delete this item – cannot be undone'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="true" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Re-enable an inactive item'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          >
+                            Activate
+                          </button>
+                        </form>
+                        {% endif %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/servers/{{ server.id }}/delete"
+                          class="contents"
+                          onsubmit="return handleSubmitWithConfirmation(event, 'servers')"
                         >
-                          Delete
-                        </button>
-                      </form>
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </form>
                       </div>
                     </div>
                   </td>
@@ -1631,7 +1759,10 @@
                     class="text-gray-700 dark:text-gray-300"
                     style="display: none"
                   >
-                    No resource found containing "<span id="searchResourcesQuery"></span>"
+                    No resource found containing "<span
+                      id="searchResourcesQuery"
+                    ></span
+                    >"
                   </p>
                 </div>
                 <div class="flex justify-end gap-3 mt-3">
@@ -1697,7 +1828,10 @@
                     class="text-gray-700 dark:text-gray-300"
                     style="display: none"
                   >
-                    No prompt found containing "<span id="searchPromptsQuery"></span>"
+                    No prompt found containing "<span
+                      id="searchPromptsQuery"
+                    ></span
+                    >"
                   </p>
                 </div>
                 <div class="flex justify-end gap-3 mt-3">
@@ -1735,7 +1869,10 @@
             </div>
 
             <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Tags</label>
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Tags</label
+              >
               <input
                 type="text"
                 name="tags"
@@ -1743,24 +1880,60 @@
                 class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
               />
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Enter tags separated by commas. Tags help categorize and filter servers.
+                Enter tags separated by commas. Tags help categorize and filter
+                servers.
               </p>
             </div>
             <!-- Visibility options -->
             <div class="mt-4">
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
-              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Visibility</label
+              >
+              <div class="flex gap-x-6 mt-2">
+                <!-- Add gap-x-6 for more space between radio options -->
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-public" checked />
-                  <label for="server-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="public"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="server-visibility-public"
+                    checked
+                  />
+                  <label
+                    for="server-visibility-public"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🌍Public</label
+                  >
                 </div>
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-team" />
-                  <label for="server-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="team"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="server-visibility-team"
+                  />
+                  <label
+                    for="server-visibility-team"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >👥Team</label
+                  >
                 </div>
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="server-visibility-private" />
-                  <label for="server-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="private"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="server-visibility-private"
+                  />
+                  <label
+                    for="server-visibility-private"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🔒Private</label
+                  >
                 </div>
               </div>
             </div>
@@ -1907,7 +2080,7 @@
                   >
                     Owner
                   </th>
-                   <th
+                  <th
                     class="px-2 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20"
                   >
                     Team
@@ -2029,13 +2202,15 @@
                     >
                     {% endif %}
                   </td>
-                   <td class="px-2 py-4 whitespace-nowrap">
-                   {% if tool.team %}
+                  <td class="px-2 py-4 whitespace-nowrap">
+                    {% if tool.team %}
                     <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ tool.team.replace(' ', '<br>')|safe }}
+                      {{ tool.team.replace(' ', '<br />')|safe }}
                     </span>
                     {% else %}
-                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
                     {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
@@ -2155,54 +2330,54 @@
                       </button>
 
                       <!-- Row 3: Deactivate/Activate | Delete -->
-                       <div class="col-span-2 flex flex-col space-y-1">
-                      {% if tool.enabled %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'tools')"
-                      >
-                        <input type="hidden" name="activate" value="false" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                      <div class="col-span-2 flex flex-col space-y-1">
+                        {% if tool.enabled %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'tools')"
                         >
-                          Deactivate
-                        </button>
-                      </form>
-                      {% else %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'tools')"
-                      >
-                        <input type="hidden" name="activate" value="true" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Re-enable an inactive item'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="false" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                          >
+                            Deactivate
+                          </button>
+                        </form>
+                        {% else %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'tools')"
                         >
-                          Activate
-                        </button>
-                      </form>
-                      {% endif %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
-                        class="contents"
-                        onsubmit="return handleSubmitWithConfirmation(event, 'tools')"
-                      >
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Permanently delete this item – cannot be undone'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="true" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Re-enable an inactive item'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          >
+                            Activate
+                          </button>
+                        </form>
+                        {% endif %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/tools/{{ tool.id }}/delete"
+                          class="contents"
+                          onsubmit="return handleSubmitWithConfirmation(event, 'tools')"
                         >
-                          Delete
-                        </button>
-                      </form>
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </form>
                       </div>
                     </div>
                   </td>
@@ -2215,8 +2390,12 @@
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <div class="flex justify-between items-center mb-4">
             <div>
-              <h3 class="text-lg font-bold dark:text-gray-200">Add New Tool from REST API</h3>
-              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">Convert existing REST API to an MCP Tool</p>
+              <h3 class="text-lg font-bold dark:text-gray-200">
+                Add New Tool from REST API
+              </h3>
+              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                Convert existing REST API to an MCP Tool
+              </p>
             </div>
 
             <!-- Bulk Import Dropdown -->
@@ -2277,14 +2456,21 @@
                         name spaces and tag formats.
                       </p>
                       <p><strong>Maximum:</strong> 200 tools per import</p>
-                      <div class="mt-3 p-3 bg-gray-50 dark:bg-gray-700 rounded border">
+                      <div
+                        class="mt-3 p-3 bg-gray-50 dark:bg-gray-700 rounded border"
+                      >
                         <div class="flex justify-between items-center mb-2">
                           <strong class="text-xs">Sample JSON Template:</strong>
-                          <button onclick="downloadSampleJSON()" class="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-xs underline">
+                          <button
+                            onclick="downloadSampleJSON()"
+                            class="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-xs underline"
+                          >
                             📥 Download Sample
                           </button>
                         </div>
-                        <pre class="text-xs overflow-x-auto"><code id="sample-json">[
+                        <pre
+                          class="text-xs overflow-x-auto"
+                        ><code id="sample-json">[
   {
     "name": "weather-api",
     "displayName": "Weather API Tool",
@@ -2311,9 +2497,19 @@
   }
 ]</code></pre>
                         <div class="mt-3 text-xs space-y-1">
-                          <p><strong>Auth Types:</strong> basic, bearer, authheaders, oauth, or none</p>
-                          <p><strong>Required Fields:</strong> name, url, integration_type, request_type</p>
-                          <p><strong>Optional Fields:</strong> displayName, description, auth_type, auth_value, headers, input_schema, jsonpath_filter, tags</p>
+                          <p>
+                            <strong>Auth Types:</strong> basic, bearer,
+                            authheaders, oauth, or none
+                          </p>
+                          <p>
+                            <strong>Required Fields:</strong> name, url,
+                            integration_type, request_type
+                          </p>
+                          <p>
+                            <strong>Optional Fields:</strong> displayName,
+                            description, auth_type, auth_value, headers,
+                            input_schema, jsonpath_filter, tags
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -2714,19 +2910,54 @@
             </div>
             <!-- Visibility options -->
             <div class="mt-4">
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
-              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Visibility</label
+              >
+              <div class="flex gap-x-6 mt-2">
+                <!-- Add gap-x-6 for more space between radio options -->
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-public" checked />
-                  <label for="tool-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="public"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="tool-visibility-public"
+                    checked
+                  />
+                  <label
+                    for="tool-visibility-public"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🌍Public</label
+                  >
                 </div>
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-team" />
-                  <label for="tool-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="team"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="tool-visibility-team"
+                  />
+                  <label
+                    for="tool-visibility-team"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >👥Team</label
+                  >
                 </div>
                 <div class="flex items-center">
-                  <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="tool-visibility-private" />
-                  <label for="tool-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="private"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="tool-visibility-private"
+                  />
+                  <label
+                    for="tool-visibility-private"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🔒Private</label
+                  >
                 </div>
               </div>
             </div>
@@ -3019,12 +3250,14 @@
                     {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
-                   {% if resource.team %}
+                    {% if resource.team %}
                     <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ resource.team.replace(' ', '<br>')|safe }}
+                      {{ resource.team.replace(' ', '<br />')|safe }}
                     </span>
                     {% else %}
-                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -3076,53 +3309,53 @@
 
                       <!-- Row 2: Deactivate/Activate | Delete -->
                       <div class="col-span-2 flex flex-col space-y-1">
-                      {% if resource.isActive %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'resources')"
-                      >
-                        <input type="hidden" name="activate" value="false" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                        {% if resource.isActive %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'resources')"
                         >
-                          Deactivate
-                        </button>
-                      </form>
-                      {% else %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'resources')"
-                      >
-                        <input type="hidden" name="activate" value="true" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Re-enable an inactive item'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="false" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                          >
+                            Deactivate
+                          </button>
+                        </form>
+                        {% else %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/resources/{{ resource.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'resources')"
                         >
-                          Activate
-                        </button>
-                      </form>
-                      {% endif %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/resources/{{ resource.uri }}/delete"
-                        class="contents"
-                        onsubmit="return handleSubmitWithConfirmation(event, 'resources')"
-                      >
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Permanently delete this item – cannot be undone'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="true" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Re-enable an inactive item'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          >
+                            Activate
+                          </button>
+                        </form>
+                        {% endif %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/resources/{{ resource.uri }}/delete"
+                          class="contents"
+                          onsubmit="return handleSubmitWithConfirmation(event, 'resources')"
                         >
-                          Delete
-                        </button>
-                      </form>
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </form>
                       </div>
                     </div>
                   </td>
@@ -3220,20 +3453,55 @@
             </div>
             <!-- Visibility options -->
             <div class="mt-4">
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
-              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
-              <div class="flex items-center">
-                <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="resource-visibility-public" checked />
-                <label for="resource-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
-              </div>
-              <div class="flex items-center">
-                <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="resource-visibility-team" />
-                <label for="resource-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
-              </div>
-              <div class="flex items-center">
-                <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="resource-visibility-private" />
-                <label for="resource-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
-              </div>
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Visibility</label
+              >
+              <div class="flex gap-x-6 mt-2">
+                <!-- Add gap-x-6 for more space between radio options -->
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="public"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="resource-visibility-public"
+                    checked
+                  />
+                  <label
+                    for="resource-visibility-public"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🌍Public</label
+                  >
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="team"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="resource-visibility-team"
+                  />
+                  <label
+                    for="resource-visibility-team"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >👥Team</label
+                  >
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="private"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="resource-visibility-private"
+                  />
+                  <label
+                    for="resource-visibility-private"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🔒Private</label
+                  >
+                </div>
               </div>
             </div>
             <div class="mt-6">
@@ -3409,12 +3677,14 @@
                     {% endif %}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
-                   {% if prompt.team %}
+                    {% if prompt.team %}
                     <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ prompt.team.replace(' ', '<br>')|safe }}
+                      {{ prompt.team.replace(' ', '<br />')|safe }}
                     </span>
                     {% else %}
-                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -3475,53 +3745,53 @@
 
                       <!-- Row 3: Deactivate/Activate | Delete -->
                       <div class="col-span-2 flex flex-col space-y-1">
-                      {% if prompt.isActive %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'prompts')"
-                      >
-                        <input type="hidden" name="activate" value="false" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                        {% if prompt.isActive %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'prompts')"
                         >
-                          Deactivate
-                        </button>
-                      </form>
-                      {% else %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'prompts')"
-                      >
-                        <input type="hidden" name="activate" value="true" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Re-enable an inactive item'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="false" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                          >
+                            Deactivate
+                          </button>
+                        </form>
+                        {% else %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/prompts/{{ prompt.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'prompts')"
                         >
-                          Activate
-                        </button>
-                      </form>
-                      {% endif %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/prompts/{{ prompt.name }}/delete"
-                        class="contents"
-                        onsubmit="return handleSubmitWithConfirmation(event, 'prompts')"
-                      >
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Permanently delete this item – cannot be undone'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="true" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Re-enable an inactive item'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          >
+                            Activate
+                          </button>
+                        </form>
+                        {% endif %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/prompts/{{ prompt.name }}/delete"
+                          class="contents"
+                          onsubmit="return handleSubmitWithConfirmation(event, 'prompts')"
                         >
-                          Delete
-                        </button>
-                      </form>
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </form>
                       </div>
                     </div>
                   </td>
@@ -3631,20 +3901,55 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
             <!-- Visibility options -->
             <div class="mt-4">
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
-              <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
-              <div class="flex items-center">
-                <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="prompt-visibility-public" checked />
-                <label for="prompt-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
-              </div>
-              <div class="flex items-center">
-                <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="prompt-visibility-team" />
-                <label for="prompt-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
-              </div>
-              <div class="flex items-center">
-                <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="prompt-visibility-private" />
-                <label for="prompt-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
-              </div>
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >Visibility</label
+              >
+              <div class="flex gap-x-6 mt-2">
+                <!-- Add gap-x-6 for more space between radio options -->
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="public"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="prompt-visibility-public"
+                    checked
+                  />
+                  <label
+                    for="prompt-visibility-public"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🌍Public</label
+                  >
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="team"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="prompt-visibility-team"
+                  />
+                  <label
+                    for="prompt-visibility-team"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >👥Team</label
+                  >
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="private"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="prompt-visibility-private"
+                  />
+                  <label
+                    for="prompt-visibility-private"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🔒Private</label
+                  >
+                </div>
               </div>
             </div>
             <div class="mt-6">
@@ -3867,14 +4172,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
-                    </td>
+                  </td>
                   <td class="px-2 py-4 whitespace-nowrap">
-                   {% if gateway.team %}
+                    {% if gateway.team %}
                     <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ gateway.team.replace(' ', '<br>')|safe }}
+                      {{ gateway.team.replace(' ', '<br />')|safe }}
                     </span>
                     {% else %}
-                    <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -3963,53 +4270,53 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                       <!-- Row 4: Deactivate/Activate | Delete -->
                       <div class="col-span-2 flex flex-col space-y-1">
-                      {% if gateway.enabled %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'gateways')"
-                      >
-                        <input type="hidden" name="activate" value="false" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                        {% if gateway.enabled %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'gateways')"
                         >
-                          Deactivate
-                        </button>
-                      </form>
-                      {% else %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
-                        class="contents"
-                        onsubmit="return handleToggleSubmit(event, 'gateways')"
-                      >
-                        <input type="hidden" name="activate" value="true" />
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Re-enable an inactive item'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="false" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Temporarily disable this item (can be re-activated)'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors"
+                          >
+                            Deactivate
+                          </button>
+                        </form>
+                        {% else %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/toggle"
+                          class="contents"
+                          onsubmit="return handleToggleSubmit(event, 'gateways')"
                         >
-                          Activate
-                        </button>
-                      </form>
-                      {% endif %}
-                      <form
-                        method="POST"
-                        action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete"
-                        class="contents"
-                        onsubmit="return handleSubmitWithConfirmation(event, 'gateways')"
-                      >
-                        <button
-                          type="submit"
-                          x-tooltip="'💡Permanently delete this item – cannot be undone'"
-                          class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          <input type="hidden" name="activate" value="true" />
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Re-enable an inactive item'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors"
+                          >
+                            Activate
+                          </button>
+                        </form>
+                        {% endif %}
+                        <form
+                          method="POST"
+                          action="{{ root_path }}/admin/gateways/{{ gateway.id }}/delete"
+                          class="contents"
+                          onsubmit="return handleSubmitWithConfirmation(event, 'gateways')"
                         >
-                          Delete
-                        </button>
-                      </form>
+                          <button
+                            type="submit"
+                            x-tooltip="'💡Permanently delete this item – cannot be undone'"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </form>
                       </div>
                     </div>
 
@@ -4087,7 +4394,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 </p>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                >
                   Visibility
                 </label>
                 <div class="mt-1 flex space-x-6">
@@ -4099,7 +4408,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                       checked
                     />
-                    <label for="edit-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                    <label
+                      for="edit-visibility-public"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >🌍Public</label
+                    >
                   </div>
                   <div class="flex items-center">
                     <input
@@ -4108,7 +4421,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       value="team"
                       class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                     />
-                    <label for="edit-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                    <label
+                      for="edit-visibility-team"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >👥Team</label
+                    >
                   </div>
                   <div class="flex items-center">
                     <input
@@ -4117,7 +4434,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       value="private"
                       class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
                     />
-                    <label for="edit-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                    <label
+                      for="edit-visibility-private"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >🔒Private</label
+                    >
                   </div>
                 </div>
               </div>
@@ -4899,43 +5220,49 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
               <!-- Agent Name -->
               <div>
-                <label for="a2a-agent-name" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Agent Name</label>
+                <label
+                  for="a2a-agent-name"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Agent Name</label
+                >
                 <input
                   type="text"
                   id="a2a-agent-name"
                   name="name"
                   required
                   placeholder="my-assistant-agent"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
-                        dark:placeholder-gray-300 dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
 
               <!-- Endpoint URL -->
               <div>
-                <label for="a2a-agent-endpoint-url" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Endpoint URL</label>
+                <label
+                  for="a2a-agent-endpoint-url"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Endpoint URL</label
+                >
                 <input
                   type="url"
                   id="a2a-agent-endpoint-url"
                   name="endpoint_url"
                   required
                   placeholder="https://api.example.com/agent"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
-                        dark:placeholder-gray-300 dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
 
               <!-- Agent Type -->
               <div>
-                <label for="a2a-agent-type" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Agent Type</label>
+                <label
+                  for="a2a-agent-type"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Agent Type</label
+                >
                 <select
                   id="a2a-agent-type"
                   name="agent_type"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
-                        dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                 >
                   <option value="generic">Generic</option>
                   <option value="openai">OpenAI</option>
@@ -4946,13 +5273,15 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
               <!-- Authentication Type -->
               <div>
-                <label for="a2a-agent-auth-type" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Authentication Type</label>
+                <label
+                  for="a2a-agent-auth-type"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Authentication Type</label
+                >
                 <select
                   id="a2a-agent-auth-type"
                   name="auth_type"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
-                        dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                 >
                   <option value="">None</option>
                   <option value="api_key">API Key</option>
@@ -4963,81 +5292,124 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
               <!-- Authentication Value -->
               <div>
-                <label for="a2a-agent-auth-value" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Authentication Value</label>
+                <label
+                  for="a2a-agent-auth-value"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Authentication Value</label
+                >
                 <input
                   type="password"
                   id="a2a-agent-auth-value"
                   name="auth_value"
                   placeholder="API key, token, etc."
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
-                        dark:placeholder-gray-300 dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
 
               <!-- Description -->
               <div class="sm:col-span-2">
-                <label for="a2a-agent-description" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Description</label>
+                <label
+                  for="a2a-agent-description"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Description</label
+                >
                 <textarea
                   id="a2a-agent-description"
                   name="description"
                   rows="2"
                   placeholder="Description of the agent's capabilities"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
-                        dark:placeholder-gray-300 dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
 
               <!-- Tags -->
               <div>
-                <label for="a2a-agent-tags" class="block text-sm font-medium text-gray-700 dark:text-gray-400">Tags</label>
+                <label
+                  for="a2a-agent-tags"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tags</label
+                >
                 <input
                   type="text"
                   id="a2a-agent-tags"
                   name="tags"
                   placeholder="ai,assistant,production (comma-separated)"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
-                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900
-                        dark:placeholder-gray-300 dark:text-gray-300"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
 
               <!-- Visibility -->
               <div class="sm:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Visibility</label
+                >
                 <div class="flex gap-x-6 mt-2">
                   <div class="flex items-center">
-                    <input type="radio" name="visibility" value="public" id="a2a-visibility-public"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" checked />
-                    <label for="a2a-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</label>
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="public"
+                      id="a2a-visibility-public"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      checked
+                    />
+                    <label
+                      for="a2a-visibility-public"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >🌍 Public</label
+                    >
                   </div>
                   <div class="flex items-center">
-                    <input type="radio" name="visibility" value="team" id="a2a-visibility-team"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" />
-                    <label for="a2a-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</label>
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="team"
+                      id="a2a-visibility-team"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label
+                      for="a2a-visibility-team"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >👥 Team</label
+                    >
                   </div>
                   <div class="flex items-center">
-                    <input type="radio" name="visibility" value="private" id="a2a-visibility-private"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" />
-                    <label for="a2a-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</label>
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="private"
+                      id="a2a-visibility-private"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label
+                      for="a2a-visibility-private"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >🔒 Private</label
+                    >
                   </div>
                 </div>
               </div>
 
               <!-- Error Display -->
-              <span id="a2aFormError" class="sm:col-span-2 block text-sm font-semibold text-red-600 mt-2"></span>
+              <span
+                id="a2aFormError"
+                class="sm:col-span-2 block text-sm font-semibold text-red-600 mt-2"
+              ></span>
 
               <!-- Loading Indicator -->
-              <div id="add-a2a-loading" class="hidden sm:col-span-2 text-sm text-gray-500 mt-2">Submitting...</div>
+              <div
+                id="add-a2a-loading"
+                class="hidden sm:col-span-2 text-sm text-gray-500 mt-2"
+              >
+                Submitting...
+              </div>
 
               <!-- Submit -->
               <div class="sm:col-span-2 mt-6">
                 <button
                   type="submit"
-                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm
-                        text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700
-                        focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   Add A2A Agent
                 </button>
@@ -5131,16 +5503,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <div class="flex space-x-2">
                     <!--- Adding a2a-agents VIEW HERE -->
                     <button
-                        onclick="viewAgent('{{ agent.id }}')"
-                        class="px-3 py-1 text-sm font-medium text-indigo-700 bg-indigo-100 hover:bg-indigo-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        x-tooltip="'💡View Agent A2A details and configuration'"
+                      onclick="viewAgent('{{ agent.id }}')"
+                      class="px-3 py-1 text-sm font-medium text-indigo-700 bg-indigo-100 hover:bg-indigo-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      x-tooltip="'💡View Agent A2A details and configuration'"
                     >
                       View
                     </button>
                     <!--- Adding a2a-agents EDIT HERE -->
                     <button
-                        class="px-3 py-1 text-sm font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-                        x-tooltip="'Edit Agent A2A details and configuration'"
+                      class="px-3 py-1 text-sm font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                      x-tooltip="'Edit Agent A2A details and configuration'"
                     >
                       Edit
                     </button>
@@ -5153,7 +5525,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <form
                       method="post"
                       action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle"
-                      class="inline">
+                      class="inline"
+                    >
                       <input
                         type="hidden"
                         name="activate"
@@ -5848,23 +6221,57 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </p>
                   </div>
                   <!-- Visibility options -->
-                    <div id="edit-tool-visibility" class="mt-4">
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
-                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
-                        <div class="flex items-center">
-                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-public" />
-                          <label for="edit-tool-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
-                        </div>
-                        <div class="flex items-center">
-                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-team" />
-                          <label for="edit-tool-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
-                        </div>
-                        <div class="flex items-center">
-                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-tool-visibility-private" />
-                          <label for="edit-tool-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
-                        </div>
+                  <div id="edit-tool-visibility" class="mt-4">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                      >Visibility</label
+                    >
+                    <div class="flex gap-x-6 mt-2">
+                      <!-- Add gap-x-6 for more space between radio options -->
+                      <div class="flex items-center">
+                        <input
+                          type="radio"
+                          name="visibility"
+                          value="public"
+                          class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                          id="edit-tool-visibility-public"
+                        />
+                        <label
+                          for="edit-tool-visibility-public"
+                          class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                          >🌍Public</label
+                        >
+                      </div>
+                      <div class="flex items-center">
+                        <input
+                          type="radio"
+                          name="visibility"
+                          value="team"
+                          class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                          id="edit-tool-visibility-team"
+                        />
+                        <label
+                          for="edit-tool-visibility-team"
+                          class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                          >👥Team</label
+                        >
+                      </div>
+                      <div class="flex items-center">
+                        <input
+                          type="radio"
+                          name="visibility"
+                          value="private"
+                          class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                          id="edit-tool-visibility-private"
+                        />
+                        <label
+                          for="edit-tool-visibility-private"
+                          class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                          >🔒Private</label
+                        >
                       </div>
                     </div>
+                  </div>
                   <div
                     class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
                   >
@@ -5953,7 +6360,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <form id="edit-resource-form" method="POST">
                   <div class="grid grid-cols-1 gap-6">
                     <div>
-                      <label class="block text-sm font-medium text-gray-700">URI</label>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >URI</label
+                      >
                       <!-- URI is read-only -->
                       <input
                         type="text"
@@ -5965,7 +6374,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       />
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700">Name</label>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >Name</label
+                      >
                       <input
                         type="text"
                         name="name"
@@ -5975,7 +6386,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       />
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700">Description</label>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >Description</label
+                      >
                       <textarea
                         name="description"
                         id="edit-resource-description"
@@ -5983,7 +6396,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       ></textarea>
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700">MIME Type</label>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >MIME Type</label
+                      >
                       <input
                         type="text"
                         name="mimeType"
@@ -5992,7 +6407,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       />
                     </div>
                     <div>
-                      <label class="block text-sm font-medium text-gray-700">Content</label>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >Content</label
+                      >
                       <!-- Remove required attribute to avoid browser validation issues -->
                       <textarea
                         name="content"
@@ -6021,28 +6438,52 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </div>
                     <!-- Visibility options -->
                     <div id="edit-resource-visibility" class="mt-4">
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Visibility</label
+                      >
                       <div class="flex gap-x-6 mt-2">
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="public"
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="public"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-resource-visibility-public" />
-                          <label for="edit-resource-visibility-public"
-                            class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                            id="edit-resource-visibility-public"
+                          />
+                          <label
+                            for="edit-resource-visibility-public"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🌍Public</label
+                          >
                         </div>
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="team"
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="team"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-resource-visibility-team" />
-                          <label for="edit-resource-visibility-team"
-                            class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                            id="edit-resource-visibility-team"
+                          />
+                          <label
+                            for="edit-resource-visibility-team"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >👥Team</label
+                          >
                         </div>
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="private"
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="private"
                             class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                            id="edit-resource-visibility-private" />
-                          <label for="edit-resource-visibility-private"
-                            class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                            id="edit-resource-visibility-private"
+                          />
+                          <label
+                            for="edit-resource-visibility-private"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🔒Private</label
+                          >
                         </div>
                       </div>
                     </div>
@@ -6193,29 +6634,53 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </div>
                     <!-- Visibility options -->
                     <div id="edit-prompt-visibility" class="mt-4">
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Visibility</label
+                      >
                       <div class="flex gap-x-6 mt-2">
-                      <div class="flex items-center">
-                        <input type="radio" name="visibility" value="public"
-                        class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                        id="edit-prompt-visibility-public" />
-                        <label for="edit-prompt-visibility-public"
-                        class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
-                      </div>
-                      <div class="flex items-center">
-                        <input type="radio" name="visibility" value="team"
-                        class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                        id="edit-prompt-visibility-team" />
-                        <label for="edit-prompt-visibility-team"
-                        class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
-                      </div>
-                      <div class="flex items-center">
-                        <input type="radio" name="visibility" value="private"
-                        class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                        id="edit-prompt-visibility-private" />
-                        <label for="edit-prompt-visibility-private"
-                        class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
-                      </div>
+                        <div class="flex items-center">
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="public"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-prompt-visibility-public"
+                          />
+                          <label
+                            for="edit-prompt-visibility-public"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🌍Public</label
+                          >
+                        </div>
+                        <div class="flex items-center">
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="team"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-prompt-visibility-team"
+                          />
+                          <label
+                            for="edit-prompt-visibility-team"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >👥Team</label
+                          >
+                        </div>
+                        <div class="flex items-center">
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="private"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-prompt-visibility-private"
+                          />
+                          <label
+                            for="edit-prompt-visibility-private"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🔒Private</label
+                          >
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -6590,19 +7055,53 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                     <!-- Visibility options -->
                     <div id="edit-gateway-visibility" class="mt-4">
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
-                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Visibility</label
+                      >
+                      <div class="flex gap-x-6 mt-2">
+                        <!-- Add gap-x-6 for more space between radio options -->
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-public" />
-                          <label for="edit-gateway-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="public"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-gateway-visibility-public"
+                          />
+                          <label
+                            for="edit-gateway-visibility-public"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🌍Public</label
+                          >
                         </div>
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-team" />
-                          <label for="edit-gateway-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="team"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-gateway-visibility-team"
+                          />
+                          <label
+                            for="edit-gateway-visibility-team"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >👥Team</label
+                          >
                         </div>
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-gateway-visibility-private" />
-                          <label for="edit-gateway-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="private"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-gateway-visibility-private"
+                          />
+                          <label
+                            for="edit-gateway-visibility-private"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🔒Private</label
+                          >
                         </div>
                       </div>
                     </div>
@@ -7032,19 +7531,53 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                     <!-- Visibility options -->
                     <div id="edit-server-visibility" class="mt-4">
-                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
-                      <div class="flex gap-x-6 mt-2"> <!-- Add gap-x-6 for more space between radio options -->
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                        >Visibility</label
+                      >
+                      <div class="flex gap-x-6 mt-2">
+                        <!-- Add gap-x-6 for more space between radio options -->
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-public" />
-                          <label for="edit-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍Public</label>
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="public"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-visibility-public"
+                          />
+                          <label
+                            for="edit-visibility-public"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🌍Public</label
+                          >
                         </div>
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-team" />
-                          <label for="edit-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥Team</label>
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="team"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-visibility-team"
+                          />
+                          <label
+                            for="edit-visibility-team"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >👥Team</label
+                          >
                         </div>
                         <div class="flex items-center">
-                          <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="edit-visibility-private" />
-                          <label for="edit-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒Private</label>
+                          <input
+                            type="radio"
+                            name="visibility"
+                            value="private"
+                            class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            id="edit-visibility-private"
+                          />
+                          <label
+                            for="edit-visibility-private"
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                            >🔒Private</label
+                          >
                         </div>
                       </div>
                     </div>
@@ -8315,7 +8848,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       });
 
       // Add search functionality for filtering tools
-
     </script>
     <script>
       function handleEditIntegrationTypeChange() {
@@ -9515,13 +10047,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           importBtn.textContent = "Importing...";
 
           try {
-            const response = await fetch(window.ROOT_PATH + "/admin/tools/import", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
+            const response = await fetch(
+              window.ROOT_PATH + "/admin/tools/import",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(data),
               },
-              body: JSON.stringify(data),
-            });
+            );
 
             const result = await response.json();
 
