@@ -1,11 +1,11 @@
 # Plugin Framework
 
 !!! success "Production Ready"
-    The plugin framework is **production ready** with comprehensive hook coverage, robust error handling, and battle-tested implementations. Supports both self-contained and external service plugins.
+    The plugin framework is **production ready** with comprehensive hook coverage, robust error handling, and battle-tested implementations. Supports both native and external service plugins.
 
 ## Overview
 
-The MCP Context Forge Plugin Framework provides a comprehensive, production-grade system for extending gateway functionality through pre/post processing hooks at various points in the MCP request lifecycle. The framework supports both high-performance self-contained plugins and sophisticated external AI service integrations.
+The MCP Context Forge Plugin Framework provides a comprehensive, production-grade system for extending gateway functionality through pre/post processing hooks at various points in the MCP request lifecycle. The framework supports both high-performance native plugins and sophisticated external AI service integrations.
 
 ### Key Capabilities
 
@@ -18,9 +18,9 @@ The MCP Context Forge Plugin Framework provides a comprehensive, production-grad
 
 ## Architecture
 
-The plugin framework implements a **hybrid architecture** supporting both self-contained and external service integrations:
+The plugin framework implements a **hybrid architecture** supporting both native and external service integrations:
 
-### Self-Contained Plugins
+### Native Plugins
 - **In-Process Execution:** Written in Python, run directly within the gateway process
 - **High Performance:** Sub-millisecond latency, no network overhead
 - **Direct Access:** Full access to gateway internals and context
@@ -1078,7 +1078,7 @@ plugins:
 
 ### Benchmark Results
 
-- **Self-Contained Plugins:** <1ms latency overhead per hook
+- **Native Plugins:** <1ms latency overhead per hook
 - **External Service Plugins:** 10-100ms depending on service (cached responses: <5ms)
 - **Memory Usage:** ~5MB base overhead + ~1MB per active plugin
 - **Throughput:** Tested to 1,000+ req/s with 5 active plugins
