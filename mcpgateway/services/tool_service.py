@@ -596,7 +596,7 @@ class ToolService:
         return result
 
     async def list_tools_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, _skip: int = 0, _limit: int = 100
     ) -> List[ToolRead]:
         """
         List tools user has access to with team filtering.
@@ -657,8 +657,9 @@ class ToolService:
         if visibility:
             query = query.where(DbTool.visibility == visibility)
 
-        # Apply pagination following existing patterns
-        query = query.offset(skip).limit(limit)
+        # Note: Pagination is currently not implemented so this limit is not supporeted as of now
+        # # Apply pagination following existing patterns
+        # query = query.offset(skip).limit(limit)
 
         tools = db.execute(query).scalars().all()
         result = []
