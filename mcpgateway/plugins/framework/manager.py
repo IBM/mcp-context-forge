@@ -189,6 +189,11 @@ class PluginExecutor(Generic[T]):
         current_payload: T | None = None
 
         for pluginref in plugins:
+            # Skip disabled plugins
+            if pluginref.mode == PluginMode.DISABLED:
+                logger.debug(f"Skipping disabled plugin {pluginref.name}")
+                continue
+
             # Check if plugin conditions match current context
             if pluginref.conditions and not compare(payload, pluginref.conditions, global_context):
                 logger.debug(f"Skipping plugin {pluginref.name} - conditions not met")
@@ -607,8 +612,19 @@ class PluginManager:
         loaded_count = 0
 
         for plugin_config in plugins:
-            if plugin_config.mode != PluginMode.DISABLED:
-                try:
+            try:
+                # For disabled plugins, create a stub plugin without full instantiation
+                if plugin_config.mode == PluginMode.DISABLED:
+                    # Create a minimal stub plugin for display purposes only
+                    # First-Party
+                    from mcpgateway.plugins.framework.base import Plugin
+
+                    stub_plugin = Plugin(plugin_config)
+                    self._registry.register(stub_plugin)
+                    loaded_count += 1
+                    logger.info(f"Registered disabled plugin: {plugin_config.name} (display only, not instantiated)")
+                else:
+                    # Fully instantiate enabled plugins
                     plugin = await self._loader.load_and_instantiate_plugin(plugin_config)
                     if plugin:
                         self._registry.register(plugin)
@@ -616,13 +632,11 @@ class PluginManager:
                         logger.info(f"Loaded plugin: {plugin_config.name} (mode: {plugin_config.mode})")
                     else:
                         raise ValueError(f"Unable to instantiate plugin: {plugin_config.name}")
-                except Exception as e:
-                    # Clean error message without stack trace spam
-                    logger.error(f"Failed to load plugin '{plugin_config.name}': {str(e)}")
-                    # Let it crash gracefully with a clean error
-                    raise RuntimeError(f"Plugin initialization failed: {plugin_config.name} - {str(e)}")
-            else:
-                logger.debug(f"Skipping disabled plugin: {plugin_config.name}")
+            except Exception as e:
+                # Clean error message without stack trace spam
+                logger.error(f"Failed to load plugin '{plugin_config.name}': {str(e)}")
+                # Let it crash gracefully with a clean error
+                raise RuntimeError(f"Plugin initialization failed: {plugin_config.name} - {str(e)}")
 
         self._initialized = True
         logger.info(f"Plugin manager initialized with {loaded_count} plugins")
