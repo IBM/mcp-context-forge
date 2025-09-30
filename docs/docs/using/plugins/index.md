@@ -1,11 +1,11 @@
 # Plugin Framework
 
 !!! success "Production Ready"
-    The plugin framework is **production ready** with comprehensive hook coverage, robust error handling, and battle-tested implementations. Supports both self-contained and external service plugins.
+    The plugin framework is **production ready** with comprehensive hook coverage, robust error handling, and battle-tested implementations. Supports both native and external service plugins.
 
 ## Overview
 
-The MCP Context Forge Plugin Framework provides a comprehensive, production-grade system for extending gateway functionality through pre/post processing hooks at various points in the MCP request lifecycle. The framework supports both high-performance self-contained plugins and sophisticated external AI service integrations.
+The MCP Context Forge Plugin Framework provides a comprehensive, production-grade system for extending gateway functionality through pre/post processing hooks at various points in the MCP request lifecycle. The framework supports both high-performance native plugins and sophisticated external AI service integrations.
 
 ### Key Capabilities
 
@@ -18,9 +18,12 @@ The MCP Context Forge Plugin Framework provides a comprehensive, production-grad
 
 ## Architecture
 
-The plugin framework implements a **hybrid architecture** supporting both self-contained and external service integrations:
+!!! details "Plugin Framework Specification"
+    Check the [specification](https://ibm.github.io/mcp-context-forge/architecture/plugins/) docs for a detailed design of the plugin system.
+    
+The plugin framework implements a **hybrid architecture** supporting both native and external service integrations:
 
-### Self-Contained Plugins
+### Native Plugins
 - **In-Process Execution:** Written in Python, run directly within the gateway process
 - **High Performance:** Sub-millisecond latency, no network overhead
 - **Direct Access:** Full access to gateway internals and context
@@ -40,14 +43,24 @@ Both plugin types implement the same interface, enabling seamless switching betw
 
 ```python
 class Plugin:
-    async def prompt_pre_fetch(self, payload, context) -> PluginResult
-    async def tool_pre_invoke(self, payload, context) -> PluginResult
-    # ... unified interface for all hook points
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload,
+                              context: PluginContext) -> PromptPrehookResult: ...
+    async def prompt_post_fetch(self, payload: PromptPosthookPayload,
+                               context: PluginContext) -> PromptPosthookResult: ...
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload,
+                             context: PluginContext) -> ToolPreInvokeResult: ...
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload,
+                              context: PluginContext) -> ToolPostInvokeResult: ...
+    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload,
+                                context: PluginContext) -> ResourcePreFetchResult: ...
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload,
+                                 context: PluginContext) -> ResourcePostFetchResult: ...
+    # ... additional hook methods
 ```
 
 ## Enabling Plugins
 
-### 1. Environment Configuration
+### Environment Configuration
 
 Enable the plugin framework in your `.env` file:
 
@@ -59,14 +72,17 @@ PLUGINS_ENABLED=true
 PLUGIN_CONFIG_FILE=plugins/config.yaml
 ```
 
-## Build Your Own Plugin (Quickstart)
+## Build Your First Plugin (Quickstart)
 
 Decide between a native (in‑process) or external (MCP) plugin:
 
 - Native: simplest path; write Python class extending `Plugin`, configure via `plugins/config.yaml` using fully‑qualified class path.
 - External: runs as a separate MCP server (STDIO or Streamable HTTP); great for independent scaling and isolation.
 
-Quick native skeleton:
+!!! details "Plugins CLI"
+    To bootstrap a plugin quickly (native or external), run `mcpplugins bootstrap` and follow the prompts.
+
+**Quick native skeleton:**
 
 ```python
 from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PromptPrehookPayload, PromptPrehookResult
@@ -76,8 +92,19 @@ class MyPlugin(Plugin):
         super().__init__(config)
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
-        # modify or block
+        # modify         
         return PromptPrehookResult(modified_payload=payload)
+        
+        # or block
+        # return PromptPrehookResult(
+        #     continue_processing=False,
+        #     violation=PluginViolation(
+        #         reason=f"Blocked by {self.name}",
+        #         description="...",
+        #         code="...",
+        #         details="..."
+        #     )
+        # )
 ```
 
 Register it in `plugins/config.yaml`:
@@ -91,7 +118,10 @@ plugins:
     priority: 120
 ```
 
-External plugin quickstart: see the Lifecycle guide for `mcpplugins bootstrap`, building, and serving. Then point the gateway at your server:
+**External plugin quickstart:** 
+
+!!! details "Plugins Lifecycle Guide"
+    See the [plugin lifecycle guide](https://ibm.github.io/mcp-context-forge/using/plugins/lifecycle/) for building, testing, and serving extenal plugins.
 
 ```yaml
 plugins:
@@ -103,51 +133,55 @@ plugins:
       url: http://localhost:8000/mcp
 ```
 
-For detailed steps (bootstrap, build, serve, test), see the Lifecycle page.
+### Plugin Configuration
 
-### 2. Plugin Configuration
+The plugin configuration file is used to configure a set of plugins that implement hook functions used to register to hook points throughout the MCP Context Forge. An example configuration
+is below. It contains two main sections: `plugins` and `plugin_settings`.
 
-The plugin configuration file is used to configure a set of plugins to run a
-set of hook points throughout the MCP Context Forge.  An example configuration
-is below.  It contains two main sections: `plugins` and `plugin_settings`.
-
-Create or modify `plugins/config.yaml`:
+!!! details "Plugin Configuration"
+    Check [here](https://ibm.github.io/mcp-context-forge/architecture/plugins/#plugin-types-and-configuration) for detailed explanations of configuration options and fields.
 
 ```yaml
-# Main plugin configuration
+# plugins/config.yaml
 plugins:
-  - name: "ContentFilter"
-    kind: "plugins.native.content_filter.ContentFilterPlugin"
-    description: "Filters inappropriate content"
-    version: "1.0"
-    author: "Your Team"
-    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
-    tags: ["security", "filter"]
-    mode: "enforce"  # enforce | enforce_ignore_error | permissive | disabled
-    priority: 100    # Lower number = higher priority
-    conditions:
-      - prompts: ["customer_chat", "support_bot"]
-        server_ids: []  # Apply to all servers
-        tenant_ids: []  # Apply to all tenants
-    config:
-      # Plugin-specific configuration
-      block_patterns: ["ssn", "credit_card"]
-      mask_char: "*"
+  - name: "PIIFilterPlugin"                    # Unique plugin identifier
+    kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"  # Plugin class path
+    description: "Detects and masks PII"       # Human-readable description
+    version: "1.0.0"                          # Plugin version
+    author: "Security Team"                   # Plugin author
+    hooks:                                    # Hook registration
+      - "prompt_pre_fetch"
+      - "tool_pre_invoke"
+      - "tool_post_invoke"
+    tags:                                     # Searchable tags
+      - "security"
+      - "pii"
+      - "compliance"
+    mode: "enforce"                           # enforce|enforce_ignore_error|permissive|disabled
+    priority: 50                              # Execution priority (lower = higher)
+    conditions:                               # Conditional execution
+      - server_ids: ["prod-server"]
+        tenant_ids: ["enterprise"]
+        tools: ["sensitive-tool"]
+    config:                                   # Plugin-specific configuration
+      detect_ssn: true
+      detect_credit_card: true
+      mask_strategy: "partial"
+      redaction_text: "[REDACTED]"
 
 # Global plugin settings
 plugin_settings:
-  parallel_execution_within_band: false
-  plugin_timeout: 30
-  fail_on_plugin_error: false
-  enable_plugin_api: true
-  plugin_health_check_interval: 60
+  parallel_execution_within_band: false      # Execute same-priority plugins in parallel
+  plugin_timeout: 30                         # Per-plugin timeout (seconds)
+  fail_on_plugin_error: false                # Continue on plugin failures
+  plugin_health_check_interval: 60           # Health check interval (seconds)
 ```
 
-## Getting Started (Built‑in Plugins)
+## Getting Started (Native Plugins)
 
-Use the built‑in plugins out of the box:
+Use the native plugins out of the box:
 
-1) Copy and adapt the example config (enable any subset):
+1. Copy and adapt the example config (enable any subset):
 
 ```yaml
 # plugins/config.yaml
@@ -201,53 +235,96 @@ plugin_settings:
   plugin_health_check_interval: 60
 ```
 
-2) Ensure `.env` contains: `PLUGINS_ENABLED=true` and `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
+2. Ensure `.env` contains: `PLUGINS_ENABLED=true` and `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
 
-3) Start the gateway: `make dev` (or `make serve`).
+3. Start the gateway: `make dev` (or `make serve`).
 
 That's it — the gateway now runs the enabled plugins at the selected hook points.
+
+### Plugin Configuration
 
 The `plugins` section lists the set of configured plugins that will be loaded
 by the Context Forge at startup.  Each plugin contains a set of standard configurations,
 and then a `config` section designed for plugin specific configurations. The attributes
 are defined as follows:
 
-| Attribute | Description | Example Value |
-|-----------|-------------|---------------|
-| **name**  | A unique name for the plugin. | MyFirstPlugin |
-| **kind**  | A fully qualified string representing the plugin python object. | plugins.native.content_filter.ContentFilterPlugin |
-| **description** | The description of the plugin configuration. | A plugin for replacing bad words. |
-| **version** | The version of the plugin configuration. | 0.1 |
-| **author** | The team that wrote the plugin. | MCP Context Forge |
-| **hooks** | Hook points where the plugin runs. Supported hooks: "prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch" | ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke", "resource_pre_fetch", "resource_post_fetch"] |
-| **tags** | Descriptive keywords that make the configuration searchable. | ["security", "filter"] |
-| **mode** | Mode of operation of the plugin. - enforce (stops during a violation), permissive (audits a violation but doesn't stop), disabled (disabled) | permissive |
-| **priority** | The priority in which the plugin will run - 0 is higher priority | 100 |
-| **conditions** | A list of conditions under which a plugin is run. See section on conditions.|  |
-| **config** | Plugin specific configuration.  This is a dictionary and is passed to the plugin on initialization. |   |
+| Field | Type | Required | Default | Description | Example Values |
+|-------|------|----------|---------|-------------|----------------|
+| `name` | `string` | Yes | - | Unique plugin identifier within the configuration | `"PIIFilterPlugin"`, `"OpenAIModeration"` |
+| `kind` | `string` | Yes | - | Plugin class path for native plugins or `"external"` for MCP servers | `"plugins.pii_filter.pii_filter.PIIFilterPlugin"`, `"external"` |
+| `description` | `string` |  | `null` | Human-readable description of plugin functionality | `"Detects and masks PII in requests"` |
+| `author` | `string` |  | `null` | Plugin author or team responsible for maintenance | `"Security Team"`, `"AI Safety Group"` |
+| `version` | `string` |  | `null` | Plugin version for tracking and compatibility | `"1.0.0"`, `"2.3.1-beta"` |
+| `hooks` | `string[]` |  | `[]` | List of hook points where plugin executes | `["prompt_pre_fetch", "tool_pre_invoke"]` |
+| `tags` | `string[]` |  | `[]` | Searchable tags for plugin categorization | `["security", "pii", "compliance"]` |
+| `mode` | `string` |  | `"enforce"` | Plugin execution mode controlling behavior on violations | `"enforce"`, `"enforce_ignore_error"`, `"permissive"`, `"disabled"` |
+| `priority` | `integer` |  | `null` | Execution priority (lower number = higher priority) | `10`, `50`, `100` |
+| `conditions` | `object[]` |  | `[]` | Conditional execution rules for targeting specific contexts | See [Condition Fields](#condition-fields) below |
+| `config` | `object` |  | `{}` | Plugin-specific configuration parameters | `{"detect_ssn": true, "mask_strategy": "partial"}` |
+| `mcp` | `object` |  | `null` | External MCP server configuration (required for external plugins) | See [MCP Configuration](#mcp-configuration-fields) below |
+
+#### Hook Types
+
+Available hook values for the `hooks` field:
+
+| Hook Value | Description | Timing |
+|------------|-------------|--------|
+| `"prompt_pre_fetch"` | Process prompt requests before template processing | Before prompt template retrieval |
+| `"prompt_post_fetch"` | Process prompt responses after template rendering | After prompt template processing |
+| `"tool_pre_invoke"` | Process tool calls before execution | Before tool invocation |
+| `"tool_post_invoke"` | Process tool results after execution | After tool completion |
+| `"resource_pre_fetch"` | Process resource requests before fetching | Before resource retrieval |
+| `"resource_post_fetch"` | Process resource content after loading | After resource content loading |
+
+#### Condition Fields
+
+Users may only want plugins to be invoked on specific servers, tools, and prompts. To address this, a set of conditionals can be applied to a plugin. The attributes in a conditional combine together in as a set of `and` operations, while each attribute list item is `or`ed with other items in the list. 
+
+The `conditions` array contains objects that specify when plugins should execute:
+
+| Field | Type | Description | Example |
+|-------|------|-------------|---------|
+| `server_ids` | `string[]` | Execute only for specific virtual server IDs | `["prod-server", "api-gateway"]` |
+| `tenant_ids` | `string[]` | Execute only for specific tenant/organization IDs | `["enterprise", "premium-tier"]` |
+| `tools` | `string[]` | Execute only for specific tool names | `["file_reader", "web_scraper"]` |
+| `prompts` | `string[]` | Execute only for specific prompt names | `["user_prompt", "system_message"]` |
+| `resources` | `string[]` | Execute only for specific resource URI patterns | `["https://api.example.com/*"]` |
+| `user_patterns` | `string[]` | Execute for users matching regex patterns | `["admin_.*", ".*@company.com"]` |
+| `content_types` | `string[]` | Execute for specific content types | `["application/json", "text/plain"]` |
+
+#### MCP Configuration Fields
+
+For external plugins (`kind: "external"`), the `mcp` object configures the MCP server connection:
+
+| Field | Type | Required | Description | Example |
+|-------|------|----------|-------------|---------|
+| `proto` | `string` | Yes | MCP transport protocol | `"stdio"`, `"sse"`, `"streamablehttp"`, `"websocket"` |
+| `url` | `string` |  | Service URL for HTTP-based transports | `"http://openai-plugin:3000/mcp"` |
+| `script` | `string` |  | Script path for STDIO transport | `"/opt/plugins/custom-filter.py"` |
+
+#### Global Plugin Settings
 
 The `plugin_settings` are as follows:
 
-| Attribute | Description | Example Value |
-|-----------|-------------|---------------|
-| **parallel_execution_within_band** | Reserved for future: execute same‑priority plugins in parallel (not implemented). | true or false |
-| **plugin_timeout** | Per‑plugin call timeout in seconds. | 30 |
-| **fail_on_plugin_error** | Cause the execution of the task to fail if the plugin errors. | true or false |
-| **plugin_health_check_interval** | Reserved for future health checks (not implemented). | 60 |
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `parallel_execution_within_band` | `boolean` | `false` | Execute plugins with same priority in parallel |
+| `plugin_timeout` | `integer` | `30` | Per-plugin timeout in seconds |
+| `fail_on_plugin_error` | `boolean` | `false` | Stop processing on plugin errors |
+| `plugin_health_check_interval` | `integer` | `60` | Health check interval in seconds |
 
-
-### 3. Execution Modes
+#### Execution Modes
 
 Each plugin can operate in one of four modes:
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **enforce** | Blocks requests on policy violations and plugin errors | Production guardrails |
-| **enforce_ignore_errors** | Blocks requests on policy violations but only logs errors | Production guardrails |
-| **permissive** | Logs violations but allows requests | Testing and monitoring |
-| **disabled** | Plugin loaded but not executed | Temporary deactivation |
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `"enforce"` | Block requests when plugin detects violations or errors | Production security plugins, critical compliance checks |
+| `"enforce_ignore_error"` | Block on violations but continue on plugin errors | Security plugins that should block violations but not break on technical errors |
+| `"permissive"` | Log violations and errors but allow requests to continue | Development environments, monitoring-only plugins |
+| `"disabled"` | Plugin is loaded but never executed | Temporary plugin deactivation, maintenance mode |
 
-### 4. Priority and Execution Order
+#### Priority and Execution Order
 
 Plugins execute in priority order (ascending):
 
@@ -269,19 +346,6 @@ plugins:
 
 Plugins with the same priority may execute in parallel if `parallel_execution_within_band` is enabled.
 
-### 5. Conditions of Execution
-
-Users may only want plugins to be invoked on specific servers, tools, and prompts. To address this, a set of conditionals can be applied to a plugin. The attributes in a conditional combine together in as a set of `and` operations, while each attribute list item is `ored` with other items in the list.  The attributes are defined as follows:
-
-| Attribute | Description
-|-----------|------------|
-| **server_ids** | The list of MCP servers on which the plugin will trigger |
-| **tools** | The list of tools on which the plugin will be applied. |
-| **prompts** | The list of prompts on which the plugin will be applied. |
-| **resources** | The list of resource URIs on which the plugin will be applied. |
-| **user_patterns** | The list of users on which the plugin will be applied. |
-| **content_types** | The list of content types on which the plugin will trigger. |
-
 ## Available Hooks
 
 The plugin framework provides comprehensive hook coverage across the entire MCP request lifecycle:
@@ -301,12 +365,14 @@ The plugin framework provides comprehensive hook coverage across the entire MCP 
 
 | Hook | Purpose | Expected Release |
 |------|---------|-----------------|
-| `server_pre_register` | Server attestation and validation before admission | v0.7.0 |
-| `server_post_register` | Post-registration processing and setup | v0.7.0 |
-| `auth_pre_check` | Custom authentication logic integration | v0.7.0 |
-| `auth_post_check` | Post-authentication processing and enrichment | v0.7.0 |
-| `federation_pre_sync` | Gateway federation validation and filtering | v0.8.0 |
-| `federation_post_sync` | Post-federation data processing and reconciliation | v0.8.0 |
+| `http_pre_forwarding_call` | Before HTTP forwarding | v0.9.0 |
+| `http_post_forwarding_call` | Before HTTP forwarding | v0.9.0 |
+| `server_pre_register` | Server attestation and validation before admission | v0.9.0 |
+| `server_post_register` | Post-registration processing and setup | v0.9.0 |
+| `auth_pre_check` | Custom authentication logic integration | v0.9.0 |
+| `auth_post_check` | Post-authentication processing and enrichment | v0.9.0 |
+| `federation_pre_sync` | Gateway federation validation and filtering | v0.10.0 |
+| `federation_post_sync` | Post-federation data processing and reconciliation | v0.10.0 |
 
 ### Prompt Hooks Details
 
@@ -1078,7 +1144,7 @@ plugins:
 
 ### Benchmark Results
 
-- **Self-Contained Plugins:** <1ms latency overhead per hook
+- **Native Plugins:** <1ms latency overhead per hook
 - **External Service Plugins:** 10-100ms depending on service (cached responses: <5ms)
 - **Memory Usage:** ~5MB base overhead + ~1MB per active plugin
 - **Throughput:** Tested to 1,000+ req/s with 5 active plugins
@@ -1139,7 +1205,6 @@ Secure external plugin servers as you would any service (authentication, TLS). T
 - **Plugin Marketplace:** Community plugin sharing and discovery
 - **Advanced Analytics:** Plugin performance analytics and optimization recommendations
 - **A/B Testing Framework:** Split traffic between plugin configurations
-- **Policy as Code:** Integration with Open Policy Agent (OPA) for complex rule evaluation
 - **Machine Learning Pipeline:** Built-in support for custom ML model deployment
 
 ## Contributing
