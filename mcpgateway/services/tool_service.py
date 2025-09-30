@@ -1016,11 +1016,12 @@ class ToolService:
                     if request_headers:
                         headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
-                    async def connect_to_sse_server(server_url: str):
+                    async def connect_to_sse_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with SSE transport.
 
                         Args:
                             server_url: MCP Server SSE URL
+                            headers: HTTP headers to include in the request
 
                         Returns:
                             ToolResult: Result of tool call
@@ -1031,11 +1032,12 @@ class ToolService:
                                 tool_call_result = await session.call_tool(tool.original_name, arguments)
                         return tool_call_result
 
-                    async def connect_to_streamablehttp_server(server_url: str, headers: dict=headers):
+                    async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
 
                         Args:
                             server_url: MCP Server URL
+                            headers: HTTP headers to include in the request
 
                         Returns:
                             ToolResult: Result of tool call
