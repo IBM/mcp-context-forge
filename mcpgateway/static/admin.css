@@ -59,6 +59,7 @@
   background-color: rgb(
     255 255 255 / 80%
   ); /* slightly more opaque for contrast */
+
   backdrop-filter: blur(8px);
   box-shadow: 0 6px 20px rgb(2 6 23 / 12%); /* slightly stronger shadow for depth */
 }
