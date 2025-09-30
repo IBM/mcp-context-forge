@@ -208,8 +208,6 @@ Available hook values for the `hooks` field:
 
 | Hook Value | Description | Timing |
 |------------|-------------|--------|
-| `"http_pre_forwarding_call"` | Process HTTP requests forwarding calls for request handling | Before execution pipeline starts |
-| `"http_post_forwarding_call"` | Process HTTP responses after request handling | After execution pipeline finishes |
 | `"prompt_pre_fetch"` | Process prompt requests before template processing | Before prompt template retrieval |
 | `"prompt_post_fetch"` | Process prompt responses after template rendering | After prompt template processing |
 | `"tool_pre_invoke"` | Process tool calls before execution | Before tool invocation |
@@ -287,6 +285,7 @@ The plugin manifest follows a structured YAML format that captures comprehensive
 ```yaml
 # plugin-manifest.yaml
 name: "Advanced PII Filter"
+kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
 description: "Comprehensive PII detection and masking with configurable sensitivity levels"
 author: "Security Engineering Team"
 version: "2.1.0"
@@ -379,6 +378,7 @@ deployment:
 | Field | Type | Required | Description | Example |
 |-------|------|----------|-------------|---------|
 | `name` | `string` | Yes | Human-readable plugin name | `"Advanced PII Filter"` |
+| `kind` | `string` | Yes | Plugin class path | `"plugins.pii_filter.pii_filter.PIIFilterPlugin"` |
 | `description` | `string` | Yes | Detailed plugin description | `"Comprehensive PII detection with GDPR compliance"` |
 | `author` | `string` | Yes | Plugin author or team | `"Security Engineering Team"` |
 | `version` | `string` | Yes | Semantic version | `"2.1.0"` |
@@ -638,9 +638,7 @@ class PluginMode(str, Enum):
     DISABLED = "disabled"            # Plugin loaded but not executed
 
 class HookType(str, Enum):
-    """Available hook points in MCP request lifecycle"""
-    HTTP_PRE_FORWARDING_CALL = "http_pre_forwarding_call"   # Before HTTP forwarding
-    HTTP_POST_FORWARDING_CALL = "http_post_forwarding_call" # After HTTP forwarding
+    """Available hook points in MCP request lifecycle"""    
     PROMPT_PRE_FETCH = "prompt_pre_fetch"     # Before prompt retrieval
     PROMPT_POST_FETCH = "prompt_post_fetch"   # After prompt rendering
     TOOL_PRE_INVOKE = "tool_pre_invoke"       # Before tool execution
@@ -1537,6 +1535,10 @@ Legend: ✅ = Completed | 🚧 = In Progress | 📋 = Planned
 ### Planned Hook Points
 
 ```python
+# HTTP hooks
+HTTP_PRE_FORWARDING_CALL = "http_pre_forwarding_call"   # Before HTTP forwarding
+HTTP_POST_FORWARDING_CALL = "http_post_forwarding_call" # After HTTP forwarding
+
 # Server lifecycle hooks
 SERVER_PRE_REGISTER = "server_pre_register"    # Server attestation and validation
 SERVER_POST_REGISTER = "server_post_register"  # Post-registration processing

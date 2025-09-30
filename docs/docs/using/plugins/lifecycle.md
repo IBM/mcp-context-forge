@@ -129,6 +129,7 @@ You can run `mcp inspector` to check your new server (note, it requires `npm`):
 
 ```bash
 npx @modelcontextprotocol/inspector
+```
 
 ## Plugin Templates
 
@@ -163,7 +164,6 @@ mcpplugins bootstrap --destination your/plugin/dir --type native   # or external
 ```
 
 After bootstrapping, follow the steps above to install deps, run tests, build, and serve.
-```
 
 ## Gateway Integration
 
