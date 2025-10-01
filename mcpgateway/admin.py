@@ -5750,6 +5750,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
         
+        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
+        LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
+        
         # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
