@@ -239,7 +239,7 @@
           <option value="">All Providers</option>
           {% for provider, count in stats.servers_by_provider.items() %}
           {% if count > 0 %}
-          <option value="{{ provider }}">{{ provider }}</option>
+          <option value="{{ provider | lower }}">{{ provider }}</option>
           {% endif %}
           {% endfor %}
         </select>
