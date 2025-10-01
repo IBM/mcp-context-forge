@@ -22,7 +22,7 @@
       MCP Registry
     </h2>
 
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="grid grid-cols-3 md:grid-cols-3 gap-4">
       <div class="text-center">
         <div class="text-3xl font-bold">{{ stats.total_servers }}</div>
         <div class="text-blue-100 text-sm">Total Servers</div>
@@ -30,10 +30,6 @@
       <div class="text-center">
         <div class="text-3xl font-bold">{{ stats.registered_servers }}</div>
         <div class="text-blue-100 text-sm">Registered</div>
-      </div>
-      <div class="text-center">
-        <div class="text-3xl font-bold">{{ stats.available_servers }}</div>
-        <div class="text-blue-100 text-sm">Available</div>
       </div>
       <div class="text-center">
         <div class="text-3xl font-bold">{{ stats.categories|length }}</div>
@@ -65,6 +61,8 @@
       <div class="flex flex-wrap gap-2">
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
+          data-filter-type="category"
+          data-filter-value=""
           onclick="filterByCategory('')"
         >
           All Categories
@@ -76,6 +74,8 @@
         {% if count > 0 %}
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          data-filter-type="category"
+          data-filter-value="{{ category }}"
           onclick="filterByCategory('{{ category }}')"
         >
           {{ category }}
@@ -109,6 +109,8 @@
       <div class="space-y-2">
         <div
           class="flex justify-between items-center p-2 bg-blue-50 rounded dark:bg-blue-900/20 cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors border border-blue-200 dark:border-blue-800"
+          data-filter-type="auth"
+          data-filter-value=""
           onclick="filterByAuthType('')"
         >
           <span
@@ -125,6 +127,8 @@
         {% if count > 0 %}
         <div
           class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+          data-filter-type="auth"
+          data-filter-value="{{ auth_type }}"
           onclick="filterByAuthType('{{ auth_type }}')"
         >
           <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -159,9 +163,11 @@
         </svg>
         Providers
       </h3>
-      <div class="flex flex-wrap gap-2 max-h-64 overflow-y-auto">
+      <div class="flex flex-wrap gap-2">
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
+          data-filter-type="provider"
+          data-filter-value=""
           onclick="filterByProvider('')"
         >
           All Providers
@@ -173,7 +179,9 @@
         {% if count > 0 %}
         <span
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-          onclick="filterByProvider('{{ provider }}')"
+          data-filter-type="provider"
+          data-filter-value="{{ provider | lower }}"
+          onclick="filterByProvider('{{ provider | lower }}')"
         >
           {{ provider }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -238,6 +246,88 @@
       </div>
     </div>
   </div>
+
+  <!-- Pagination Controls -->
+  {% if total_pages > 1 %}
+  <div class="flex justify-center items-center gap-2">
+    <!-- First Page -->
+    {% if page > 1 %}
+    <a
+      href="{{ root_path }}/admin/mcp-registry/partial?page=1"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page=1"
+      hx-target="#mcp-registry-content"
+      hx-swap="innerHTML"
+      class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+    >
+      First
+    </a>
+    <!-- Previous Page -->
+    <a
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}"
+      hx-target="#mcp-registry-content"
+      hx-swap="innerHTML"
+      class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+    >
+      Previous
+    </a>
+    {% else %}
+    <button
+      disabled
+      class="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-400 dark:text-gray-500 cursor-not-allowed"
+    >
+      First
+    </button>
+    <button
+      disabled
+      class="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-400 dark:text-gray-500 cursor-not-allowed"
+    >
+      Previous
+    </button>
+    {% endif %}
+
+    <!-- Page Info -->
+    <span class="px-4 py-2 text-gray-700 dark:text-gray-300">
+      Page {{ page }} of {{ total_pages }}
+    </span>
+
+    <!-- Next Page -->
+    {% if page < total_pages %}
+    <a
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}"
+      hx-target="#mcp-registry-content"
+      hx-swap="innerHTML"
+      class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+    >
+      Next
+    </a>
+    <!-- Last Page -->
+    <a
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}"
+      hx-target="#mcp-registry-content"
+      hx-swap="innerHTML"
+      class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
+    >
+      Last
+    </a>
+    {% else %}
+    <button
+      disabled
+      class="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-400 dark:text-gray-500 cursor-not-allowed"
+    >
+      Next
+    </button>
+    <button
+      disabled
+      class="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-400 dark:text-gray-500 cursor-not-allowed"
+    >
+      Last
+    </button>
+    {% endif %}
+  </div>
+  {% endif %}
 
   <!-- Server Grid -->
   <div
@@ -488,6 +578,54 @@ function filterServers() {
       card.style.display = 'none';
     }
   });
+
+  // Update active badge highlighting
+  updateBadgeHighlights();
+}
+
+// Update badge highlights based on active filters
+function updateBadgeHighlights() {
+  const categoryFilter = document.getElementById('category-filter').value;
+  const authFilter = document.getElementById('auth-filter').value;
+  const providerFilter = document.getElementById('provider-filter').value;
+
+  // Category badges
+  document.querySelectorAll('[data-filter-type="category"]').forEach(badge => {
+    const value = badge.getAttribute('data-filter-value');
+    if (value === categoryFilter) {
+      badge.classList.add('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
+      badge.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'bg-blue-100', 'dark:bg-blue-900');
+    } else if (value === '') {
+      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
+    } else {
+      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
+      badge.classList.add('bg-gray-100', 'dark:bg-gray-700');
+    }
+  });
+
+  // Auth type badges
+  document.querySelectorAll('[data-filter-type="auth"]').forEach(badge => {
+    const value = badge.getAttribute('data-filter-value');
+    if (value === authFilter) {
+      badge.classList.add('ring-2', 'ring-blue-500');
+    } else {
+      badge.classList.remove('ring-2', 'ring-blue-500');
+    }
+  });
+
+  // Provider badges
+  document.querySelectorAll('[data-filter-type="provider"]').forEach(badge => {
+    const value = badge.getAttribute('data-filter-value');
+    if (value === providerFilter) {
+      badge.classList.add('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
+      badge.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'bg-blue-100', 'dark:bg-blue-900');
+    } else if (value === '') {
+      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
+    } else {
+      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
+      badge.classList.add('bg-gray-100', 'dark:bg-gray-700');
+    }
+  });
 }
 
 // Quick filter functions
@@ -511,6 +649,11 @@ function filterByProvider(provider) {
   document.getElementById('provider-filter').value = provider;
   filterServers();
 }
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+  updateBadgeHighlights();
+});
 
 // API Key modal functions
 function showApiKeyModal(serverId, serverName, serverUrl) {
