@@ -518,9 +518,7 @@ async def update_global_passthrough_headers(
 
 
 @admin_router.get("/config/settings")
-@rate_limit(requests_per_minute=30)
 async def get_configuration_settings(
-    request: Request,  # pylint: disable=unused-argument
     _db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
