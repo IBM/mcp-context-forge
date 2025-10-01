@@ -827,6 +827,17 @@ catalog_servers:
     requires_api_key: false
     tags: ["prediction-markets", "forecasting", "betting"]
 
+  # Local Development Servers
+  - id: fast-time-server
+    name: "Fast Time Server"
+    category: "Time Services"
+    url: "http://localhost:8101/sse"
+    auth_type: "Open"
+    provider: "ContextForge"
+    description: "Minimal Go service for time operations with MCP tools, resources, and prompts"
+    requires_api_key: false
+    tags: ["time", "timezone", "local", "development"]
+
 # Categories for filtering
 categories:
   - Project Management
@@ -866,6 +877,7 @@ categories:
   - Forecasting
   - Database
   - Observability
+  - Time Services
 
 # Auth types for filtering
 auth_types:
