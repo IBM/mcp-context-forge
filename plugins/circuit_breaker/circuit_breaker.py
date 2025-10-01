@@ -12,15 +12,19 @@ Blocks calls during cooldown; resets after cooldown elapses.
 Hooks: tool_pre_invoke, tool_post_invoke
 """
 
+# Future
 from __future__ import annotations
 
-import time
+# Standard
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, Optional
+import time
+from typing import Any, Deque, Dict
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -92,7 +96,6 @@ class CircuitBreakerPlugin(Plugin):
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         tool = payload.name
         st = _get_state(tool)
-        cfg = _cfg_for(self._cfg, tool)
         now = _now()
         # Close breaker if cooldown elapsed
         if st.open_until and now >= st.open_until:
@@ -147,10 +150,12 @@ class CircuitBreakerPlugin(Plugin):
 
         if should_open and not st.open_until:
             st.open_until = now + max(1, int(cfg.cooldown_seconds))
-        return ToolPostInvokeResult(metadata={
-            "circuit_calls_in_window": calls,
-            "circuit_failures_in_window": len(st.failures),
-            "circuit_failure_rate": round(failure_rate, 3),
-            "circuit_consecutive_failures": st.consecutive_failures,
-            "circuit_open_until": st.open_until or 0.0,
-        })
+        return ToolPostInvokeResult(
+            metadata={
+                "circuit_calls_in_window": calls,
+                "circuit_failures_in_window": len(st.failures),
+                "circuit_failure_rate": round(failure_rate, 3),
+                "circuit_consecutive_failures": st.consecutive_failures,
+                "circuit_open_until": st.open_until or 0.0,
+            }
+        )
