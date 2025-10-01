@@ -107,20 +107,24 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                     
                     logger.info(f"✅ DCR successful for gateway {gateway_id}: client_id={registered_client.client_id}")
                     
-                    # Decrypt the client secret for use in OAuth flow
-                    from mcpgateway.utils.oauth_encryption import get_oauth_encryption
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
-                    decrypted_secret = encryption.decrypt_secret(registered_client.client_secret_encrypted)
+                    # Decrypt the client secret for use in OAuth flow (if present - public clients may not have secrets)
+                    decrypted_secret = None
+                    if registered_client.client_secret_encrypted:
+                        from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+                        encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                        decrypted_secret = encryption.decrypt_secret(registered_client.client_secret_encrypted)
                     
                     # Update oauth_config with registered credentials
                     oauth_config["client_id"] = registered_client.client_id
-                    oauth_config["client_secret"] = decrypted_secret
+                    if decrypted_secret:
+                        oauth_config["client_secret"] = decrypted_secret
                     
                     # Discover AS metadata to get authorization/token endpoints if not already set
-                    if not oauth_config.get("authorization_endpoint") or not oauth_config.get("token_endpoint"):
+                    # Note: OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'
+                    if not oauth_config.get("authorization_url") or not oauth_config.get("token_url"):
                         metadata = await dcr_service.discover_as_metadata(issuer)
-                        oauth_config["authorization_endpoint"] = metadata.get("authorization_endpoint")
-                        oauth_config["token_endpoint"] = metadata.get("token_endpoint")
+                        oauth_config["authorization_url"] = metadata.get("authorization_endpoint")
+                        oauth_config["token_url"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
                     
                     # Update gateway's oauth_config and auth_type in database for future use

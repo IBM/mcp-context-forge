@@ -5785,9 +5785,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 if oauth_issuer:
                     oauth_config["issuer"] = oauth_issuer
                 if oauth_token_url:
-                    oauth_config["token_endpoint"] = oauth_token_url
+                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
                 if oauth_authorization_url:
-                    oauth_config["authorization_endpoint"] = oauth_authorization_url
+                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
                 if oauth_redirect_uri:
                     oauth_config["redirect_uri"] = oauth_redirect_uri
                 if oauth_client_id:
@@ -6088,9 +6088,9 @@ async def admin_edit_gateway(
                 if oauth_issuer:
                     oauth_config["issuer"] = oauth_issuer
                 if oauth_token_url:
-                    oauth_config["token_endpoint"] = oauth_token_url
+                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
                 if oauth_authorization_url:
-                    oauth_config["authorization_endpoint"] = oauth_authorization_url
+                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
                 if oauth_redirect_uri:
                     oauth_config["redirect_uri"] = oauth_redirect_uri
                 if oauth_client_id:
