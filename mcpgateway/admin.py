@@ -9504,6 +9504,7 @@ async def catalog_partial(
     category: Optional[str] = None,
     auth_type: Optional[str] = None,
     search: Optional[str] = None,
+    page: int = 1,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -9514,6 +9515,7 @@ async def catalog_partial(
         category: Filter by category
         auth_type: Filter by authentication type
         search: Search term
+        page: Page number (1-indexed)
         db: Database session
         _user: Authenticated user
 
@@ -9528,109 +9530,48 @@ async def catalog_partial(
 
     root_path = request.scope.get("root_path", "")
 
-    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=True, limit=50, offset=0)
+    # Calculate pagination
+    page_size = 100
+    offset = (page - 1) * page_size
+
+    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=False, limit=page_size, offset=offset)
 
     response = await catalog_service.get_catalog_servers(catalog_request, db)
 
-    # Build HTML for server cards
-    servers_html = '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">'
+    # Calculate statistics and pagination info
+    total_servers = response.total
+    registered_count = sum(1 for s in response.servers if s.is_registered)
+    total_pages = (total_servers + page_size - 1) // page_size  # Ceiling division
+
+    # Count servers by category, auth type, and provider
+    servers_by_category = {}
+    servers_by_auth_type = {}
+    servers_by_provider = {}
 
     for server in response.servers:
-        # Badge colors based on auth type
-        auth_badge_class = "bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200"
-        if server.auth_type == "OAuth2.1":
-            auth_badge_class = "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-        elif server.auth_type == "API Key":
-            auth_badge_class = "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
-        elif server.auth_type == "Open":
-            auth_badge_class = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200"
+        servers_by_category[server.category] = servers_by_category.get(server.category, 0) + 1
+        servers_by_auth_type[server.auth_type] = servers_by_auth_type.get(server.auth_type, 0) + 1
+        servers_by_provider[server.provider] = servers_by_provider.get(server.provider, 0) + 1
 
-        # Registration status
-        if server.is_registered:
-            register_button = '<button class="w-full px-4 py-2 bg-gray-300 text-gray-600 rounded-md cursor-not-allowed" disabled>Already Registered</button>'
-        else:
-            if server.requires_api_key or server.auth_type in ["API Key", "OAuth2.1 & API Key"]:
-                # Show modal for API key input
-                register_button = f"""
-                    <button class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                            onclick="showApiKeyModal('{server.id}', '{server.name}', '{server.url}')">
-                        Add Server
-                    </button>
-                """
-            else:
-                # Direct registration for servers that don't require API key
-                register_button = f"""
-                    <button class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                            hx-post="{root_path}/admin/mcp-registry/{server.id}/register"
-                            hx-swap="outerHTML"
-                            hx-indicator="#{server.id}-spinner">
-                        <span id="{server.id}-spinner" class="htmx-indicator">
-                            <span class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span>
-                        </span>
-                        Add Server
-                    </button>
-                """
+    stats = {
+        "total_servers": total_servers,
+        "registered_servers": registered_count,
+        "categories": response.categories,
+        "auth_types": response.auth_types,
+        "providers": response.providers,
+        "servers_by_category": servers_by_category,
+        "servers_by_auth_type": servers_by_auth_type,
+        "servers_by_provider": servers_by_provider,
+    }
 
-        servers_html += f"""
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 hover:shadow-md transition-shadow">
-            <div class="mb-3">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">{server.name}</h3>
-                <div class="flex gap-2 mb-2">
-                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {auth_badge_class}">
-                        {server.auth_type}
-                    </span>
-                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-                        {server.category}
-                    </span>
-                </div>
-                <p class="text-sm text-gray-600 dark:text-gray-400">{server.description}</p>
-            </div>
+    context = {
+        "request": request,
+        "servers": response.servers,
+        "stats": stats,
+        "root_path": root_path,
+        "page": page,
+        "total_pages": total_pages,
+        "page_size": page_size,
+    }
 
-            <div class="mb-3">
-                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    <span class="font-semibold">Provider:</span> {server.provider}
-                </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    <span class="font-semibold">URL:</span> {server.url}
-                </p>
-            </div>
-
-            <div>
-                {register_button}
-            </div>
-        </div>
-        """
-
-    servers_html += "</div>"
-
-    # Update filter dropdowns with available options
-    servers_html += f"""
-    <script>
-        (function() {{
-            // Update category filter options
-            const categoryFilter = document.getElementById('category-filter');
-            if (categoryFilter && categoryFilter.options.length <= 1) {{
-                {"; ".join([f'categoryFilter.options.add(new Option("{cat}", "{cat}"))' for cat in response.categories])}
-            }}
-
-            // Update auth type filter options
-            const authFilter = document.getElementById('auth-filter');
-            if (authFilter && authFilter.options.length <= 1) {{
-                {"; ".join([f'authFilter.options.add(new Option("{auth}", "{auth}"))' for auth in response.auth_types])}
-            }}
-
-            // Set selected values
-            if (categoryFilter) categoryFilter.value = "{category or ""}";
-            if (authFilter) authFilter.value = "{auth_type or ""}";
-        }})();
-    </script>
-    """  # nosec B608
-
-    if not response.servers:
-        servers_html = """
-        <div class="text-center py-8">
-            <p class="text-gray-500">No servers found matching your filters</p>
-        </div>
-        """
-
-    return HTMLResponse(content=servers_html)
+    return request.app.state.templates.TemplateResponse("mcp_registry_partial.html", context)
