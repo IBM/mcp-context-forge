@@ -11,13 +11,17 @@ Detects likely credentials and secrets in inputs and outputs using regex and sim
 Hooks: prompt_pre_fetch, tool_post_invoke, resource_post_fetch
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import re
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, Tuple
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -30,7 +34,6 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
-
 
 PATTERNS = {
     "aws_access_key_id": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -63,6 +66,7 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
         elif isinstance(obj, list):
             for i, v in enumerate(obj):
                 yield from walk(v, f"{path}[{i}]")
+
     yield from walk(value, "")
 
 

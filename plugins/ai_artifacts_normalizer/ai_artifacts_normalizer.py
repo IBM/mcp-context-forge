@@ -8,13 +8,16 @@ and normalizes excessive spacing.
 Hooks: prompt_pre_fetch, resource_post_fetch, tool_post_invoke
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import re
-from typing import Any
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -27,16 +30,13 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokeResult,
 )
 
-
 SMART_MAP = {
     """: '"',
     """: '"',
     "„": '"',
-    """: '"',
-    "'": "'",
+    '"': '"',
     "'": "'",
     "‚": "'",
-    "'": "'",
     "—": "-",
     "–": "-",
     "−": "-",
@@ -54,9 +54,7 @@ LIGATURE_MAP = {
     "ff": "ff",
 }
 
-BIDI_AND_ZERO_WIDTH = re.compile(
-    "[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2066-\u2069]"
-)
+BIDI_AND_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 SPACING_RE = re.compile(r"[ \t\x0b\x0c]+")
 

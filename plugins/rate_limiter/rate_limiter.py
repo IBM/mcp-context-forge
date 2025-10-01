@@ -9,11 +9,12 @@ Enforces simple in-memory rate limits by user, tenant, and/or tool.
 Uses a fixed window keyed by second for simplicity and determinism.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
-import time
 from dataclasses import dataclass
+import time
 from typing import Any, Dict, Optional
 
 # Third-Party

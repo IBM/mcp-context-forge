@@ -9,11 +9,12 @@ Detects risky code patterns (eval/exec/system/spawn) in tool outputs and
 either blocks or annotates based on mode.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
 import re
-from typing import Any, List
+from typing import List
 
 # Third-Party
 from pydantic import BaseModel, Field

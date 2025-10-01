@@ -14,15 +14,19 @@ the plugin returns cache hit info via metadata in `tool_pre_invoke`, and writes
 results at `tool_post_invoke` with a TTL.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
+from dataclasses import dataclass
 import math
 import time
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+# Third-Party
 from pydantic import BaseModel, Field
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -120,11 +124,13 @@ class ResponseCacheByPromptPlugin(Plugin):
         best, sim = self._find_best(tool, text)
         meta: dict[str, Any] = {"approx_cache": False}
         if best and sim >= self._cfg.threshold:
-            meta.update({
-                "approx_cache": True,
-                "similarity": round(sim, 4),
-                "cached_text_len": len(best.text),
-            })
+            meta.update(
+                {
+                    "approx_cache": True,
+                    "similarity": round(sim, 4),
+                    "cached_text_len": len(best.text),
+                }
+            )
             # Expose a small hint; not all callers will use it
             context.metadata["approx_cached_result_available"] = True
             context.metadata["approx_cached_similarity"] = sim

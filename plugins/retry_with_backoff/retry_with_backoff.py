@@ -9,6 +9,7 @@ Advisory plugin that annotates retry policy metadata for downstream systems.
 Note: The framework cannot re-execute tools/resources; this provides guidance only.
 """
 
+# Future
 from __future__ import annotations
 
 # Third-Party
@@ -41,20 +42,24 @@ class RetryWithBackoffPlugin(Plugin):
         self._cfg = RetryPolicyConfig(**(config.config or {}))
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
-        return ToolPostInvokeResult(metadata={
-            "retry_policy": {
-                "max_retries": self._cfg.max_retries,
-                "backoff_base_ms": self._cfg.backoff_base_ms,
-                "max_backoff_ms": self._cfg.max_backoff_ms,
+        return ToolPostInvokeResult(
+            metadata={
+                "retry_policy": {
+                    "max_retries": self._cfg.max_retries,
+                    "backoff_base_ms": self._cfg.backoff_base_ms,
+                    "max_backoff_ms": self._cfg.max_backoff_ms,
+                }
             }
-        })
+        )
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
-        return ResourcePostFetchResult(metadata={
-            "retry_policy": {
-                "max_retries": self._cfg.max_retries,
-                "backoff_base_ms": self._cfg.backoff_base_ms,
-                "max_backoff_ms": self._cfg.max_backoff_ms,
-                "retry_on_status": self._cfg.retry_on_status,
+        return ResourcePostFetchResult(
+            metadata={
+                "retry_policy": {
+                    "max_retries": self._cfg.max_retries,
+                    "backoff_base_ms": self._cfg.backoff_base_ms,
+                    "max_backoff_ms": self._cfg.max_backoff_ms,
+                    "retry_on_status": self._cfg.retry_on_status,
+                }
             }
-        })
+        )

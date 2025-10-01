@@ -16,11 +16,11 @@ The plugin is non-blocking and returns modified payloads when changes occur.
 """
 
 # Standard
-import re
-import unicodedata
 from dataclasses import dataclass
 from enum import Enum
+import re
 from typing import Any, Dict, List, Optional
+import unicodedata
 
 # Third-Party
 from pydantic import BaseModel, Field
@@ -36,7 +36,6 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokeResult,
 )
 from mcpgateway.services.logging_service import LoggingService
-
 
 # Initialize logging service first
 logging_service = LoggingService()
