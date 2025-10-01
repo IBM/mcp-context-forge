@@ -5773,13 +5773,19 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         else:
             passthrough_headers = None
 
+        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
+        auth_type_from_form = str(form.get("auth_type", ""))
+        if oauth_config and not auth_type_from_form:
+            auth_type_from_form = "oauth"
+            LOGGER.info("Auto-detected OAuth configuration, setting auth_type='oauth'")
+
         gateway = GatewayCreate(
             name=str(form["name"]),
             url=str(form["url"]),
             description=str(form.get("description")),
             tags=tags,
             transport=str(form.get("transport", "SSE")),
-            auth_type=str(form.get("auth_type", "")),
+            auth_type=auth_type_from_form,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
             auth_token=str(form.get("auth_token", "")),
@@ -6019,13 +6025,19 @@ async def admin_edit_gateway(
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
 
+        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
+        auth_type_from_form = str(form.get("auth_type", ""))
+        if oauth_config and not auth_type_from_form:
+            auth_type_from_form = "oauth"
+            LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
+
         gateway = GatewayUpdate(  # Pydantic validation happens here
             name=str(form.get("name")),
             url=str(form["url"]),
             description=str(form.get("description")),
             transport=str(form.get("transport", "SSE")),
             tags=tags,
-            auth_type=str(form.get("auth_type", "")),
+            auth_type=auth_type_from_form,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
             auth_token=str(form.get("auth_token", "")),
