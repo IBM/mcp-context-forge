@@ -123,11 +123,12 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                         oauth_config["token_endpoint"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
                     
-                    # Update gateway's oauth_config in database for future use
+                    # Update gateway's oauth_config and auth_type in database for future use
                     gateway.oauth_config = oauth_config
+                    gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
                     
-                    logger.info(f"Updated gateway {gateway_id} with DCR credentials")
+                    logger.info(f"Updated gateway {gateway_id} with DCR credentials and auth_type=oauth")
                     
                 except DcrError as dcr_err:
                     logger.error(f"DCR failed for gateway {gateway_id}: {dcr_err}")
