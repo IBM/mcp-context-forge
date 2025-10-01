@@ -5746,9 +5746,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             except (json.JSONDecodeError, ValueError):
                 auth_headers = []
 
-        # Parse OAuth configuration if present
+        # Parse OAuth configuration - support both JSON string and individual form fields
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
+        
+        # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
                 oauth_config = json.loads(oauth_config_json)
@@ -5759,6 +5761,46 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
+        
+        # Option 2: Assemble from individual UI form fields
+        if not oauth_config:
+            oauth_grant_type = str(form.get("oauth_grant_type", ""))
+            oauth_issuer = str(form.get("oauth_issuer", ""))
+            oauth_token_url = str(form.get("oauth_token_url", ""))
+            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
+            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
+            oauth_client_id = str(form.get("oauth_client_id", ""))
+            oauth_client_secret = str(form.get("oauth_client_secret", ""))
+            oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            
+            # If any OAuth field is provided, assemble oauth_config
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+                oauth_config = {}
+                
+                if oauth_grant_type:
+                    oauth_config["grant_type"] = oauth_grant_type
+                if oauth_issuer:
+                    oauth_config["issuer"] = oauth_issuer
+                if oauth_token_url:
+                    oauth_config["token_endpoint"] = oauth_token_url
+                if oauth_authorization_url:
+                    oauth_config["authorization_endpoint"] = oauth_authorization_url
+                if oauth_redirect_uri:
+                    oauth_config["redirect_uri"] = oauth_redirect_uri
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
+                if oauth_client_secret:
+                    # Encrypt the client secret
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+                
+                # Parse scopes (comma or space separated)
+                if oauth_scopes_str:
+                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+                    if scopes:
+                        oauth_config["scopes"] = scopes
+                
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
         visibility = str(form.get("visibility", "private"))
 
@@ -5775,9 +5817,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
+        LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
         if oauth_config and not auth_type_from_form:
             auth_type_from_form = "oauth"
-            LOGGER.info("Auto-detected OAuth configuration, setting auth_type='oauth'")
+            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
+        elif oauth_config and auth_type_from_form:
+            LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
         gateway = GatewayCreate(
             name=str(form["name"]),
@@ -6003,9 +6048,11 @@ async def admin_edit_gateway(
         else:
             passthrough_headers = None
 
-        # Parse OAuth configuration if present
+        # Parse OAuth configuration - support both JSON string and individual form fields
         oauth_config_json = str(form.get("oauth_config"))
         oauth_config: Optional[dict[str, Any]] = None
+        
+        # Option 1: Pre-assembled oauth_config JSON (from API calls)
         if oauth_config_json and oauth_config_json != "None":
             try:
                 oauth_config = json.loads(oauth_config_json)
@@ -6016,6 +6063,46 @@ async def admin_edit_gateway(
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
+        
+        # Option 2: Assemble from individual UI form fields
+        if not oauth_config:
+            oauth_grant_type = str(form.get("oauth_grant_type", ""))
+            oauth_issuer = str(form.get("oauth_issuer", ""))
+            oauth_token_url = str(form.get("oauth_token_url", ""))
+            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
+            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
+            oauth_client_id = str(form.get("oauth_client_id", ""))
+            oauth_client_secret = str(form.get("oauth_client_secret", ""))
+            oauth_scopes_str = str(form.get("oauth_scopes", ""))
+            
+            # If any OAuth field is provided, assemble oauth_config
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+                oauth_config = {}
+                
+                if oauth_grant_type:
+                    oauth_config["grant_type"] = oauth_grant_type
+                if oauth_issuer:
+                    oauth_config["issuer"] = oauth_issuer
+                if oauth_token_url:
+                    oauth_config["token_endpoint"] = oauth_token_url
+                if oauth_authorization_url:
+                    oauth_config["authorization_endpoint"] = oauth_authorization_url
+                if oauth_redirect_uri:
+                    oauth_config["redirect_uri"] = oauth_redirect_uri
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
+                if oauth_client_secret:
+                    # Encrypt the client secret
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+                
+                # Parse scopes (comma or space separated)
+                if oauth_scopes_str:
+                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+                    if scopes:
+                        oauth_config["scopes"] = scopes
+                
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
         user_email = get_user_email(user)
         # Determine personal team for default assignment
