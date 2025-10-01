@@ -180,7 +180,8 @@ class DcrService:
                     json=registration_request,
                     timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
                 ) as response:
-                    if response.status == 201:
+                    # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
+                    if response.status in (200, 201):
                         registration_response = await response.json()
                     else:
                         error_data = await response.json()
