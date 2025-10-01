@@ -4798,7 +4798,7 @@ function showTab(tabName) {
                 if (tabName === "mcp-registry") {
                     // Load MCP Registry content
                     const registryContent = safeGetElement(
-                        "mcp-registry-servers",
+                        "mcp-registry-content",
                     );
                     if (registryContent) {
                         // Always load on first visit or if showing loading message
@@ -4820,7 +4820,7 @@ function showTab(tabName) {
                                         "GET",
                                         `${rootPath}/admin/mcp-registry/partial`,
                                         {
-                                            target: "#mcp-registry-servers",
+                                            target: "#mcp-registry-content",
                                             swap: "innerHTML",
                                         },
                                     )
@@ -13764,7 +13764,7 @@ window.submitApiKeyForm = function (event) {
                         "GET",
                         `${rootPath}/admin/mcp-registry/partial`,
                         {
-                            target: "#mcp-registry-servers",
+                            target: "#mcp-registry-content",
                             swap: "innerHTML",
                         },
                     );
