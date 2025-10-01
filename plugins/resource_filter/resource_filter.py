@@ -56,9 +56,7 @@ class ResourceFilterPlugin(Plugin):
         self.blocked_domains = plugin_config.get("blocked_domains", [])
         self.content_filters = plugin_config.get("content_filters", [])
 
-    async def resource_pre_fetch(
-        self, payload: ResourcePreFetchPayload, context: PluginContext
-    ) -> ResourcePreFetchResult:
+    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
         """Validate and potentially modify resource requests before fetching.
 
         Args:
@@ -72,36 +70,16 @@ class ResourceFilterPlugin(Plugin):
         try:
             parsed = urlparse(payload.uri)
         except Exception as e:
-            violation = PluginViolation(
-                reason="Invalid URI",
-                description=f"Could not parse resource URI: {e}",
-                code="INVALID_URI",
-                details={"uri": payload.uri, "error": str(e)}
-            )
-            return ResourcePreFetchResult(
-                continue_processing=False,
-                violation=violation
-            )
+            violation = PluginViolation(reason="Invalid URI", description=f"Could not parse resource URI: {e}", code="INVALID_URI", details={"uri": payload.uri, "error": str(e)})
+            return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
         # Check if URI has a scheme
         if not parsed.scheme:
-            violation = PluginViolation(
-                reason="Invalid URI format",
-                description="URI must have a valid scheme (protocol)",
-                code="INVALID_URI",
-                details={"uri": payload.uri}
-            )
+            violation = PluginViolation(reason="Invalid URI format", description="URI must have a valid scheme (protocol)", code="INVALID_URI", details={"uri": payload.uri})
             # In permissive mode, log but continue
             if self.mode == PluginMode.PERMISSIVE:
-                return ResourcePreFetchResult(
-                    continue_processing=True,
-                    violation=violation,
-                    modified_payload=payload
-                )
-            return ResourcePreFetchResult(
-                continue_processing=False,
-                violation=violation
-            )
+                return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
+            return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
         # Check protocol
         if parsed.scheme not in self.allowed_protocols:
@@ -109,50 +87,26 @@ class ResourceFilterPlugin(Plugin):
                 reason="Protocol not allowed",
                 description=f"Protocol '{parsed.scheme}' is not in allowed list",
                 code="PROTOCOL_BLOCKED",
-                details={
-                    "uri": payload.uri,
-                    "protocol": parsed.scheme,
-                    "allowed": self.allowed_protocols
-                }
+                details={"uri": payload.uri, "protocol": parsed.scheme, "allowed": self.allowed_protocols},
             )
             # In permissive mode, log but continue
             if self.mode == PluginMode.PERMISSIVE:
-                return ResourcePreFetchResult(
-                    continue_processing=True,
-                    violation=violation,
-                    modified_payload=payload
-                )
-            return ResourcePreFetchResult(
-                continue_processing=False,
-                violation=violation
-            )
+                return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
+            return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
         # Check domain blocking (case-insensitive)
         if parsed.netloc:
             # Convert both to lowercase for comparison
             domain_lower = parsed.netloc.lower()
             blocked_domains_lower = [d.lower() for d in self.blocked_domains]
-            if domain_lower in blocked_domains_lower or any(domain_lower.endswith('.' + d) for d in blocked_domains_lower):
+            if domain_lower in blocked_domains_lower or any(domain_lower.endswith("." + d) for d in blocked_domains_lower):
                 violation = PluginViolation(
-                    reason="Domain is blocked",
-                    description=f"Domain '{parsed.netloc}' is in blocked list",
-                    code="DOMAIN_BLOCKED",
-                    details={
-                        "uri": payload.uri,
-                        "domain": parsed.netloc
-                    }
+                    reason="Domain is blocked", description=f"Domain '{parsed.netloc}' is in blocked list", code="DOMAIN_BLOCKED", details={"uri": payload.uri, "domain": parsed.netloc}
                 )
                 # In permissive mode, log but continue
                 if self.mode == PluginMode.PERMISSIVE:
-                    return ResourcePreFetchResult(
-                        continue_processing=True,
-                        violation=violation,
-                        modified_payload=payload
-                    )
-                return ResourcePreFetchResult(
-                    continue_processing=False,
-                    violation=violation
-                )
+                    return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
+                return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
         # Add metadata to track this plugin processed the request
         modified_payload = ResourcePreFetchPayload(
@@ -164,23 +118,17 @@ class ResourceFilterPlugin(Plugin):
                 "request_id": context.global_context.request_id,
                 "user": context.global_context.user,
                 "resource_filter_plugin": "pre_fetch_validated",
-                "allowed_size": self.max_content_size
-            }
+                "allowed_size": self.max_content_size,
+            },
         )
 
         # Store validation info in context for post-fetch
         context.set_state("uri_validated", True)
         context.set_state("original_uri", payload.uri)
 
-        return ResourcePreFetchResult(
-            continue_processing=True,
-            modified_payload=modified_payload,
-            metadata={"validation": "passed"}
-        )
+        return ResourcePreFetchResult(continue_processing=True, modified_payload=modified_payload, metadata={"validation": "passed"})
 
-    async def resource_post_fetch(
-        self, payload: ResourcePostFetchPayload, context: PluginContext
-    ) -> ResourcePostFetchResult:
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
         """Filter and modify resource content after fetching.
 
         Args:
@@ -193,91 +141,59 @@ class ResourceFilterPlugin(Plugin):
         # Check if pre-fetch validation was done
         if not context.get_state("uri_validated"):
             # This resource wasn't validated in pre-fetch, skip processing
-            return ResourcePostFetchResult(
-                continue_processing=True,
-                modified_payload=payload
-            )
+            return ResourcePostFetchResult(continue_processing=True, modified_payload=payload)
 
         # Process content if it's text
         modified_content = payload.content
         content_was_modified = False
 
         # Apply content filters if we have text content
-        if hasattr(payload.content, 'text') and payload.content.text:
+        if hasattr(payload.content, "text") and payload.content.text:
             original_text = payload.content.text
             filtered_text = original_text
 
             # Check content size
-            if len(filtered_text.encode('utf-8')) > self.max_content_size:
+            if len(filtered_text.encode("utf-8")) > self.max_content_size:
                 violation = PluginViolation(
                     reason="Content exceeds maximum size",
                     description=f"Resource content exceeds maximum size of {self.max_content_size} bytes",
                     code="CONTENT_TOO_LARGE",
-                    details={
-                        "uri": payload.uri,
-                        "size": len(filtered_text.encode('utf-8')),
-                        "max_size": self.max_content_size
-                    }
+                    details={"uri": payload.uri, "size": len(filtered_text.encode("utf-8")), "max_size": self.max_content_size},
                 )
                 # In permissive mode, log but continue
                 if self.mode == PluginMode.PERMISSIVE:
-                    return ResourcePostFetchResult(
-                        continue_processing=True,
-                        violation=violation,
-                        modified_payload=payload
-                    )
-                return ResourcePostFetchResult(
-                    continue_processing=False,
-                    violation=violation
-                )
+                    return ResourcePostFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
+                return ResourcePostFetchResult(continue_processing=False, violation=violation)
 
             # Apply content filters
             for filter_rule in self.content_filters:
                 pattern = filter_rule.get("pattern")
                 replacement = filter_rule.get("replacement", "***")
                 if pattern:
-                    filtered_text = re.sub(
-                        pattern,
-                        replacement,
-                        filtered_text,
-                        flags=re.IGNORECASE
-                    )
+                    filtered_text = re.sub(pattern, replacement, filtered_text, flags=re.IGNORECASE)
 
             # Update content if it was modified
             if filtered_text != original_text:
                 # Create new content object with filtered text
                 # First-Party
                 from mcpgateway.models import ResourceContent
-                modified_content = ResourceContent(
-                    type=payload.content.type,
-                    uri=payload.content.uri,
-                    text=filtered_text
-                )
+
+                modified_content = ResourceContent(type=payload.content.type, uri=payload.content.uri, text=filtered_text)
                 content_was_modified = True
                 context.set_state("content_filtered", True)
 
         # Only create modified payload if content was actually modified
         if content_was_modified:
-            modified_payload = ResourcePostFetchPayload(
-                uri=payload.uri,
-                content=modified_content
-            )
+            modified_payload = ResourcePostFetchPayload(uri=payload.uri, content=modified_content)
         else:
             # Return original payload if nothing was modified
             modified_payload = payload
 
         return ResourcePostFetchResult(
-            continue_processing=True,
-            modified_payload=modified_payload,
-            metadata={
-                "filtered": context.get_state("content_filtered", False),
-                "original_uri": context.get_state("original_uri")
-            }
+            continue_processing=True, modified_payload=modified_payload, metadata={"filtered": context.get_state("content_filtered", False), "original_uri": context.get_state("original_uri")}
         )
 
-    async def tool_post_invoke(
-        self, payload: ToolPostInvokePayload, context: PluginContext
-    ) -> ToolPostInvokeResult:
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Handle tool invocation results.
 
         This plugin focuses on resource filtering, so tool invocations pass through unmodified.
@@ -291,7 +207,4 @@ class ResourceFilterPlugin(Plugin):
         """
         # This plugin is focused on resource filtering, not tool invocations
         # Simply pass through without modification
-        return ToolPostInvokeResult(
-            continue_processing=True,
-            modified_payload=payload
-        )
+        return ToolPostInvokeResult(continue_processing=True, modified_payload=payload)

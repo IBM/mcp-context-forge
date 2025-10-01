@@ -8,16 +8,15 @@ Advanced content moderation using AI services (IBM Watson, IBM Granite Guardian,
 Detects and handles harmful content including hate speech, violence, sexual content, and self-harm.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
-import asyncio
+from enum import Enum
 import json
 import logging
 import re
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 # Third-Party
 import httpx
@@ -31,10 +30,10 @@ from mcpgateway.plugins.framework import (
     PluginViolation,
     PromptPrehookPayload,
     PromptPrehookResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 class ModerationProvider(str, Enum):
     """Available content moderation providers."""
+
     IBM_WATSON = "ibm_watson"
     IBM_GRANITE = "ibm_granite"
     OPENAI = "openai"
@@ -51,6 +51,7 @@ class ModerationProvider(str, Enum):
 
 class ModerationAction(str, Enum):
     """Actions to take when content violations are detected."""
+
     BLOCK = "block"
     WARN = "warn"
     REDACT = "redact"
@@ -59,6 +60,7 @@ class ModerationAction(str, Enum):
 
 class ModerationCategory(str, Enum):
     """Content moderation categories."""
+
     HATE = "hate"
     VIOLENCE = "violence"
     SEXUAL = "sexual"
@@ -71,6 +73,7 @@ class ModerationCategory(str, Enum):
 
 class IBMWatsonConfig(BaseModel):
     """IBM Watson Natural Language Understanding configuration."""
+
     api_key: str = Field(description="IBM Watson API key")
     url: str = Field(description="IBM Watson service URL")
     version: str = Field(default="2022-04-07", description="API version")
@@ -80,6 +83,7 @@ class IBMWatsonConfig(BaseModel):
 
 class IBMGraniteConfig(BaseModel):
     """IBM Granite Guardian configuration via Ollama."""
+
     ollama_url: str = Field(default="http://localhost:11434", description="Ollama API URL")
     model: str = Field(default="granite3-guardian", description="Granite model name")
     temperature: float = Field(default=0.1, description="Model temperature")
@@ -88,6 +92,7 @@ class IBMGraniteConfig(BaseModel):
 
 class OpenAIConfig(BaseModel):
     """OpenAI Moderation API configuration."""
+
     api_key: str = Field(description="OpenAI API key")
     api_base: str = Field(default="https://api.openai.com/v1", description="API base URL")
     model: str = Field(default="text-moderation-latest", description="Moderation model")
@@ -96,6 +101,7 @@ class OpenAIConfig(BaseModel):
 
 class AzureConfig(BaseModel):
     """Azure Content Safety configuration."""
+
     api_key: str = Field(description="Azure Content Safety API key")
     endpoint: str = Field(description="Azure Content Safety endpoint")
     api_version: str = Field(default="2023-10-01", description="API version")
@@ -104,6 +110,7 @@ class AzureConfig(BaseModel):
 
 class AWSConfig(BaseModel):
     """AWS Comprehend configuration."""
+
     access_key: str = Field(description="AWS access key")
     secret_key: str = Field(description="AWS secret key")
     region: str = Field(default="us-east-1", description="AWS region")
@@ -112,6 +119,7 @@ class AWSConfig(BaseModel):
 
 class CategoryConfig(BaseModel):
     """Configuration for a specific moderation category."""
+
     threshold: float = Field(default=0.7, ge=0.0, le=1.0, description="Confidence threshold")
     action: ModerationAction = Field(default=ModerationAction.WARN, description="Action to take")
     providers: List[ModerationProvider] = Field(default_factory=list, description="Providers to use for this category")
@@ -120,6 +128,7 @@ class CategoryConfig(BaseModel):
 
 class ContentModerationConfig(BaseModel):
     """Configuration for the content moderation plugin."""
+
     provider: ModerationProvider = Field(default=ModerationProvider.IBM_WATSON, description="Primary provider")
     fallback_provider: Optional[ModerationProvider] = Field(default=None, description="Fallback provider")
     fallback_on_error: ModerationAction = Field(default=ModerationAction.WARN, description="Action when provider fails")
@@ -155,6 +164,7 @@ class ContentModerationConfig(BaseModel):
 
 class ModerationResult(BaseModel):
     """Result from content moderation check."""
+
     flagged: bool = Field(description="Whether content was flagged")
     categories: Dict[str, float] = Field(default_factory=dict, description="Category scores")
     action: ModerationAction = Field(description="Recommended action")
@@ -175,7 +185,9 @@ class ContentModerationPlugin(Plugin):
 
     async def _get_cache_key(self, text: str, provider: ModerationProvider) -> str:
         """Generate cache key for content."""
+        # Standard
         import hashlib
+
         content_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
         return f"{provider.value}:{content_hash}"
 
@@ -205,29 +217,12 @@ class ContentModerationPlugin(Plugin):
         # IBM Watson NLU API call
         url = f"{config.url}/v1/analyze"
 
-        payload = {
-            "text": text,
-            "features": {
-                "emotion": {},
-                "sentiment": {},
-                "concepts": {"limit": 5}
-            },
-            "language": config.language,
-            "version": config.version
-        }
+        payload = {"text": text, "features": {"emotion": {}, "sentiment": {}, "concepts": {"limit": 5}}, "language": config.language, "version": config.version}
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.api_key}"
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.api_key}"}
 
         try:
-            response = await self._client.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=config.timeout
-            )
+            response = await self._client.post(url, json=payload, headers=headers, timeout=config.timeout)
             response.raise_for_status()
 
             data = response.json()
@@ -256,11 +251,7 @@ class ContentModerationPlugin(Plugin):
             categories[ModerationCategory.SELF_HARM.value] = min(sadness_score + fear_score * 0.3, 1.0)
 
             # Check if any category exceeds threshold
-            flagged = any(
-                score >= self._cfg.categories[ModerationCategory(cat)].threshold
-                for cat, score in categories.items()
-                if ModerationCategory(cat) in self._cfg.categories
-            )
+            flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
 
             # Determine action
             action = ModerationAction.WARN
@@ -270,9 +261,7 @@ class ContentModerationPlugin(Plugin):
                 # Find the category with highest score above threshold
                 for cat, score in categories.items():
                     cat_enum = ModerationCategory(cat)
-                    if (cat_enum in self._cfg.categories and
-                        score >= self._cfg.categories[cat_enum].threshold and
-                        score == max_score):
+                    if cat_enum in self._cfg.categories and score >= self._cfg.categories[cat_enum].threshold and score == max_score:
                         action = self._cfg.categories[cat_enum].action
                         break
 
@@ -282,11 +271,7 @@ class ContentModerationPlugin(Plugin):
                 action=action,
                 provider=ModerationProvider.IBM_WATSON,
                 confidence=max_score,
-                details={
-                    "watson_emotion": emotion_scores,
-                    "watson_sentiment": sentiment,
-                    "watson_concepts": concepts
-                }
+                details={"watson_emotion": emotion_scores, "watson_sentiment": sentiment, "watson_concepts": concepts},
             )
 
         except Exception as e:
@@ -317,20 +302,10 @@ Text to analyze: "{text}"
 Respond with JSON format:
 {{"hate": 0.0, "violence": 0.0, "sexual": 0.0, "self_harm": 0.0, "harassment": 0.0, "toxic": 0.0}}"""
 
-        payload = {
-            "model": config.model,
-            "prompt": prompt,
-            "temperature": config.temperature,
-            "stream": False,
-            "format": "json"
-        }
+        payload = {"model": config.model, "prompt": prompt, "temperature": config.temperature, "stream": False, "format": "json"}
 
         try:
-            response = await self._client.post(
-                url,
-                json=payload,
-                timeout=config.timeout
-            )
+            response = await self._client.post(url, json=payload, timeout=config.timeout)
             response.raise_for_status()
 
             data = response.json()
@@ -351,11 +326,7 @@ Respond with JSON format:
                         categories[cat.value] = 0.0
 
             # Check if any category exceeds threshold
-            flagged = any(
-                score >= self._cfg.categories[ModerationCategory(cat)].threshold
-                for cat, score in categories.items()
-                if ModerationCategory(cat) in self._cfg.categories
-            )
+            flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
 
             # Determine action
             action = ModerationAction.WARN
@@ -364,20 +335,11 @@ Respond with JSON format:
             if flagged:
                 for cat, score in categories.items():
                     cat_enum = ModerationCategory(cat)
-                    if (cat_enum in self._cfg.categories and
-                        score >= self._cfg.categories[cat_enum].threshold and
-                        score == max_score):
+                    if cat_enum in self._cfg.categories and score >= self._cfg.categories[cat_enum].threshold and score == max_score:
                         action = self._cfg.categories[cat_enum].action
                         break
 
-            return ModerationResult(
-                flagged=flagged,
-                categories=categories,
-                action=action,
-                provider=ModerationProvider.IBM_GRANITE,
-                confidence=max_score,
-                details={"granite_response": response_text}
-            )
+            return ModerationResult(flagged=flagged, categories=categories, action=action, provider=ModerationProvider.IBM_GRANITE, confidence=max_score, details={"granite_response": response_text})
 
         except Exception as e:
             logger.error(f"IBM Granite moderation failed: {e}")
@@ -392,23 +354,12 @@ Respond with JSON format:
 
         url = f"{config.api_base}/moderations"
 
-        payload = {
-            "input": text,
-            "model": config.model
-        }
+        payload = {"input": text, "model": config.model}
 
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {config.api_key}"
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {config.api_key}"}
 
         try:
-            response = await self._client.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=config.timeout
-            )
+            response = await self._client.post(url, json=payload, headers=headers, timeout=config.timeout)
             response.raise_for_status()
 
             data = response.json()
@@ -450,14 +401,7 @@ Respond with JSON format:
                             action = self._cfg.categories[our_cat].action
                             break
 
-            return ModerationResult(
-                flagged=flagged,
-                categories=categories,
-                action=action,
-                provider=ModerationProvider.OPENAI,
-                confidence=max_score,
-                details={"openai_result": result}
-            )
+            return ModerationResult(flagged=flagged, categories=categories, action=action, provider=ModerationProvider.OPENAI, confidence=max_score, details={"openai_result": result})
 
         except Exception as e:
             logger.error(f"OpenAI moderation failed: {e}")
@@ -477,7 +421,7 @@ Respond with JSON format:
                 if score >= self._cfg.categories.get(ModerationCategory(category), CategoryConfig()).threshold:
                     # Simple word replacement for demonstration
                     if category == ModerationCategory.PROFANITY.value:
-                        transformed = re.sub(r'\b(damn|hell|crap)\b', '[FILTERED]', transformed, flags=re.IGNORECASE)
+                        transformed = re.sub(r"\b(damn|hell|crap)\b", "[FILTERED]", transformed, flags=re.IGNORECASE)
             return transformed
         else:  # WARN or default
             return text  # Return original text
@@ -485,7 +429,7 @@ Respond with JSON format:
     async def _moderate_content(self, text: str) -> ModerationResult:
         """Moderate content using the configured provider."""
         if len(text) > self._cfg.max_text_length:
-            text = text[:self._cfg.max_text_length]
+            text = text[: self._cfg.max_text_length]
 
         # Check cache first
         cached_result = await self._get_cached_result(text, self._cfg.provider)
@@ -538,25 +482,11 @@ Respond with JSON format:
 
         # Basic pattern matching for different categories
         patterns = {
-            ModerationCategory.HATE: [
-                r'\b(hate|racist|nazi|fascist)\b',
-                r'\b(kill\s+(all\s+)?(jews|muslims|christians|blacks|whites))\b'
-            ],
-            ModerationCategory.VIOLENCE: [
-                r'\b(kill|murder|shoot|stab|bomb)\s+(you|him|her|them)\b',
-                r'\b(death\s+threat|going\s+to\s+kill)\b'
-            ],
-            ModerationCategory.SELF_HARM: [
-                r'\b(kill\s+myself|suicide|self\s*harm|end\s+it\s+all)\b',
-                r'\b(want\s+to\s+die|cutting\s+myself)\b'
-            ],
-            ModerationCategory.PROFANITY: [
-                r'\b(fuck\w*|shit|damn|hell|crap|bitch|asshole)\b'
-            ],
-            ModerationCategory.HARASSMENT: [
-                r'\b(you\s+suck|loser|idiot|moron|stupid)\b',
-                r'\b(go\s+away|nobody\s+likes\s+you)\b'
-            ]
+            ModerationCategory.HATE: [r"\b(hate|racist|nazi|fascist)\b", r"\b(kill\s+(all\s+)?(jews|muslims|christians|blacks|whites))\b"],
+            ModerationCategory.VIOLENCE: [r"\b(kill|murder|shoot|stab|bomb)\s+(you|him|her|them)\b", r"\b(death\s+threat|going\s+to\s+kill)\b"],
+            ModerationCategory.SELF_HARM: [r"\b(kill\s+myself|suicide|self\s*harm|end\s+it\s+all)\b", r"\b(want\s+to\s+die|cutting\s+myself)\b"],
+            ModerationCategory.PROFANITY: [r"\b(fuck\w*|shit|damn|hell|crap|bitch|asshole)\b"],
+            ModerationCategory.HARASSMENT: [r"\b(you\s+suck|loser|idiot|moron|stupid)\b", r"\b(go\s+away|nobody\s+likes\s+you)\b"],
         }
 
         for category, category_patterns in patterns.items():
@@ -576,37 +506,26 @@ Respond with JSON format:
         max_score = max(categories.values()) if categories else 0.0
 
         # Check if flagged
-        flagged = any(
-            score >= self._cfg.categories[ModerationCategory(cat)].threshold
-            for cat, score in categories.items()
-            if ModerationCategory(cat) in self._cfg.categories
-        )
+        flagged = any(score >= self._cfg.categories[ModerationCategory(cat)].threshold for cat, score in categories.items() if ModerationCategory(cat) in self._cfg.categories)
 
         # Determine action
         action = ModerationAction.WARN
         if flagged:
             for cat, score in categories.items():
                 cat_enum = ModerationCategory(cat)
-                if (cat_enum in self._cfg.categories and
-                    score >= self._cfg.categories[cat_enum].threshold and
-                    score == max_score):
+                if cat_enum in self._cfg.categories and score >= self._cfg.categories[cat_enum].threshold and score == max_score:
                     action = self._cfg.categories[cat_enum].action
                     break
 
         return ModerationResult(
-            flagged=flagged,
-            categories=categories,
-            action=action,
-            provider=ModerationProvider.IBM_WATSON,  # Default fallback
-            confidence=max_score,
-            details={"method": "pattern_matching"}
+            flagged=flagged, categories=categories, action=action, provider=ModerationProvider.IBM_WATSON, confidence=max_score, details={"method": "pattern_matching"}  # Default fallback
         )
 
     async def _extract_text_content(self, payload: Any) -> List[str]:
         """Extract text content from various payload types."""
         texts = []
 
-        if hasattr(payload, 'args') and payload.args:
+        if hasattr(payload, "args") and payload.args:
             for key, value in payload.args.items():
                 if isinstance(value, str) and len(value.strip()) > 0:
                     texts.append(value)
@@ -616,7 +535,7 @@ Respond with JSON format:
                         if isinstance(nested_value, str) and len(nested_value.strip()) > 0:
                             texts.append(nested_value)
 
-        if hasattr(payload, 'name') and isinstance(payload.name, str):
+        if hasattr(payload, "name") and isinstance(payload.name, str):
             texts.append(payload.name)
 
         return [text for text in texts if len(text.strip()) > 3]  # Filter very short texts
@@ -630,9 +549,9 @@ Respond with JSON format:
                 result = await self._moderate_content(text)
 
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Prompt: {payload.name}, Result: {result.flagged}, "
-                              f"Action: {result.action}, Provider: {result.provider}, "
-                              f"Confidence: {result.confidence:.2f}")
+                    logger.info(
+                        f"Content moderation - Prompt: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
+                    )
 
                 if result.action == ModerationAction.BLOCK:
                     return PromptPrehookResult(
@@ -645,39 +564,22 @@ Respond with JSON format:
                                 "categories": result.categories,
                                 "provider": result.provider.value,
                                 "confidence": result.confidence,
-                                "flagged_text_preview": text[:100] + "..." if len(text) > 100 else text
-                            }
+                                "flagged_text_preview": text[:100] + "..." if len(text) > 100 else text,
+                            },
                         ),
-                        metadata={
-                            "moderation_result": result.dict(),
-                            "provider": result.provider.value
-                        }
+                        metadata={"moderation_result": result.dict(), "provider": result.provider.value},
                     )
                 elif result.modified_content:
                     # Modify the payload with redacted/transformed content
-                    modified_payload = PromptPrehookPayload(
-                        name=payload.name,
-                        args={k: result.modified_content if v == text else v for k, v in payload.args.items()}
-                    )
-                    return PromptPrehookResult(
-                        modified_payload=modified_payload,
-                        metadata={
-                            "moderation_result": result.dict(),
-                            "content_modified": True
-                        }
-                    )
+                    modified_payload = PromptPrehookPayload(name=payload.name, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
+                    return PromptPrehookResult(modified_payload=modified_payload, metadata={"moderation_result": result.dict(), "content_modified": True})
 
             except Exception as e:
                 logger.error(f"Content moderation failed for prompt {payload.name}: {e}")
                 if self._cfg.fallback_on_error == ModerationAction.BLOCK:
                     return PromptPrehookResult(
                         continue_processing=False,
-                        violation=PluginViolation(
-                            reason="Content moderation service error",
-                            description="Unable to verify content safety",
-                            code="MODERATION_ERROR",
-                            details={"error": str(e)}
-                        )
+                        violation=PluginViolation(reason="Content moderation service error", description="Unable to verify content safety", code="MODERATION_ERROR", details={"error": str(e)}),
                     )
 
         return PromptPrehookResult()
@@ -691,8 +593,7 @@ Respond with JSON format:
                 result = await self._moderate_content(text)
 
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, "
-                              f"Action: {result.action}, Provider: {result.provider}")
+                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}")
 
                 if result.action == ModerationAction.BLOCK:
                     return ToolPreInvokeResult(
@@ -701,22 +602,14 @@ Respond with JSON format:
                             reason="Content policy violation in tool arguments",
                             description=f"Harmful content detected in {payload.name} arguments",
                             code="CONTENT_MODERATION",
-                            details={
-                                "tool": payload.name,
-                                "categories": result.categories,
-                                "provider": result.provider.value,
-                                "confidence": result.confidence
-                            }
-                        )
+                            details={"tool": payload.name, "categories": result.categories, "provider": result.provider.value, "confidence": result.confidence},
+                        ),
                     )
                 elif result.modified_content:
                     # Modify the payload arguments
                     modified_args = {k: result.modified_content if v == text else v for k, v in payload.args.items()}
                     modified_payload = ToolPreInvokePayload(name=payload.name, args=modified_args)
-                    return ToolPreInvokeResult(
-                        modified_payload=modified_payload,
-                        metadata={"moderation_applied": True, "content_modified": True}
-                    )
+                    return ToolPreInvokeResult(modified_payload=modified_payload, metadata={"moderation_applied": True, "content_modified": True})
 
             except Exception as e:
                 logger.error(f"Content moderation failed for tool {payload.name}: {e}")
@@ -724,11 +617,8 @@ Respond with JSON format:
                     return ToolPreInvokeResult(
                         continue_processing=False,
                         violation=PluginViolation(
-                            reason="Content moderation service error",
-                            description="Unable to verify tool argument safety",
-                            code="MODERATION_ERROR",
-                            details={"error": str(e), "tool": payload.name}
-                        )
+                            reason="Content moderation service error", description="Unable to verify tool argument safety", code="MODERATION_ERROR", details={"error": str(e), "tool": payload.name}
+                        ),
                     )
 
         return ToolPreInvokeResult(metadata={"moderation_checked": True})
@@ -737,10 +627,10 @@ Respond with JSON format:
         """Moderate tool output after invocation."""
         # Extract text from tool results
         result_text = ""
-        if hasattr(payload.result, 'content'):
+        if hasattr(payload.result, "content"):
             if isinstance(payload.result.content, list):
                 for item in payload.result.content:
-                    if hasattr(item, 'text') and isinstance(item.text, str):
+                    if hasattr(item, "text") and isinstance(item.text, str):
                         result_text += item.text + " "
             elif isinstance(payload.result.content, str):
                 result_text = payload.result.content
@@ -766,21 +656,13 @@ Respond with JSON format:
                             reason="Content policy violation in tool output",
                             description=f"Harmful content detected in {payload.name} output",
                             code="CONTENT_MODERATION",
-                            details={
-                                "tool": payload.name,
-                                "categories": moderation_result.categories,
-                                "confidence": moderation_result.confidence
-                            }
-                        )
+                            details={"tool": payload.name, "categories": moderation_result.categories, "confidence": moderation_result.confidence},
+                        ),
                     )
                 elif moderation_result.modified_content:
                     # Return modified result
                     return ToolPostInvokeResult(
-                        modified_payload=ToolPostInvokePayload(
-                            name=payload.name,
-                            result=moderation_result.modified_content
-                        ),
-                        metadata={"content_moderated": True, "content_modified": True}
+                        modified_payload=ToolPostInvokePayload(name=payload.name, result=moderation_result.modified_content), metadata={"content_moderated": True, "content_modified": True}
                     )
 
             except Exception as e:
@@ -794,5 +676,5 @@ Respond with JSON format:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - cleanup HTTP client."""
-        if hasattr(self, '_client'):
+        if hasattr(self, "_client"):
             await self._client.aclose()

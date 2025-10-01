@@ -9,6 +9,7 @@ Validates tool args and results against a minimal JSONSchema-like subset.
 Supported: type, properties, required. Types: object, string, number, integer, boolean, array.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard

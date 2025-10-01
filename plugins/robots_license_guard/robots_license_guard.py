@@ -12,13 +12,16 @@ Blocks or annotates based on configuration.
 Hooks: resource_post_fetch (primary), resource_pre_fetch (annotation)
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import re
-from typing import Any
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -29,7 +32,6 @@ from mcpgateway.plugins.framework import (
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
 )
-
 
 META_PATTERN = re.compile(
     r"<meta\s+[^>]*name=\"(?P<name>robots|x-robots-tag|genai|permissions-policy|license)\"[^>]*content=\"(?P<content>[^\"]+)\"[^>]*>",

@@ -12,13 +12,17 @@ content keyword hints. Annotates or blocks based on configuration.
 Hooks: resource_post_fetch, tool_post_invoke
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -30,7 +34,6 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokeResult,
 )
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-
 
 URL_RE = re.compile(r"https?://[\w\-\._~:/%#\[\]@!\$&'\(\)\*\+,;=]+", re.IGNORECASE)
 

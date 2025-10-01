@@ -14,13 +14,17 @@ non-parameterized interpolation are applied.
 Hooks: prompt_pre_fetch, tool_pre_invoke
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -31,7 +35,6 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
-
 
 _DEFAULT_BLOCKED = [
     r"\bDROP\b",

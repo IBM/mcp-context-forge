@@ -21,6 +21,7 @@ Policy:
 - block_on_positive: When true, block on any positive detection; else annotate.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
@@ -36,14 +37,13 @@ from mcpgateway.plugins.framework import (
     PluginViolation,
     PromptPosthookPayload,
     PromptPosthookResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
 )
-
 
 EICAR_SIGNATURES = (
     "EICAR-STANDARD-ANTIVIRUS-TEST-FILE",

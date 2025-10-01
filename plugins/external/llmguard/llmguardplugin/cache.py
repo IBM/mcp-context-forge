@@ -11,14 +11,13 @@ This module loads redis client for caching, updates, retrieves and deletes cache
 
 # Standard
 import os
-
- # Third-Party
-import redis
 import pickle
+
+# Third-Party
+import redis
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
-
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -36,6 +35,7 @@ class CacheTTLDict(dict):
         cache_ttl: Cache time to live in seconds
         cache: Redis client to connect to database for caching
     """
+
     def __init__(self, ttl: int = 0) -> None:
         """init block for cache. This initializes a redit client.
 
@@ -56,20 +56,19 @@ class CacheTTLDict(dict):
         """
         serialized_obj = pickle.dumps(value)
         logger.info(f"Update cache in cache: {key} {serialized_obj}")
-        success_set = self.cache.set(key,serialized_obj)
+        success_set = self.cache.set(key, serialized_obj)
         if success_set:
             logger.debug(f"Cache updated successfully with key: {key} and value {value}")
         else:
             logger.error(f"Cache updated failed for key: {key} and value {value}")
-        success_expiry = self.cache.expire(key,self.cache_ttl)
+        success_expiry = self.cache.expire(key, self.cache_ttl)
         if success_expiry:
             logger.debug(f"Cache expiry set successfully for key: {key}")
         else:
-            logger.error(f"Failed to set cache expiration")
+            logger.error("Failed to set cache expiration")
         return success_set, success_expiry
 
-
-    def retrieve_cache(self, key: int = None) -> tuple :
+    def retrieve_cache(self, key: int = None) -> tuple:
         """Retrieves cache for a key value
 
         Args:
@@ -87,8 +86,7 @@ class CacheTTLDict(dict):
         else:
             logger.error(f"Cache retrieval unsuccessful for id: {key}")
 
-
-    def delete_cache(self,key: int = None) -> None:
+    def delete_cache(self, key: int = None) -> None:
         """Retrieves cache for a key value
 
         Args:

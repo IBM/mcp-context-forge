@@ -16,13 +16,17 @@ Formats code/text outputs with lightweight, dependency-free normalization:
 Hooks: tool_post_invoke, resource_post_fetch
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 from textwrap import dedent
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -74,6 +78,7 @@ def _normalize_text(text: str, cfg: CodeFormatterConfig) -> str:
 
 
 def _try_format_json(text: str) -> Optional[str]:
+    # Standard
     import json
 
     try:

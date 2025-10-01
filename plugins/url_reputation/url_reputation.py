@@ -8,10 +8,11 @@ URL Reputation Plugin.
 Blocks known-bad domains or URL patterns before fetching resources.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
-from typing import Any, List, Optional
+from typing import List
 from urllib.parse import urlparse
 
 # Third-Party

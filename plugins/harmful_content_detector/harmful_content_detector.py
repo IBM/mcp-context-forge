@@ -11,13 +11,17 @@ Detects categories such as self-harm, violence, and hate via keyword lexicons.
 Hooks: prompt_pre_fetch, tool_post_invoke
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import re
 from typing import Any, Dict, Iterable, List, Tuple
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -28,7 +32,6 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
-
 
 DEFAULT_LEXICONS: Dict[str, List[str]] = {
     "self_harm": [
@@ -76,6 +79,7 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
         elif isinstance(obj, list):
             for i, v in enumerate(obj):
                 yield from walk(v, f"{path}[{i}]")
+
     yield from walk(value, "")
 
 
