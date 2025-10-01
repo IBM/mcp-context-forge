@@ -25,6 +25,7 @@ class DenyListConfig(BaseModel):
 
 class DenyListPlugin(Plugin):
     """Example deny list plugin."""
+
     def __init__(self, config: PluginConfig):
         super().__init__(config)
         self._dconfig = DenyListConfig.model_validate(self._config.config)
@@ -55,7 +56,6 @@ class DenyListPlugin(Plugin):
                     return PromptPrehookResult(modified_payload=payload, violation=violation, continue_processing=False)
         return PromptPrehookResult(modified_payload=payload)
 
-
     async def shutdown(self) -> None:
         """Cleanup when plugin shuts down."""
-        logger.info(f"Deny list plugin shutting down")
+        logger.info("Deny list plugin shutting down")

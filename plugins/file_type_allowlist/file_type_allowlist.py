@@ -9,11 +9,11 @@ Allows only configured MIME types or file extensions for resource fetches.
 Performs checks in pre-fetch (by URI/ext) and post-fetch (by ResourceContent MIME).
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
-import mimetypes
-from typing import Any, List, Optional
+from typing import Any, List
 from urllib.parse import urlparse
 
 # Third-Party
@@ -26,10 +26,10 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
 )
 
 

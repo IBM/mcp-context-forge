@@ -11,14 +11,17 @@ Summarizes long text content using configurable LLM providers (OpenAI initially)
 Hooks: resource_post_fetch, tool_post_invoke
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import json
-import textwrap
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
+# Third-Party
 from pydantic import BaseModel, Field
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -53,9 +56,7 @@ class SummarizerConfig(BaseModel):
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     prompt_template: str = (
-        "You are a helpful assistant. Summarize the following content succinctly "
-        "in no more than {max_tokens} tokens. Focus on key points, remove redundancy, "
-        "and preserve critical details."
+        "You are a helpful assistant. Summarize the following content succinctly " "in no more than {max_tokens} tokens. Focus on key points, remove redundancy, " "and preserve critical details."
     )
     include_bullets: bool = True
     language: Optional[str] = None  # e.g., "en", "de"; None = autodetect by model
@@ -67,6 +68,7 @@ class SummarizerConfig(BaseModel):
 
 
 async def _summarize_openai(cfg: OpenAIConfig, system_prompt: str, user_text: str) -> str:
+    # Standard
     import os
 
     api_key = os.getenv(cfg.api_key_env)
@@ -110,6 +112,7 @@ async def _summarize_openai(cfg: OpenAIConfig, system_prompt: str, user_text: st
 
 
 async def _summarize_anthropic(cfg: AnthropicConfig, system_prompt: str, user_text: str) -> str:
+    # Standard
     import os
 
     api_key = os.getenv(cfg.api_key_env)

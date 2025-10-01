@@ -11,13 +11,14 @@ Authors: Shriti Priya
 
 # Standard
 import ast
-import re
 from enum import Enum
+import re
 from typing import Union
 
 
 class ResponseGuardrailPolicy(Enum):
     """Class to create custom messages responded by your guardrails"""
+
     DEFAULT_NORESPONSE_GUARDRAIL = "I'm sorry, I'm afraid I can't do that."
     DEFAULT_POLICY_DENIAL_RESPONSE = "Request Forbidden"
     DEFAULT_POLICY_ALLOW_RESPONSE = "Request Allowed"
@@ -25,6 +26,7 @@ class ResponseGuardrailPolicy(Enum):
 
 class GuardrailPolicy:
     """Class to apply and evaluate guardrail policies on results produced by scanners (example: LLMGuard)"""
+
     def evaluate(self, policy: str, scan_result: dict) -> Union[bool, str]:
         """Class to create custom messages responded by your guardrails
 
@@ -35,10 +37,10 @@ class GuardrailPolicy:
         Returns:
             A union of bool (if true or false). However, if the policy expression is invalid returns string with invalid expression
         """
-        policy_variables = {key: value['is_valid'] for key, value in scan_result.items()}
+        policy_variables = {key: value["is_valid"] for key, value in scan_result.items()}
         try:
             # Parse the policy expression into an abstract syntax tree
-            tree = ast.parse(policy, mode='eval')
+            tree = ast.parse(policy, mode="eval")
             # Check if the tree only contains allowed operations
             for node in ast.walk(tree):
                 if isinstance(node, (ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)):
@@ -55,7 +57,7 @@ class GuardrailPolicy:
                     raise ValueError("Invalid operation")
 
             # Evaluate the expression
-            return eval(compile(tree, '<string>', 'eval'), {}, policy_variables)
+            return eval(compile(tree, "<string>", "eval"), {}, policy_variables)
         except (ValueError, SyntaxError, Exception):
             return "Invalid expression"
 
@@ -63,12 +65,12 @@ class GuardrailPolicy:
 def word_wise_levenshtein_distance(sentence1, sentence2):
     """A helper function to calculate word wise levenshtein distance
 
-        Args:
-            sentence1: The first sentence
-            sentence2: The second sentence
+    Args:
+        sentence1: The first sentence
+        sentence2: The second sentence
 
-        Returns:
-            distance between the two sentences
+    Returns:
+        distance between the two sentences
     """
     words1 = sentence1.split()
     words2 = sentence2.split()
@@ -91,15 +93,15 @@ def word_wise_levenshtein_distance(sentence1, sentence2):
     return dp[n][m]
 
 
-def get_policy_filters(policy_expression) -> Union[list,None]:
+def get_policy_filters(policy_expression) -> Union[list, None]:
     """A helper function to get filters defined in the policy expression
 
-        Args:
-            policy_expression: The expression of policy
-            sentence2: The second sentence
+    Args:
+        policy_expression: The expression of policy
+        sentence2: The second sentence
 
-        Returns:
-            None if no policy expression is defined, else a comma separated list of filters defined in the policy
+    Returns:
+        None if no policy expression is defined, else a comma separated list of filters defined in the policy
     """
     if isinstance(policy_expression, str):
         pattern = r"\b(and|or|not)\b|[()]"

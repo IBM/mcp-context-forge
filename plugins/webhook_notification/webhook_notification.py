@@ -8,18 +8,18 @@ Sends HTTP webhook notifications on specific events, violations, or state change
 Supports multiple webhooks, event filtering, retry logic, and authentication.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
+from enum import Enum
 import hashlib
 import hmac
 import json
 import logging
-import time
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 # Third-Party
 import httpx
@@ -31,18 +31,18 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-    PromptPrehookPayload,
-    PromptPrehookResult,
     PromptPosthookPayload,
     PromptPosthookResult,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
+    PromptPrehookPayload,
+    PromptPrehookResult,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 class EventType(str, Enum):
     """Event types for webhook notifications."""
+
     VIOLATION = "violation"
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
     PII_DETECTED = "pii_detected"
@@ -63,6 +64,7 @@ class EventType(str, Enum):
 
 class AuthenticationType(str, Enum):
     """Authentication types for webhook requests."""
+
     NONE = "none"
     BEARER = "bearer"
     API_KEY = "api_key"
@@ -71,6 +73,7 @@ class AuthenticationType(str, Enum):
 
 class AuthenticationConfig(BaseModel):
     """Authentication configuration for webhooks."""
+
     type: AuthenticationType = AuthenticationType.NONE
     token: Optional[str] = None
     api_key: Optional[str] = None
@@ -82,6 +85,7 @@ class AuthenticationConfig(BaseModel):
 
 class WebhookConfig(BaseModel):
     """Configuration for a single webhook endpoint."""
+
     url: str = Field(description="Webhook URL")
     events: List[EventType] = Field(default_factory=lambda: [EventType.VIOLATION])
     authentication: AuthenticationConfig = Field(default_factory=AuthenticationConfig)
@@ -93,9 +97,11 @@ class WebhookConfig(BaseModel):
 
 class WebhookNotificationConfig(BaseModel):
     """Configuration for the webhook notification plugin."""
+
     webhooks: List[WebhookConfig] = Field(default_factory=list)
     payload_templates: Dict[str, str] = Field(default_factory=dict)
-    default_template: str = Field(default="""{
+    default_template: str = Field(
+        default="""{
     "event": "{{event}}",
     "plugin": "{{plugin_name}}",
     "timestamp": "{{timestamp}}",
@@ -105,7 +111,8 @@ class WebhookNotificationConfig(BaseModel):
     "server_id": "{{server_id}}",
     "violation": {{violation}},
     "metadata": {{metadata}}
-}""")
+}"""
+    )
     include_payload_data: bool = Field(default=False, description="Include request payload in notifications")
     max_payload_size: int = Field(default=1000, description="Max payload size to include in notifications")
 
@@ -135,11 +142,7 @@ class WebhookNotificationPlugin(Plugin):
     def _create_hmac_signature(self, payload: str, secret: str, algorithm: str) -> str:
         """Create HMAC signature for the payload."""
         hash_func = getattr(hashlib, algorithm, hashlib.sha256)
-        signature = hmac.new(
-            secret.encode('utf-8'),
-            payload.encode('utf-8'),
-            hash_func
-        ).hexdigest()
+        signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hash_func).hexdigest()
         return f"{algorithm}={signature}"
 
     async def _send_webhook(
@@ -149,7 +152,7 @@ class WebhookNotificationPlugin(Plugin):
         context: PluginContext,
         violation: Optional[PluginViolation] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        payload_data: Optional[Dict[str, Any]] = None
+        payload_data: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Send a webhook notification with retry logic."""
         if not webhook.enabled or event not in webhook.events:
@@ -179,16 +182,13 @@ class WebhookNotificationPlugin(Plugin):
 
         try:
             payload_json = await self._render_template(template, template_context)
-            payload_bytes = payload_json.encode('utf-8')
+            payload_bytes = payload_json.encode("utf-8")
         except Exception as e:
             logger.error(f"Failed to render webhook template for {event.value}: {e}")
             return
 
         # Prepare headers
-        headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "MCP-Gateway-Webhook-Plugin/1.0"
-        }
+        headers = {"Content-Type": "application/json", "User-Agent": "MCP-Gateway-Webhook-Plugin/1.0"}
 
         # Add authentication
         auth_config = webhook.authentication
@@ -203,12 +203,7 @@ class WebhookNotificationPlugin(Plugin):
         # Attempt delivery with retry logic
         for attempt in range(webhook.retry_attempts + 1):
             try:
-                response = await self._client.post(
-                    webhook.url,
-                    content=payload_bytes,
-                    headers=headers,
-                    timeout=webhook.timeout
-                )
+                response = await self._client.post(webhook.url, content=payload_bytes, headers=headers, timeout=webhook.timeout)
 
                 if 200 <= response.status_code < 300:
                     logger.debug(f"Webhook delivered successfully to {webhook.url} on attempt {attempt + 1}")
@@ -221,28 +216,20 @@ class WebhookNotificationPlugin(Plugin):
 
             # Don't sleep after the last attempt
             if attempt < webhook.retry_attempts:
-                delay_seconds = webhook.retry_delay / 1000.0 * (2 ** attempt)  # Exponential backoff
+                delay_seconds = webhook.retry_delay / 1000.0 * (2**attempt)  # Exponential backoff
                 await asyncio.sleep(delay_seconds)
 
         logger.error(f"All webhook delivery attempts failed for {webhook.url}")
 
     async def _notify_webhooks(
-        self,
-        event: EventType,
-        context: PluginContext,
-        violation: Optional[PluginViolation] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        payload_data: Optional[Dict[str, Any]] = None
+        self, event: EventType, context: PluginContext, violation: Optional[PluginViolation] = None, metadata: Optional[Dict[str, Any]] = None, payload_data: Optional[Dict[str, Any]] = None
     ) -> None:
         """Send notifications to all configured webhooks."""
         if not self._cfg.webhooks:
             return
 
         # Send webhooks concurrently
-        tasks = [
-            self._send_webhook(webhook, event, context, violation, metadata, payload_data)
-            for webhook in self._cfg.webhooks
-        ]
+        tasks = [self._send_webhook(webhook, event, context, violation, metadata, payload_data) for webhook in self._cfg.webhooks]
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -267,11 +254,7 @@ class WebhookNotificationPlugin(Plugin):
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
         """Hook for prompt post-fetch events."""
-        await self._notify_webhooks(
-            EventType.PROMPT_SUCCESS,
-            context,
-            metadata={"prompt_name": payload.name}
-        )
+        await self._notify_webhooks(EventType.PROMPT_SUCCESS, context, metadata={"prompt_name": payload.name})
         return PromptPosthookResult()
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -284,7 +267,7 @@ class WebhookNotificationPlugin(Plugin):
         event = EventType.TOOL_SUCCESS
         metadata = {"tool_name": payload.name}
 
-        if hasattr(payload.result, 'error') and payload.result.error:
+        if hasattr(payload.result, "error") and payload.result.error:
             event = EventType.TOOL_ERROR
             metadata["error"] = str(payload.result.error)
 
@@ -301,11 +284,7 @@ class WebhookNotificationPlugin(Plugin):
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
         """Hook for resource post-fetch events."""
-        await self._notify_webhooks(
-            EventType.RESOURCE_SUCCESS,
-            context,
-            metadata={"resource_uri": payload.uri}
-        )
+        await self._notify_webhooks(EventType.RESOURCE_SUCCESS, context, metadata={"resource_uri": payload.uri})
         return ResourcePostFetchResult()
 
     async def __aenter__(self):
@@ -314,5 +293,5 @@ class WebhookNotificationPlugin(Plugin):
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - cleanup HTTP client."""
-        if hasattr(self, '_client'):
+        if hasattr(self, "_client"):
             await self._client.aclose()

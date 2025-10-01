@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
 
-from pydantic import BaseModel
+# Standard
 from enum import Enum
+import json
+from urllib.parse import urlparse
 
+# Third-Party
+from pydantic import BaseModel
 
+# First-Party
+from mcpgateway.db import get_db
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -11,15 +17,9 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
-
 from mcpgateway.plugins.framework.models import HttpHeaderPayload
-from mcpgateway.services.logging_service import LoggingService
-
 from mcpgateway.services.gateway_service import GatewayService
-from mcpgateway.db import get_db
-from urllib.parse import urlparse
-
-import json
+from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -66,7 +66,7 @@ class Vault(Plugin):
         logger.debug(f"Processing tool pre-invoke for tool {payload}  with context {context}")
         logger.debug(f"Gateway metadata {context.global_context.metadata['gateway']}")
 
-        gateway_metadata = context.global_context.metadata['gateway']
+        gateway_metadata = context.global_context.metadata["gateway"]
 
         system_key: str | None = None
         if self._sconfig.system_handling == SystemHandling.TAG:
@@ -120,7 +120,6 @@ class Vault(Plugin):
                 headers["Authorization"] = f"Bearer {bearer_token}"
                 del headers[self._sconfig.vault_header_name]
                 modified = True
-
 
             payload.headers = HttpHeaderPayload(root=headers)
 

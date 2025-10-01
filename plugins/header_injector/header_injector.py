@@ -11,12 +11,16 @@ Injects custom HTTP headers into resource fetches by merging into payload.metada
 Hook: resource_pre_fetch
 """
 
+# Future
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+# Standard
+from typing import Dict, Optional
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,

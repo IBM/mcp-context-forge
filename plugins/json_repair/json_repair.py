@@ -9,12 +9,12 @@ Attempts to repair nearly-JSON string outputs into valid JSON strings.
 It is conservative: only applies transformations when confidently fixable.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
 import json
 import re
-from typing import Any
 
 # First-Party
 from mcpgateway.plugins.framework import (

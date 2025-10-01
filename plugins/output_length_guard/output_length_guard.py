@@ -23,8 +23,10 @@ Supported result shapes
 Other result types are ignored.
 """
 
-# Standard
+# Future
 from __future__ import annotations
+
+# Standard
 from typing import Any, List, Optional
 
 # Third-Party
@@ -35,9 +37,9 @@ from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
     PluginContext,
+    PluginViolation,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
-    PluginViolation,
 )
 
 
@@ -96,12 +98,14 @@ class OutputLengthGuardPlugin(Plugin):
                 return text, meta, None
 
             # Out of bounds
-            meta.update({
-                "within_bounds": False,
-                "min_chars": cfg.min_chars,
-                "max_chars": cfg.max_chars,
-                "strategy": cfg.strategy,
-            })
+            meta.update(
+                {
+                    "within_bounds": False,
+                    "min_chars": cfg.min_chars,
+                    "max_chars": cfg.max_chars,
+                    "strategy": cfg.strategy,
+                }
+            )
 
             if cfg.is_blocking():
                 violation = PluginViolation(

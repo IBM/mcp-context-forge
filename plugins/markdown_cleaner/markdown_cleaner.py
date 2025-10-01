@@ -9,6 +9,7 @@ Tidies Markdown by fixing headings, list markers, code fences, and collapsing
 excess blank lines. Works on prompt results and resource content.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard

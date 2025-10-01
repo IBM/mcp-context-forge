@@ -2,23 +2,10 @@
 """Tests for registered plugins."""
 
 # Standard
-import asyncio
 
 # Third-Party
-import pytest
 
 # First-Party
-from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework import (
-    GlobalContext,
-    PluginManager,
-    PromptPosthookPayload,
-    PromptPrehookPayload,
-    PromptResult,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-)
-
 
 # @pytest.fixture(scope="module", autouse=True)
 # def plugin_manager():

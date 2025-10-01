@@ -9,6 +9,7 @@ Converts HTML resource content to Markdown, optionally preserving code blocks
 and tables. Designed to run as a resource post-fetch transformer.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
@@ -44,6 +45,7 @@ def _strip_tags(text: str) -> str:
         text,
         flags=re.IGNORECASE,
     )
+
     # Fallback: any <pre>...</pre> to fenced code (strip inner tags)
     def _pre_fallback(m):
         inner = m.group(1)

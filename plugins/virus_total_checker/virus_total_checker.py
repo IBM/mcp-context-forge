@@ -11,19 +11,19 @@ analysis and waits briefly for results. Caches lookups in-memory to reduce
 latency.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
 import asyncio
 import base64
-import os
-import time
-from typing import Any, Dict, Optional
 import hashlib
 import ipaddress
-from urllib.parse import unquote
+import os
 import re
-from urllib.parse import urlparse
+import time
+from typing import Any, Dict, Optional
+from urllib.parse import unquote, urlparse
 
 # Third-Party
 import httpx
@@ -37,12 +37,12 @@ from mcpgateway.plugins.framework import (
     PluginViolation,
     PromptPosthookPayload,
     PromptPosthookResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
 )
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 
@@ -197,16 +197,8 @@ def _apply_overrides(url: str, host: str | None, cfg: VirusTotalConfig) -> str |
     Precedence order is controlled by cfg.override_precedence.
     """
     host_l = (host or "").lower()
-    allow = (
-        _url_matches(url, cfg.allow_url_patterns)
-        or (host_l and _domain_matches(host_l, cfg.allow_domains))
-        or (host_l and _ip_in_cidrs(host_l, cfg.allow_ip_cidrs))
-    )
-    deny = (
-        _url_matches(url, cfg.deny_url_patterns)
-        or (host_l and _domain_matches(host_l, cfg.deny_domains))
-        or (host_l and _ip_in_cidrs(host_l, cfg.deny_ip_cidrs))
-    )
+    allow = _url_matches(url, cfg.allow_url_patterns) or (host_l and _domain_matches(host_l, cfg.allow_domains)) or (host_l and _ip_in_cidrs(host_l, cfg.allow_ip_cidrs))
+    deny = _url_matches(url, cfg.deny_url_patterns) or (host_l and _domain_matches(host_l, cfg.deny_domains)) or (host_l and _ip_in_cidrs(host_l, cfg.deny_ip_cidrs))
     if cfg.override_precedence == "allow_over_deny":
         if allow:
             return "allow"
@@ -503,6 +495,7 @@ class VirusTotalURLCheckerPlugin(Plugin):
         # Local allow/deny on any URL encountered
         urls: list[str] = []
         pattern = re.compile(cfg.url_pattern)
+
         def add_from(obj: Any):
             if isinstance(obj, str):
                 urls.extend(pattern.findall(obj))

@@ -11,12 +11,16 @@ Adds a language-appropriate license header to code outputs.
 Hooks: tool_post_invoke, resource_post_fetch
 """
 
+# Future
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+# Standard
+from typing import Any
 
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -26,7 +30,6 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
-
 
 LANG_COMMENT = {
     "python": ("# ", None),

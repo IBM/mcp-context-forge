@@ -16,15 +16,19 @@ Sanitizes fetched HTML to neutralize common XSS vectors:
 Hook: resource_post_fetch
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import html
-import re
 from html.parser import HTMLParser
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Tuple
 
+# Third-Party
 from pydantic import BaseModel, Field
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,
@@ -32,7 +36,6 @@ from mcpgateway.plugins.framework import (
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
 )
-
 
 DEFAULT_ALLOWED_TAGS = [
     "a",
@@ -80,7 +83,7 @@ ON_ATTR = re.compile(r"^on[a-z]+", re.IGNORECASE)
 BAD_SCHEMES = ("javascript:", "vbscript:")
 
 DATA_URI_RE = re.compile(r"^data:([a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+)")
-BIDI_ZERO_WIDTH = re.compile("[\u200B\u200C\u200D\u200E\u200F\u202A-\u202E\u2066-\u2069]")
+BIDI_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
 class SafeHTMLConfig(BaseModel):
@@ -116,7 +119,7 @@ class _Sanitizer(HTMLParser):
         allowed_for_tag = set(self.cfg.allowed_attrs.get(tag_l, []) + self.cfg.allowed_attrs.get("*", []))
         safe_attrs: List[Tuple[str, str]] = []
         rel_values: List[str] = []
-        for (name, value) in attrs:
+        for name, value in attrs:
             if not name:
                 continue
             n = name.lower()
@@ -158,9 +161,7 @@ class _Sanitizer(HTMLParser):
             elif rel_values:
                 safe_attrs.append(("rel", " ".join(sorted(set(rel_values)))))
         # emit
-        attr_str = "".join(
-            f" {html.escape(k)}=\"{html.escape(v, quote=True)}\"" for k, v in safe_attrs
-        )
+        attr_str = "".join(f' {html.escape(k)}="{html.escape(v, quote=True)}"' for k, v in safe_attrs)
         self.out.append(f"<{tag_l}{attr_str}>")
 
     def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:

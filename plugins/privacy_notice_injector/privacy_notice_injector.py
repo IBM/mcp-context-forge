@@ -12,12 +12,13 @@ user message (prepend/append) or by inserting a separate message when none exist
 Hook: prompt_post_fetch
 """
 
+# Future
 from __future__ import annotations
 
-from typing import Optional
-
+# Third-Party
 from pydantic import BaseModel
 
+# First-Party
 from mcpgateway.models import Message, Role, TextContent
 from mcpgateway.plugins.framework import (
     Plugin,
@@ -29,9 +30,7 @@ from mcpgateway.plugins.framework import (
 
 
 class PrivacyNoticeConfig(BaseModel):
-    notice_text: str = (
-        "Privacy notice: Do not include PII, secrets, or confidential information in prompts or outputs."
-    )
+    notice_text: str = "Privacy notice: Do not include PII, secrets, or confidential information in prompts or outputs."
     placement: str = "append"  # prepend | append | separate_message
     marker: str = "[PRIVACY]"  # used to dedupe
 

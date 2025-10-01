@@ -9,7 +9,6 @@ Authors: Shriti Priya
 
 # Standard
 from typing import Optional
-from datetime import timedelta
 
 # Third-Party
 from pydantic import BaseModel
@@ -28,6 +27,7 @@ class ModeConfig(BaseModel):
         >>> config.filters
         {'PromptInjection' : {'threshold' : 0.5}
     """
+
     sanitizers: Optional[dict] = None
     filters: Optional[dict] = None
 
@@ -46,6 +46,7 @@ class LLMGuardConfig(BaseModel):
         >>> config.input.filters
         {'PromptInjection' : {'threshold' : 0.5}
     """
+
     set_guardrails_context: bool = True
     cache_ttl: int = 0
     input: Optional[ModeConfig] = None
