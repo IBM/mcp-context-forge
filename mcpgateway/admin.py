@@ -38,7 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -533,14 +533,17 @@ async def get_configuration_settings(
     Returns:
         Dict with configuration groups and their settings
     """
-    # First-Party
-    from mcpgateway.config import settings
 
     def mask_sensitive(value: Any, key: str) -> Any:
-        """Mask sensitive configuration values."""
-        # Third-Party
-        from pydantic import SecretStr
+        """Mask sensitive configuration values.
 
+        Args:
+            value: Configuration value to potentially mask
+            key: Configuration key name to check for sensitive patterns
+
+        Returns:
+            Masked value if sensitive, original value otherwise
+        """
         sensitive_keys = {"password", "secret", "key", "token", "credentials", "client_secret", "private_key", "auth_encryption_secret"}
         if any(s in key.lower() for s in sensitive_keys):
             # Handle SecretStr objects
