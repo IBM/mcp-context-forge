@@ -44,7 +44,7 @@
 
   <!-- Server Statistics Cards -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-    <!-- Categories Distribution -->
+    <!-- Categories -->
     <div class="bg-white rounded-lg shadow p-6 dark:bg-gray-800">
       <h3 class="text-lg font-medium mb-4 dark:text-gray-200 flex items-center">
         <svg
@@ -62,35 +62,28 @@
         </svg>
         Categories
       </h3>
-      <div class="space-y-2">
-        <div
-          class="flex justify-between items-center p-2 bg-blue-50 rounded dark:bg-blue-900/20 cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors border border-blue-200 dark:border-blue-800"
+      <div class="flex flex-wrap gap-2">
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
           onclick="filterByCategory('')"
         >
-          <span
-            class="text-sm font-medium text-blue-700 dark:text-blue-300"
-            >All Categories</span
+          All Categories
+          <span class="ml-1 text-xs text-blue-600 dark:text-blue-300"
+            >({{ stats.total_servers }})</span
           >
-          <span
-            class="bg-blue-200 text-blue-900 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-800 dark:text-blue-100"
-          >
-            {{ stats.total_servers }}
-          </span>
-        </div>
-        {% for category in stats.categories %}
-        <div
-          class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+        </span>
+        {% for category, count in stats.servers_by_category.items() %}
+        {% if count > 0 %}
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           onclick="filterByCategory('{{ category }}')"
         >
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
-            >{{ category }}</span
+          {{ category }}
+          <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
+            >({{ count }})</span
           >
-          <span
-            class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-900 dark:text-blue-200"
-          >
-            {{ stats.servers_by_category.get(category, 0) }}
-          </span>
-        </div>
+        </span>
+        {% endif %}
         {% endfor %}
       </div>
     </div>
@@ -128,7 +121,8 @@
             {{ stats.total_servers }}
           </span>
         </div>
-        {% for auth_type in stats.auth_types %}
+        {% for auth_type, count in stats.servers_by_auth_type.items() %}
+        {% if count > 0 %}
         <div
           class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
           onclick="filterByAuthType('{{ auth_type }}')"
@@ -139,9 +133,10 @@
           <span
             class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-900 dark:text-blue-200"
           >
-            {{ stats.servers_by_auth_type.get(auth_type, 0) }}
+            {{ count }}
           </span>
         </div>
+        {% endif %}
         {% endfor %}
       </div>
     </div>
@@ -164,35 +159,28 @@
         </svg>
         Providers
       </h3>
-      <div class="space-y-2 max-h-64 overflow-y-auto">
-        <div
-          class="flex justify-between items-center p-2 bg-blue-50 rounded dark:bg-blue-900/20 cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors border border-blue-200 dark:border-blue-800"
+      <div class="flex flex-wrap gap-2 max-h-64 overflow-y-auto">
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
           onclick="filterByProvider('')"
         >
-          <span
-            class="text-sm font-medium text-blue-700 dark:text-blue-300"
-            >All Providers</span
+          All Providers
+          <span class="ml-1 text-xs text-blue-600 dark:text-blue-300"
+            >({{ stats.total_servers }})</span
           >
-          <span
-            class="bg-blue-200 text-blue-900 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-800 dark:text-blue-100"
-          >
-            {{ stats.total_servers }}
-          </span>
-        </div>
-        {% for provider in stats.providers %}
-        <div
-          class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+        </span>
+        {% for provider, count in stats.servers_by_provider.items() %}
+        {% if count > 0 %}
+        <span
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           onclick="filterByProvider('{{ provider }}')"
         >
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
-            >{{ provider }}</span
+          {{ provider }}
+          <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
+            >({{ count }})</span
           >
-          <span
-            class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-900 dark:text-blue-200"
-          >
-            {{ stats.servers_by_provider.get(provider, 0) }}
-          </span>
-        </div>
+        </span>
+        {% endif %}
         {% endfor %}
       </div>
     </div>
@@ -217,8 +205,10 @@
           class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         >
           <option value="">All Categories</option>
-          {% for category in stats.categories %}
+          {% for category, count in stats.servers_by_category.items() %}
+          {% if count > 0 %}
           <option value="{{ category }}">{{ category }}</option>
+          {% endif %}
           {% endfor %}
         </select>
         <select
@@ -227,8 +217,10 @@
           class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         >
           <option value="">All Auth Types</option>
-          {% for auth_type in stats.auth_types %}
+          {% for auth_type, count in stats.servers_by_auth_type.items() %}
+          {% if count > 0 %}
           <option value="{{ auth_type }}">{{ auth_type }}</option>
+          {% endif %}
           {% endfor %}
         </select>
         <select
@@ -237,8 +229,10 @@
           class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
         >
           <option value="">All Providers</option>
-          {% for provider in stats.providers %}
+          {% for provider, count in stats.servers_by_provider.items() %}
+          {% if count > 0 %}
           <option value="{{ provider }}">{{ provider }}</option>
+          {% endif %}
           {% endfor %}
         </select>
       </div>
@@ -468,7 +462,7 @@ function filterServers() {
   const searchTerm = document.getElementById('mcp-search').value.toLowerCase();
   const categoryFilter = document.getElementById('category-filter').value;
   const authFilter = document.getElementById('auth-filter').value;
-  const providerFilter = document.getElementById('provider-filter').value;
+  const providerFilter = document.getElementById('provider-filter').value.toLowerCase();
 
   const cards = document.querySelectorAll('.server-card');
   let visibleCount = 0;
@@ -478,7 +472,7 @@ function filterServers() {
     const description = card.dataset.description || '';
     const provider = card.dataset.provider || '';
     const category = card.dataset.category || '';
-    const authType = card.dataset.authType || '';
+    const authType = card.getAttribute('data-auth-type') || '';
 
     const matchesSearch = !searchTerm || name.includes(searchTerm) ||
                          description.includes(searchTerm) ||
@@ -499,15 +493,21 @@ function filterServers() {
 // Quick filter functions
 function filterByCategory(category) {
   document.getElementById('category-filter').value = category;
+  document.getElementById('auth-filter').value = '';
+  document.getElementById('provider-filter').value = '';
   filterServers();
 }
 
 function filterByAuthType(authType) {
+  document.getElementById('category-filter').value = '';
   document.getElementById('auth-filter').value = authType;
+  document.getElementById('provider-filter').value = '';
   filterServers();
 }
 
 function filterByProvider(provider) {
+  document.getElementById('category-filter').value = '';
+  document.getElementById('auth-filter').value = '';
   document.getElementById('provider-filter').value = provider;
   filterServers();
 }

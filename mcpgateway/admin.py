@@ -9528,11 +9528,13 @@ async def catalog_partial(
 
     root_path = request.scope.get("root_path", "")
 
-    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=True, limit=50, offset=0)
+    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=True, limit=100, offset=0)
 
     response = await catalog_service.get_catalog_servers(catalog_request, db)
 
-    # Calculate statistics for the catalog
+    # Calculate statistics for the catalog - use len(response.servers) instead of response.total
+    # response.total includes all servers, but we only show available ones
+    total_displayed = len(response.servers)
     registered_count = sum(1 for s in response.servers if s.is_registered)
     available_count = sum(1 for s in response.servers if s.is_available)
 
@@ -9547,7 +9549,7 @@ async def catalog_partial(
         servers_by_provider[server.provider] = servers_by_provider.get(server.provider, 0) + 1
 
     stats = {
-        "total_servers": response.total,
+        "total_servers": total_displayed,
         "registered_servers": registered_count,
         "available_servers": available_count,
         "categories": response.categories,
