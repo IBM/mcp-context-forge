@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Add registered_oauth_clients table for DCR
 
 Revision ID: 2f67b12600b4
@@ -39,7 +40,7 @@ def upgrade() -> None:
         sa.Column('expires_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('is_active', sa.Boolean, server_default='1'),
     )
-    
+
     # Create unique index on (gateway_id, issuer)
     op.create_index('idx_gateway_issuer', 'registered_oauth_clients', ['gateway_id', 'issuer'], unique=True)
 

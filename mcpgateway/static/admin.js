@@ -7686,7 +7686,7 @@ async function handleGatewayFormSubmit(e) {
         // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
         // The backend assembles individual form fields into oauth_config with proper field names
         // and supports DCR (Dynamic Client Registration) when client_id/client_secret are empty
-        // 
+        //
         // Leaving this commented for reference:
         // const authType = formData.get("auth_type");
         // if (authType === "oauth") {

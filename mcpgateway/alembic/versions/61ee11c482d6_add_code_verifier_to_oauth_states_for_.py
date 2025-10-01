@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Add code_verifier to oauth_states for PKCE support
 
 Revision ID: 61ee11c482d6

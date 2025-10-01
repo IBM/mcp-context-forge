@@ -2475,7 +2475,7 @@ class Gateway(Base):
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
-    
+
     # Relationship with registered OAuth clients (DCR)
     registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
 

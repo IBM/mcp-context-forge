@@ -38,7 +38,7 @@ function test_warning() {
 echo "Test 1: Checking for PKCE support..."
 if python3 -c "from mcpgateway.services.oauth_manager import OAuthManager; m = OAuthManager(); assert hasattr(m, '_generate_pkce_params')" 2>/dev/null; then
     test_passed "PKCE methods found"
-    
+
     # Test PKCE generation
     echo "  Testing PKCE generation..."
     if python3 -c "from mcpgateway.services.oauth_manager import OAuthManager; m = OAuthManager(); pkce = m._generate_pkce_params(); assert 'code_verifier' in pkce and 'code_challenge' in pkce and pkce['code_challenge_method'] == 'S256' and 43 <= len(pkce['code_verifier']) <= 128" 2>/dev/null; then
@@ -55,7 +55,7 @@ echo ""
 echo "Test 2: Checking for DCR service..."
 if python3 -c "from mcpgateway.services.dcr_service import DcrService" 2>/dev/null; then
     test_passed "DcrService exists"
-    
+
     # Check for required methods
     echo "  Checking DcrService methods..."
     python3 -c "from mcpgateway.services.dcr_service import DcrService; import inspect; dcr = DcrService(); methods = ['discover_as_metadata', 'register_client', 'get_or_register_client', 'update_client_registration', 'delete_client_registration']; [print(f'  ✓ {m}') if hasattr(dcr, m) else print(f'  ✗ Missing: {m}') for m in methods]" 2>/dev/null
@@ -69,11 +69,11 @@ echo "Test 3: Checking database for DCR tables..."
 if [ -f "mcp.db" ]; then
     if sqlite3 mcp.db ".tables" | grep -q "registered_oauth_clients"; then
         test_passed "registered_oauth_clients table exists"
-        
+
         # Check table schema
         echo "  Checking table schema..."
         REQUIRED_COLUMNS=("id" "gateway_id" "issuer" "client_id" "client_secret_encrypted" "redirect_uris" "grant_types" "scope" "token_endpoint_auth_method" "registration_client_uri" "registration_access_token_encrypted" "created_at" "expires_at" "is_active")
-        
+
         for col in "${REQUIRED_COLUMNS[@]}"; do
             if sqlite3 mcp.db "PRAGMA table_info(registered_oauth_clients)" | grep -q "$col"; then
                 echo "    ✓ Column: $col"
@@ -81,7 +81,7 @@ if [ -f "mcp.db" ]; then
                 echo "    ✗ Missing column: $col"
             fi
         done
-        
+
         # Check for unique constraint
         if sqlite3 mcp.db ".schema registered_oauth_clients" | grep -q "UNIQUE.*gateway_id.*issuer"; then
             echo "    ✓ Unique constraint on (gateway_id, issuer)"
@@ -91,7 +91,7 @@ if [ -f "mcp.db" ]; then
     else
         test_failed "registered_oauth_clients table NOT found"
     fi
-    
+
     # Check for code_verifier column in oauth_states
     if sqlite3 mcp.db "PRAGMA table_info(oauth_states)" | grep -q "code_verifier"; then
         test_passed "code_verifier column exists in oauth_states"
@@ -129,7 +129,7 @@ echo ""
 echo "Test 6: Checking admin DCR router..."
 if [ -f "mcpgateway/routers/admin_dcr_router.py" ]; then
     test_passed "admin_dcr_router.py exists"
-    
+
     echo "  Checking DCR admin endpoints..."
     for endpoint in list_registered_clients get_registered_client delete_registered_client refresh_registered_client; do
         if grep -q "$endpoint" mcpgateway/routers/admin_dcr_router.py 2>/dev/null; then
@@ -148,14 +148,14 @@ echo "Test 7: Checking Alembic migration..."
 MIGRATION_FILE=$(find mcpgateway/alembic/versions -name "*dcr*.py" 2>/dev/null | head -1)
 if [ -n "$MIGRATION_FILE" ]; then
     test_passed "DCR migration file found: $(basename $MIGRATION_FILE)"
-    
+
     echo "  Checking migration content..."
     if grep -q "registered_oauth_clients" "$MIGRATION_FILE"; then
         echo "    ✓ Creates registered_oauth_clients table"
     else
         echo "    ✗ Missing registered_oauth_clients table creation"
     fi
-    
+
     if grep -q "code_verifier" "$MIGRATION_FILE"; then
         echo "    ✓ Adds code_verifier to oauth_states"
     else
@@ -195,7 +195,7 @@ if [ -d "tests/unit/services" ]; then
     else
         test_failed "DCR service unit tests fail or don't exist"
     fi
-    
+
     if pytest tests/unit/services/test_oauth_manager_pkce.py -v --tb=short 2>/dev/null; then
         test_passed "OAuth manager PKCE tests pass"
     else
@@ -252,4 +252,3 @@ else
     echo "  4. Check logs: tail -f logs/gateway.log"
     exit 1
 fi
-

@@ -62,14 +62,14 @@ class DcrService:
             cached_entry = _metadata_cache[issuer]
             cached_at = cached_entry["cached_at"]
             cache_age = (datetime.now(timezone.utc) - cached_at).total_seconds()
-            
+
             if cache_age < self.settings.dcr_metadata_cache_ttl:
                 logger.debug(f"Using cached AS metadata for {issuer}")
                 return cached_entry["metadata"]
 
         # Try RFC 8414 path first
         rfc8414_url = f"{issuer}/.well-known/oauth-authorization-server"
-        
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -78,17 +78,17 @@ class DcrService:
                 ) as response:
                     if response.status == 200:
                         metadata = await response.json()
-                        
+
                         # Validate issuer matches
                         if metadata.get("issuer") != issuer:
                             raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
-                        
+
                         # Cache the metadata
                         _metadata_cache[issuer] = {
                             "metadata": metadata,
                             "cached_at": datetime.now(timezone.utc)
                         }
-                        
+
                         logger.info(f"Discovered AS metadata for {issuer} via RFC 8414")
                         return metadata
         except aiohttp.ClientError as e:
@@ -96,7 +96,7 @@ class DcrService:
 
         # Try OIDC discovery fallback
         oidc_url = f"{issuer}/.well-known/openid-configuration"
-        
+
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -105,17 +105,17 @@ class DcrService:
                 ) as response:
                     if response.status == 200:
                         metadata = await response.json()
-                        
+
                         # Validate issuer matches
                         if metadata.get("issuer") != issuer:
                             raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
-                        
+
                         # Cache the metadata
                         _metadata_cache[issuer] = {
                             "metadata": metadata,
                             "cached_at": datetime.now(timezone.utc)
                         }
-                        
+
                         logger.info(f"Discovered AS metadata for {issuer} via OIDC discovery")
                         return metadata
                     else:
@@ -155,14 +155,14 @@ class DcrService:
 
         # Discover AS metadata
         metadata = await self.discover_as_metadata(issuer)
-        
+
         registration_endpoint = metadata.get("registration_endpoint")
         if not registration_endpoint:
             raise DcrError(f"AS {issuer} does not support Dynamic Client Registration (no registration_endpoint)")
 
         # Build registration request (RFC 7591)
         client_name = self.settings.dcr_client_name_template.replace("{gateway_name}", gateway_name)
-        
+
         registration_request = {
             "client_name": client_name,
             "redirect_uris": [redirect_uri],
@@ -193,10 +193,10 @@ class DcrService:
 
         # Encrypt secrets
         encryption = get_oauth_encryption(self.settings.auth_encryption_secret)
-        
+
         client_secret = registration_response.get("client_secret")
         client_secret_encrypted = encryption.encrypt_secret(client_secret) if client_secret else None
-        
+
         registration_access_token = registration_response.get("registration_access_token")
         registration_access_token_encrypted = encryption.encrypt_secret(registration_access_token) if registration_access_token else None
 
@@ -319,14 +319,14 @@ class DcrService:
                 ) as response:
                     if response.status == 200:
                         updated_response = await response.json()
-                        
+
                         # Update encrypted secret if changed
                         if "client_secret" in updated_response:
                             client_record.client_secret_encrypted = encryption.encrypt_secret(updated_response["client_secret"])
-                        
+
                         db.commit()
                         db.refresh(client_record)
-                        
+
                         logger.info(f"Successfully updated client registration for {client_record.client_id}")
                         return client_record
                     else:
@@ -387,5 +387,3 @@ class DcrService:
 class DcrError(Exception):
     """DCR-related errors."""
     pass
-
-
