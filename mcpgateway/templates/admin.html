@@ -472,6 +472,15 @@
             >
               📦 MCP Registry
             </a>
+            <a
+              href="#configuration"
+              id="tab-configuration"
+              data-testid="configuration-tab"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('configuration')"
+            >
+              ⚙️ Configuration
+            </a>
             {% if email_auth_enabled %}
             <a
               href="#teams"
@@ -1173,6 +1182,39 @@
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Configuration Panel -->
+      <div id="configuration-panel" class="tab-panel hidden">
+        <div class="container mx-auto px-4 py-8">
+          <div class="mb-6">
+            <h2 class="text-2xl font-bold dark:text-gray-200 mb-2">
+              ⚙️ Configuration Settings
+            </h2>
+            <p class="text-gray-600 dark:text-gray-400">
+              View application configuration grouped by category. Sensitive values are masked for security.
+            </p>
+          </div>
+
+          <!-- Security Status Card -->
+          <div id="security-status-card" class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
+            <h3 class="text-lg font-semibold mb-4 dark:text-gray-200">🔒 Security Status</h3>
+            <div id="security-status-content" class="space-y-2">
+              <div class="text-center py-4">
+                <div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-gray-100"></div>
+                <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Loading security status...</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Configuration Groups -->
+          <div id="config-groups-container" class="space-y-6">
+            <div class="text-center py-8">
+              <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"></div>
+              <p class="mt-2 text-gray-600 dark:text-gray-400">Loading configuration...</p>
             </div>
           </div>
         </div>
@@ -11323,6 +11365,155 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
+
+      // Configuration viewer functions
+      async function loadConfiguration() {
+        try {
+          const response = await fetch(window.ROOT_PATH + '/admin/config/settings', {
+            headers: {
+              'Authorization': 'Bearer ' + getCookie('jwt_token')
+            }
+          });
+
+          if (!response.ok) {
+            throw new Error('Failed to load configuration');
+          }
+
+          const data = await response.json();
+          renderSecurityStatus(data.security_status);
+          renderConfigurationGroups(data.groups);
+        } catch (error) {
+          console.error('Error loading configuration:', error);
+          document.getElementById('config-groups-container').innerHTML =
+            '<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">' +
+            '<p class="text-red-800 dark:text-red-200">Failed to load configuration. Please try again.</p>' +
+            '</div>';
+        }
+      }
+
+      function renderSecurityStatus(status) {
+        const container = document.getElementById('security-status-content');
+        const score = status.security_score || 0;
+        const scoreColor = score >= 80 ? 'green' : score >= 60 ? 'yellow' : 'red';
+
+        let html = `
+          <div class="mb-4">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-medium dark:text-gray-300">Security Score</span>
+              <span class="text-2xl font-bold text-${scoreColor}-600 dark:text-${scoreColor}-400">${score}/100</span>
+            </div>
+            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+              <div class="bg-${scoreColor}-600 h-2.5 rounded-full" style="width: ${score}%"></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mb-4 text-sm">
+            <div class="flex items-center">
+              <span class="${status.auth_enabled ? 'text-green-600' : 'text-red-600'}">
+                ${status.auth_enabled ? '✓' : '✗'}
+              </span>
+              <span class="ml-2 dark:text-gray-300">Auth Enabled</span>
+            </div>
+            <div class="flex items-center">
+              <span class="${status.ssl_verification ? 'text-green-600' : 'text-red-600'}">
+                ${status.ssl_verification ? '✓' : '✗'}
+              </span>
+              <span class="ml-2 dark:text-gray-300">SSL Verification</span>
+            </div>
+            <div class="flex items-center">
+              <span class="${status.secure_secrets ? 'text-green-600' : 'text-red-600'}">
+                ${status.secure_secrets ? '✓' : '✗'}
+              </span>
+              <span class="ml-2 dark:text-gray-300">Secure Secrets</span>
+            </div>
+            <div class="flex items-center">
+              <span class="${status.cors_restricted ? 'text-green-600' : 'text-red-600'}">
+                ${status.cors_restricted ? '✓' : '✗'}
+              </span>
+              <span class="ml-2 dark:text-gray-300">CORS Restricted</span>
+            </div>
+          </div>`;
+
+        if (status.warnings && status.warnings.length > 0) {
+          html += '<div class="mt-4"><h4 class="font-semibold mb-2 dark:text-gray-200">⚠️ Warnings:</h4><ul class="space-y-1 text-sm">';
+          status.warnings.forEach(warning => {
+            html += `<li class="text-yellow-700 dark:text-yellow-400">${escapeHtml(warning)}</li>`;
+          });
+          html += '</ul></div>';
+        }
+
+        container.innerHTML = html;
+      }
+
+      function renderConfigurationGroups(groups) {
+        const container = document.getElementById('config-groups-container');
+        let html = '';
+
+        for (const [groupName, settings] of Object.entries(groups)) {
+          html += `
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
+              <div class="px-6 py-4 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+                <h3 class="text-lg font-semibold dark:text-gray-200">${escapeHtml(groupName)}</h3>
+              </div>
+              <div class="p-6">
+                <dl class="space-y-3">`;
+
+          for (const [key, value] of Object.entries(settings)) {
+            const displayValue = formatConfigValue(value);
+            html += `
+              <div class="flex justify-between py-2 border-b border-gray-100 dark:border-gray-700">
+                <dt class="font-medium text-gray-700 dark:text-gray-300">${escapeHtml(key)}</dt>
+                <dd class="text-gray-900 dark:text-gray-100 text-right font-mono text-sm">${displayValue}</dd>
+              </div>`;
+          }
+
+          html += `
+                </dl>
+              </div>
+            </div>`;
+        }
+
+        container.innerHTML = html;
+      }
+
+      function formatConfigValue(value) {
+        if (value === null || value === undefined) {
+          return '<span class="text-gray-400">null</span>';
+        }
+        if (typeof value === 'boolean') {
+          return value ?
+            '<span class="text-green-600 dark:text-green-400">✓ true</span>' :
+            '<span class="text-red-600 dark:text-red-400">✗ false</span>';
+        }
+        if (Array.isArray(value)) {
+          if (value.length === 0) return '<span class="text-gray-400">[]</span>';
+          return '<span class="text-blue-600 dark:text-blue-400">[' + value.length + ' items]</span>';
+        }
+        if (typeof value === 'object') {
+          return '<span class="text-purple-600 dark:text-purple-400">{object}</span>';
+        }
+        return escapeHtml(String(value));
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      // Initialize configuration tab when selected
+      document.addEventListener('DOMContentLoaded', function() {
+        // Listen for hash changes to load configuration when tab is activated
+        window.addEventListener('hashchange', function() {
+          if (window.location.hash === '#configuration') {
+            loadConfiguration();
+          }
+        });
+
+        // Load configuration if already on the tab
+        if (window.location.hash === '#configuration') {
+          loadConfiguration();
+        }
+      });
     </script>
   </body>
 </html>

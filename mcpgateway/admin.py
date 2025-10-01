@@ -38,7 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -515,6 +515,157 @@ async def update_global_passthrough_headers(
         if isinstance(e, PassthroughHeadersError):
             raise HTTPException(status_code=500, detail=str(e))
         raise HTTPException(status_code=500, detail="Unknown error occurred")
+
+
+@admin_router.get("/config/settings")
+async def get_configuration_settings(
+    _db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get application configuration settings grouped by category.
+
+    Returns configuration settings with sensitive values masked.
+
+    Args:
+        _db: Database session
+        _user: Authenticated user
+
+    Returns:
+        Dict with configuration groups and their settings
+    """
+
+    def mask_sensitive(value: Any, key: str) -> Any:
+        """Mask sensitive configuration values.
+
+        Args:
+            value: Configuration value to potentially mask
+            key: Configuration key name to check for sensitive patterns
+
+        Returns:
+            Masked value if sensitive, original value otherwise
+        """
+        sensitive_keys = {"password", "secret", "key", "token", "credentials", "client_secret", "private_key", "auth_encryption_secret"}
+        if any(s in key.lower() for s in sensitive_keys):
+            # Handle SecretStr objects
+            if isinstance(value, SecretStr):
+                return settings.masked_auth_value
+            if value and str(value) not in ["", "None", "null"]:
+                return settings.masked_auth_value
+        # Handle SecretStr even for non-sensitive keys
+        if isinstance(value, SecretStr):
+            return value.get_secret_value()
+        return value
+
+    # Group settings by category
+    config_groups = {
+        "Basic Settings": {
+            "app_name": settings.app_name,
+            "host": settings.host,
+            "port": settings.port,
+            "environment": settings.environment,
+            "app_domain": str(settings.app_domain),
+            "protocol_version": settings.protocol_version,
+        },
+        "Authentication & Security": {
+            "auth_required": settings.auth_required,
+            "basic_auth_user": settings.basic_auth_user,
+            "basic_auth_password": mask_sensitive(settings.basic_auth_password, "password"),
+            "jwt_algorithm": settings.jwt_algorithm,
+            "jwt_secret_key": mask_sensitive(settings.jwt_secret_key, "secret_key"),
+            "jwt_audience": settings.jwt_audience,
+            "jwt_issuer": settings.jwt_issuer,
+            "token_expiry": settings.token_expiry,
+            "require_token_expiration": settings.require_token_expiration,
+            "mcp_client_auth_enabled": settings.mcp_client_auth_enabled,
+            "trust_proxy_auth": settings.trust_proxy_auth,
+            "skip_ssl_verify": settings.skip_ssl_verify,
+        },
+        "SSO Configuration": {
+            "sso_enabled": settings.sso_enabled,
+            "sso_github_enabled": settings.sso_github_enabled,
+            "sso_google_enabled": settings.sso_google_enabled,
+            "sso_ibm_verify_enabled": settings.sso_ibm_verify_enabled,
+            "sso_okta_enabled": settings.sso_okta_enabled,
+            "sso_auto_create_users": settings.sso_auto_create_users,
+            "sso_preserve_admin_auth": settings.sso_preserve_admin_auth,
+            "sso_require_admin_approval": settings.sso_require_admin_approval,
+        },
+        "Email Authentication": {
+            "email_auth_enabled": settings.email_auth_enabled,
+            "platform_admin_email": settings.platform_admin_email,
+            "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
+        },
+        "Database & Cache": {
+            "database_url": settings.database_url.replace("://", "://***@") if "@" in settings.database_url else settings.database_url,
+            "cache_type": settings.cache_type,
+            "redis_url": settings.redis_url.replace("://", "://***@") if settings.redis_url and "@" in settings.redis_url else settings.redis_url,
+            "db_pool_size": settings.db_pool_size,
+            "db_max_overflow": settings.db_max_overflow,
+        },
+        "Feature Flags": {
+            "mcpgateway_ui_enabled": settings.mcpgateway_ui_enabled,
+            "mcpgateway_admin_api_enabled": settings.mcpgateway_admin_api_enabled,
+            "mcpgateway_bulk_import_enabled": settings.mcpgateway_bulk_import_enabled,
+            "mcpgateway_a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "mcpgateway_catalog_enabled": settings.mcpgateway_catalog_enabled,
+            "plugins_enabled": settings.plugins_enabled,
+            "well_known_enabled": settings.well_known_enabled,
+        },
+        "Federation": {
+            "federation_enabled": settings.federation_enabled,
+            "federation_discovery": settings.federation_discovery,
+            "federation_timeout": settings.federation_timeout,
+            "federation_sync_interval": settings.federation_sync_interval,
+        },
+        "Transport": {
+            "transport_type": settings.transport_type,
+            "websocket_ping_interval": settings.websocket_ping_interval,
+            "sse_retry_timeout": settings.sse_retry_timeout,
+            "sse_keepalive_enabled": settings.sse_keepalive_enabled,
+        },
+        "Logging": {
+            "log_level": settings.log_level,
+            "log_format": settings.log_format,
+            "log_to_file": settings.log_to_file,
+            "log_file": settings.log_file,
+            "log_rotation_enabled": settings.log_rotation_enabled,
+        },
+        "Resources & Tools": {
+            "tool_timeout": settings.tool_timeout,
+            "tool_rate_limit": settings.tool_rate_limit,
+            "tool_concurrent_limit": settings.tool_concurrent_limit,
+            "resource_cache_size": settings.resource_cache_size,
+            "resource_cache_ttl": settings.resource_cache_ttl,
+            "max_resource_size": settings.max_resource_size,
+        },
+        "CORS Settings": {
+            "cors_enabled": settings.cors_enabled,
+            "allowed_origins": list(settings.allowed_origins),
+            "cors_allow_credentials": settings.cors_allow_credentials,
+        },
+        "Security Headers": {
+            "security_headers_enabled": settings.security_headers_enabled,
+            "x_frame_options": settings.x_frame_options,
+            "hsts_enabled": settings.hsts_enabled,
+            "hsts_max_age": settings.hsts_max_age,
+            "remove_server_headers": settings.remove_server_headers,
+        },
+        "Observability": {
+            "otel_enable_observability": settings.otel_enable_observability,
+            "otel_traces_exporter": settings.otel_traces_exporter,
+            "otel_service_name": settings.otel_service_name,
+        },
+        "Development": {
+            "dev_mode": settings.dev_mode,
+            "reload": settings.reload,
+            "debug": settings.debug,
+        },
+    }
+
+    return {
+        "groups": config_groups,
+        "security_status": settings.get_security_status(),
+    }
 
 
 @admin_router.get("/servers", response_model=List[ServerRead])
