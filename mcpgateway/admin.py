@@ -5801,6 +5801,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                         oauth_config["scopes"] = scopes
                 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
 
         visibility = str(form.get("visibility", "private"))
 
