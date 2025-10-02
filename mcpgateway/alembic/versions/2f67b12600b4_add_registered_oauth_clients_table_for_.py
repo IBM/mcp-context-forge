@@ -39,7 +39,7 @@ def upgrade() -> None:
         sa.Column("registration_access_token_encrypted", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("is_active", sa.Boolean, server_default="1"),
+        sa.Column("is_active", sa.Boolean, server_default=sa.true()),
     )
 
     # Create unique index on (gateway_id, issuer)
