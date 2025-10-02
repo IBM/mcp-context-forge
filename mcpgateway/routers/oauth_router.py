@@ -37,7 +37,9 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:  # noqa: ARG001
+async def initiate_oauth_flow(
+    gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -102,7 +104,7 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                         issuer=issuer,
                         redirect_uri=oauth_config.get("redirect_uri"),
                         scopes=oauth_config.get("scopes", settings.dcr_default_scopes),
-                        db=db
+                        db=db,
                     )
 
                     logger.info(f"✅ DCR successful for gateway {gateway_id}: client_id={registered_client.client_id}")
@@ -110,7 +112,9 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                     # Decrypt the client secret for use in OAuth flow (if present - public clients may not have secrets)
                     decrypted_secret = None
                     if registered_client.client_secret_encrypted:
+                        # First-Party
                         from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+
                         encryption = get_oauth_encryption(settings.auth_encryption_secret)
                         decrypted_secret = encryption.decrypt_secret(registered_client.client_secret_encrypted)
 
@@ -138,20 +142,17 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                     logger.error(f"DCR failed for gateway {gateway_id}: {dcr_err}")
                     raise HTTPException(
                         status_code=500,
-                        detail=f"Dynamic Client Registration failed: {str(dcr_err)}. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591."
+                        detail=f"Dynamic Client Registration failed: {str(dcr_err)}. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
                     )
                 except Exception as dcr_ex:
                     logger.error(f"Unexpected error during DCR for gateway {gateway_id}: {dcr_ex}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to register OAuth client: {str(dcr_ex)}"
-                    )
+                    raise HTTPException(status_code=500, detail=f"Failed to register OAuth client: {str(dcr_ex)}")
             else:
                 # DCR is disabled or auto-register is off
                 logger.warning(f"Gateway {gateway_id} has issuer but no client_id, and DCR auto-registration is disabled")
                 raise HTTPException(
                     status_code=400,
-                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true and MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true"
+                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true and MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true",
                 )
 
         # Validate required fields for OAuth flow
@@ -535,11 +536,9 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
 # Admin Endpoints for DCR Management
 # ============================================================================
 
+
 @oauth_router.get("/registered-clients")
-async def list_registered_oauth_clients(
-    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),  # noqa: ARG001
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+async def list_registered_oauth_clients(current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
     This endpoint shows OAuth clients that were dynamically registered with external
@@ -556,6 +555,7 @@ async def list_registered_oauth_clients(
         HTTPException: If user lacks permissions or database error occurs
     """
     try:
+        # First-Party
         from mcpgateway.db import RegisteredOAuthClient
 
         # Query all registered clients
@@ -564,24 +564,23 @@ async def list_registered_oauth_clients(
         # Build response
         clients_data = []
         for client in clients:
-            clients_data.append({
-                "id": client.id,
-                "gateway_id": client.gateway_id,
-                "issuer": client.issuer,
-                "client_id": client.client_id,
-                "redirect_uris": client.redirect_uris.split(",") if isinstance(client.redirect_uris, str) else client.redirect_uris,
-                "grant_types": client.grant_types.split(",") if isinstance(client.grant_types, str) else client.grant_types,
-                "scope": client.scope,
-                "token_endpoint_auth_method": client.token_endpoint_auth_method,
-                "created_at": client.created_at.isoformat() if client.created_at else None,
-                "expires_at": client.expires_at.isoformat() if client.expires_at else None,
-                "is_active": client.is_active,
-            })
+            clients_data.append(
+                {
+                    "id": client.id,
+                    "gateway_id": client.gateway_id,
+                    "issuer": client.issuer,
+                    "client_id": client.client_id,
+                    "redirect_uris": client.redirect_uris.split(",") if isinstance(client.redirect_uris, str) else client.redirect_uris,
+                    "grant_types": client.grant_types.split(",") if isinstance(client.grant_types, str) else client.grant_types,
+                    "scope": client.scope,
+                    "token_endpoint_auth_method": client.token_endpoint_auth_method,
+                    "created_at": client.created_at.isoformat() if client.created_at else None,
+                    "expires_at": client.expires_at.isoformat() if client.expires_at else None,
+                    "is_active": client.is_active,
+                }
+            )
 
-        return {
-            "total": len(clients_data),
-            "clients": clients_data
-        }
+        return {"total": len(clients_data), "clients": clients_data}
 
     except Exception as e:
         logger.error(f"Failed to list registered OAuth clients: {e}")
@@ -590,9 +589,7 @@ async def list_registered_oauth_clients(
 
 @oauth_router.get("/registered-clients/{gateway_id}")
 async def get_registered_client_for_gateway(
-    gateway_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),  # noqa: ARG001
-    db: Session = Depends(get_db)
+    gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)  # noqa: ARG001
 ) -> Dict[str, Any]:
     """Get the registered OAuth client for a specific gateway.
 
@@ -608,12 +605,11 @@ async def get_registered_client_for_gateway(
         HTTPException: If gateway or registered client not found
     """
     try:
+        # First-Party
         from mcpgateway.db import RegisteredOAuthClient
 
         # Query registered client for this gateway
-        client = db.execute(
-            select(RegisteredOAuthClient).where(RegisteredOAuthClient.gateway_id == gateway_id)
-        ).scalar_one_or_none()
+        client = db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.gateway_id == gateway_id)).scalar_one_or_none()
 
         if not client:
             raise HTTPException(status_code=404, detail=f"No registered OAuth client found for gateway {gateway_id}")
@@ -641,11 +637,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
-async def delete_registered_client(
-    client_id: str,
-    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),  # noqa: ARG001
-    db: Session = Depends(get_db)
-) -> Dict[str, Any]:
+async def delete_registered_client(client_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
     This will revoke the client registration locally. Note: This does not automatically
@@ -664,12 +656,11 @@ async def delete_registered_client(
         HTTPException: If client not found or deletion fails
     """
     try:
+        # First-Party
         from mcpgateway.db import RegisteredOAuthClient
 
         # Find the client
-        client = db.execute(
-            select(RegisteredOAuthClient).where(RegisteredOAuthClient.id == client_id)
-        ).scalar_one_or_none()
+        client = db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.id == client_id)).scalar_one_or_none()
 
         if not client:
             raise HTTPException(status_code=404, detail=f"Registered client {client_id} not found")
@@ -683,12 +674,7 @@ async def delete_registered_client(
 
         logger.info(f"Deleted registered OAuth client {client_id} for gateway {gateway_id} (issuer: {issuer})")
 
-        return {
-            "success": True,
-            "message": f"Registered OAuth client {client_id} deleted successfully",
-            "gateway_id": gateway_id,
-            "issuer": issuer
-        }
+        return {"success": True, "message": f"Registered OAuth client {client_id} deleted successfully", "gateway_id": gateway_id, "issuer": issuer}
 
     except HTTPException:
         raise

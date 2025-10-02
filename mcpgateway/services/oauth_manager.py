@@ -134,18 +134,12 @@ class OAuthManager:
             Dict containing code_verifier, code_challenge, and code_challenge_method
         """
         # Generate code_verifier: 43-128 character random string
-        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
+        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("utf-8").rstrip("=")
 
         # Generate code_challenge: base64url(SHA256(code_verifier))
-        code_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(code_verifier.encode('utf-8')).digest()
-        ).decode('utf-8').rstrip('=')
+        code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("utf-8")).digest()).decode("utf-8").rstrip("=")
 
-        return {
-            "code_verifier": code_verifier,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256"
-        }
+        return {"code_verifier": code_verifier, "code_challenge": code_challenge, "code_challenge_method": "S256"}
 
     async def get_access_token(self, credentials: Dict[str, Any]) -> str:
         """Get access token based on grant type.
@@ -422,12 +416,7 @@ class OAuthManager:
             await self._store_authorization_state(gateway_id, state, code_verifier=pkce_params["code_verifier"])
 
         # Generate authorization URL with PKCE
-        auth_url = self._create_authorization_url_with_pkce(
-            credentials,
-            state,
-            pkce_params["code_challenge"],
-            pkce_params["code_challenge_method"]
-        )
+        auth_url = self._create_authorization_url_with_pkce(credentials, state, pkce_params["code_challenge"], pkce_params["code_challenge_method"])
 
         logger.info(f"Generated authorization URL with PKCE for gateway {gateway_id}")
 
@@ -567,13 +556,7 @@ class OAuthManager:
             if redis:
                 try:
                     state_key = f"oauth:state:{gateway_id}:{state}"
-                    state_data = {
-                        "state": state,
-                        "gateway_id": gateway_id,
-                        "code_verifier": code_verifier,
-                        "expires_at": expires_at.isoformat(),
-                        "used": False
-                    }
+                    state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
                     # Store in Redis with TTL
                     await redis.setex(state_key, STATE_TTL_SECONDS, json.dumps(state_data))
                     logger.debug(f"Stored OAuth state in Redis for gateway {gateway_id}")
@@ -594,13 +577,7 @@ class OAuthManager:
                     db.query(OAuthState).filter(OAuthState.expires_at < datetime.now(timezone.utc)).delete()
 
                     # Store new state with code_verifier
-                    oauth_state = OAuthState(
-                        gateway_id=gateway_id,
-                        state=state,
-                        code_verifier=code_verifier,
-                        expires_at=expires_at,
-                        used=False
-                    )
+                    oauth_state = OAuthState(gateway_id=gateway_id, state=state, code_verifier=code_verifier, expires_at=expires_at, used=False)
                     db.add(oauth_state)
                     db.commit()
                     logger.debug(f"Stored OAuth state in database for gateway {gateway_id}")
@@ -615,13 +592,7 @@ class OAuthManager:
             # Clean up expired states first
             now = datetime.now(timezone.utc)
             state_key = f"oauth:state:{gateway_id}:{state}"
-            state_data = {
-                "state": state,
-                "gateway_id": gateway_id,
-                "code_verifier": code_verifier,
-                "expires_at": expires_at.isoformat(),
-                "used": False
-            }
+            state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
             expired_states = [key for key, data in _oauth_states.items() if datetime.fromisoformat(data["expires_at"]) < now]
             for key in expired_states:
                 del _oauth_states[key]
@@ -800,15 +771,13 @@ class OAuthManager:
         # Try database
         if settings.cache_type == "database":
             try:
+                # First-Party
                 from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
                 db = next(db_gen)
                 try:
-                    oauth_state = db.query(OAuthState).filter(
-                        OAuthState.gateway_id == gateway_id,
-                        OAuthState.state == state
-                    ).first()
+                    oauth_state = db.query(OAuthState).filter(OAuthState.gateway_id == gateway_id, OAuthState.state == state).first()
 
                     if not oauth_state:
                         return None
@@ -828,12 +797,7 @@ class OAuthManager:
                         return None
 
                     # Build state data
-                    state_data = {
-                        "state": oauth_state.state,
-                        "gateway_id": oauth_state.gateway_id,
-                        "code_verifier": oauth_state.code_verifier,
-                        "expires_at": oauth_state.expires_at.isoformat()
-                    }
+                    state_data = {"state": oauth_state.state, "gateway_id": oauth_state.gateway_id, "code_verifier": oauth_state.code_verifier, "expires_at": oauth_state.expires_at.isoformat()}
 
                     # Mark as used and delete
                     db.delete(oauth_state)
@@ -888,13 +852,7 @@ class OAuthManager:
 
         return auth_url, state
 
-    def _create_authorization_url_with_pkce(
-        self,
-        credentials: Dict[str, Any],
-        state: str,
-        code_challenge: str,
-        code_challenge_method: str
-    ) -> str:
+    def _create_authorization_url_with_pkce(self, credentials: Dict[str, Any], state: str, code_challenge: str, code_challenge_method: str) -> str:
         """Create authorization URL with PKCE parameters (RFC 7636).
 
         Args:
@@ -906,6 +864,7 @@ class OAuthManager:
         Returns:
             Authorization URL string with PKCE parameters
         """
+        # Standard
         from urllib.parse import urlencode
 
         client_id = credentials["client_id"]
@@ -914,14 +873,7 @@ class OAuthManager:
         scopes = credentials.get("scopes", [])
 
         # Build authorization parameters
-        params = {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "state": state,
-            "code_challenge": code_challenge,
-            "code_challenge_method": code_challenge_method
-        }
+        params = {"response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri, "state": state, "code_challenge": code_challenge, "code_challenge_method": code_challenge_method}
 
         # Add scopes if present
         if scopes:

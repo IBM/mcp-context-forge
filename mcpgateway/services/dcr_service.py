@@ -13,9 +13,9 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 """
 
 # Standard
+from datetime import datetime, timezone
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 # Third-Party
@@ -72,10 +72,7 @@ class DcrService:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    rfc8414_url,
-                    timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
-                ) as response:
+                async with session.get(rfc8414_url, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
                     if response.status == 200:
                         metadata = await response.json()
 
@@ -84,10 +81,7 @@ class DcrService:
                             raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
 
                         # Cache the metadata
-                        _metadata_cache[issuer] = {
-                            "metadata": metadata,
-                            "cached_at": datetime.now(timezone.utc)
-                        }
+                        _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
                         logger.info(f"Discovered AS metadata for {issuer} via RFC 8414")
                         return metadata
@@ -99,10 +93,7 @@ class DcrService:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    oidc_url,
-                    timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
-                ) as response:
+                async with session.get(oidc_url, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
                     if response.status == 200:
                         metadata = await response.json()
 
@@ -111,10 +102,7 @@ class DcrService:
                             raise DcrError(f"AS metadata issuer mismatch: expected {issuer}, got {metadata.get('issuer')}")
 
                         # Cache the metadata
-                        _metadata_cache[issuer] = {
-                            "metadata": metadata,
-                            "cached_at": datetime.now(timezone.utc)
-                        }
+                        _metadata_cache[issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
 
                         logger.info(f"Discovered AS metadata for {issuer} via OIDC discovery")
                         return metadata
@@ -123,15 +111,7 @@ class DcrService:
         except aiohttp.ClientError as e:
             raise DcrError(f"Failed to discover AS metadata for {issuer}: {e}")
 
-    async def register_client(
-        self,
-        gateway_id: str,
-        gateway_name: str,
-        issuer: str,
-        redirect_uri: str,
-        scopes: List[str],
-        db: Session
-    ) -> RegisteredOAuthClient:
+    async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
 
         Args:
@@ -169,17 +149,13 @@ class DcrService:
             "grant_types": ["authorization_code"],
             "response_types": ["code"],
             "token_endpoint_auth_method": self.settings.dcr_token_endpoint_auth_method,
-            "scope": " ".join(scopes)
+            "scope": " ".join(scopes),
         }
 
         # Send registration request
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    registration_endpoint,
-                    json=registration_request,
-                    timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
-                ) as response:
+                async with session.post(registration_endpoint, json=registration_request, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
                     # Accept both 200 OK and 201 Created (some servers don't follow RFC 7591 strictly)
                     if response.status in (200, 201):
                         registration_response = await response.json()
@@ -215,7 +191,7 @@ class DcrService:
             registration_access_token_encrypted=registration_access_token_encrypted,
             created_at=datetime.now(timezone.utc),
             expires_at=None,  # TODO: Calculate from client_id_issued_at + client_secret_expires_at
-            is_active=True
+            is_active=True,
         )
 
         db.add(registered_client)
@@ -226,15 +202,7 @@ class DcrService:
 
         return registered_client
 
-    async def get_or_register_client(
-        self,
-        gateway_id: str,
-        gateway_name: str,
-        issuer: str,
-        redirect_uri: str,
-        scopes: List[str],
-        db: Session
-    ) -> RegisteredOAuthClient:
+    async def get_or_register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Get existing registered client or register new one.
 
         Args:
@@ -252,11 +220,11 @@ class DcrService:
             DcrError: If client not found and auto-register is disabled
         """
         # Try to find existing client
-        existing_client = db.query(RegisteredOAuthClient).filter(
-            RegisteredOAuthClient.gateway_id == gateway_id,
-            RegisteredOAuthClient.issuer == issuer,
-            RegisteredOAuthClient.is_active == True  # noqa: E712
-        ).first()
+        existing_client = (
+            db.query(RegisteredOAuthClient)
+            .filter(RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == issuer, RegisteredOAuthClient.is_active == True)  # noqa: E712
+            .first()
+        )
 
         if existing_client:
             logger.debug(f"Found existing registered client for gateway {gateway_id} and issuer {issuer}")
@@ -265,19 +233,14 @@ class DcrService:
         # No existing client, check if auto-register is enabled
         if not self.settings.dcr_auto_register_on_missing_credentials:
             raise DcrError(
-                f"No registered client found for gateway {gateway_id} and issuer {issuer}. "
-                "Auto-register is disabled. Set MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true to enable."
+                f"No registered client found for gateway {gateway_id} and issuer {issuer}. " "Auto-register is disabled. Set MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true to enable."
             )
 
         # Auto-register
         logger.info(f"No existing client found for gateway {gateway_id}, registering new client with {issuer}")
         return await self.register_client(gateway_id, gateway_name, issuer, redirect_uri, scopes, db)
 
-    async def update_client_registration(
-        self,
-        client_record: RegisteredOAuthClient,
-        db: Session
-    ) -> RegisteredOAuthClient:
+    async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:
         """Update existing client registration (RFC 7591 section 4.2).
 
         Args:
@@ -301,21 +264,14 @@ class DcrService:
         registration_access_token = encryption.decrypt_secret(client_record.registration_access_token_encrypted)
 
         # Build update request
-        update_request = {
-            "client_id": client_record.client_id,
-            "redirect_uris": json.loads(client_record.redirect_uris),
-            "grant_types": json.loads(client_record.grant_types)
-        }
+        update_request = {"client_id": client_record.client_id, "redirect_uris": json.loads(client_record.redirect_uris), "grant_types": json.loads(client_record.grant_types)}
 
         # Send update request
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {"Authorization": f"Bearer {registration_access_token}"}
                 async with session.put(
-                    client_record.registration_client_uri,
-                    json=update_request,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
+                    client_record.registration_client_uri, json=update_request, headers=headers, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
                 ) as response:
                     if response.status == 200:
                         updated_response = await response.json()
@@ -335,11 +291,7 @@ class DcrService:
         except aiohttp.ClientError as e:
             raise DcrError(f"Failed to update client registration: {e}")
 
-    async def delete_client_registration(
-        self,
-        client_record: RegisteredOAuthClient,
-        db: Session
-    ) -> bool:
+    async def delete_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> bool:
         """Delete/revoke client registration (RFC 7591 section 4.3).
 
         Args:
@@ -368,11 +320,7 @@ class DcrService:
         try:
             async with aiohttp.ClientSession() as session:
                 headers = {"Authorization": f"Bearer {registration_access_token}"}
-                async with session.delete(
-                    client_record.registration_client_uri,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)
-                ) as response:
+                async with session.delete(client_record.registration_client_uri, headers=headers, timeout=aiohttp.ClientTimeout(total=self.settings.oauth_request_timeout)) as response:
                     if response.status in [204, 404]:  # 204 = deleted, 404 = already gone
                         logger.info(f"Successfully deleted client registration for {client_record.client_id}")
                         return True
@@ -386,4 +334,3 @@ class DcrService:
 
 class DcrError(Exception):
     """DCR-related errors."""
-    pass
