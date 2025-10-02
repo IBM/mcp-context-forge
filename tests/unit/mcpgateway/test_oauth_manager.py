@@ -548,7 +548,7 @@ class TestOAuthManager:
 
     @pytest.mark.asyncio
     async def test_initiate_authorization_code_flow_success(self):
-        """Test successful initiation of authorization code flow."""
+        """Test successful initiation of authorization code flow with PKCE."""
         mock_token_storage = Mock()
         manager = OAuthManager(token_storage=mock_token_storage)
 
@@ -560,24 +560,17 @@ class TestOAuthManager:
             "scopes": ["read", "write"]
         }
 
-        with patch.object(manager, '_generate_state') as mock_generate_state:
-            mock_generate_state.return_value = "state123"
+        result = await manager.initiate_authorization_code_flow(gateway_id, credentials, app_user_email="test@example.com")
 
-            with patch.object(manager, '_store_authorization_state') as mock_store_state:
-                with patch.object(manager, '_create_authorization_url') as mock_create_url:
-                    mock_create_url.return_value = ("https://oauth.example.com/authorize?state=state123", "state123")
-
-                    result = await manager.initiate_authorization_code_flow(gateway_id, credentials, app_user_email="test@example.com")
-
-                    expected = {
-                        "authorization_url": "https://oauth.example.com/authorize?state=state123",
-                        "state": "state123",
-                        "gateway_id": "gateway123"
-                    }
-                    assert result == expected
-                    mock_generate_state.assert_called_once_with(gateway_id, "test@example.com")
-                    mock_store_state.assert_called_once_with(gateway_id, "state123")
-                    mock_create_url.assert_called_once_with(credentials, "state123")
+        # With PKCE, the authorization URL now includes code_challenge and code_challenge_method
+        assert "authorization_url" in result
+        assert "state" in result
+        assert "gateway_id" in result
+        assert result["gateway_id"] == "gateway123"
+        
+        # Verify PKCE parameters are in the URL
+        assert "code_challenge=" in result["authorization_url"]
+        assert "code_challenge_method=S256" in result["authorization_url"]
 
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_success(self):
@@ -625,8 +618,8 @@ class TestOAuthManager:
                 "expires_in": 3600
             }
 
-            # Store the state first to make it valid
-            await manager._store_authorization_state(gateway_id, state)
+            # Store the state with code_verifier (PKCE) to make it valid
+            await manager._store_authorization_state(gateway_id, state, code_verifier="test_code_verifier_123")
 
             with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
                     mock_exchange.return_value = token_response
@@ -650,7 +643,8 @@ class TestOAuthManager:
                             assert result["success"] == expected["success"]
                             assert result["expires_at"] == expected["expires_at"]
 
-                            mock_exchange.assert_called_once_with(credentials, code)
+                            # PKCE: Now includes code_verifier parameter
+                            mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_code_verifier_123")
                             mock_extract_user.assert_called_once_with(token_response, credentials)
                             mock_store_tokens.assert_called_once()
 
@@ -1243,18 +1237,39 @@ class TestOAuthManager:
 
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_no_token_storage(self):
-        """Test complete authorization code flow without token storage (line 334)."""
+        """Test complete authorization code flow without token storage with PKCE."""
         import base64
         import json
+        import hashlib
+        import hmac
 
         manager = OAuthManager()  # No token storage
 
         gateway_id = "gateway123"
         code = "auth_code_123"
-        # Create state with new format
-        state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com", "nonce": "state456"}
-        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
-        credentials = {"client_id": "test_client"}
+        
+        # Create state with HMAC signature
+        from datetime import datetime, timezone
+        state_data = {
+            "gateway_id": "gateway123",
+            "app_user_email": "test@example.com",
+            "nonce": "state456",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        state_json = json.dumps(state_data, separators=(",", ":"))
+        state_bytes = state_json.encode()
+        
+        # Create HMAC signature
+        from mcpgateway.config import get_settings
+        settings = get_settings()
+        secret_key = settings.auth_encryption_secret.get_secret_value().encode() if settings.auth_encryption_secret else b"default-secret-key"
+        signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+        
+        # Combine state and signature
+        state_with_sig = state_bytes + signature
+        state = base64.urlsafe_b64encode(state_with_sig).decode()
+        
+        credentials = {"client_id": "test_client", "token_url": "https://oauth.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
 
         token_response = {
             "access_token": "access123",
@@ -1262,28 +1277,29 @@ class TestOAuthManager:
             "expires_in": 3600
         }
 
-        # Mock state validation since we're testing the flow without storage
-        with patch.object(manager, '_validate_authorization_state') as mock_validate:
-            mock_validate.return_value = True
+        # Mock state validation to return state data with code_verifier
+        with patch.object(manager, '_validate_and_retrieve_state') as mock_validate:
+            mock_validate.return_value = {"state": state, "gateway_id": gateway_id, "code_verifier": "test_verifier_abc123"}
 
             with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
-                mock_exchange.return_value = token_response
+                    mock_exchange.return_value = token_response
 
-                with patch.object(manager, '_extract_user_id') as mock_extract_user:
-                    mock_extract_user.return_value = "user123"
+                    with patch.object(manager, '_extract_user_id') as mock_extract_user:
+                        mock_extract_user.return_value = "user123"
 
-                    # This should hit line 334 - return without token storage
-                    result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+                        # This should work without token storage
+                        result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
-                expected = {
-                    "success": True,
-                    "user_id": "user123",
-                    "expires_at": None  # No token storage means no expiration tracking
-                }
-                assert result == expected
+                        expected = {
+                            "success": True,
+                            "user_id": "user123",
+                            "expires_at": None  # No token storage means no expiration tracking
+                        }
+                        assert result == expected
 
-                mock_exchange.assert_called_once_with(credentials, code)
-                mock_extract_user.assert_called_once_with(token_response, credentials)
+                        # PKCE: Now includes code_verifier parameter
+                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_verifier_abc123")
+                        mock_extract_user.assert_called_once_with(token_response, credentials)
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_tokens_decryption_success(self):

@@ -546,7 +546,8 @@ class TestGatewayServiceOAuthComprehensive:
             mock_tool.description = "OAuth Tool"
             mock_tool.inputSchema = {}
 
-            gateway_service.connect_to_sse_server = AsyncMock(return_value=(
+            # Mock the new _connect_to_sse_server_without_validation method (used for OAuth servers)
+            gateway_service._connect_to_sse_server_without_validation = AsyncMock(return_value=(
                 {"protocolVersion": "0.1.0"},  # capabilities
                 [mock_tool],  # tools
                 [],  # resources
@@ -559,8 +560,8 @@ class TestGatewayServiceOAuthComprehensive:
             # Verify token service was called
             mock_token_service.get_user_token.assert_called_once_with(mock_oauth_auth_code_gateway.id, "test@example.com")
 
-            # Verify connection was made with token
-            gateway_service.connect_to_sse_server.assert_called_once_with(
+            # Verify connection was made with token using the new method
+            gateway_service._connect_to_sse_server_without_validation.assert_called_once_with(
                 mock_oauth_auth_code_gateway.url,
                 {"Authorization": "Bearer oauth_callback_token"}
             )
