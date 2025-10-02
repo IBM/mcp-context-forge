@@ -123,7 +123,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ## 🚀 Overview & Goals
 
-**ContextForge MCP Gateway** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API-exposing a unified endpoint for all your AI clients.
+**ContextForge** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API-exposing a unified endpoint for all your AI clients.
 
 **⚠️ Caution**: The current release (0.7.0) is considered alpha / early beta. It is not production-ready and should only be used for local development, testing, or experimentation. Features, APIs, and behaviors are subject to change without notice. **Do not** deploy in production environments without thorough security review, validation and additional security mechanisms.  Many of the features required for secure, large-scale, or multi-tenant production deployments are still on the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) - which is itself evolving.
 
@@ -140,7 +140,7 @@ It currently supports:
 
 ![MCP Gateway Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
 
-For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
+For a list of upcoming features, check out the [ContextForge Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
 
 > Note on Multi‑Tenancy (v0.7.0): A comprehensive multi‑tenant architecture with email authentication, teams, RBAC, and resource visibility is landing in v0.7.0. See the [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md) for details.
 
@@ -238,7 +238,7 @@ See [Observability Documentation](https://ibm.github.io/mcp-context-forge/manage
 
 ## Quick Start - PyPI
 
-MCP Gateway is published on [PyPI](https://pypi.org/project/mcp-contextforge-gateway/) as `mcp-contextforge-gateway`.
+ContextForge is published on [PyPI](https://pypi.org/project/mcp-contextforge-gateway/) as `mcp-contextforge-gateway`.
 
 ---
 
@@ -2178,7 +2178,7 @@ make lint            # Run lint tools
 
 ## Doctest Coverage
 
-MCP Context Forge implements comprehensive doctest coverage to ensure all code examples in documentation are tested and verified:
+ContextForge implements comprehensive doctest coverage to ensure all code examples in documentation are tested and verified:
 
 ```bash
 make doctest         # Run all doctests
@@ -2400,7 +2400,7 @@ This project offer the following Makefile targets. Type `make` in the project ro
 <summary><strong>🔧 Available Makefile targets</strong></summary>
 
 ```bash
-🐍 MCP CONTEXT FORGE  (An enterprise-ready Model Context Protocol Gateway)
+🐍 MCP CONTEXTFORGE  (An enterprise-ready Model Context Protocol Gateway)
 🔧 SYSTEM-LEVEL DEPENDENCIES (DEV BUILD ONLY)
 os-deps              - Install Graphviz, Pandoc, Trivy, SCC used for dev docs generation and security scan
 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
@@ -2702,7 +2702,7 @@ Licensed under the **Apache License 2.0** - see [LICENSE](./LICENSE)
 
 - [Mihai Criveti](https://www.linkedin.com/in/crivetimihai) - Distinguished Engineer, Agentic AI
 
-Special thanks to our contributors for helping us improve ContextForge MCP Gateway:
+Special thanks to our contributors for helping us improve ContextForge:
 
 <a href="https://github.com/ibm/mcp-context-forge/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=ibm/mcp-context-forge&max=100&anon=0&columns=10" />
