@@ -549,28 +549,36 @@ class TestOAuthManager:
     @pytest.mark.asyncio
     async def test_initiate_authorization_code_flow_success(self):
         """Test successful initiation of authorization code flow with PKCE."""
-        mock_token_storage = Mock()
-        manager = OAuthManager(token_storage=mock_token_storage)
-
-        gateway_id = "gateway123"
-        credentials = {
-            "client_id": "test_client",
-            "authorization_url": "https://oauth.example.com/authorize",
-            "redirect_uri": "https://gateway.example.com/callback",
-            "scopes": ["read", "write"]
-        }
-
-        result = await manager.initiate_authorization_code_flow(gateway_id, credentials, app_user_email="test@example.com")
-
-        # With PKCE, the authorization URL now includes code_challenge and code_challenge_method
-        assert "authorization_url" in result
-        assert "state" in result
-        assert "gateway_id" in result
-        assert result["gateway_id"] == "gateway123"
+        from pydantic import SecretStr
         
-        # Verify PKCE parameters are in the URL
-        assert "code_challenge=" in result["authorization_url"]
-        assert "code_challenge_method=S256" in result["authorization_url"]
+        # Mock settings to provide proper secret for HMAC
+        with patch('mcpgateway.services.oauth_manager.get_settings') as mock_get_settings:
+            mock_settings = Mock()
+            mock_settings.auth_encryption_secret = SecretStr("test-secret-key-for-hmac")
+            mock_get_settings.return_value = mock_settings
+            
+            mock_token_storage = Mock()
+            manager = OAuthManager(token_storage=mock_token_storage)
+
+            gateway_id = "gateway123"
+            credentials = {
+                "client_id": "test_client",
+                "authorization_url": "https://oauth.example.com/authorize",
+                "redirect_uri": "https://gateway.example.com/callback",
+                "scopes": ["read", "write"]
+            }
+
+            result = await manager.initiate_authorization_code_flow(gateway_id, credentials, app_user_email="test@example.com")
+
+            # With PKCE, the authorization URL now includes code_challenge and code_challenge_method
+            assert "authorization_url" in result
+            assert "state" in result
+            assert "gateway_id" in result
+            assert result["gateway_id"] == "gateway123"
+            
+            # Verify PKCE parameters are in the URL
+            assert "code_challenge=" in result["authorization_url"]
+            assert "code_challenge_method=S256" in result["authorization_url"]
 
     @pytest.mark.asyncio
     async def test_complete_authorization_code_flow_success(self):
@@ -1242,64 +1250,69 @@ class TestOAuthManager:
         import json
         import hashlib
         import hmac
+        from pydantic import SecretStr
 
-        manager = OAuthManager()  # No token storage
+        # Mock settings to provide proper secret for HMAC
+        with patch('mcpgateway.services.oauth_manager.get_settings') as mock_get_settings:
+            mock_settings = Mock()
+            mock_settings.auth_encryption_secret = SecretStr("test-secret-key-for-hmac")
+            mock_get_settings.return_value = mock_settings
 
-        gateway_id = "gateway123"
-        code = "auth_code_123"
-        
-        # Create state with HMAC signature
-        from datetime import datetime, timezone
-        state_data = {
-            "gateway_id": "gateway123",
-            "app_user_email": "test@example.com",
-            "nonce": "state456",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        state_json = json.dumps(state_data, separators=(",", ":"))
-        state_bytes = state_json.encode()
-        
-        # Create HMAC signature
-        from mcpgateway.config import get_settings
-        settings = get_settings()
-        secret_key = settings.auth_encryption_secret.get_secret_value().encode() if settings.auth_encryption_secret else b"default-secret-key"
-        signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
-        
-        # Combine state and signature
-        state_with_sig = state_bytes + signature
-        state = base64.urlsafe_b64encode(state_with_sig).decode()
-        
-        credentials = {"client_id": "test_client", "token_url": "https://oauth.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
+            manager = OAuthManager()  # No token storage
 
-        token_response = {
-            "access_token": "access123",
-            "refresh_token": "refresh123",
-            "expires_in": 3600
-        }
+            gateway_id = "gateway123"
+            code = "auth_code_123"
+            
+            # Create state with HMAC signature using the mocked secret
+            from datetime import datetime, timezone
+            state_data = {
+                "gateway_id": "gateway123",
+                "app_user_email": "test@example.com",
+                "nonce": "state456",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            state_json = json.dumps(state_data, separators=(",", ":"))
+            state_bytes = state_json.encode()
+            
+            # Create HMAC signature using the same secret
+            secret_key = b"test-secret-key-for-hmac"
+            signature = hmac.new(secret_key, state_bytes, hashlib.sha256).digest()
+            
+            # Combine state and signature
+            state_with_sig = state_bytes + signature
+            state = base64.urlsafe_b64encode(state_with_sig).decode()
+            
+            credentials = {"client_id": "test_client", "token_url": "https://oauth.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
 
-        # Mock state validation to return state data with code_verifier
-        with patch.object(manager, '_validate_and_retrieve_state') as mock_validate:
-            mock_validate.return_value = {"state": state, "gateway_id": gateway_id, "code_verifier": "test_verifier_abc123"}
+            token_response = {
+                "access_token": "access123",
+                "refresh_token": "refresh123",
+                "expires_in": 3600
+            }
 
-            with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
-                    mock_exchange.return_value = token_response
+            # Mock state validation to return state data with code_verifier
+            with patch.object(manager, '_validate_and_retrieve_state') as mock_validate:
+                mock_validate.return_value = {"state": state, "gateway_id": gateway_id, "code_verifier": "test_verifier_abc123"}
 
-                    with patch.object(manager, '_extract_user_id') as mock_extract_user:
-                        mock_extract_user.return_value = "user123"
+                with patch.object(manager, '_exchange_code_for_tokens') as mock_exchange:
+                        mock_exchange.return_value = token_response
 
-                        # This should work without token storage
-                        result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
+                        with patch.object(manager, '_extract_user_id') as mock_extract_user:
+                            mock_extract_user.return_value = "user123"
 
-                        expected = {
-                            "success": True,
-                            "user_id": "user123",
-                            "expires_at": None  # No token storage means no expiration tracking
-                        }
-                        assert result == expected
+                            # This should work without token storage
+                            result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
-                        # PKCE: Now includes code_verifier parameter
-                        mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_verifier_abc123")
-                        mock_extract_user.assert_called_once_with(token_response, credentials)
+                            expected = {
+                                "success": True,
+                                "user_id": "user123",
+                                "expires_at": None  # No token storage means no expiration tracking
+                            }
+                            assert result == expected
+
+                            # PKCE: Now includes code_verifier parameter
+                            mock_exchange.assert_called_once_with(credentials, code, code_verifier="test_verifier_abc123")
+                            mock_extract_user.assert_called_once_with(token_response, credentials)
 
     @pytest.mark.asyncio
     async def test_exchange_code_for_tokens_decryption_success(self):
