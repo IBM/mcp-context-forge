@@ -106,8 +106,8 @@ class DcrService:
 
                         logger.info(f"Discovered AS metadata for {issuer} via OIDC discovery")
                         return metadata
-                    else:
-                        raise DcrError(f"AS metadata not found for {issuer} (status: {response.status})")
+
+                    raise DcrError(f"AS metadata not found for {issuer} (status: {response.status})")
         except aiohttp.ClientError as e:
             raise DcrError(f"Failed to discover AS metadata for {issuer}: {e}")
 
@@ -190,7 +190,7 @@ class DcrService:
             registration_client_uri=registration_response.get("registration_client_uri"),
             registration_access_token_encrypted=registration_access_token_encrypted,
             created_at=datetime.now(timezone.utc),
-            expires_at=None,  # TODO: Calculate from client_id_issued_at + client_secret_expires_at
+            expires_at=None,  # TODO: Calculate from client_id_issued_at + client_secret_expires_at  # pylint: disable=fixme
             is_active=True,
         )
 
@@ -222,7 +222,7 @@ class DcrService:
         # Try to find existing client
         existing_client = (
             db.query(RegisteredOAuthClient)
-            .filter(RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == issuer, RegisteredOAuthClient.is_active == True)  # noqa: E712
+            .filter(RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == issuer, RegisteredOAuthClient.is_active.is_(True))  # pylint: disable=singleton-comparison
             .first()
         )
 
@@ -285,13 +285,13 @@ class DcrService:
 
                         logger.info(f"Successfully updated client registration for {client_record.client_id}")
                         return client_record
-                    else:
-                        error_data = await response.json()
-                        raise DcrError(f"Failed to update client: {error_data}")
+
+                    error_data = await response.json()
+                    raise DcrError(f"Failed to update client: {error_data}")
         except aiohttp.ClientError as e:
             raise DcrError(f"Failed to update client registration: {e}")
 
-    async def delete_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> bool:
+    async def delete_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> bool:  # pylint: disable=unused-argument
         """Delete/revoke client registration (RFC 7591 section 4.3).
 
         Args:
@@ -324,9 +324,9 @@ class DcrService:
                     if response.status in [204, 404]:  # 204 = deleted, 404 = already gone
                         logger.info(f"Successfully deleted client registration for {client_record.client_id}")
                         return True
-                    else:
-                        logger.warning(f"Unexpected status when deleting client: {response.status}")
-                        return True  # Consider it best-effort
+
+                    logger.warning(f"Unexpected status when deleting client: {response.status}")
+                    return True  # Consider it best-effort
         except aiohttp.ClientError as e:
             logger.warning(f"Failed to delete client at AS: {e}")
             return True  # Best-effort, don't fail if AS is unreachable

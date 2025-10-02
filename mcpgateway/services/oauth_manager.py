@@ -864,8 +864,7 @@ class OAuthManager:
         Returns:
             Authorization URL string with PKCE parameters
         """
-        # Standard
-        from urllib.parse import urlencode
+        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
 
         client_id = credentials["client_id"]
         redirect_uri = credentials["redirect_uri"]
