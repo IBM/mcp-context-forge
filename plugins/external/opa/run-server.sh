@@ -37,7 +37,7 @@ fi
 #────────────────────────────────────────────────────────────────────────────────
 
 echo "Running OPA server"
-opa run --server ${POLICY_PATH:-opaserver/rego/policy.rego &
+opa run --server ${POLICY_PATH:-opaserver/rego/policy.rego} &
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 2: Run the API server
