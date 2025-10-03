@@ -174,27 +174,30 @@ if __name__ == "__main__":
         # Wait for server to be ready with health check
         import httpx
         max_retries = 10
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient() as client:
+        client = None
+        try:
+            client = httpx.AsyncClient()
+            for attempt in range(max_retries):
+                try:
                     response = await client.get(f"http://localhost:{port}/healthz", timeout=2.0)
                     if response.status_code == 200 and response.text.strip() == "ok":
                         break
-            except (httpx.ConnectError, httpx.TimeoutException):
-                pass
-            await asyncio.sleep(0.5)
-        else:
-            # If health check fails, log error and terminate
-            stderr_output = process.stderr.read() if process.stderr else "No stderr output"
-            print(f"Server failed to start. Stderr: {stderr_output}")
-            process.terminate()
-            process.wait()
-            pytest.skip(f"Translate server failed to start on port {port}")
+                except (httpx.ConnectError, httpx.TimeoutException):
+                    pass
+                await asyncio.sleep(0.5)
+            else:
+                # If health check fails, log error and terminate
+                stderr_output = process.stderr.read() if process.stderr else "No stderr output"
+                print(f"Server failed to start. Stderr: {stderr_output}")
+                process.terminate()
+                process.wait()
+                pytest.skip(f"Translate server failed to start on port {port}")
 
-        try:
             yield port
         finally:
             # Cleanup
+            if client:
+                await client.aclose()
             process.terminate()
             try:
                 process.wait(timeout=5)
