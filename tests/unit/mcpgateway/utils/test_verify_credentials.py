@@ -189,6 +189,7 @@ async def test_require_basic_auth_optional(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_require_basic_auth_raises_when_credentials_missing(monkeypatch):
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     with pytest.raises(HTTPException) as exc:
         await vc.require_basic_auth(None)
 
@@ -313,6 +314,7 @@ async def test_docs_auth_with_basic_auth_enabled_bearer_still_works(monkeypatch)
 @pytest.mark.asyncio
 async def test_docs_both_auth_methods_work_simultaneously(monkeypatch):
     """Test that both auth methods work when Basic Auth is enabled."""
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
@@ -334,6 +336,7 @@ async def test_docs_both_auth_methods_work_simultaneously(monkeypatch):
 @pytest.mark.asyncio
 async def test_docs_invalid_basic_auth_fails(monkeypatch):
     """Test that invalid Basic Auth returns 401 and does not fall back to Bearer."""
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", "correct", raising=False)

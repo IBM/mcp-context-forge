@@ -316,7 +316,7 @@ class StdIOEndpoint:
         True
     """
 
-    def __init__(self, cmd: str, pubsub: _PubSub, env_vars: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, cmd: str, pubsub: _PubSub, env_vars: Optional[Dict[str, str]] = None, header_mappings: Optional[Dict[str, str]] = None) -> None:
         """Initialize a stdio endpoint for subprocess communication.
 
         Sets up the endpoint with the command to run and the pubsub system
@@ -329,6 +329,8 @@ class StdIOEndpoint:
                 output to SSE clients.
             env_vars: Optional dictionary of environment variables to set
                 when starting the subprocess.
+            header_mappings: Optional mapping of HTTP headers to environment variable names
+                for dynamic environment injection.
 
         Examples:
             >>> pubsub = _PubSub()
@@ -349,6 +351,7 @@ class StdIOEndpoint:
         self._cmd = cmd
         self._pubsub = pubsub
         self._env_vars = env_vars or {}
+        self._header_mappings = header_mappings or {}
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._stdin: Optional[asyncio.StreamWriter] = None
         self._pump_task: Optional[asyncio.Task[None]] = None
@@ -384,6 +387,12 @@ class StdIOEndpoint:
         env.update(self._env_vars)
         if additional_env_vars:
             env.update(additional_env_vars)
+
+        # Clear any mapped env vars that weren't provided in headers to avoid inheritance
+        if self._header_mappings:
+            for env_var_name in self._header_mappings.values():
+                if env_var_name not in (additional_env_vars or {}):
+                    env[env_var_name] = ""
 
         self._proc = await asyncio.create_subprocess_exec(
             *shlex.split(self._cmd),
@@ -778,13 +787,13 @@ def _build_fastapi(
                 LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
                 await stdio.stop()  # Stop existing process
                 await stdio.start(additional_env_vars)  # Start with new env vars
-                await asyncio.sleep(0.1)  # Give process time to initialize
+                await asyncio.sleep(0.5)  # Give process time to initialize
 
         # Ensure stdio endpoint is running
         if stdio._proc is None:
             LOGGER.info("Starting stdio endpoint (was not running)")
             await stdio.start()
-            await asyncio.sleep(0.1)  # Give process time to initialize
+            await asyncio.sleep(0.5)  # Give process time to initialize
 
         payload = await raw.body()
         try:
@@ -1032,7 +1041,7 @@ async def _run_stdio_to_sse(
         True
     """
     pubsub = _PubSub()
-    stdio = StdIOEndpoint(cmd, pubsub)
+    stdio = StdIOEndpoint(cmd, pubsub, header_mappings=header_mappings)
     await stdio.start()
 
     app = _build_fastapi(pubsub, stdio, keep_alive=keep_alive, sse_path=sse_path, message_path=message_path, cors_origins=cors, header_mappings=header_mappings)
@@ -1778,7 +1787,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     pubsub = _PubSub() if (expose_sse or expose_streamable_http) else None
 
     # Create the stdio endpoint
-    stdio = StdIOEndpoint(cmd, pubsub) if (expose_sse or expose_streamable_http) and pubsub else None
+    stdio = StdIOEndpoint(cmd, pubsub, header_mappings=header_mappings) if (expose_sse or expose_streamable_http) and pubsub else None
 
     # Create fastapi app and middleware
     app = FastAPI()
@@ -1897,13 +1906,13 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                     LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
                     await stdio.stop()  # Stop existing process
                     await stdio.start(additional_env_vars)  # Start with new env vars
-                    await asyncio.sleep(0.1)  # Give process time to initialize
+                    await asyncio.sleep(0.5)  # Give process time to initialize
 
             # Ensure stdio endpoint is running
             if stdio and stdio._proc is None:
                 LOGGER.info("Starting stdio endpoint (was not running)")
                 await stdio.start()
-                await asyncio.sleep(0.1)  # Give process time to initialize
+                await asyncio.sleep(0.5)  # Give process time to initialize
 
             payload = await raw.body()
             try:

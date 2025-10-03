@@ -122,6 +122,7 @@ class _FakeProc:
         self.stdout = _DummyReader(lines)
         self.pid = 4321
         self.terminated = False
+        self.returncode = None
 
     def terminate(self):
         self.terminated = True
@@ -539,7 +540,7 @@ async def test_run_stdio_to_sse(monkeypatch, translate):
         calls: list[str] = []
 
         class _DummyStd:
-            def __init__(self, *_):
+            def __init__(self, *_, **kwargs):
                 calls.append("init")
 
             async def start(self):
@@ -590,7 +591,7 @@ async def test_run_stdio_to_sse_with_cors(monkeypatch, translate):
         calls: list[str] = []
 
         class _DummyStd:
-            def __init__(self, *_):
+            def __init__(self, *_, **kwargs):
                 calls.append("init")
 
             async def start(self):
@@ -636,7 +637,7 @@ async def test_run_stdio_to_sse_signal_handling_windows(monkeypatch, translate):
 
     async def _test_logic():
         class _DummyStd:
-            def __init__(self, cmd, pubsub):  # Accept the required arguments
+            def __init__(self, cmd, pubsub, **kwargs):  # Accept the required arguments
                 self.cmd = cmd
                 self.pubsub = pubsub
 
@@ -1118,6 +1119,7 @@ async def test_stdio_endpoint_exception_in_pump(monkeypatch, translate):
                 self.stdin = _DummyWriter()
                 self.pid = 1234
                 self.terminated = False
+                self.returncode = None
                 self.stdout = self
 
             def terminate(self):
@@ -1657,6 +1659,7 @@ async def test_stdio_endpoint_pump_exception_handling(monkeypatch, translate):
             self.stdout = ExceptionReader()
             self.pid = 1234
             self.terminated = False
+            self.returncode = None
 
         def terminate(self):
             self.terminated = True
@@ -2099,7 +2102,7 @@ async def test_multi_protocol_server_basic(monkeypatch, translate):
     calls = []
 
     class MockStdIO:
-        def __init__(self, cmd, pubsub):
+        def __init__(self, cmd, pubsub, **kwargs):
             calls.append("stdio_init")
             self.cmd = cmd
             self.pubsub = pubsub
@@ -2177,7 +2180,7 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
 
     # Mock all the classes we need
     class MockStdIO:
-        def __init__(self, cmd, pubsub):
+        def __init__(self, cmd, pubsub, **kwargs):
             calls.append("stdio_init")
 
         async def start(self):
