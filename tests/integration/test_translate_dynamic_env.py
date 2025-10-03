@@ -14,9 +14,6 @@ import pytest
 import tempfile
 import os
 import json
-import sys
-from unittest.mock import Mock, patch
-from typing import Dict, Any, Optional
 
 # First-Party
 from mcpgateway.translate import StdIOEndpoint, _PubSub
@@ -47,13 +44,13 @@ for var in sys.argv[1:]:
 print(json.dumps(env_vars))
 sys.stdout.flush()
 """
-        
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
             yield f.name
-        
+
         os.unlink(f.name)
 
     @pytest.fixture
@@ -70,9 +67,9 @@ def main():
             line = sys.stdin.readline()
             if not line:
                 break
-            
+
             request = json.loads(line.strip())
-            
+
             if request.get("method") == "env_test":
                 # Return environment variables
                 result = {
@@ -113,7 +110,7 @@ def main():
                 }
                 print(json.dumps(result))
                 sys.stdout.flush()
-                
+
         except Exception as e:
             error = {
                 "jsonrpc": "2.0",
@@ -129,13 +126,13 @@ def main():
 if __name__ == "__main__":
     main()
 """
-        
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
             yield f.name
-        
+
         os.unlink(f.name)
 
     @pytest.mark.asyncio
@@ -152,10 +149,10 @@ if __name__ == "__main__":
             "X-Tenant-Id": "TENANT_ID",
             "X-API-Key": "API_KEY",
         }
-        
+
         # Extract environment variables from headers
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Verify extraction
         expected = {
             "GITHUB_TOKEN": "Bearer github-token-123",
@@ -163,22 +160,22 @@ if __name__ == "__main__":
             "API_KEY": "api-key-456",
         }
         assert env_vars == expected
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             # Send request to check environment variables
             await endpoint.send('["GITHUB_TOKEN", "TENANT_ID", "API_KEY"]\n')
-            
+
             # Wait for response
             await asyncio.sleep(0.1)
-            
+
             # Verify process was started
             assert endpoint._proc is not None
-            
+
         finally:
             await endpoint.stop()
 
@@ -195,10 +192,10 @@ if __name__ == "__main__":
             "X-Tenant-Id": "TENANT_ID",     # Proper case
             "X-Api-Key": "API_KEY",         # Proper case
         }
-        
+
         # Extract environment variables
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Verify case-insensitive matching worked
         expected = {
             "GITHUB_TOKEN": "Bearer github-token-123",
@@ -206,12 +203,12 @@ if __name__ == "__main__":
             "API_KEY": "api-key-456",
         }
         assert env_vars == expected
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN", "TENANT_ID", "API_KEY"]\n')
             await asyncio.sleep(0.1)
@@ -232,22 +229,22 @@ if __name__ == "__main__":
             "X-Tenant-Id": "TENANT_ID",
             "X-API-Key": "API_KEY",  # Not in headers
         }
-        
+
         # Extract environment variables
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Verify only matching headers are included
         expected = {
             "GITHUB_TOKEN": "Bearer github-token-123",
             "TENANT_ID": "acme-corp",
         }
         assert env_vars == expected
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN", "TENANT_ID", "API_KEY"]\n')
             await asyncio.sleep(0.1)
@@ -266,15 +263,15 @@ if __name__ == "__main__":
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         # Extract environment variables
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Test with MCP server script
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(mcp_server_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             # Send MCP initialize request
             init_request = {
@@ -288,10 +285,10 @@ if __name__ == "__main__":
                 }
             }
             await endpoint.send(json.dumps(init_request) + "\n")
-            
+
             # Wait for response
             await asyncio.sleep(0.1)
-            
+
             # Send environment test request
             env_test_request = {
                 "jsonrpc": "2.0",
@@ -300,12 +297,12 @@ if __name__ == "__main__":
                 "params": {}
             }
             await endpoint.send(json.dumps(env_test_request) + "\n")
-            
+
             # Wait for response
             await asyncio.sleep(0.1)
-            
+
             assert endpoint._proc is not None
-            
+
         finally:
             await endpoint.stop()
 
@@ -317,7 +314,7 @@ if __name__ == "__main__":
             "GITHUB_TOKEN": "initial-token",
             "BASE_VAR": "base-value",
         }
-        
+
         # Headers that will override some values
         headers = {
             "Authorization": "Bearer override-token",
@@ -327,25 +324,25 @@ if __name__ == "__main__":
             "Authorization": "GITHUB_TOKEN",  # This will override initial
             "X-Tenant-Id": "TENANT_ID",      # This is new
         }
-        
+
         # Extract environment variables from headers
         header_env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Combine with initial (header vars should override)
         combined_env_vars = {**initial_env_vars, **header_env_vars}
-        
+
         expected = {
             "GITHUB_TOKEN": "Bearer override-token",  # Overridden
             "BASE_VAR": "base-value",                 # Preserved
             "TENANT_ID": "override-tenant",           # New
         }
         assert combined_env_vars == expected
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, combined_env_vars)
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN", "BASE_VAR", "TENANT_ID"]\n')
             await asyncio.sleep(0.1)
@@ -366,10 +363,10 @@ if __name__ == "__main__":
             "X-Tenant-Id": "TENANT_ID",
             "Normal-Header": "NORMAL_VAR",
         }
-        
+
         # Extract environment variables
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Verify sanitization
         expected = {
             "GITHUB_TOKEN": "Bearertoken123",  # Dangerous chars removed
@@ -377,12 +374,12 @@ if __name__ == "__main__":
             "NORMAL_VAR": "normal-value",      # Normal value preserved
         }
         assert env_vars == expected
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN", "TENANT_ID", "NORMAL_VAR"]\n')
             await asyncio.sleep(0.1)
@@ -398,18 +395,18 @@ if __name__ == "__main__":
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         # Extract environment variables
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Should return empty dict
         assert env_vars == {}
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN", "TENANT_ID"]\n')
             await asyncio.sleep(0.1)
@@ -425,18 +422,18 @@ if __name__ == "__main__":
             "X-Tenant-Id": "acme-corp",
         }
         mappings = {}
-        
+
         # Extract environment variables
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Should return empty dict
         assert env_vars == {}
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN", "TENANT_ID"]\n')
             await asyncio.sleep(0.1)
@@ -452,9 +449,9 @@ if __name__ == "__main__":
             "X-Tenant-Id=TENANT_ID",
             "X-API-Key=API_KEY",
         ]
-        
+
         mappings = parse_header_mappings(mappings_list)
-        
+
         expected = {
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
@@ -469,9 +466,9 @@ if __name__ == "__main__":
             " X-Tenant-Id = TENANT_ID ",
             "Content-Type=CONTENT_TYPE",
         ]
-        
+
         mappings = parse_header_mappings(mappings_list)
-        
+
         expected = {
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
@@ -484,11 +481,11 @@ if __name__ == "__main__":
         # Test invalid header name
         with pytest.raises(HeaderMappingError, match="Invalid header name"):
             parse_header_mappings(["Invalid Header!=GITHUB_TOKEN"])
-        
+
         # Test invalid environment variable name
         with pytest.raises(HeaderMappingError, match="Invalid environment variable name"):
             parse_header_mappings(["Authorization=123INVALID"])
-        
+
         # Test duplicate header
         with pytest.raises(HeaderMappingError, match="Duplicate header mapping"):
             parse_header_mappings([
@@ -508,19 +505,19 @@ if __name__ == "__main__":
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         # Extract environment variables
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Verify truncation
         assert len(env_vars["GITHUB_TOKEN"]) == 4096  # MAX_HEADER_VALUE_LENGTH
         assert env_vars["TENANT_ID"] == "acme-corp"
-        
+
         # Test with StdIOEndpoint
         pubsub = _PubSub()
         endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN", "TENANT_ID"]\n')
             await asyncio.sleep(0.1)
@@ -533,7 +530,7 @@ if __name__ == "__main__":
         """Test handling multiple concurrent requests with different headers."""
         # This test simulates what would happen in a real scenario
         # where multiple clients send requests with different headers
-        
+
         # Setup for first request
         headers1 = {
             "Authorization": "Bearer token-user1",
@@ -543,33 +540,33 @@ if __name__ == "__main__":
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         env_vars1 = extract_env_vars_from_headers(headers1, mappings)
-        
+
         # Setup for second request
         headers2 = {
             "Authorization": "Bearer token-user2",
             "X-Tenant-Id": "tenant-2",
         }
-        
+
         env_vars2 = extract_env_vars_from_headers(headers2, mappings)
-        
+
         # Verify different environment variables
         assert env_vars1["GITHUB_TOKEN"] == "Bearer token-user1"
         assert env_vars1["TENANT_ID"] == "tenant-1"
         assert env_vars2["GITHUB_TOKEN"] == "Bearer token-user2"
         assert env_vars2["TENANT_ID"] == "tenant-2"
-        
+
         # Test both with separate endpoints (simulating different processes)
         pubsub1 = _PubSub()
         endpoint1 = StdIOEndpoint(mcp_server_script, pubsub1, env_vars1)
-        
+
         pubsub2 = _PubSub()
         endpoint2 = StdIOEndpoint(mcp_server_script, pubsub2, env_vars2)
-        
+
         await endpoint1.start()
         await endpoint2.start()
-        
+
         try:
             # Send requests to both endpoints
             request1 = {
@@ -579,7 +576,7 @@ if __name__ == "__main__":
                 "params": {}
             }
             await endpoint1.send(json.dumps(request1) + "\n")
-            
+
             request2 = {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -587,12 +584,12 @@ if __name__ == "__main__":
                 "params": {}
             }
             await endpoint2.send(json.dumps(request2) + "\n")
-            
+
             await asyncio.sleep(0.1)
-            
+
             assert endpoint1._proc is not None
             assert endpoint2._proc is not None
-            
+
         finally:
             await endpoint1.stop()
             await endpoint2.stop()
@@ -618,13 +615,13 @@ for var in sys.argv[1:]:
 print(json.dumps(env_vars))
 sys.stdout.flush()
 """
-        
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
             yield f.name
-        
+
         os.unlink(f.name)
 
     @pytest.mark.asyncio
@@ -632,10 +629,10 @@ sys.stdout.flush()
         """Test handling of invalid commands."""
         pubsub = _PubSub()
         env_vars = {"GITHUB_TOKEN": "test-token"}
-        
+
         # Use nonexistent command
         endpoint = StdIOEndpoint("nonexistent-command-12345", pubsub, env_vars)
-        
+
         with pytest.raises((OSError, FileNotFoundError)):
             await endpoint.start()
 
@@ -645,11 +642,11 @@ sys.stdout.flush()
         # Test invalid mapping format
         with pytest.raises(HeaderMappingError):
             parse_header_mappings(["InvalidFormat"])
-        
+
         # Test invalid header name
         with pytest.raises(HeaderMappingError):
             parse_header_mappings(["Invalid Header!=GITHUB_TOKEN"])
-        
+
         # Test invalid environment variable name
         with pytest.raises(HeaderMappingError):
             parse_header_mappings(["Authorization=123INVALID"])
@@ -658,22 +655,21 @@ sys.stdout.flush()
     async def test_graceful_degradation(self, test_script):
         """Test graceful degradation when environment injection fails."""
         pubsub = _PubSub()
-        
+
         # Test with invalid environment variable names (should be caught during parsing)
         try:
             parse_header_mappings(["Authorization=123INVALID"])
             assert False, "Should have raised HeaderMappingError"
         except HeaderMappingError:
             pass  # Expected
-        
+
         # Test normal operation without environment variables
         endpoint = StdIOEndpoint(test_script, pubsub, {})
         await endpoint.start()
-        
+
         try:
             await endpoint.send('["GITHUB_TOKEN"]\n')
             await asyncio.sleep(0.1)
             assert endpoint._proc is not None
         finally:
             await endpoint.stop()
-

@@ -11,7 +11,6 @@ Tests for dynamic environment variable injection utilities in mcpgateway.transla
 
 import pytest
 from unittest.mock import patch
-import logging
 
 # First-Party
 from mcpgateway.translate_header_utils import (
@@ -62,7 +61,7 @@ class TestHeaderMappingValidation:
             "",                 # Empty
             "123Header",        # Starts with number
         ]
-        
+
         for invalid_header in invalid_headers:
             with pytest.raises(HeaderMappingError, match="Invalid header name"):
                 validate_header_mapping(invalid_header, "VALID_ENV")
@@ -79,7 +78,7 @@ class TestHeaderMappingValidation:
             "",                 # Empty
             "var-with-hyphen",  # Contains hyphen
         ]
-        
+
         for invalid_env_var in invalid_env_vars:
             with pytest.raises(HeaderMappingError, match="Invalid environment variable name"):
                 validate_header_mapping("Valid-Header", invalid_env_var)
@@ -102,7 +101,7 @@ class TestHeaderValueSanitization:
             ("github-token-abc123", "github-token-abc123"),
             ("acme-corp", "acme-corp"),
         ]
-        
+
         for input_val, expected in test_cases:
             result = sanitize_header_value(input_val)
             assert result == expected
@@ -123,7 +122,7 @@ class TestHeaderValueSanitization:
             ("token\twith\ttabs", "tokenwithtabs"),
             ("token\x01with\x02control", "tokenwithcontrol"),
         ]
-        
+
         for input_val, expected in test_cases:
             result = sanitize_header_value(input_val)
             assert result == expected
@@ -135,7 +134,7 @@ class TestHeaderValueSanitization:
             ("token\u2603with\u2603snowman", "tokenwithsnowman"),
             ("token\x00\x01\x02\x03control", "tokencontrol"),
         ]
-        
+
         for input_val, expected in test_cases:
             result = sanitize_header_value(input_val)
             assert result == expected
@@ -143,7 +142,7 @@ class TestHeaderValueSanitization:
     def test_empty_value_after_sanitization(self):
         """Test handling of values that become empty after sanitization."""
         empty_after_sanitization = ["", "\x00", "\n\r\t", "\x80\xff"]
-        
+
         for val in empty_after_sanitization:
             result = sanitize_header_value(val)
             assert result == ""
@@ -159,7 +158,7 @@ class TestHeaderMappingParsing:
             "X-Tenant-Id=TENANT_ID",
             "X-GitHub-Enterprise-Host=GITHUB_HOST",
         ])
-        
+
         expected = {
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
@@ -174,7 +173,7 @@ class TestHeaderMappingParsing:
             " X-Tenant-Id = TENANT_ID ",
             "Content-Type=CONTENT_TYPE",
         ])
-        
+
         expected = {
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
@@ -198,7 +197,7 @@ class TestHeaderMappingParsing:
             "=ENV_VAR",               # Empty header name
             "Header=Env=Var",         # Multiple equals signs
         ]
-        
+
         for invalid_format in invalid_formats:
             with pytest.raises(HeaderMappingError):
                 parse_header_mappings([invalid_format])
@@ -233,9 +232,9 @@ class TestEnvironmentVariableExtraction:
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         expected = {
             "GITHUB_TOKEN": "Bearer token123",
             "TENANT_ID": "acme-corp",
@@ -254,9 +253,9 @@ class TestEnvironmentVariableExtraction:
             "X-Tenant-Id": "TENANT_ID",
             "Content-Type": "CONTENT_TYPE",
         }
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         expected = {
             "GITHUB_TOKEN": "Bearer token123",
             "TENANT_ID": "acme-corp",
@@ -275,9 +274,9 @@ class TestEnvironmentVariableExtraction:
             "X-Tenant-Id": "TENANT_ID",
             "Content-Type": "CONTENT_TYPE",
         }
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         expected = {
             "CONTENT_TYPE": "application/json",
         }
@@ -290,7 +289,7 @@ class TestEnvironmentVariableExtraction:
             "X-Tenant-Id": "acme-corp",
         }
         mappings = {}
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
         assert env_vars == {}
 
@@ -301,7 +300,7 @@ class TestEnvironmentVariableExtraction:
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
         assert env_vars == {}
 
@@ -315,9 +314,9 @@ class TestEnvironmentVariableExtraction:
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         expected = {
             "GITHUB_TOKEN": "Bearertoken123",
             "TENANT_ID": "acmecorp",
@@ -334,9 +333,9 @@ class TestEnvironmentVariableExtraction:
             "Authorization": "GITHUB_TOKEN",
             "X-Tenant-Id": "TENANT_ID",
         }
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         # Only non-empty values should be included
         expected = {
             "TENANT_ID": "valid-value",
@@ -352,9 +351,9 @@ class TestEnvironmentVariableExtraction:
         mappings = {
             "Authorization": "GITHUB_TOKEN",
         }
-        
+
         env_vars = extract_env_vars_from_headers(headers, mappings)
-        
+
         expected = {
             "GITHUB_TOKEN": "x" * MAX_HEADER_VALUE_LENGTH,
         }
@@ -375,7 +374,7 @@ class TestSecurityConstants:
             "API-Key",
             "Custom-Header-123",
         ]
-        
+
         for header in valid_headers:
             assert ALLOWED_HEADERS_REGEX.match(header), f"Header '{header}' should be valid"
 
@@ -390,7 +389,7 @@ class TestSecurityConstants:
             "",
             "123Header",
         ]
-        
+
         for header in invalid_headers:
             assert not ALLOWED_HEADERS_REGEX.match(header), f"Header '{header}' should be invalid"
 
@@ -425,9 +424,9 @@ class TestErrorHandling:
         with patch('mcpgateway.translate_header_utils.logger') as mock_logger:
             headers = {"Authorization": "Bearer token123"}
             mappings = {"Authorization": "GITHUB_TOKEN"}
-            
+
             extract_env_vars_from_headers(headers, mappings)
-            
+
             # Should log debug message about successful mapping
             mock_logger.debug.assert_called()
             debug_calls = [call[0][0] for call in mock_logger.debug.call_args_list]
@@ -437,15 +436,14 @@ class TestErrorHandling:
         """Test exception handling during header extraction."""
         with patch('mcpgateway.translate_header_utils.sanitize_header_value') as mock_sanitize:
             mock_sanitize.side_effect = Exception("Sanitization failed")
-            
+
             with patch('mcpgateway.translate_header_utils.logger') as mock_logger:
                 headers = {"Authorization": "Bearer token123"}
                 mappings = {"Authorization": "GITHUB_TOKEN"}
-                
+
                 env_vars = extract_env_vars_from_headers(headers, mappings)
-                
+
                 # Should log warning and continue processing
                 mock_logger.warning.assert_called()
                 assert "Failed to process header Authorization" in mock_logger.warning.call_args[0][0]
                 assert env_vars == {}  # Should return empty dict on error
-
