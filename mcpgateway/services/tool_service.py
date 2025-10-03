@@ -1533,10 +1533,9 @@ class ToolService:
             input_schema={
                 "type": "object",
                 "properties": {
-                    "parameters": {"type": "object", "description": "Parameters to pass to the A2A agent"},
-                    "interaction_type": {"type": "string", "description": "Type of interaction", "default": "query"},
+                    "query": {"type": "string", "description": "User query", "default": "Hello from MCP Gateway Admin UI test!"},
                 },
-                "required": ["parameters"],
+                "required": ["query"],
             },
             allow_auto=True,
             annotations={
@@ -1626,11 +1625,11 @@ class ToolService:
         # Patch: Build correct JSON-RPC params structure from flat UI input
         params = None
         # If UI sends flat fields, convert to nested message structure
-        if isinstance(parameters, dict) and "parameters" in parameters and "interaction_type" in parameters and isinstance(parameters["interaction_type"], str):
+        if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
             # Build the nested message object
             message_id = f"admin-test-{int(time.time())}"
-            params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["interaction_type"]}]}}
-            method = parameters.get("parameters", "message/send")
+            params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["query"]}]}}
+            method = parameters.get("method", "message/send")
         else:
             # Already in correct format or unknown, pass through
             params = parameters.get("params", parameters)
