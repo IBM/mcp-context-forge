@@ -638,7 +638,7 @@ class PluginMode(str, Enum):
     DISABLED = "disabled"            # Plugin loaded but not executed
 
 class HookType(str, Enum):
-    """Available hook points in MCP request lifecycle"""    
+    """Available hook points in MCP request lifecycle"""
     PROMPT_PRE_FETCH = "prompt_pre_fetch"     # Before prompt retrieval
     PROMPT_POST_FETCH = "prompt_post_fetch"   # After prompt rendering
     TOOL_PRE_INVOKE = "tool_pre_invoke"       # Before tool execution

@@ -4,9 +4,9 @@ MCP Context Forge provides a comprehensive collection of production-ready plugin
 
 ## Plugin Categories
 
-- [Security & Safety](#security-safety) 
-- [Reliability & Performance](#reliability-performance) 
-- [Content Transformation & Formatting](#content-transformation-formatting) 
+- [Security & Safety](#security-safety)
+- [Reliability & Performance](#reliability-performance)
+- [Content Transformation & Formatting](#content-transformation-formatting)
 - [Content Filtering & Validation](#content-filtering-validation)
 - [Compliance & Governance](#compliance-governance)
 - [Network & Integration](#network-integration)
