@@ -44,9 +44,13 @@ sys.stdout.flush()
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
-            yield f.name
-
-        os.unlink(f.name)
+            try:
+                yield f.name
+            finally:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
 
     @pytest.fixture
     def echo_script(self):
@@ -61,9 +65,13 @@ sys.stdout.flush()
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
-            yield f.name
-
-        os.unlink(f.name)
+            try:
+                yield f.name
+            finally:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
 
     def test_stdio_endpoint_init_with_env_vars(self):
         """Test StdIOEndpoint initialization with environment variables."""
@@ -451,9 +459,13 @@ sys.stdout.flush()
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
-            yield f.name
-
-        os.unlink(f.name)
+            try:
+                yield f.name
+            finally:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
 
     def test_old_initialization_still_works(self):
         """Test that old initialization method still works."""

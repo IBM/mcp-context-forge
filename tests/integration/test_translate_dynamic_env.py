@@ -49,9 +49,13 @@ sys.stdout.flush()
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
-            yield f.name
-
-        os.unlink(f.name)
+            try:
+                yield f.name
+            finally:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
 
     @pytest.fixture
     def mcp_server_script(self):
@@ -131,9 +135,13 @@ if __name__ == "__main__":
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
-            yield f.name
-
-        os.unlink(f.name)
+            try:
+                yield f.name
+            finally:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
 
     @pytest.mark.asyncio
     async def test_header_to_env_integration(self, test_script):
@@ -620,9 +628,13 @@ sys.stdout.flush()
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
-            yield f.name
-
-        os.unlink(f.name)
+            try:
+                yield f.name
+            finally:
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
 
     @pytest.mark.asyncio
     async def test_invalid_command_handling(self):
