@@ -104,7 +104,7 @@ sys.stdout.flush()
         pubsub = _PubSub()
         env_vars = {"GITHUB_TOKEN": "test-token-123", "TENANT_ID": "acme-corp"}
 
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -129,7 +129,7 @@ sys.stdout.flush()
         initial_env_vars = {"BASE_VAR": "base-value"}
         additional_env_vars = {"GITHUB_TOKEN": "additional-token", "TENANT_ID": "additional-tenant"}
 
-        endpoint = StdIOEndpoint(test_script, pubsub, initial_env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, initial_env_vars)
         await endpoint.start(additional_env_vars=additional_env_vars)
 
         try:
@@ -152,7 +152,7 @@ sys.stdout.flush()
         initial_env_vars = {"GITHUB_TOKEN": "initial-token", "BASE_VAR": "base-value"}
         additional_env_vars = {"GITHUB_TOKEN": "override-token"}  # Override initial
 
-        endpoint = StdIOEndpoint(test_script, pubsub, initial_env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, initial_env_vars)
         await endpoint.start(additional_env_vars=additional_env_vars)
 
         try:
@@ -173,7 +173,7 @@ sys.stdout.flush()
         """Test starting StdIOEndpoint without environment variables."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(echo_script, pubsub)
+        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
         await endpoint.start()
 
         try:
@@ -194,7 +194,7 @@ sys.stdout.flush()
         """Test that starting an already started endpoint is handled gracefully."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(echo_script, pubsub)
+        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
         await endpoint.start()
 
         try:
@@ -231,7 +231,7 @@ sys.stdout.flush()
         """Test stopping after starting."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(echo_script, pubsub)
+        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
         await endpoint.start()
 
         assert endpoint._proc is not None
@@ -256,7 +256,7 @@ sys.stdout.flush()
             "DEBUG": "false",
         }
 
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -278,7 +278,7 @@ sys.stdout.flush()
         pubsub = _PubSub()
         env_vars = {}
 
-        endpoint = StdIOEndpoint(echo_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -299,7 +299,7 @@ sys.stdout.flush()
         """Test with None environment variables."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(echo_script, pubsub, None)
+        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub, None)
         await endpoint.start()
 
         try:
@@ -325,7 +325,7 @@ sys.stdout.flush()
             "JSON_CONFIG": '{"key": "value", "number": 123}',
         }
 
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -351,7 +351,7 @@ sys.stdout.flush()
             "NORMAL_VAR": "normal",
         }
 
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -483,7 +483,7 @@ sys.stdout.flush()
         """Test that old start method still works."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(echo_script, pubsub)
+        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
         await endpoint.start()  # No additional_env_vars parameter
 
         try:

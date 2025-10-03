@@ -61,8 +61,8 @@ def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH)
         value = value[:max_length]
 
     # Remove potentially dangerous characters
-    value = re.sub(r'[^\x20-\x7E]', '', value)  # Only printable ASCII
-    value = value.replace('\x00', '')  # Remove null bytes
+    value = re.sub(r"[^\x20-\x7E]", "", value)  # Only printable ASCII
+    value = value.replace("\x00", "")  # Remove null bytes
 
     return value
 
@@ -102,10 +102,7 @@ def parse_header_mappings(header_mappings: List[str]) -> Dict[str, str]:
     return mappings
 
 
-def extract_env_vars_from_headers(
-    request_headers: Dict[str, str],
-    header_mappings: Dict[str, str]
-) -> Dict[str, str]:
+def extract_env_vars_from_headers(request_headers: Dict[str, str], header_mappings: Dict[str, str]) -> Dict[str, str]:
     """Extract environment variables from request headers.
 
     Args:

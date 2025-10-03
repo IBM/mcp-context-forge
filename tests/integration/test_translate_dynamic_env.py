@@ -171,7 +171,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -214,7 +214,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -250,7 +250,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -277,7 +277,7 @@ if __name__ == "__main__":
 
         # Test with MCP server script
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(mcp_server_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {mcp_server_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -348,7 +348,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, combined_env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, combined_env_vars)
         await endpoint.start()
 
         try:
@@ -385,7 +385,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -412,7 +412,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -439,7 +439,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -523,7 +523,7 @@ if __name__ == "__main__":
 
         # Test with StdIOEndpoint
         pubsub = _PubSub()
-        endpoint = StdIOEndpoint(test_script, pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -567,10 +567,10 @@ if __name__ == "__main__":
 
         # Test both with separate endpoints (simulating different processes)
         pubsub1 = _PubSub()
-        endpoint1 = StdIOEndpoint(mcp_server_script, pubsub1, env_vars1)
+        endpoint1 = StdIOEndpoint(f"python3 {mcp_server_script}", pubsub1, env_vars1)
 
         pubsub2 = _PubSub()
-        endpoint2 = StdIOEndpoint(mcp_server_script, pubsub2, env_vars2)
+        endpoint2 = StdIOEndpoint(f"python3 {mcp_server_script}", pubsub2, env_vars2)
 
         await endpoint1.start()
         await endpoint2.start()
@@ -676,7 +676,7 @@ sys.stdout.flush()
             pass  # Expected
 
         # Test normal operation without environment variables
-        endpoint = StdIOEndpoint(test_script, pubsub, {})
+        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, {})
         await endpoint.start()
 
         try:

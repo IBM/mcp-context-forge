@@ -399,7 +399,7 @@ class StdIOEndpoint:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,  # passthrough for visibility
-            env=env  # 🔑 Add environment variable support
+            env=env,  # 🔑 Add environment variable support
         )
 
         # Explicit error checking
@@ -976,17 +976,8 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
 
     # Dynamic environment variable injection
-    p.add_argument(
-        "--enable-dynamic-env",
-        action="store_true",
-        help="Enable dynamic environment variable injection from HTTP headers"
-    )
-    p.add_argument(
-        "--header-to-env",
-        action="append",
-        default=[],
-        help="Map HTTP header to environment variable (format: HEADER=ENV_VAR, can be used multiple times)"
-    )
+    p.add_argument("--enable-dynamic-env", action="store_true", help="Enable dynamic environment variable injection from HTTP headers")
+    p.add_argument("--header-to-env", action="append", default=[], help="Map HTTP header to environment variable (format: HEADER=ENV_VAR, can be used multiple times)")
 
     # For streamable HTTP mode
     p.add_argument(
@@ -2321,7 +2312,9 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
     header_mappings = None
     if getattr(args, "enable_dynamic_env", False):
         try:
+            # First-Party
             from mcpgateway.translate_header_utils import parse_header_mappings
+
             header_mappings = parse_header_mappings(getattr(args, "header_to_env", []))
             LOGGER.info(f"Dynamic environment injection enabled with {len(header_mappings)} header mappings")
         except Exception as e:
