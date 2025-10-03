@@ -1,6 +1,8 @@
 nav:
   - index.md
   - configuration.md
+  - scale.md
+  - tuning.md
   - backup.md
   - bulk-import.md
   - metadata-tracking.md
@@ -20,7 +22,8 @@ nav:
   - sso-google-tutorial.md
   - sso-ibm-tutorial.md
   - sso-okta-tutorial.md
-  - tuning.md
+  - rbac.md
+  - teams.md
   - ui-customization.md
   - upgrade.md
   - well-known-uris.md
