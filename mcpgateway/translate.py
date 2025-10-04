@@ -149,6 +149,7 @@ from starlette.routing import Route
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.translate_header_utils import extract_env_vars_from_headers, parse_header_mappings
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -315,7 +316,7 @@ class StdIOEndpoint:
         True
     """
 
-    def __init__(self, cmd: str, pubsub: _PubSub) -> None:
+    def __init__(self, cmd: str, pubsub: _PubSub, env_vars: Optional[Dict[str, str]] = None, header_mappings: Optional[Dict[str, str]] = None) -> None:
         """Initialize a stdio endpoint for subprocess communication.
 
         Sets up the endpoint with the command to run and the pubsub system
@@ -326,6 +327,10 @@ class StdIOEndpoint:
             cmd: The command string to execute as a subprocess.
             pubsub: The publish-subscribe system for distributing subprocess
                 output to SSE clients.
+            env_vars: Optional dictionary of environment variables to set
+                when starting the subprocess.
+            header_mappings: Optional mapping of HTTP headers to environment variable names
+                for dynamic environment injection.
 
         Examples:
             >>> pubsub = _PubSub()
@@ -345,15 +350,22 @@ class StdIOEndpoint:
         """
         self._cmd = cmd
         self._pubsub = pubsub
+        self._env_vars = env_vars or {}
+        self._header_mappings = header_mappings or {}
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._stdin: Optional[asyncio.StreamWriter] = None
         self._pump_task: Optional[asyncio.Task[None]] = None
 
-    async def start(self) -> None:
-        """Start the stdio subprocess.
+    async def start(self, additional_env_vars: Optional[Dict[str, str]] = None) -> None:
+        """Start the stdio subprocess with custom environment variables.
 
         Creates the subprocess and starts the stdout pump task. The subprocess
         is created with stdin/stdout pipes and stderr passed through.
+
+        Args:
+            additional_env_vars: Optional dictionary of additional environment
+                variables to set when starting the subprocess. These will be
+                combined with the environment variables set during initialization.
 
         Raises:
             RuntimeError: If the subprocess fails to create stdin/stdout pipes.
@@ -369,11 +381,25 @@ class StdIOEndpoint:
             True
         """
         LOGGER.info(f"Starting stdio subprocess: {self._cmd}")
+
+        # Build environment from base + configured + additional
+        env = os.environ.copy()
+        env.update(self._env_vars)
+        if additional_env_vars:
+            env.update(additional_env_vars)
+
+        # Clear any mapped env vars that weren't provided in headers to avoid inheritance
+        if self._header_mappings:
+            for env_var_name in self._header_mappings.values():
+                if env_var_name not in (additional_env_vars or {}):
+                    env[env_var_name] = ""
+
         self._proc = await asyncio.create_subprocess_exec(
             *shlex.split(self._cmd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,  # passthrough for visibility
+            env=env,  # 🔑 Add environment variable support
         )
 
         # Explicit error checking
@@ -401,12 +427,52 @@ class StdIOEndpoint:
         """
         if self._proc is None:
             return
+
+        # Check if process is still running
+        try:
+            if self._proc.returncode is not None:
+                # Process already terminated
+                LOGGER.info(f"Subprocess (pid={self._proc.pid}) already terminated")
+                self._proc = None
+                self._stdin = None
+                return
+        except (ProcessLookupError, AttributeError):
+            # Process doesn't exist or is already cleaned up
+            LOGGER.info("Subprocess already cleaned up")
+            self._proc = None
+            self._stdin = None
+            return
+
         LOGGER.info(f"Stopping subprocess (pid={self._proc.pid})")
-        self._proc.terminate()
-        with suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(self._proc.wait(), timeout=5)
-        if self._pump_task:
-            self._pump_task.cancel()
+        try:
+            self._proc.terminate()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._proc.wait(), timeout=5)
+        except ProcessLookupError:
+            # Process already terminated
+            LOGGER.info("Subprocess already terminated")
+        finally:
+            if self._pump_task:
+                self._pump_task.cancel()
+            self._proc = None
+            self._stdin = None  # Reset stdin too!
+
+    def is_running(self) -> bool:
+        """Check if the stdio subprocess is currently running.
+
+        Returns:
+            True if the subprocess is running, False otherwise.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_is_running():
+            ...     pubsub = _PubSub()
+            ...     stdio = StdIOEndpoint("cat", pubsub)
+            ...     return stdio.is_running()
+            >>> asyncio.run(test_is_running())
+            False
+        """
+        return self._proc is not None
 
     async def send(self, raw: str) -> None:
         """Send data to the subprocess stdin.
@@ -556,6 +622,7 @@ def _build_fastapi(
     sse_path: str = "/sse",
     message_path: str = "/message",
     cors_origins: Optional[List[str]] = None,
+    header_mappings: Optional[Dict[str, str]] = None,
 ) -> FastAPI:
     """Build FastAPI application with SSE and message endpoints.
 
@@ -569,6 +636,7 @@ def _build_fastapi(
         sse_path: Path for the SSE endpoint. Defaults to "/sse".
         message_path: Path for the message endpoint. Defaults to "/message".
         cors_origins: Optional list of CORS allowed origins.
+        header_mappings: Optional mapping of HTTP headers to environment variables.
 
     Returns:
         FastAPI: The configured FastAPI application.
@@ -625,6 +693,18 @@ def _build_fastapi(
             messages from the child process and emits periodic ``keepalive``
             frames so that clients and proxies do not time out.
         """
+        # Extract environment variables from headers if dynamic env is enabled
+        additional_env_vars = {}
+        if header_mappings:
+            request_headers = dict(request.headers)
+            additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
+
+            # Restart stdio endpoint with new environment variables
+            if additional_env_vars:
+                LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
+                await stdio.stop()  # Stop existing process
+                await stdio.start(additional_env_vars)  # Start with new env vars
+
         queue = pubsub.subscribe()
         session_id = uuid.uuid4().hex
 
@@ -712,6 +792,26 @@ def _build_fastapi(
             or ``400 Bad Request`` when the body is not valid JSON.
         """
         _ = session_id  # Unused but required for API compatibility
+
+        # Extract environment variables from headers if dynamic env is enabled
+        additional_env_vars = {}
+        if header_mappings:
+            request_headers = dict(raw.headers)
+            additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
+
+            # Restart stdio endpoint with new environment variables
+            if additional_env_vars:
+                LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
+                await stdio.stop()  # Stop existing process
+                await stdio.start(additional_env_vars)  # Start with new env vars
+                await asyncio.sleep(0.5)  # Give process time to initialize
+
+        # Ensure stdio endpoint is running
+        if not stdio.is_running():
+            LOGGER.info("Starting stdio endpoint (was not running)")
+            await stdio.start()
+            await asyncio.sleep(0.5)  # Give process time to initialize
+
         payload = await raw.body()
         try:
             json.loads(payload)  # validate
@@ -892,6 +992,10 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Command to run when bridging SSE/streamableHttp to stdio (optional with --sse or --streamableHttp)",
     )
 
+    # Dynamic environment variable injection
+    p.add_argument("--enable-dynamic-env", action="store_true", help="Enable dynamic environment variable injection from HTTP headers")
+    p.add_argument("--header-to-env", action="append", default=[], help="Map HTTP header to environment variable (format: HEADER=ENV_VAR, can be used multiple times)")
+
     # For streamable HTTP mode
     p.add_argument(
         "--stateless",
@@ -918,6 +1022,7 @@ async def _run_stdio_to_sse(
     sse_path: str = "/sse",
     message_path: str = "/message",
     keep_alive: int = KEEP_ALIVE_INTERVAL,
+    header_mappings: Optional[Dict[str, str]] = None,
 ) -> None:
     """Run stdio to SSE bridge.
 
@@ -933,6 +1038,7 @@ async def _run_stdio_to_sse(
         sse_path: Path for the SSE endpoint. Defaults to "/sse".
         message_path: Path for the message endpoint. Defaults to "/message".
         keep_alive: Keep-alive interval in seconds. Defaults to KEEP_ALIVE_INTERVAL.
+        header_mappings: Optional mapping of HTTP headers to environment variables.
 
     Examples:
         >>> import asyncio # doctest: +SKIP
@@ -943,10 +1049,10 @@ async def _run_stdio_to_sse(
         True
     """
     pubsub = _PubSub()
-    stdio = StdIOEndpoint(cmd, pubsub)
+    stdio = StdIOEndpoint(cmd, pubsub, header_mappings=header_mappings)
     await stdio.start()
 
-    app = _build_fastapi(pubsub, stdio, keep_alive=keep_alive, sse_path=sse_path, message_path=message_path, cors_origins=cors)
+    app = _build_fastapi(pubsub, stdio, keep_alive=keep_alive, sse_path=sse_path, message_path=message_path, cors_origins=cors, header_mappings=header_mappings)
     config = uvicorn.Config(
         app,
         host=host,  # Changed from hardcoded "0.0.0.0"
@@ -1663,6 +1769,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     keep_alive: int = KEEP_ALIVE_INTERVAL,
     stateless: bool = False,
     json_response: bool = False,
+    header_mappings: Optional[Dict[str, str]] = None,
 ) -> None:
     """Run a stdio server and expose it via multiple protocols simultaneously.
 
@@ -1679,6 +1786,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         keep_alive: Keep-alive interval for SSE. Defaults to KEEP_ALIVE_INTERVAL.
         stateless: Whether to use stateless mode for streamable HTTP.
         json_response: Whether to return JSON responses for streamable HTTP.
+        header_mappings: Optional mapping of HTTP headers to environment variables.
     """
     LOGGER.info(f"Starting multi-protocol server for command: {cmd}")
     LOGGER.info(f"Protocols: SSE={expose_sse}, StreamableHTTP={expose_streamable_http}")
@@ -1687,7 +1795,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     pubsub = _PubSub() if (expose_sse or expose_streamable_http) else None
 
     # Create the stdio endpoint
-    stdio = StdIOEndpoint(cmd, pubsub) if (expose_sse or expose_streamable_http) and pubsub else None
+    stdio = StdIOEndpoint(cmd, pubsub, header_mappings=header_mappings) if (expose_sse or expose_streamable_http) and pubsub else None
 
     # Create fastapi app and middleware
     app = FastAPI()
@@ -1721,6 +1829,19 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             """
             if not pubsub:
                 raise RuntimeError("PubSub not available")
+
+            # Extract environment variables from headers if dynamic env is enabled
+            additional_env_vars = {}
+            if header_mappings and stdio:
+                request_headers = dict(request.headers)
+                additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
+
+                # Restart stdio endpoint with new environment variables
+                if additional_env_vars:
+                    LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
+                    await stdio.stop()  # Stop existing process
+                    await stdio.start(additional_env_vars)  # Start with new env vars
+
             queue = pubsub.subscribe()
             session_id = uuid.uuid4().hex
 
@@ -1781,6 +1902,26 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 Response: Acknowledgement of message receipt.
             """
             _ = session_id
+
+            # Extract environment variables from headers if dynamic env is enabled
+            additional_env_vars = {}
+            if header_mappings and stdio:
+                request_headers = dict(raw.headers)
+                additional_env_vars = extract_env_vars_from_headers(request_headers, header_mappings)
+
+                # Only restart if we have new environment variables
+                if additional_env_vars:
+                    LOGGER.info(f"Restarting stdio endpoint with {len(additional_env_vars)} environment variables")
+                    await stdio.stop()  # Stop existing process
+                    await stdio.start(additional_env_vars)  # Start with new env vars
+                    await asyncio.sleep(0.5)  # Give process time to initialize
+
+            # Ensure stdio endpoint is running
+            if stdio and not stdio.is_running():
+                LOGGER.info("Starting stdio endpoint (was not running)")
+                await stdio.start()
+                await asyncio.sleep(0.5)  # Give process time to initialize
+
             payload = await raw.body()
             try:
                 json.loads(payload)
@@ -2183,6 +2324,17 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
         level=getattr(logging, args.logLevel.upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    # Parse header mappings if dynamic environment injection is enabled
+    header_mappings = None
+    if getattr(args, "enable_dynamic_env", False):
+        try:
+            header_mappings = parse_header_mappings(getattr(args, "header_to_env", []))
+            LOGGER.info(f"Dynamic environment injection enabled with {len(header_mappings)} header mappings")
+        except Exception as e:
+            LOGGER.error(f"Failed to parse header mappings: {e}")
+            raise
+
     try:
         # Handle local stdio server exposure
         if args.stdio:
@@ -2209,6 +2361,7 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
                     keep_alive=getattr(args, "keepAlive", KEEP_ALIVE_INTERVAL),
                     stateless=getattr(args, "stateless", False),
                     json_response=getattr(args, "jsonResponse", False),
+                    header_mappings=header_mappings,
                 )
             )
 
