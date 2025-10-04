@@ -102,26 +102,18 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ----------------------------------------------------------------
-      # Step 4  Pull the image using the commit SHA tag
       # ----------------------------------------------------------------
-      - name: ⬇️  Pull image by commit SHA
-        run: |
-          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          docker pull "$IMAGE:${{ steps.meta.outputs.sha }}"
+      # Step 4  Set up Docker Buildx for multi-platform image handling
+      # ----------------------------------------------------------------
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
 
       # ----------------------------------------------------------------
-      # Step 5  Tag the image with the semantic version tag
+      # Step 5  Tag multi-platform image with semantic version
       # ----------------------------------------------------------------
-      - name: 🏷️  Tag image with version
+      - name: 🏷️  Tag multi-platform image with version
         run: |
           IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          docker tag "$IMAGE:${{ steps.meta.outputs.sha }}" \
-                     "$IMAGE:${{ steps.meta.outputs.tag }}"
-
-      # ----------------------------------------------------------------
-      # Step 6  Push the new tag to GHCR
-      # ----------------------------------------------------------------
-      - name: 🚀  Push new version tag
-        run: |
-          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          docker push "$IMAGE:${{ steps.meta.outputs.tag }}"
+          docker buildx imagetools create \
+            "$IMAGE:${{ steps.meta.outputs.sha }}" \
+            --tag "$IMAGE:${{ steps.meta.outputs.tag }}"

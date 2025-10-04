@@ -1,0 +1,22 @@
+name: Test Multiplatform Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-multiplatform:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      - name: Build multi-platform Docker image
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file Containerfile.lite \
+            --tag test-multiplatform:latest \
+            --output type=docker,dest=- | docker load

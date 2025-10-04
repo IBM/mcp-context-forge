@@ -97,19 +97,20 @@ jobs:
       # -------------------------------------------------------------
       # 3️⃣  Build & tag image (timestamp + latest)
       # -------------------------------------------------------------
-      - name: 🏗️  Build Docker image
+      - name: 🏗️  Build multi-platform Docker image
         env:
           DOCKER_CONTENT_TRUST: "1"
         run: |
           TAG=$(date +%s)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           docker buildx build \
+            --platform linux/amd64,linux/arm64 \
             --file Containerfile.lite \
             --tag $IMAGE_NAME:$TAG \
             --tag $IMAGE_NAME:latest \
             --cache-from type=local,src=${{ env.CACHE_DIR }} \
             --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
-            --load \
+            --push \
             .   # build context is mandatory
 
       # -------------------------------------------------------------

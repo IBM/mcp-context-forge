@@ -129,22 +129,20 @@ jobs:
       # -----------------------------------------------------------
       # 5️⃣  Build & tag image (cache-aware)
       # -----------------------------------------------------------
-      - name: 🏗️  Build Docker image (with cache)
+      - name: 🏗️  Build multi-platform Docker image (with cache)
         run: |
           docker buildx build \
+            --platform linux/amd64,linux/arm64 \
             --file Containerfile.lite \
             --tag "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
             --cache-from type=local,src=${{ env.CACHE_DIR }} \
             --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
-            --load \
+            --push \
             .
 
       # -----------------------------------------------------------
-      # 6️⃣  Push image to IBM Container Registry
+      # 6️⃣  Image pushed during build (multi-platform)
       # -----------------------------------------------------------
-      - name: 📤  Push image to ICR
-        run: |
-          docker push "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG"
 
       # -----------------------------------------------------------
       # 7️⃣  Deploy (create or update) Code Engine application
