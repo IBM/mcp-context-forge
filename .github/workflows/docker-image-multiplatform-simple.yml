@@ -3,10 +3,10 @@
 # ===============================================================
 #
 # ⚠️  DISABLED: This workflow is too slow due to ARM64 emulation on AMD64 runners
-# 
+#
 # This workflow builds multiplatform Docker images using a simpler approach:
 # 1. Builds both platforms in a single job
-# 2. Uses proper lowercase repository names  
+# 2. Uses proper lowercase repository names
 # 3. Creates timestamped tags for traceability
 # 4. More reliable than matrix-based approach
 #
