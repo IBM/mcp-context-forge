@@ -37,7 +37,7 @@ fi
 #────────────────────────────────────────────────────────────────────────────────
 
 echo "Running OPA server"
-opa run --server ${POLICY_PATH:-opaserver/rego/policy.rego} &
+opa run --server "${POLICY_PATH:-opaserver/rego/policy.rego}" &
 
 #────────────────────────────────────────────────────────────────────────────────
 # SECTION 2: Run the API server
@@ -49,4 +49,4 @@ CHUK_MCP_CONFIG_PATH=${CHUK_MCP_CONFIG_PATH:-./resources/runtime/config.yaml}
 
 echo "✓  Using plugin config from: ${PLUGINS_CONFIG_PATH}"
 echo "✓  Running API server with config from: ${CHUK_MCP_CONFIG_PATH}"
-python ${API_SERVER_SCRIPT}
+python "${API_SERVER_SCRIPT}"
