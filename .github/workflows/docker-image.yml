@@ -95,7 +95,17 @@ jobs:
           restore-keys: ${{ runner.os }}-buildx-
 
       # -------------------------------------------------------------
-      # 3️⃣  Build & tag image (timestamp + latest)
+      # 3️⃣  Log in to GHCR (before build)
+      # -------------------------------------------------------------
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------
+      # 4️⃣  Build & tag image (timestamp + latest)
       # -------------------------------------------------------------
       - name: 🏗️  Build multi-platform Docker image
         env:
@@ -117,7 +127,7 @@ jobs:
             .   # build context is mandatory
 
       # -------------------------------------------------------------
-      # 4️⃣  Image lint (Dockle CLI → SARIF)
+      # 5️⃣  Image lint (Dockle CLI → SARIF)
       # -------------------------------------------------------------
       - name: 🔍  Image lint (Dockle)
         id: dockle
@@ -139,7 +149,7 @@ jobs:
           sarif_file: dockle-results.sarif
 
       # -------------------------------------------------------------
-      # 5️⃣  Generate SPDX SBOM with Syft
+      # 6️⃣  Generate SPDX SBOM with Syft
       # -------------------------------------------------------------
       - name: 📄  Generate SBOM (Syft)
         uses: anchore/sbom-action@v0.20.5
@@ -148,7 +158,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # -------------------------------------------------------------
-      # 6️⃣  Trivy, Grype CVE scan → SARIF
+      # 7️⃣  Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
         if: env.TRIVY_ENABLED == 'true'
@@ -181,22 +191,6 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: grype-results.sarif
-
-      # -------------------------------------------------------------
-      # 7️⃣  Push both tags to GHCR
-      # -------------------------------------------------------------
-      - name: 🔑  Log in to GHCR
-        uses: docker/login-action@v3.5.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🚀 Push image to GHCR
-        if: github.ref == 'refs/heads/main'
-        run: |
-          docker push $IMAGE_NAME:${{ env.TAG }}
-          docker push $IMAGE_NAME:latest
 
       # -------------------------------------------------------------
       # 8️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
