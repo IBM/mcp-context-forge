@@ -198,6 +198,12 @@ RUN set -euo pipefail \
     && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 upgrade -y \
     && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
          --setopt=install_weak_deps=0 \
+         --setopt=tsflags=nodocs \
+         --setopt=skip_if_unavailable=1 \
+         filesystem \
+         bash \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
+         --setopt=install_weak_deps=0 \
          --setopt=tsflags=nodocs,noscripts \
          --setopt=skip_if_unavailable=1 \
          python${PYTHON_VERSION} \
