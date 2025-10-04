@@ -20,7 +20,8 @@ from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.config import Settings
-from mcpgateway.db import Base
+import mcpgateway.db  # Import entire module to ensure all models are registered
+from mcpgateway.db import Base, OAuthState, RegisteredOAuthClient
 
 # Local
 # Test utilities - import before mcpgateway modules

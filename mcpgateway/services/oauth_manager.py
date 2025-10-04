@@ -127,6 +127,20 @@ class OAuthManager:
         self.token_storage = token_storage
         self.settings = get_settings()
 
+    def _generate_pkce_params(self) -> Dict[str, str]:
+        """Generate PKCE parameters for OAuth Authorization Code flow (RFC 7636).
+
+        Returns:
+            Dict containing code_verifier, code_challenge, and code_challenge_method
+        """
+        # Generate code_verifier: 43-128 character random string
+        code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode("utf-8").rstrip("=")
+
+        # Generate code_challenge: base64url(SHA256(code_verifier))
+        code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("utf-8")).digest()).decode("utf-8").rstrip("=")
+
+        return {"code_verifier": code_verifier, "code_challenge": code_challenge, "code_challenge_method": "S256"}
+
     async def get_access_token(self, credentials: Dict[str, Any]) -> str:
         """Get access token based on grant type.
 
@@ -307,12 +321,12 @@ class OAuthManager:
             OAuthError: If token exchange fails
         """
         client_id = credentials["client_id"]
-        client_secret = credentials["client_secret"]
+        client_secret = credentials.get("client_secret")  # Optional for public clients (PKCE-only)
         token_url = credentials["token_url"]
         redirect_uri = credentials["redirect_uri"]
 
-        # Decrypt client secret if it's encrypted
-        if len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
+        # Decrypt client secret if it's encrypted and present
+        if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
             try:
                 settings = get_settings()
                 encryption = get_oauth_encryption(settings.auth_encryption_secret)
@@ -331,8 +345,11 @@ class OAuthManager:
             "code": code,
             "redirect_uri": redirect_uri,
             "client_id": client_id,
-            "client_secret": client_secret,
         }
+
+        # Only include client_secret if present (public clients don't have secrets)
+        if client_secret:
+            token_data["client_secret"] = client_secret
 
         # Exchange code for token with retries
         for attempt in range(self.max_retries):
@@ -377,7 +394,7 @@ class OAuthManager:
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
     async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None) -> Dict[str, str]:
-        """Initiate Authorization Code flow and return authorization URL.
+        """Initiate Authorization Code flow with PKCE and return authorization URL.
 
         Args:
             gateway_id: ID of the gateway being configured
@@ -388,22 +405,25 @@ class OAuthManager:
             Dict containing authorization_url and state
         """
 
+        # Generate PKCE parameters (RFC 7636)
+        pkce_params = self._generate_pkce_params()
+
         # Generate state parameter with user context for CSRF protection
         state = self._generate_state(gateway_id, app_user_email)
 
-        # Store state in session/cache for validation
+        # Store state with code_verifier in session/cache for validation
         if self.token_storage:
-            await self._store_authorization_state(gateway_id, state)
+            await self._store_authorization_state(gateway_id, state, code_verifier=pkce_params["code_verifier"])
 
-        # Generate authorization URL
-        auth_url, _ = self._create_authorization_url(credentials, state)
+        # Generate authorization URL with PKCE
+        auth_url = self._create_authorization_url_with_pkce(credentials, state, pkce_params["code_challenge"], pkce_params["code_challenge_method"])
 
-        logger.info(f"Generated authorization URL for gateway {gateway_id}")
+        logger.info(f"Generated authorization URL with PKCE for gateway {gateway_id}")
 
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
     async def complete_authorization_code_flow(self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any]) -> Dict[str, Any]:
-        """Complete Authorization Code flow and store tokens.
+        """Complete Authorization Code flow with PKCE and store tokens.
 
         Args:
             gateway_id: ID of the gateway
@@ -417,9 +437,12 @@ class OAuthManager:
         Raises:
             OAuthError: If state validation fails or token exchange fails
         """
-        # First, validate state to prevent replay attacks
-        if not await self._validate_authorization_state(gateway_id, state):
+        # Validate state and retrieve code_verifier
+        state_data = await self._validate_and_retrieve_state(gateway_id, state)
+        if not state_data:
             raise OAuthError("Invalid or expired state parameter - possible replay attack")
+
+        code_verifier = state_data.get("code_verifier")
 
         # Decode state to extract user context and verify HMAC
         try:
@@ -439,9 +462,9 @@ class OAuthManager:
 
             # Parse state data
             state_json = state_bytes.decode()
-            state_data = json.loads(state_json)
-            app_user_email = state_data.get("app_user_email")
-            state_gateway_id = state_data.get("gateway_id")
+            state_payload = json.loads(state_json)
+            app_user_email = state_payload.get("app_user_email")
+            state_gateway_id = state_payload.get("gateway_id")
 
             # Validate gateway ID matches
             if state_gateway_id != gateway_id:
@@ -451,8 +474,8 @@ class OAuthManager:
             logger.warning(f"Failed to decode state JSON, trying legacy format: {e}")
             app_user_email = None
 
-        # Exchange code for tokens
-        token_response = await self._exchange_code_for_tokens(credentials, code)
+        # Exchange code for tokens with PKCE code_verifier
+        token_response = await self._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
 
         # Extract user information from token response
         user_id = self._extract_user_id(token_response, credentials)
@@ -516,12 +539,13 @@ class OAuthManager:
 
         return state_encoded
 
-    async def _store_authorization_state(self, gateway_id: str, state: str) -> None:
+    async def _store_authorization_state(self, gateway_id: str, state: str, code_verifier: str = None) -> None:
         """Store authorization state for validation with TTL.
 
         Args:
             gateway_id: ID of the gateway
             state: State parameter to store
+            code_verifier: Optional PKCE code verifier (RFC 7636)
         """
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
         settings = get_settings()
@@ -532,7 +556,7 @@ class OAuthManager:
             if redis:
                 try:
                     state_key = f"oauth:state:{gateway_id}:{state}"
-                    state_data = {"state": state, "gateway_id": gateway_id, "expires_at": expires_at.isoformat(), "used": False}
+                    state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
                     # Store in Redis with TTL
                     await redis.setex(state_key, STATE_TTL_SECONDS, json.dumps(state_data))
                     logger.debug(f"Stored OAuth state in Redis for gateway {gateway_id}")
@@ -552,8 +576,8 @@ class OAuthManager:
                     # Clean up expired states first
                     db.query(OAuthState).filter(OAuthState.expires_at < datetime.now(timezone.utc)).delete()
 
-                    # Store new state
-                    oauth_state = OAuthState(gateway_id=gateway_id, state=state, expires_at=expires_at, used=False)
+                    # Store new state with code_verifier
+                    oauth_state = OAuthState(gateway_id=gateway_id, state=state, code_verifier=code_verifier, expires_at=expires_at, used=False)
                     db.add(oauth_state)
                     db.commit()
                     logger.debug(f"Stored OAuth state in database for gateway {gateway_id}")
@@ -568,7 +592,7 @@ class OAuthManager:
             # Clean up expired states first
             now = datetime.now(timezone.utc)
             state_key = f"oauth:state:{gateway_id}:{state}"
-            state_data = {"state": state, "gateway_id": gateway_id, "expires_at": expires_at.isoformat(), "used": False}
+            state_data = {"state": state, "gateway_id": gateway_id, "code_verifier": code_verifier, "expires_at": expires_at.isoformat(), "used": False}
             expired_states = [key for key, data in _oauth_states.items() if datetime.fromisoformat(data["expires_at"]) < now]
             for key in expired_states:
                 del _oauth_states[key]
@@ -704,6 +728,107 @@ class OAuthManager:
             logger.debug(f"Successfully validated OAuth state from memory for gateway {gateway_id}")
             return True
 
+    async def _validate_and_retrieve_state(self, gateway_id: str, state: str) -> Optional[Dict[str, Any]]:
+        """Validate state and return full state data including code_verifier.
+
+        Args:
+            gateway_id: ID of the gateway
+            state: State parameter to validate
+
+        Returns:
+            Dict with state data including code_verifier, or None if invalid/expired
+        """
+        settings = get_settings()
+
+        # Try Redis first
+        if settings.cache_type == "redis":
+            redis = await _get_redis_client()
+            if redis:
+                try:
+                    state_key = f"oauth:state:{gateway_id}:{state}"
+                    state_json = await redis.getdel(state_key)  # Atomic get+delete
+                    if not state_json:
+                        return None
+
+                    state_data = json.loads(state_json)
+
+                    # Check expiration
+                    try:
+                        expires_at = datetime.fromisoformat(state_data["expires_at"])
+                    except Exception:
+                        expires_at = datetime.strptime(state_data["expires_at"], "%Y-%m-%dT%H:%M:%S")
+
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+                    if expires_at < datetime.now(timezone.utc):
+                        return None
+
+                    return state_data
+                except Exception as e:
+                    logger.warning(f"Failed to validate state in Redis: {e}, falling back")
+
+        # Try database
+        if settings.cache_type == "database":
+            try:
+                # First-Party
+                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+
+                db_gen = get_db()
+                db = next(db_gen)
+                try:
+                    oauth_state = db.query(OAuthState).filter(OAuthState.gateway_id == gateway_id, OAuthState.state == state).first()
+
+                    if not oauth_state:
+                        return None
+
+                    # Check expiration
+                    expires_at = oauth_state.expires_at
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+                    if expires_at < datetime.now(timezone.utc):
+                        db.delete(oauth_state)
+                        db.commit()
+                        return None
+
+                    # Check if already used
+                    if oauth_state.used:
+                        return None
+
+                    # Build state data
+                    state_data = {"state": oauth_state.state, "gateway_id": oauth_state.gateway_id, "code_verifier": oauth_state.code_verifier, "expires_at": oauth_state.expires_at.isoformat()}
+
+                    # Mark as used and delete
+                    db.delete(oauth_state)
+                    db.commit()
+
+                    return state_data
+                finally:
+                    db_gen.close()
+            except Exception as e:
+                logger.warning(f"Failed to validate state in database: {e}")
+
+        # Fallback to in-memory
+        state_key = f"oauth:state:{gateway_id}:{state}"
+        async with _state_lock:
+            state_data = _oauth_states.get(state_key)
+            if not state_data:
+                return None
+
+            # Check expiration
+            expires_at = datetime.fromisoformat(state_data["expires_at"])
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+            if expires_at < datetime.now(timezone.utc):
+                del _oauth_states[state_key]
+                return None
+
+            # Remove from memory (single-use)
+            del _oauth_states[state_key]
+            return state_data
+
     def _create_authorization_url(self, credentials: Dict[str, Any], state: str) -> tuple[str, str]:
         """Create authorization URL with state parameter.
 
@@ -727,12 +852,44 @@ class OAuthManager:
 
         return auth_url, state
 
-    async def _exchange_code_for_tokens(self, credentials: Dict[str, Any], code: str) -> Dict[str, Any]:
-        """Exchange authorization code for tokens.
+    def _create_authorization_url_with_pkce(self, credentials: Dict[str, Any], state: str, code_challenge: str, code_challenge_method: str) -> str:
+        """Create authorization URL with PKCE parameters (RFC 7636).
+
+        Args:
+            credentials: OAuth configuration
+            state: State parameter for CSRF protection
+            code_challenge: PKCE code challenge
+            code_challenge_method: PKCE method (S256)
+
+        Returns:
+            Authorization URL string with PKCE parameters
+        """
+        # Standard
+        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
+
+        client_id = credentials["client_id"]
+        redirect_uri = credentials["redirect_uri"]
+        authorization_url = credentials["authorization_url"]
+        scopes = credentials.get("scopes", [])
+
+        # Build authorization parameters
+        params = {"response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri, "state": state, "code_challenge": code_challenge, "code_challenge_method": code_challenge_method}
+
+        # Add scopes if present
+        if scopes:
+            params["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
+
+        # Build full URL
+        query_string = urlencode(params)
+        return f"{authorization_url}?{query_string}"
+
+    async def _exchange_code_for_tokens(self, credentials: Dict[str, Any], code: str, code_verifier: str = None) -> Dict[str, Any]:
+        """Exchange authorization code for tokens with PKCE support.
 
         Args:
             credentials: OAuth configuration
             code: Authorization code from callback
+            code_verifier: Optional PKCE code verifier (RFC 7636)
 
         Returns:
             Token response dictionary
@@ -741,12 +898,12 @@ class OAuthManager:
             OAuthError: If token exchange fails
         """
         client_id = credentials["client_id"]
-        client_secret = credentials["client_secret"]
+        client_secret = credentials.get("client_secret")  # Optional for public clients (PKCE-only)
         token_url = credentials["token_url"]
         redirect_uri = credentials["redirect_uri"]
 
-        # Decrypt client secret if it's encrypted
-        if len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
+        # Decrypt client secret if it's encrypted and present
+        if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
             try:
                 settings = get_settings()
                 encryption = get_oauth_encryption(settings.auth_encryption_secret)
@@ -765,8 +922,15 @@ class OAuthManager:
             "code": code,
             "redirect_uri": redirect_uri,
             "client_id": client_id,
-            "client_secret": client_secret,
         }
+
+        # Only include client_secret if present (public clients don't have secrets)
+        if client_secret:
+            token_data["client_secret"] = client_secret
+
+        # Add PKCE code_verifier if present (RFC 7636)
+        if code_verifier:
+            token_data["code_verifier"] = code_verifier
 
         # Exchange code for token with retries
         for attempt in range(self.max_retries):

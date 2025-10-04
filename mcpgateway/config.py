@@ -226,6 +226,39 @@ class Settings(BaseSettings):
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
 
+    # ===================================
+    # Dynamic Client Registration (DCR) - Client Mode
+    # ===================================
+
+    # Enable DCR client functionality
+    dcr_enabled: bool = Field(default=True, description="Enable Dynamic Client Registration (RFC 7591) - gateway acts as DCR client")
+
+    # Auto-register when missing credentials
+    dcr_auto_register_on_missing_credentials: bool = Field(default=True, description="Automatically register with AS when gateway has issuer but no client_id")
+
+    # Default scopes for DCR
+    dcr_default_scopes: List[str] = Field(default=["mcp:read"], description="Default MCP scopes to request during DCR")
+
+    # Issuer allowlist (empty = allow any)
+    dcr_allowed_issuers: List[str] = Field(default_factory=list, description="Optional allowlist of issuer URLs for DCR (empty = allow any)")
+
+    # Token endpoint auth method
+    dcr_token_endpoint_auth_method: str = Field(default="client_secret_basic", description="Token endpoint auth method for DCR (client_secret_basic or client_secret_post)")
+
+    # Metadata cache TTL
+    dcr_metadata_cache_ttl: int = Field(default=3600, description="AS metadata cache TTL in seconds (RFC 8414 discovery)")
+
+    # Client name template
+    dcr_client_name_template: str = Field(default="MCP Gateway ({gateway_name})", description="Template for client_name in DCR requests")
+
+    # ===================================
+    # OAuth Discovery (RFC 8414)
+    # ===================================
+
+    oauth_discovery_enabled: bool = Field(default=True, description="Enable OAuth AS metadata discovery (RFC 8414)")
+
+    oauth_preferred_code_challenge_method: str = Field(default="S256", description="Preferred PKCE code challenge method (S256 or plain)")
+
     # Email-Based Authentication
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")

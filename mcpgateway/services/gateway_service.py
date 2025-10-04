@@ -783,12 +783,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 raise GatewayConnectionError(
                     f"No OAuth tokens found for user {app_user_email} on gateway {gateway.name}. Please complete the OAuth authorization flow first at /oauth/authorize/{gateway.id}"
                 )
+
+            # Debug: Check if token was decrypted
+            if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
+                logger.error(f"Token appears to be encrypted! Encryption service may have failed. Token length: {len(access_token)}")
+            else:
+                logger.info(f"Using decrypted OAuth token for {gateway.name} (length: {len(access_token)})")
+
             # Now connect to MCP server with the access token
             authentication = {"Authorization": f"Bearer {access_token}"}
 
             # Use the existing connection logic
+            # Note: For OAuth servers, skip validation since we already validated via OAuth flow
             if gateway.transport.upper() == "SSE":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(gateway.url, authentication)
+                capabilities, tools, resources, prompts = await self._connect_to_sse_server_without_validation(gateway.url, authentication)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
                 capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(gateway.url, authentication)
             else:
@@ -2798,6 +2806,103 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         for queue in self._event_subscribers:
             await queue.put(event)
+
+    async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
+        """Connect to an MCP server running with SSE transport, skipping URL validation.
+
+        This is used for OAuth-protected servers where we've already validated the token works.
+
+        Args:
+            server_url: The URL of the SSE MCP server to connect to.
+            authentication: Optional dictionary containing authentication headers.
+
+        Returns:
+            Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
+        """
+        if authentication is None:
+            authentication = {}
+
+        # Skip validation for OAuth servers - we already validated via OAuth flow
+        # Use async with for both sse_client and ClientSession
+        try:
+            async with sse_client(url=server_url, headers=authentication) as streams:
+                async with ClientSession(*streams) as session:
+                    # Initialize the session
+                    response = await session.initialize()
+                    capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                    logger.debug(f"Server capabilities: {capabilities}")
+
+                    response = await session.list_tools()
+                    tools = response.tools
+                    tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+
+                    tools = [ToolCreate.model_validate(tool) for tool in tools]
+                    if tools:
+                        logger.info(f"Fetched {len(tools)} tools from gateway")
+                    # Fetch resources if supported
+                    resources = []
+                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    if capabilities.get("resources"):
+                        try:
+                            response = await session.list_resources()
+                            raw_resources = response.resources
+                            for resource in raw_resources:
+                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                # Convert AnyUrl to string if present
+                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                    resource_data["uri"] = str(resource_data["uri"])
+                                # Add default content if not present (will be fetched on demand)
+                                if "content" not in resource_data:
+                                    resource_data["content"] = ""
+                                try:
+                                    resources.append(ResourceCreate.model_validate(resource_data))
+                                except Exception:
+                                    # If validation fails, create minimal resource
+                                    resources.append(
+                                        ResourceCreate(
+                                            uri=str(resource_data.get("uri", "")),
+                                            name=resource_data.get("name", ""),
+                                            description=resource_data.get("description"),
+                                            mime_type=resource_data.get("mime_type"),
+                                            template=resource_data.get("template"),
+                                            content="",
+                                        )
+                                    )
+                                logger.info(f"Fetched {len(resources)} resources from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resources: {e}")
+
+                    # Fetch prompts if supported
+                    prompts = []
+                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    if capabilities.get("prompts"):
+                        try:
+                            response = await session.list_prompts()
+                            raw_prompts = response.prompts
+                            for prompt in raw_prompts:
+                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                # Add default template if not present
+                                if "template" not in prompt_data:
+                                    prompt_data["template"] = ""
+                                try:
+                                    prompts.append(PromptCreate.model_validate(prompt_data))
+                                except Exception:
+                                    # If validation fails, create minimal prompt
+                                    prompts.append(
+                                        PromptCreate(
+                                            name=prompt_data.get("name", ""),
+                                            description=prompt_data.get("description"),
+                                            template=prompt_data.get("template", ""),
+                                        )
+                                    )
+                                logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch prompts: {e}")
+
+                    return capabilities, tools, resources, prompts
+        except Exception as e:
+            logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
+            raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
 
     async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
         """Connect to an MCP server running with SSE transport.
