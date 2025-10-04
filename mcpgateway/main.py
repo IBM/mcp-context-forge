@@ -1228,11 +1228,12 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     Raises:
         HTTPException: If the request method is not "ping".
     """
+    req_id: Optional[str] = None
     try:
         body: dict = await request.json()
         if body.get("method") != "ping":
             raise HTTPException(status_code=400, detail="Invalid method")
-        req_id: Optional[str] = body.get("id")
+        req_id = body.get("id")
         logger.debug(f"Authenticated user {user} sent ping request.")
         # Return an empty result per the MCP ping specification.
         response: dict = {"jsonrpc": "2.0", "id": req_id, "result": {}}
@@ -1240,7 +1241,7 @@ async def ping(request: Request, user=Depends(get_current_user)) -> JSONResponse
     except Exception as e:
         error_response: dict = {
             "jsonrpc": "2.0",
-            "id": None,  # req_id not available in this scope
+            "id": req_id,  # Now req_id is always defined
             "error": {"code": -32603, "message": "Internal error", "data": str(e)},
         }
         return JSONResponse(status_code=500, content=error_response)
@@ -3354,6 +3355,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         PluginError: If encounters issue with plugin
         PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
     """
+    req_id = None
     try:
         # Extract user identifier from either RBAC user object or JWT payload
         if hasattr(user, "email"):
