@@ -1,0 +1,119 @@
+# ===============================================================
+# 📦 Optimized Multiplatform Docker Build Workflow
+# ===============================================================
+#
+# This workflow builds multiplatform Docker images more efficiently by:
+# 1. Building AMD64 and ARM64 images in parallel on native runners
+# 2. Using matrix strategy to run builds simultaneously
+# 3. Combining results into a single multiplatform manifest
+#
+# This approach is much faster than cross-compilation with emulation.
+# ===============================================================
+
+name: Optimized Multiplatform Docker Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (comma-separated)'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+  push:
+    branches: ["main"]
+    paths:
+      - 'Containerfile.lite'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'Containerfile.lite'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Build individual platform images in parallel
+  build-platform:
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runs-on: ubuntu-latest
+          - platform: linux/arm64
+            runs-on: ubuntu-latest-arm64
+    
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏗️  Build single-platform image
+        run: |
+          TAG=$(date +%s)
+          PLATFORM_NAME=$(echo ${{ matrix.platform }} | sed 's/\//-/g')
+          echo "🏗️  Building ${{ matrix.platform }} image..."
+          
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --file Containerfile.lite \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-$PLATFORM_NAME \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-$PLATFORM_NAME \
+            --push \
+            --progress=plain \
+            .
+          
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "PLATFORM_NAME=$PLATFORM_NAME" >> $GITHUB_OUTPUT
+
+  # Combine individual platform images into multiplatform manifest
+  create-manifest:
+    needs: build-platform
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️  Create multiplatform manifest
+        run: |
+          TAG=${{ needs.build-platform.outputs.TAG }}
+          echo "🏷️  Creating multiplatform manifest for tag: $TAG"
+          
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG \
+            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-linux-amd64 \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-linux-arm64
+          
+          echo "✅ Multiplatform manifest created successfully!"
+
+      - name: 🔍  Verify multiplatform manifest
+        run: |
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

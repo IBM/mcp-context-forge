@@ -103,6 +103,8 @@ jobs:
         run: |
           TAG=$(date +%s)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "🏗️  Building multi-platform image (linux/amd64,linux/arm64)..."
+          echo "⚠️  Note: ARM64 build on AMD64 runners uses emulation and may take longer"
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             --file Containerfile.lite \
@@ -111,6 +113,7 @@ jobs:
             --cache-from type=local,src=${{ env.CACHE_DIR }} \
             --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
             --push \
+            --progress=plain \
             .   # build context is mandatory
 
       # -------------------------------------------------------------
