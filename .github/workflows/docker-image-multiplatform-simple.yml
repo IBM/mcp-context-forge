@@ -1,15 +1,20 @@
 # ===============================================================
-# 📦 Simple Multiplatform Docker Build Workflow
+# 📦 Simple Multiplatform Docker Build Workflow (DISABLED)
 # ===============================================================
 #
+# ⚠️  DISABLED: This workflow is too slow due to ARM64 emulation on AMD64 runners
+# 
 # This workflow builds multiplatform Docker images using a simpler approach:
 # 1. Builds both platforms in a single job
-# 2. Uses proper lowercase repository names
+# 2. Uses proper lowercase repository names  
 # 3. Creates timestamped tags for traceability
 # 4. More reliable than matrix-based approach
+#
+# ❌ PROBLEM: ARM64 builds on AMD64 runners take 3+ hours due to emulation
+# ✅ SOLUTION: Use docker-image-multiplatform-optimized.yml instead
 # ===============================================================
 
-name: Simple Multiplatform Docker Build
+name: Simple Multiplatform Docker Build (DISABLED - TOO SLOW)
 
 on:
   workflow_dispatch:
@@ -18,20 +23,22 @@ on:
         description: 'Platforms to build (comma-separated)'
         required: false
         default: 'linux/amd64,linux/arm64'
-  push:
-    branches: ["main"]
-    paths:
-      - 'Containerfile.lite'
-      - 'mcpgateway/**'
-      - 'plugins/**'
-      - 'pyproject.toml'
-  pull_request:
-    branches: ["main"]
-    paths:
-      - 'Containerfile.lite'
-      - 'mcpgateway/**'
-      - 'plugins/**'
-      - 'pyproject.toml'
+  # DISABLED: This workflow is too slow due to ARM64 emulation on AMD64 runners
+  # Use docker-image-multiplatform-optimized.yml instead which uses native ARM64 runners
+  # push:
+  #   branches: ["main"]
+  #   paths:
+  #     - 'Containerfile.lite'
+  #     - 'mcpgateway/**'
+  #     - 'plugins/**'
+  #     - 'pyproject.toml'
+  # pull_request:
+  #   branches: ["main"]
+  #   paths:
+  #     - 'Containerfile.lite'
+  #     - 'mcpgateway/**'
+  #     - 'plugins/**'
+  #     - 'pyproject.toml'
 
 env:
   REGISTRY: ghcr.io
