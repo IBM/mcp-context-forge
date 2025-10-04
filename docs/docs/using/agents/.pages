@@ -1,6 +1,7 @@
 title: Agents
 nav:
   - index.md
+  - a2a.md
   - langchain.md
   - langgraph.md
   - crewai.md

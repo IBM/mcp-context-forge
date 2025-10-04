@@ -5,3 +5,4 @@ nav:
   - Python Servers: python
   - External Servers: external
   - IBM Servers: ibm
+  - Hashicorp Servers: hashicorp
