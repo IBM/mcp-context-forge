@@ -4564,6 +4564,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <option value="client_credentials">
                         Client Credentials (Machine-to-Machine)
                       </option>
+                      <option value="password">
+                        Resource Owner Password Credentials (Keycloak/Legacy)
+                      </option>
                     </select>
                   </div>
 
@@ -4615,6 +4618,42 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     />
                     <p class="mt-1 text-sm text-blue-600">
                       💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                    </p>
+                  </div>
+
+                  <div id="oauth-username-field-gw" style="display: none;">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Username <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_username"
+                      id="oauth-username-gw"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="systemadmin@system.com"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      Required for Resource Owner Password Credentials grant type (Keycloak).
+                    </p>
+                  </div>
+
+                  <div id="oauth-password-field-gw" style="display: none;">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Password <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                    </label>
+                    <input
+                      type="password"
+                      name="oauth_password"
+                      id="oauth-password-gw"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="Enter password"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      Required for Resource Owner Password Credentials grant type (Keycloak).
                     </p>
                   </div>
 
@@ -7252,6 +7291,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             <option value="client_credentials">
                               Client Credentials (Machine-to-Machine)
                             </option>
+                            <option value="password">
+                              Resource Owner Password Credentials (Keycloak/Legacy)
+                            </option>
                           </select>
                         </div>
 
@@ -7309,6 +7351,42 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           </p>
                           <p class="mt-1 text-sm text-blue-600">
                             💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                          </p>
+                        </div>
+
+                        <div id="oauth-username-field-edit" style="display: none;">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Username <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="oauth_username"
+                            id="oauth-username-gw-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="systemadmin@system.com"
+                          />
+                          <p class="mt-1 text-sm text-gray-500">
+                            Required for Resource Owner Password Credentials grant type (Keycloak).
+                          </p>
+                        </div>
+
+                        <div id="oauth-password-field-edit" style="display: none;">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Password <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                          </label>
+                          <input
+                            type="password"
+                            name="oauth_password"
+                            id="oauth-password-gw-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="Enter password"
+                          />
+                          <p class="mt-1 text-sm text-gray-500">
+                            Required for Resource Owner Password Credentials grant type (Keycloak).
                           </p>
                         </div>
 

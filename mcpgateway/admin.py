@@ -5774,6 +5774,8 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
             oauth_client_id = str(form.get("oauth_client_id", ""))
             oauth_client_secret = str(form.get("oauth_client_secret", ""))
+            oauth_username = str(form.get("oauth_username", ""))
+            oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
 
             # If any OAuth field is provided, assemble oauth_config
@@ -5796,6 +5798,12 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     # Encrypt the client secret
                     encryption = get_oauth_encryption(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+
+                # Add username and password for password grant type
+                if oauth_username:
+                    oauth_config["username"] = oauth_username
+                if oauth_password:
+                    oauth_config["password"] = oauth_password
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
@@ -6077,6 +6085,8 @@ async def admin_edit_gateway(
             oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
             oauth_client_id = str(form.get("oauth_client_id", ""))
             oauth_client_secret = str(form.get("oauth_client_secret", ""))
+            oauth_username = str(form.get("oauth_username", ""))
+            oauth_password = str(form.get("oauth_password", ""))
             oauth_scopes_str = str(form.get("oauth_scopes", ""))
 
             # If any OAuth field is provided, assemble oauth_config
@@ -6099,6 +6109,12 @@ async def admin_edit_gateway(
                     # Encrypt the client secret
                     encryption = get_oauth_encryption(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+
+                # Add username and password for password grant type
+                if oauth_username:
+                    oauth_config["username"] = oauth_username
+                if oauth_password:
+                    oauth_config["password"] = oauth_password
 
                 # Parse scopes (comma or space separated)
                 if oauth_scopes_str:
