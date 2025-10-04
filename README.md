@@ -379,7 +379,7 @@ python3 -m mcpgateway.translate \
 # 2️⃣  Register it with the gateway
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"fast_time","url":"http://localhost:9000/sse"}' \
+     -d '{"name":"fast_time","url":"http://localhost:8003/sse"}' \
      http://localhost:4444/gateways
 
 # 3️⃣  Verify tool catalog
@@ -461,7 +461,8 @@ When using a MCP Client such as Claude with stdio:
 
 ## Quick Start - Containers
 
-Use the official OCI image from GHCR with **Docker** *or* **Podman**.
+Use the official OCI image from GHCR with **Docker** *or* **Podman**. 
+Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
 
 ---
 
