@@ -4326,10 +4326,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <!-- Auth Type: {{ gateway.auth_type }} -->
                     <!-- OAuth Config: {{ gateway.oauth_config }} -->
                     <!-- Grant Type: {{ gateway.oauth_config.grant_type if gateway.oauth_config else 'None' }} -->
-                    <script>
-                      console.log("Auth Type:", "{{ gateway.authType }}");
-                      console.log("OAuth Config:", "{{ gateway.oauthConfig }}");
-                    </script>
                   </td>
                 </tr>
                 {% endfor %}
