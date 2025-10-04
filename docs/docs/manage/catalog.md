@@ -452,7 +452,7 @@ auth_types:
 
 ## See Also
 
-- [Server Management](./servers.md) - Managing virtual MCP servers
-- [Gateway Federation](./federation.md) - Connecting multiple gateways
-- [Health Checks](../architecture/health-checks.md) - Health check architecture
-- [Authentication](./authentication.md) - Authentication configuration
+- [Configuration Reference](./index.md) - Complete configuration guide
+- [SSO Configuration](./sso.md) - Authentication and SSO setup
+- [Export/Import](./export-import.md) - Bulk operations and data migration
+- [Observability](./observability.md) - Monitoring and tracing

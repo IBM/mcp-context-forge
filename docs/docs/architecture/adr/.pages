@@ -1,5 +1,6 @@
 title: Decision Records
 nav:
+  - Overview: index.md
   - 1 Adopt FastAPI + Pydantic: 001-adopt-fastapi-pydantic.md
   - 2 Use Async SQLAlchemy ORM: 002-use-async-sqlalchemy-orm.md
   - 3 Expose Multi-Transport Endpoints: 003-expose-multi-transport-endpoints.md
@@ -8,7 +9,7 @@ nav:
   - 6 Gateway & Tool-Level Rate Limiting: 006-gateway-tool-rate-limiting.md
   - 7 Pluggable Cache Backend: 007-pluggable-cache-backend.md
   - 8 Federation & Auto-Discovery via DNS-SD: 008-federation-discovery.md
-  - 9 Built-in Health Checks: 000-built-in-health-checks.md
+  - 9 Built-in Health Checks: 009-built-in-health-checks.md
   - 10 Observability via Prometheus: 010-observability-prometheus.md
   - 11 Namespaced Tool Federation: 011-tool-federation.md
   - 12 Drop-down tool selection: 012-dropdown-ui-tool-selection.md
