@@ -305,9 +305,14 @@ class SessionRegistry(SessionBackend):
     _cleanup_task: Optional[asyncio.Task] = None
 
     async def start_pool_cleanup(self, interval: int = 60):
-        """Start periodic cleanup of idle pooled sessions."""
+        """
+        Start periodic cleanup of idle pooled sessions.
+        Args:
+            interval: Cleanup interval in seconds. Default is 60 seconds.
+        """
         if self._cleanup_task:
             return
+        
         async def _run():
             while True:
                 await asyncio.sleep(interval)
@@ -315,12 +320,22 @@ class SessionRegistry(SessionBackend):
         self._cleanup_task = asyncio.create_task(_run())
 
     async def stop_pool_cleanup(self):
+        """
+        Stop periodic cleanup of idle pooled sessions.
+        """
         if self._cleanup_task:
             self._cleanup_task.cancel()
             self._cleanup_task = None
 
     async def get_pooled_session(self, user: str, server_id: str) -> Optional[str]:
-        """Return session_id for (user, server_id) if pooled and valid, else None. Increments hit/miss metrics."""
+        """
+        Return session_id for (user, server_id) if pooled and valid, else None. Increments hit/miss metrics.
+        Args:
+            user: User identifier
+            server_id: Server identifier
+        
+        Returns: session_id if found and valid, else None
+        """
         key = (user, server_id)
         entry = self._pooled_sessions.get(key)
         if not entry:
@@ -337,23 +352,43 @@ class SessionRegistry(SessionBackend):
         return entry["session_id"]
 
     async def pool_session(self, user: str, server_id: str, session_id: str):
-        """Add or update pooled session for (user, server_id)."""
+        """
+        Add or update pooled session for (user, server_id).
+        Args:
+            user: User identifier
+            server_id: Server identifier
+            session_id: Session identifier to pool
+        """
         key = (user, server_id)
         self._pooled_sessions[key] = {"session_id": session_id, "last_used": time.time()}
 
     async def touch_pooled_session(self, user: str, server_id: str):
+        """
+        Update last_used timestamp for pooled session.
+        Args:
+            user: User identifier
+            server_id: Server identifier
+        """
         key = (user, server_id)
         if key in self._pooled_sessions:
             self._pooled_sessions[key]["last_used"] = time.time()
 
     async def evict_pooled_session(self, user: str, server_id: str):
+        """
+        Evict pooled session for (user, server_id).
+        Args:
+            user: User identifier
+            server_id: Server identifier
+        """
         key = (user, server_id)
         entry = self._pooled_sessions.pop(key, None)
         if entry:
             await self.remove_session(entry["session_id"])
 
     async def cleanup_idle_sessions(self):
-        """Evict idle pooled sessions (called periodically). Increments evict metric."""
+        """
+        Evict idle pooled sessions (called periodically). Increments evict metric.
+        """
         now = time.time()
         max_idle = getattr(settings, "session_pool_max_idle", 600)
         for key, entry in list(self._pooled_sessions.items()):
@@ -363,7 +398,10 @@ class SessionRegistry(SessionBackend):
                 self._pool_metrics["evict"] += 1
 
     def get_pool_metrics(self) -> dict:
-        """Return current pool hit/miss/evict counts."""
+        """
+        Return current pool hit/miss/evict counts.
+        Returns: dict with hit/miss/evict counts
+        """
         return dict(self._pool_metrics)
 
     async def initialize(self) -> None:
