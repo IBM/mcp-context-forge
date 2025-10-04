@@ -1255,20 +1255,35 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
 
-### Dynamic Client Registration & Virtual MCP Server Authentication
+### OAuth 2.0 Dynamic Client Registration (DCR) & PKCE
 
-ContextForge supports OAuth2 with Dynamic Client Registration (DCR)
-for streamable HTTP servers through integration with an upstream API gateway,
-such as HyperMCP gateway, enabling automatic OAuth2 client provisioning for MCP servers
-without manual configuration.
+ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and **PKCE (RFC 7636)** for seamless integration with OAuth-protected MCP servers and upstream API gateways like HyperMCP.
 
-| Setting                     | Description                                            | Default | Options |
-|-----------------------------|--------------------------------------------------------|---------|---------|
-| `JWT_AUDIENCE_VERIFICATION` | JWT audience verification needs to be disabled for DCR | `true`  | bool    |
+**Key Features:**
+- ✅ Automatic client registration with Authorization Servers (no manual credential configuration)
+- ✅ Authorization Server metadata discovery (RFC 8414)
+- ✅ PKCE (Proof Key for Code Exchange) enabled for all Authorization Code flows
+- ✅ Support for public clients (PKCE-only, no client secret)
+- ✅ Encrypted credential storage with Fernet encryption
+- ✅ Configurable issuer allowlist for security
 
-You can find an example for using dynamic client registration (DCR) with [HyprMCP Gateway (`hyprmcp/mcp-gateway`)](https://github.com/hyprmcp/mcp-gateway).
+| Setting                                                | Description                                                    | Default                        | Options       |
+|-------------------------------------------------------|----------------------------------------------------------------|--------------------------------|---------------|
+| `MCPGATEWAY_DCR_ENABLED`                              | Enable Dynamic Client Registration (RFC 7591)                  | `true`                         | bool          |
+| `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Auto-register when gateway has issuer but no client_id         | `true`                         | bool          |
+| `MCPGATEWAY_DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `mcp:read`                     | string        |
+| `MCPGATEWAY_DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
+| `MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
+| `MCPGATEWAY_DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
+| `MCPGATEWAY_DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
+| `MCPGATEWAY_OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
+| `MCPGATEWAY_OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
+| `JWT_AUDIENCE_VERIFICATION`                           | JWT audience verification (disable for DCR)                    | `true`                         | bool          |
 
-Follow the tutorial at https://ibm.github.io/mcp-context-forge/tutorials/dcr-hyprmcp/ to get started.
+**Documentation:**
+- [DCR Configuration Guide](https://ibm.github.io/mcp-context-forge/manage/dcr/) - Complete DCR setup and troubleshooting
+- [OAuth 2.0 Integration](https://ibm.github.io/mcp-context-forge/manage/oauth/) - OAuth configuration and PKCE details
+- [HyperMCP Tutorial](https://ibm.github.io/mcp-context-forge/tutorials/dcr-hyprmcp/) - End-to-end DCR setup with HyperMCP gateway
 
 ### Personal Teams Configuration
 
