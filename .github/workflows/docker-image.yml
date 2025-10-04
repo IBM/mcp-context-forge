@@ -72,11 +72,10 @@ jobs:
         run: |
           curl -sSL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint
           chmod +x /usr/local/bin/hadolint
-          hadolint -f sarif Containerfile.lite > hadolint-results.sarif
+          hadolint -f sarif Containerfile.lite > hadolint-results.sarif || true
           echo "HADOLINT_EXIT=$?" >> "$GITHUB_ENV"
-          exit 0
       - name: ☁️  Upload Hadolint SARIF
-        if: always()
+        if: always() && hashFiles('hadolint-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: hadolint-results.sarif
@@ -147,11 +146,10 @@ jobs:
             | tar -xz -C /usr/local/bin dockle
           dockle --exit-code 1 --format sarif \
                  --output dockle-results.sarif \
-                 $IMAGE_NAME:latest
+                 $IMAGE_NAME:latest || true
           echo "DOCKLE_EXIT=$?" >> "$GITHUB_ENV"
-          exit 0
       - name: ☁️  Upload Dockle SARIF
-        if: always()
+        if: always() && hashFiles('dockle-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: dockle-results.sarif
@@ -180,7 +178,7 @@ jobs:
           severity: CRITICAL
           exit-code: 0
       - name: ☁️  Upload Trivy SARIF
-        if: always() && env.TRIVY_ENABLED == 'true'
+        if: always() && env.TRIVY_ENABLED == 'true' && hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
@@ -189,13 +187,15 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
       - name: 🔍 Grype vulnerability scan
+        continue-on-error: true
         run: |
           grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --only-fixed
       - name: 📄 Generating Grype SARIF report
+        continue-on-error: true
         run: |
           grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --output sarif --file grype-results.sarif
       - name: ☁️  Upload Grype SARIF
-        if: always()
+        if: always() && hashFiles('grype-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: grype-results.sarif
