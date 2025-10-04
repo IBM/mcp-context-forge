@@ -9345,8 +9345,12 @@ function handleOAuthGrantTypeChange() {
             // Make username and password required for password grant
             const usernameInput = safeGetElement("oauth-username-gw");
             const passwordInput = safeGetElement("oauth-password-gw");
-            if (usernameInput) usernameInput.required = true;
-            if (passwordInput) passwordInput.required = true;
+            if (usernameInput) {
+                usernameInput.required = true;
+            }
+            if (passwordInput) {
+                passwordInput.required = true;
+            }
 
             console.log(
                 "Password grant flow selected - username and password are now required",
@@ -9358,8 +9362,12 @@ function handleOAuthGrantTypeChange() {
             // Remove required validation for hidden fields
             const usernameInput = safeGetElement("oauth-username-gw");
             const passwordInput = safeGetElement("oauth-password-gw");
-            if (usernameInput) usernameInput.required = false;
-            if (passwordInput) passwordInput.required = false;
+            if (usernameInput) {
+                usernameInput.required = false;
+            }
+            if (passwordInput) {
+                passwordInput.required = false;
+            }
         }
     }
 }
@@ -9406,8 +9414,12 @@ function handleEditOAuthGrantTypeChange() {
             // Make username and password required for password grant
             const usernameInput = safeGetElement("oauth-username-gw-edit");
             const passwordInput = safeGetElement("oauth-password-gw-edit");
-            if (usernameInput) usernameInput.required = true;
-            if (passwordInput) passwordInput.required = true;
+            if (usernameInput) {
+                usernameInput.required = true;
+            }
+            if (passwordInput) {
+                passwordInput.required = true;
+            }
 
             console.log(
                 "Password grant flow selected - username and password are now required",
@@ -9419,8 +9431,12 @@ function handleEditOAuthGrantTypeChange() {
             // Remove required validation for hidden fields
             const usernameInput = safeGetElement("oauth-username-gw-edit");
             const passwordInput = safeGetElement("oauth-password-gw-edit");
-            if (usernameInput) usernameInput.required = false;
-            if (passwordInput) passwordInput.required = false;
+            if (usernameInput) {
+                usernameInput.required = false;
+            }
+            if (passwordInput) {
+                passwordInput.required = false;
+            }
         }
     }
 }
