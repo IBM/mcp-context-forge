@@ -37,6 +37,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME_LOWER: ${{ github.repository }}
 
 jobs:
   # Build individual platform images in parallel
@@ -67,20 +68,20 @@ jobs:
       - name: 🏗️  Build single-platform image
         run: |
           TAG=$(date +%s)
-          PLATFORM_NAME=$(echo ${{ matrix.platform }} | sed 's/\//-/g')
+          IMAGE_NAME_LOWER=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')
           echo "🏗️  Building ${{ matrix.platform }} image..."
 
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --file Containerfile.lite \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-$PLATFORM_NAME \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest-$PLATFORM_NAME \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:$TAG \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest \
             --push \
             --progress=plain \
             .
 
           echo "TAG=$TAG" >> $GITHUB_OUTPUT
-          echo "PLATFORM_NAME=$PLATFORM_NAME" >> $GITHUB_OUTPUT
+          echo "IMAGE_NAME_LOWER=$IMAGE_NAME_LOWER" >> $GITHUB_OUTPUT
 
   # Combine individual platform images into multiplatform manifest
   create-manifest:
@@ -103,17 +104,19 @@ jobs:
 
       - name: 🏷️  Create multiplatform manifest
         run: |
+          # Get outputs from the first matrix job (both should have same TAG and IMAGE_NAME_LOWER)
           TAG=${{ needs.build-platform.outputs.TAG }}
+          IMAGE_NAME_LOWER=${{ needs.build-platform.outputs.IMAGE_NAME_LOWER }}
           echo "🏷️  Creating multiplatform manifest for tag: $TAG"
 
           docker buildx imagetools create \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-linux-amd64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-linux-arm64
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:$TAG \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest \
+            ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:$TAG
 
           echo "✅ Multiplatform manifest created successfully!"
 
       - name: 🔍  Verify multiplatform manifest
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          IMAGE_NAME_LOWER=${{ needs.build-platform.outputs.IMAGE_NAME_LOWER }}
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest
