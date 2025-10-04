@@ -49,7 +49,7 @@ jobs:
             runs-on: ubuntu-latest
           - platform: linux/arm64
             runs-on: ubuntu-latest-arm64
-    
+
     steps:
       - name: ⬇️  Checkout code
         uses: actions/checkout@v4
@@ -69,7 +69,7 @@ jobs:
           TAG=$(date +%s)
           PLATFORM_NAME=$(echo ${{ matrix.platform }} | sed 's/\//-/g')
           echo "🏗️  Building ${{ matrix.platform }} image..."
-          
+
           docker buildx build \
             --platform ${{ matrix.platform }} \
             --file Containerfile.lite \
@@ -78,7 +78,7 @@ jobs:
             --push \
             --progress=plain \
             .
-          
+
           echo "TAG=$TAG" >> $GITHUB_OUTPUT
           echo "PLATFORM_NAME=$PLATFORM_NAME" >> $GITHUB_OUTPUT
 
@@ -86,7 +86,7 @@ jobs:
   create-manifest:
     needs: build-platform
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: ⬇️  Checkout code
         uses: actions/checkout@v4
@@ -105,13 +105,13 @@ jobs:
         run: |
           TAG=${{ needs.build-platform.outputs.TAG }}
           echo "🏷️  Creating multiplatform manifest for tag: $TAG"
-          
+
           docker buildx imagetools create \
             --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG \
             --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-linux-amd64 \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$TAG-linux-arm64
-          
+
           echo "✅ Multiplatform manifest created successfully!"
 
       - name: 🔍  Verify multiplatform manifest
