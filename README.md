@@ -1296,6 +1296,20 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `INVITATION_EXPIRY_DAYS`                 | Number of days before team invitations expire   | `7`        | int > 0 |
 | `REQUIRE_EMAIL_VERIFICATION_FOR_INVITES` | Require email verification for team invitations | `true`     | bool    |
 
+### MCP Server Catalog
+
+> 🆕 **New in v0.7.0**: The MCP Server Catalog allows you to define a catalog of pre-configured MCP servers in a YAML file for easy discovery and management via the Admin UI.
+
+| Setting                              | Description                                      | Default            | Options |
+| ------------------------------------ | ------------------------------------------------ | ------------------ | ------- |
+| `MCPGATEWAY_CATALOG_ENABLED`        | Enable MCP server catalog feature                | `true`             | bool    |
+| `MCPGATEWAY_CATALOG_FILE`           | Path to catalog configuration file               | `mcp-catalog.yml`  | string  |
+| `MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK` | Automatically health check catalog servers    | `true`             | bool    |
+| `MCPGATEWAY_CATALOG_CACHE_TTL`      | Catalog cache TTL in seconds                     | `3600`             | int > 0 |
+
+**Documentation:**
+- [MCP Server Catalog Guide](https://ibm.github.io/mcp-context-forge/manage/catalog/) - Complete catalog setup and configuration
+
 ### Security
 
 | Setting                   | Description                    | Default                                        | Options    |
