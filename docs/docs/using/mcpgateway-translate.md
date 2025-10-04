@@ -106,6 +106,7 @@ python3 -m mcpgateway.translate \
 | **Bidirectional communication** | Full duplex message flow in all modes |
 | **Session management** | Stateful sessions with event replay (streamable HTTP) |
 | **Flexible response modes** | Choose between SSE streams or JSON responses |
+| **Dynamic environment injection** | Extract HTTP headers and inject as environment variables for multi-tenant support |
 | **Keep-alive support** | Automatic keepalive frames prevent connection timeouts |
 | **CORS configuration** | Enable cross-origin requests for web applications |
 | **Authentication** | OAuth2 Bearer token support for secure connections |
@@ -184,6 +185,42 @@ Connect to a remote streamable HTTP endpoint.
 | `--ssePath <path>` | SSE endpoint path | /sse |
 | `--messagePath <path>` | Message POST endpoint path | /message |
 | `--keepAlive <seconds>` | Keepalive interval | 30 |
+
+### Dynamic Environment Variable Injection
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--enable-dynamic-env` | Enable dynamic environment variable injection from HTTP headers | False |
+| `--header-to-env <HEADER=ENV_VAR>` | Map HTTP header to environment variable (can be specified multiple times) | None |
+
+**Use case**: Multi-tenant deployments where different users need different credentials passed to the MCP server.
+
+**Example - GitHub Enterprise with per-user tokens**:
+```bash
+python3 -m mcpgateway.translate \
+  --stdio "uvx mcp-server-github" \
+  --expose-sse \
+  --port 9000 \
+  --enable-dynamic-env \
+  --header-to-env "Authorization=GITHUB_TOKEN" \
+  --header-to-env "X-GitHub-Enterprise-Host=GITHUB_HOST"
+```
+
+**Client request with headers**:
+```bash
+curl -X POST http://localhost:9000/message \
+  -H "Authorization: Bearer ghp_user123token" \
+  -H "X-GitHub-Enterprise-Host: github.company.com" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+**Security features**:
+- Header names validated (alphanumeric + hyphens only)
+- Environment variable names validated (standard naming rules)
+- Values sanitized (dangerous characters removed, length limits enforced)
+- Case-insensitive header matching
+- Headers not provided in mappings are ignored
 
 ## API Documentation
 
@@ -319,6 +356,41 @@ curl -X POST http://localhost:9001/message \
 # Terminal 3: Watch SSE stream
 curl -N http://localhost:9001/sse
 ```
+
+### Multi-Tenant GitHub Enterprise
+
+Enable per-user GitHub tokens for enterprise deployments:
+
+```bash
+# Start the bridge with dynamic environment injection
+python3 -m mcpgateway.translate \
+  --stdio "uvx mcp-server-github" \
+  --expose-sse \
+  --port 9000 \
+  --enable-dynamic-env \
+  --header-to-env "Authorization=GITHUB_TOKEN" \
+  --header-to-env "X-GitHub-Enterprise-Host=GITHUB_HOST"
+
+# User A's request (uses their personal access token)
+curl -X POST http://localhost:9000/message \
+  -H "Authorization: Bearer ghp_userA_token123" \
+  -H "X-GitHub-Enterprise-Host: github.company.com" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_repositories"}}'
+
+# User B's request (uses their own token)
+curl -X POST http://localhost:9000/message \
+  -H "Authorization: Bearer ghp_userB_token456" \
+  -H "X-GitHub-Enterprise-Host: github.company.com" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_repositories"}}'
+```
+
+**Benefits**:
+- Each user's credentials are isolated per request
+- No shared token security risks
+- Supports different enterprise hosts per user
+- MCP server process restarts with new credentials for each request
 
 ### Container Deployment
 
