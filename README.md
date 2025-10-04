@@ -462,7 +462,7 @@ When using a MCP Client such as Claude with stdio:
 ## Quick Start - Containers
 
 Use the official OCI image from GHCR with **Docker** *or* **Podman**. 
-Please note: Currently, amd64 is not supported. If you are e.g. running on MacOS, install via PyPi.
+Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
 
 ---
 
