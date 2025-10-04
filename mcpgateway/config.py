@@ -814,7 +814,7 @@ class Settings(BaseSettings):
     # # Observability: session pool metrics will be exposed if enabled
     # session_pool_metrics_enabled: bool = True
     # session_pool_eviction_interval: int = 60  # Interval (seconds) to check for idle sessions to evict
-    # session_pool_cleanup_interval: int = 300  # Interval (seconds) to clean up closed sessions 
+    # session_pool_cleanup_interval: int = 300  # Interval (seconds) to clean up closed sessions
     # session_pool_max_size: int = 1000  # Max number of pooled sessions in memory
     # session_pool_check_interval: int = 30  # Interval (seconds) to check session health
     # session_pool_eviction_batch_size: int = 50  # Number of sessions to evict in each eviction run
