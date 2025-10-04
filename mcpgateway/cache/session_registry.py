@@ -400,7 +400,7 @@ class SessionRegistry(SessionBackend):
         """Return current pool hit/miss/evict counts.
 
         Returns:
-            dict: A dict with hit/miss/evict counts
+            A dict with hit/miss/evict counts
         """
         return dict(self._pool_metrics)
 
