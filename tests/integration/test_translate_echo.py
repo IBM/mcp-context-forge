@@ -436,6 +436,10 @@ async def test_concurrent_requests():
             """Mock stop method - does nothing."""
             self._proc = None
 
+        def is_running(self) -> bool:
+            """Check if the mock process is running."""
+            return self._proc is not None and self._proc.returncode is None
+
     stdio = MockStdio()
     app = _build_fastapi(pubsub, stdio)
 
