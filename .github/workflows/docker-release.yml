@@ -102,16 +102,20 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ----------------------------------------------------------------
-      # ----------------------------------------------------------------
       # Step 4  Set up Docker Buildx for multi-platform image handling
       # ----------------------------------------------------------------
       - name: 🛠️  Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.11.1
 
       # ----------------------------------------------------------------
-      # Step 5  Tag multi-platform image with semantic version
+      # Step 5  Create new manifest list with semantic version tag
+      # Note: For multiplatform images, we use 'docker buildx imagetools create'
+      # instead of 'docker pull' + 'docker tag' + 'docker push' because:
+      # 1. Multiplatform images are manifest lists, not single images
+      # 2. We create a new manifest list that references the existing SHA-tagged image
+      # 3. This is more efficient than pulling and re-pushing the entire image
       # ----------------------------------------------------------------
-      - name: 🏷️  Tag multi-platform image with version
+      - name: 🏷️  Create multiplatform manifest with version tag
         run: |
           IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
           docker buildx imagetools create \
