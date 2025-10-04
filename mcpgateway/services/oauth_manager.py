@@ -182,6 +182,8 @@ class OAuthManager:
 
         if grant_type == "client_credentials":
             return await self._client_credentials_flow(credentials)
+        if grant_type == "password":
+            return await self._password_flow(credentials)
         if grant_type == "authorization_code":
             # For authorization code flow in gateway initialization, we need to handle this differently
             # Since this is called during gateway setup, we'll try to use client credentials as fallback
@@ -271,6 +273,105 @@ class OAuthManager:
                             raise OAuthError(f"No access_token in response: {token_response}")
 
                         logger.info("""Successfully obtained access token via client credentials""")
+                        return token_response["access_token"]
+
+            except aiohttp.ClientError as e:
+                logger.warning(f"Token request attempt {attempt + 1} failed: {str(e)}")
+                if attempt == self.max_retries - 1:
+                    raise OAuthError(f"Failed to obtain access token after {self.max_retries} attempts: {str(e)}")
+                await asyncio.sleep(2**attempt)  # Exponential backoff
+
+        # This should never be reached due to the exception above, but needed for type safety
+        raise OAuthError("Failed to obtain access token after all retry attempts")
+
+    async def _password_flow(self, credentials: Dict[str, Any]) -> str:
+        """Resource Owner Password Credentials flow (RFC 6749 Section 4.3).
+
+        This flow is used when the application can directly handle the user's credentials,
+        such as with trusted first-party applications or legacy integrations like Keycloak.
+
+        Args:
+            credentials: OAuth configuration with client_id, optional client_secret, token_url, username, password
+
+        Returns:
+            Access token string
+
+        Raises:
+            OAuthError: If token acquisition fails after all retries
+        """
+        client_id = credentials.get("client_id")
+        client_secret = credentials.get("client_secret")
+        token_url = credentials["token_url"]
+        username = credentials.get("username")
+        password = credentials.get("password")
+        scopes = credentials.get("scopes", [])
+
+        if not username or not password:
+            raise OAuthError("Username and password are required for password grant type")
+
+        # Decrypt client secret if it's encrypted and present
+        if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
+            try:
+                settings = get_settings()
+                encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                decrypted_secret = encryption.decrypt_secret(client_secret)
+                if decrypted_secret:
+                    client_secret = decrypted_secret
+                    logger.debug("Successfully decrypted client secret")
+                else:
+                    logger.warning("Failed to decrypt client secret, using encrypted version")
+            except Exception as e:
+                logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
+
+        # Prepare token request data
+        token_data = {
+            "grant_type": "password",
+            "username": username,
+            "password": password,
+        }
+
+        # Add client_id (required by most providers including Keycloak)
+        if client_id:
+            token_data["client_id"] = client_id
+
+        # Add client_secret if present (some providers require it, others don't)
+        if client_secret:
+            token_data["client_secret"] = client_secret
+
+        if scopes:
+            token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
+
+        # Fetch token with retries
+        for attempt in range(self.max_retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(token_url, data=token_data, timeout=aiohttp.ClientTimeout(total=self.request_timeout)) as response:
+                        response.raise_for_status()
+
+                        # Handle both JSON and form-encoded responses
+                        content_type = response.headers.get("content-type", "")
+                        if "application/x-www-form-urlencoded" in content_type:
+                            # Parse form-encoded response
+                            text_response = await response.text()
+                            token_response = {}
+                            for pair in text_response.split("&"):
+                                if "=" in pair:
+                                    key, value = pair.split("=", 1)
+                                    token_response[key] = value
+                        else:
+                            # Try JSON response
+                            try:
+                                token_response = await response.json()
+                            except Exception as e:
+                                logger.warning(f"Failed to parse JSON response: {e}")
+                                # Fallback to text parsing
+                                text_response = await response.text()
+                                token_response = {"raw_response": text_response}
+
+                        if "access_token" not in token_response:
+                            raise OAuthError(f"No access_token in response: {token_response}")
+
+                        logger.info("Successfully obtained access token via password grant")
                         return token_response["access_token"]
 
             except aiohttp.ClientError as e:
