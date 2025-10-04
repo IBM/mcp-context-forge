@@ -149,7 +149,7 @@ from starlette.routing import Route
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.translate_header_utils import extract_env_vars_from_headers
+from mcpgateway.translate_header_utils import extract_env_vars_from_headers, parse_header_mappings
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -456,6 +456,23 @@ class StdIOEndpoint:
                 self._pump_task.cancel()
             self._proc = None
             self._stdin = None  # Reset stdin too!
+
+    def is_running(self) -> bool:
+        """Check if the stdio subprocess is currently running.
+
+        Returns:
+            True if the subprocess is running, False otherwise.
+
+        Examples:
+            >>> import asyncio
+            >>> async def test_is_running():
+            ...     pubsub = _PubSub()
+            ...     stdio = StdIOEndpoint("cat", pubsub)
+            ...     return stdio.is_running()
+            >>> asyncio.run(test_is_running())
+            False
+        """
+        return self._proc is not None
 
     async def send(self, raw: str) -> None:
         """Send data to the subprocess stdin.
@@ -790,7 +807,7 @@ def _build_fastapi(
                 await asyncio.sleep(0.5)  # Give process time to initialize
 
         # Ensure stdio endpoint is running
-        if stdio._proc is None:
+        if not stdio.is_running():
             LOGGER.info("Starting stdio endpoint (was not running)")
             await stdio.start()
             await asyncio.sleep(0.5)  # Give process time to initialize
@@ -1900,7 +1917,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                     await asyncio.sleep(0.5)  # Give process time to initialize
 
             # Ensure stdio endpoint is running
-            if stdio and stdio._proc is None:
+            if stdio and not stdio.is_running():
                 LOGGER.info("Starting stdio endpoint (was not running)")
                 await stdio.start()
                 await asyncio.sleep(0.5)  # Give process time to initialize
@@ -2312,9 +2329,6 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
     header_mappings = None
     if getattr(args, "enable_dynamic_env", False):
         try:
-            # First-Party
-            from mcpgateway.translate_header_utils import parse_header_mappings
-
             header_mappings = parse_header_mappings(getattr(args, "header_to_env", []))
             LOGGER.info(f"Dynamic environment injection enabled with {len(header_mappings)} header mappings")
         except Exception as e:
