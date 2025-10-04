@@ -2476,6 +2476,9 @@ class Gateway(Base):
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 
+    # Relationship with registered OAuth clients (DCR)
+    registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
+
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
         UniqueConstraint("team_id", "owner_email", "url", name="uq_team_owner_url_gateway"),
@@ -2714,6 +2717,7 @@ class OAuthState(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
+    code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
@@ -2723,6 +2727,46 @@ class OAuthState(Base):
 
     # Index for efficient lookups
     __table_args__ = (Index("idx_oauth_state_lookup", "gateway_id", "state"),)
+
+
+class RegisteredOAuthClient(Base):
+    """Stores dynamically registered OAuth clients (RFC 7591 client mode).
+
+    This model maintains client credentials obtained through Dynamic Client
+    Registration with upstream Authorization Servers.
+    """
+
+    __tablename__ = "registered_oauth_clients"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Registration details
+    issuer: Mapped[str] = mapped_column(String(500), nullable=False)  # AS issuer URL
+    client_id: Mapped[str] = mapped_column(String(500), nullable=False)
+    client_secret_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Encrypted
+
+    # RFC 7591 fields
+    redirect_uris: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
+    grant_types: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array
+    response_types: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
+    scope: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    token_endpoint_auth_method: Mapped[str] = mapped_column(String(50), default="client_secret_basic")
+
+    # Registration management (RFC 7591 section 4)
+    registration_client_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    registration_access_token_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Relationships
+    gateway: Mapped["Gateway"] = relationship("Gateway", back_populates="registered_oauth_clients")
+
+    # Unique constraint: one registration per gateway+issuer
+    __table_args__ = (Index("idx_gateway_issuer", "gateway_id", "issuer", unique=True),)
 
 
 class EmailApiToken(Base):

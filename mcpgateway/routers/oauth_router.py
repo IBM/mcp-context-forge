@@ -23,9 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.schemas import EmailUserResponse
+from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 
@@ -35,12 +37,19 @@ oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
+async def initiate_oauth_flow(
+    gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
     the gateway supports the Authorization Code flow, and redirects the user to the OAuth
     provider's authorization URL to begin the OAuth process.
+
+    **Phase 1.4: DCR Integration**
+    If the gateway has an issuer but no client_id, and DCR is enabled, this endpoint will
+    automatically register the gateway as an OAuth client with the Authorization Server
+    using Dynamic Client Registration (RFC 7591).
 
     Args:
         gateway_id: The unique identifier of the gateway to authorize.
@@ -73,9 +82,86 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
         if gateway.oauth_config.get("grant_type") != "authorization_code":
             raise HTTPException(status_code=400, detail="Gateway is not configured for Authorization Code flow")
 
-        # Initiate OAuth flow with user context
+        oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
+
+        # Phase 1.4: Auto-trigger DCR if credentials are missing
+        # Check if gateway has issuer but no client_id (DCR scenario)
+        issuer = oauth_config.get("issuer")
+        client_id = oauth_config.get("client_id")
+
+        if issuer and not client_id:
+            if settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
+                logger.info(f"Gateway {gateway_id} has issuer but no client_id. Attempting DCR...")
+
+                try:
+                    # Initialize DCR service
+                    dcr_service = DcrService()
+
+                    # Check if client is already registered in database
+                    registered_client = await dcr_service.get_or_register_client(
+                        gateway_id=gateway_id,
+                        gateway_name=gateway.name,
+                        issuer=issuer,
+                        redirect_uri=oauth_config.get("redirect_uri"),
+                        scopes=oauth_config.get("scopes", settings.dcr_default_scopes),
+                        db=db,
+                    )
+
+                    logger.info(f"✅ DCR successful for gateway {gateway_id}: client_id={registered_client.client_id}")
+
+                    # Decrypt the client secret for use in OAuth flow (if present - public clients may not have secrets)
+                    decrypted_secret = None
+                    if registered_client.client_secret_encrypted:
+                        # First-Party
+                        from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+
+                        encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                        decrypted_secret = encryption.decrypt_secret(registered_client.client_secret_encrypted)
+
+                    # Update oauth_config with registered credentials
+                    oauth_config["client_id"] = registered_client.client_id
+                    if decrypted_secret:
+                        oauth_config["client_secret"] = decrypted_secret
+
+                    # Discover AS metadata to get authorization/token endpoints if not already set
+                    # Note: OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'
+                    if not oauth_config.get("authorization_url") or not oauth_config.get("token_url"):
+                        metadata = await dcr_service.discover_as_metadata(issuer)
+                        oauth_config["authorization_url"] = metadata.get("authorization_endpoint")
+                        oauth_config["token_url"] = metadata.get("token_endpoint")
+                        logger.info(f"Discovered OAuth endpoints for {issuer}")
+
+                    # Update gateway's oauth_config and auth_type in database for future use
+                    gateway.oauth_config = oauth_config
+                    gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
+                    db.commit()
+
+                    logger.info(f"Updated gateway {gateway_id} with DCR credentials and auth_type=oauth")
+
+                except DcrError as dcr_err:
+                    logger.error(f"DCR failed for gateway {gateway_id}: {dcr_err}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Dynamic Client Registration failed: {str(dcr_err)}. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
+                    )
+                except Exception as dcr_ex:
+                    logger.error(f"Unexpected error during DCR for gateway {gateway_id}: {dcr_ex}")
+                    raise HTTPException(status_code=500, detail=f"Failed to register OAuth client: {str(dcr_ex)}")
+            else:
+                # DCR is disabled or auto-register is off
+                logger.warning(f"Gateway {gateway_id} has issuer but no client_id, and DCR auto-registration is disabled")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true and MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true",
+                )
+
+        # Validate required fields for OAuth flow
+        if not oauth_config.get("client_id"):
+            raise HTTPException(status_code=400, detail="OAuth configuration missing client_id")
+
+        # Initiate OAuth flow with user context (now includes PKCE from existing implementation)
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, gateway.oauth_config, app_user_email=current_user.get("email"))
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=current_user.get("email"))
 
         logger.info(f"Initiated OAuth flow for gateway {gateway_id} by user {current_user.get('email')}")
 
@@ -444,3 +530,155 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
     except Exception as e:
         logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {str(e)}")
+
+
+# ============================================================================
+# Admin Endpoints for DCR Management
+# ============================================================================
+
+
+@oauth_router.get("/registered-clients")
+async def list_registered_oauth_clients(current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+    """List all registered OAuth clients (created via DCR).
+
+    This endpoint shows OAuth clients that were dynamically registered with external
+    Authorization Servers using RFC 7591 Dynamic Client Registration.
+
+    Args:
+        current_user: The authenticated user (admin access required)
+        db: Database session
+
+    Returns:
+        Dict containing list of registered OAuth clients with metadata
+
+    Raises:
+        HTTPException: If user lacks permissions or database error occurs
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+
+        # Query all registered clients
+        clients = db.execute(select(RegisteredOAuthClient)).scalars().all()
+
+        # Build response
+        clients_data = []
+        for client in clients:
+            clients_data.append(
+                {
+                    "id": client.id,
+                    "gateway_id": client.gateway_id,
+                    "issuer": client.issuer,
+                    "client_id": client.client_id,
+                    "redirect_uris": client.redirect_uris.split(",") if isinstance(client.redirect_uris, str) else client.redirect_uris,
+                    "grant_types": client.grant_types.split(",") if isinstance(client.grant_types, str) else client.grant_types,
+                    "scope": client.scope,
+                    "token_endpoint_auth_method": client.token_endpoint_auth_method,
+                    "created_at": client.created_at.isoformat() if client.created_at else None,
+                    "expires_at": client.expires_at.isoformat() if client.expires_at else None,
+                    "is_active": client.is_active,
+                }
+            )
+
+        return {"total": len(clients_data), "clients": clients_data}
+
+    except Exception as e:
+        logger.error(f"Failed to list registered OAuth clients: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list registered clients: {str(e)}")
+
+
+@oauth_router.get("/registered-clients/{gateway_id}")
+async def get_registered_client_for_gateway(
+    gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)  # noqa: ARG001
+) -> Dict[str, Any]:
+    """Get the registered OAuth client for a specific gateway.
+
+    Args:
+        gateway_id: The gateway ID to lookup
+        current_user: The authenticated user
+        db: Database session
+
+    Returns:
+        Dict containing registered client information
+
+    Raises:
+        HTTPException: If gateway or registered client not found
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+
+        # Query registered client for this gateway
+        client = db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.gateway_id == gateway_id)).scalar_one_or_none()
+
+        if not client:
+            raise HTTPException(status_code=404, detail=f"No registered OAuth client found for gateway {gateway_id}")
+
+        return {
+            "id": client.id,
+            "gateway_id": client.gateway_id,
+            "issuer": client.issuer,
+            "client_id": client.client_id,
+            "redirect_uris": client.redirect_uris.split(",") if isinstance(client.redirect_uris, str) else client.redirect_uris,
+            "grant_types": client.grant_types.split(",") if isinstance(client.grant_types, str) else client.grant_types,
+            "scope": client.scope,
+            "token_endpoint_auth_method": client.token_endpoint_auth_method,
+            "registration_client_uri": client.registration_client_uri,
+            "created_at": client.created_at.isoformat() if client.created_at else None,
+            "expires_at": client.expires_at.isoformat() if client.expires_at else None,
+            "is_active": client.is_active,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get registered client for gateway {gateway_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get registered client: {str(e)}")
+
+
+@oauth_router.delete("/registered-clients/{client_id}")
+async def delete_registered_client(client_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+    """Delete a registered OAuth client.
+
+    This will revoke the client registration locally. Note: This does not automatically
+    revoke the client at the Authorization Server. You may need to manually revoke the
+    client using the registration_client_uri if available.
+
+    Args:
+        client_id: The registered client ID to delete
+        current_user: The authenticated user (admin access required)
+        db: Database session
+
+    Returns:
+        Dict containing success message
+
+    Raises:
+        HTTPException: If client not found or deletion fails
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import RegisteredOAuthClient
+
+        # Find the client
+        client = db.execute(select(RegisteredOAuthClient).where(RegisteredOAuthClient.id == client_id)).scalar_one_or_none()
+
+        if not client:
+            raise HTTPException(status_code=404, detail=f"Registered client {client_id} not found")
+
+        issuer = client.issuer
+        gateway_id = client.gateway_id
+
+        # Delete the client
+        db.delete(client)
+        db.commit()
+
+        logger.info(f"Deleted registered OAuth client {client_id} for gateway {gateway_id} (issuer: {issuer})")
+
+        return {"success": True, "message": f"Registered OAuth client {client_id} deleted successfully", "gateway_id": gateway_id, "issuer": issuer}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete registered client {client_id}: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete registered client: {str(e)}")

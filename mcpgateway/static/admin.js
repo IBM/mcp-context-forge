@@ -7683,49 +7683,15 @@ async function handleGatewayFormSubmit(e) {
         }
 
         // Handle OAuth configuration
-        const authType = formData.get("auth_type");
-        if (authType === "oauth") {
-            const oauthConfig = {
-                grant_type: formData.get("oauth_grant_type"),
-                client_id: formData.get("oauth_client_id"),
-                client_secret: formData.get("oauth_client_secret"),
-                token_url: formData.get("oauth_token_url"),
-                scopes: formData.get("oauth_scopes")
-                    ? formData
-                          .get("oauth_scopes")
-                          .split(" ")
-                          .filter((s) => s.trim())
-                    : [],
-            };
-
-            // Add authorization code specific fields
-            if (oauthConfig.grant_type === "authorization_code") {
-                oauthConfig.authorization_url = formData.get(
-                    "oauth_authorization_url",
-                );
-                oauthConfig.redirect_uri = formData.get("oauth_redirect_uri");
-
-                // Add token management options
-                oauthConfig.token_management = {
-                    store_tokens: formData.get("oauth_store_tokens") === "on",
-                    auto_refresh: formData.get("oauth_auto_refresh") === "on",
-                    refresh_threshold_seconds: 300,
-                };
-            }
-
-            // Remove individual OAuth fields and add as oauth_config
-            formData.delete("oauth_grant_type");
-            formData.delete("oauth_client_id");
-            formData.delete("oauth_client_secret");
-            formData.delete("oauth_token_url");
-            formData.delete("oauth_scopes");
-            formData.delete("oauth_authorization_url");
-            formData.delete("oauth_redirect_uri");
-            formData.delete("oauth_store_tokens");
-            formData.delete("oauth_auto_refresh");
-
-            formData.append("oauth_config", JSON.stringify(oauthConfig));
-        }
+        // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
+        // The backend assembles individual form fields into oauth_config with proper field names
+        // and supports DCR (Dynamic Client Registration) when client_id/client_secret are empty
+        //
+        // Leaving this commented for reference:
+        // const authType = formData.get("auth_type");
+        // if (authType === "oauth") {
+        //     ... backend handles this now ...
+        // }
 
         formData.append("visibility", formData.get("visibility"));
 
@@ -8307,40 +8273,15 @@ async function handleEditGatewayFormSubmit(e) {
         );
 
         // Handle OAuth configuration
-        const authType = formData.get("auth_type");
-        if (authType === "oauth") {
-            const oauthConfig = {
-                grant_type: formData.get("oauth_grant_type"),
-                client_id: formData.get("oauth_client_id"),
-                client_secret: formData.get("oauth_client_secret"),
-                token_url: formData.get("oauth_token_url"),
-                scopes: formData.get("oauth_scopes")
-                    ? formData
-                          .get("oauth_scopes")
-                          .split(" ")
-                          .filter((s) => s.trim())
-                    : [],
-            };
-
-            // Add authorization code specific fields
-            if (oauthConfig.grant_type === "authorization_code") {
-                oauthConfig.authorization_url = formData.get(
-                    "oauth_authorization_url",
-                );
-                oauthConfig.redirect_uri = formData.get("oauth_redirect_uri");
-            }
-
-            // Remove individual OAuth fields and add as oauth_config
-            formData.delete("oauth_grant_type");
-            formData.delete("oauth_client_id");
-            formData.delete("oauth_client_secret");
-            formData.delete("oauth_token_url");
-            formData.delete("oauth_scopes");
-            formData.delete("oauth_authorization_url");
-            formData.delete("oauth_redirect_uri");
-
-            formData.append("oauth_config", JSON.stringify(oauthConfig));
-        }
+        // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
+        // The backend assembles individual form fields into oauth_config with proper field names
+        // and supports DCR (Dynamic Client Registration) when client_id/client_secret are empty
+        //
+        // Leaving this commented for reference:
+        // const authType = formData.get("auth_type");
+        // if (authType === "oauth") {
+        //     ... backend handles this now ...
+        // }
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);

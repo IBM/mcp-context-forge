@@ -187,8 +187,28 @@ See also: [securing.md](./securing.md) for general hardening guidance and [proxy
 
 ---
 
+## PKCE Support
+
+MCP Gateway implements **PKCE (Proof Key for Code Exchange)** as defined in [RFC 7636](https://tools.ietf.org/html/rfc7636) for all Authorization Code flows. This provides enhanced security, especially for:
+
+- Public clients (mobile apps, SPAs, desktop apps)
+- Environments where client secrets cannot be securely stored
+- Protection against authorization code interception attacks
+
+**How it works:**
+
+1. Gateway generates a random `code_verifier` (43-128 characters)
+2. Computes `code_challenge` = BASE64URL(SHA256(code_verifier))
+3. Sends `code_challenge` and `code_challenge_method=S256` in authorization request
+4. Stores `code_verifier` in OAuth state (encrypted at rest)
+5. Includes `code_verifier` when exchanging authorization code for token
+
+PKCE is **automatically enabled** for all Authorization Code flows - no configuration needed.
+
+---
+
 ## FAQ
 
-- Can I use PKCE? Not yet; planned as a future enhancement.
-- Can I configure per-tool OAuth? Roadmap considers multiple OAuth configs per tool; current design is per-gateway.
-- Do you cache tokens? Default is no caching; tokens are fetched per operation. Optional storage/refresh is planned per the UI design.
+- **Can I use PKCE?** Yes! PKCE is automatically enabled for all Authorization Code flows (RFC 7636).
+- **Can I configure per-tool OAuth?** Roadmap considers multiple OAuth configs per tool; current design is per-gateway.
+- **Do you cache tokens?** Default is no caching; tokens are fetched per operation. Optional storage/refresh is available for Authorization Code flows.

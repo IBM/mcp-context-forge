@@ -472,15 +472,6 @@
             >
               📦 MCP Registry
             </a>
-            <a
-              href="#configuration"
-              id="tab-configuration"
-              data-testid="configuration-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('configuration')"
-            >
-              ⚙️ Configuration
-            </a>
             {% if email_auth_enabled %}
             <a
               href="#teams"
@@ -1112,8 +1103,74 @@
       <!-- MCP Registry Panel -->
       <div id="mcp-registry-panel" class="tab-panel hidden">
         <div class="container mx-auto px-4 py-8">
+          <div class="mb-6">
+            <h1 class="text-3xl font-bold mb-2 dark:text-gray-200">
+              MCP Registry
+            </h1>
+            <p class="text-gray-600 dark:text-gray-400">
+              Browse and add public MCP servers to your gateway
+            </p>
+          </div>
+
+          <!-- Filters -->
+          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  >Category</label
+                >
+                <select
+                  id="category-filter"
+                  name="category"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                  hx-trigger="change"
+                  hx-target="#mcp-registry-servers"
+                  hx-include="[name='auth_type'],[name='search']"
+                >
+                  <option value="">All Categories</option>
+                </select>
+              </div>
+              <div>
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  >Auth Type</label
+                >
+                <select
+                  id="auth-filter"
+                  name="auth_type"
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                  hx-trigger="change"
+                  hx-target="#mcp-registry-servers"
+                  hx-include="[name='category'],[name='search']"
+                >
+                  <option value="">All Auth Types</option>
+                </select>
+              </div>
+              <div class="md:col-span-2">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+                  >Search</label
+                >
+                <input
+                  type="text"
+                  id="search-input"
+                  name="search"
+                  placeholder="Search servers..."
+                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
+                  hx-trigger="keyup changed delay:500ms"
+                  hx-target="#mcp-registry-servers"
+                  hx-include="[name='category'],[name='auth_type']"
+                />
+              </div>
+            </div>
+          </div>
+
           <!-- Server Grid -->
-          <div id="mcp-registry-content">
+          <div id="mcp-registry-servers">
             <div class="text-center py-8">
               <div
                 class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"
@@ -1182,39 +1239,6 @@
                   </button>
                 </div>
               </form>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Configuration Panel -->
-      <div id="configuration-panel" class="tab-panel hidden">
-        <div class="container mx-auto px-4 py-8">
-          <div class="mb-6">
-            <h2 class="text-2xl font-bold dark:text-gray-200 mb-2">
-              ⚙️ Configuration Settings
-            </h2>
-            <p class="text-gray-600 dark:text-gray-400">
-              View application configuration grouped by category. Sensitive values are masked for security.
-            </p>
-          </div>
-
-          <!-- Security Status Card -->
-          <div id="security-status-card" class="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">
-            <h3 class="text-lg font-semibold mb-4 dark:text-gray-200">🔒 Security Status</h3>
-            <div id="security-status-content" class="space-y-2">
-              <div class="text-center py-4">
-                <div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 dark:border-gray-100"></div>
-                <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">Loading security status...</p>
-              </div>
-            </div>
-          </div>
-
-          <!-- Configuration Groups -->
-          <div id="config-groups-container" class="space-y-6">
-            <div class="text-center py-8">
-              <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"></div>
-              <p class="mt-2 text-gray-600 dark:text-gray-400">Loading configuration...</p>
             </div>
           </div>
         </div>
@@ -1558,11 +1582,8 @@
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
-            Create Virtual Server
+            Add New Server
           </h3>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            A Virtual Server bundles tools, resources, and prompts into a single MCP endpoint
-          </p>
           <form
             method="POST"
             id="add-server-form"
@@ -1588,13 +1609,12 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Name <span class="text-red-600 dark:text-red-400">*</span></label
+                  >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  placeholder="e.g., my-dev-environment, production-api-bundle"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -1605,7 +1625,6 @@
                 >
                 <textarea
                   name="description"
-                  placeholder="e.g., Development environment with GitHub and Notion tools"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
@@ -1617,12 +1636,8 @@
                 <input
                   type="url"
                   name="icon"
-                  placeholder="https://example.com/icon.png"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Optional - URL to an icon image for this server
-                </p>
               </div>
               <div
                 class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
@@ -1630,9 +1645,8 @@
                 <label
                   class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                   for="associatedTools"
-                  x-tooltip="'💡 Select which tools this server should expose to MCP clients'"
                 >
-                  Select Tools to Include
+                  Associated Tools
                 </label>
                 <input
                   type="text"
@@ -1705,9 +1719,8 @@
                 <label
                   class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                   for="associatedResources"
-                  x-tooltip="'💡 Add data sources, files, or templates this server can access'"
                 >
-                  Select Resources to Include
+                  Associated Resources
                 </label>
                 <input
                   type="text"
@@ -1775,9 +1788,8 @@
                 <label
                   class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                   for="associatedPrompts"
-                  x-tooltip="'💡 Include pre-defined prompt templates for common workflows'"
                 >
-                  Select Prompts to Include
+                  Associated Prompts
                 </label>
                 <input
                   type="text"
@@ -1880,57 +1892,48 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
-                <div class="flex items-center flex-col align-start">
-                  <div class="flex items-center w-full">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="public"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      id="server-visibility-public"
-                      checked
-                    />
-                    <label
-                      for="server-visibility-public"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🌍Public</label
-                    >
-                  </div>
-                  <p class="ml-7 text-xs text-gray-500 dark:text-gray-400">Visible to all users in this gateway</p>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="public"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="server-visibility-public"
+                    checked
+                  />
+                  <label
+                    for="server-visibility-public"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🌍Public</label
+                  >
                 </div>
-                <div class="flex items-center flex-col align-start">
-                  <div class="flex items-center w-full">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="team"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      id="server-visibility-team"
-                    />
-                    <label
-                      for="server-visibility-team"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >👥Team</label
-                    >
-                  </div>
-                  <p class="ml-7 text-xs text-gray-500 dark:text-gray-400">Visible only to your team members</p>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="team"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="server-visibility-team"
+                  />
+                  <label
+                    for="server-visibility-team"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >👥Team</label
+                  >
                 </div>
-                <div class="flex items-center flex-col align-start">
-                  <div class="flex items-center w-full">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="private"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      id="server-visibility-private"
-                    />
-                    <label
-                      for="server-visibility-private"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🔒Private</label
-                    >
-                  </div>
-                  <p class="ml-7 text-xs text-gray-500 dark:text-gray-400">Visible only to you</p>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="private"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="server-visibility-private"
+                  />
+                  <label
+                    for="server-visibility-private"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🔒Private</label
+                  >
                 </div>
               </div>
             </div>
@@ -1940,7 +1943,7 @@
                 x-tooltip="'💡Creates a new Virtual Server by combining Tools, Resources & Prompts from global catalogs.'"
                 class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
-                ➕ Create Virtual Server
+                Add Server
               </button>
             </div>
           </form>
@@ -1951,7 +1954,7 @@
       <div id="tools-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <div>
-            <h2 class="text-2xl font-bold dark:text-gray-200">Global Tool Catalog</h2>
+            <h2 class="text-2xl font-bold dark:text-gray-200">MCP Tools</h2>
             <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
               This is the global catalog of MCP Tools available. You can also
               add custom tools from REST APIs. Create a Virtual Server using one
@@ -2388,7 +2391,7 @@
           <div class="flex justify-between items-center mb-4">
             <div>
               <h3 class="text-lg font-bold dark:text-gray-200">
-                Register REST API Tool
+                Add New Tool from REST API
               </h3>
               <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
                 Convert existing REST API to an MCP Tool
@@ -2666,13 +2669,12 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Name <span class="text-red-600 dark:text-red-400">*</span></label
+                  >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  placeholder="e.g., get_user_profile"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -2685,7 +2687,7 @@
                 <input
                   type="text"
                   name="displayName"
-                  placeholder="e.g., Get User Profile"
+                  placeholder="Custom display name for your UI"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -2693,13 +2695,12 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >URL <span class="text-red-600 dark:text-red-400">*</span></label
+                  >URL</label
                 >
                 <input
                   type="url"
                   name="url"
                   required
-                  placeholder="https://api.example.com/v1/users"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -2710,14 +2711,12 @@
                 >
                 <textarea
                   name="description"
-                  placeholder="e.g., Fetches user profile data from CRM"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  x-tooltip="'💡 REST: standard HTTP APIs | MCP: Model Context Protocol servers'"
                   >Integration Type</label
                 >
                 <select
@@ -2732,7 +2731,6 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  x-tooltip="'💡 GET: read data | POST: create/send | PUT: update | DELETE: remove'"
                   >Request Type</label
                 >
                 <select
@@ -2746,13 +2744,11 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  x-tooltip="'💡 Add custom HTTP headers like Authentication or API keys'"
                   >Headers (JSON)</label
                 >
                 <textarea
                   name="headers"
                   id="headers-editor"
-                  placeholder="e.g., {&quot;Content-Type&quot;: &quot;application/json&quot;}"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
@@ -2820,6 +2816,7 @@
                   <option value="basic">Basic</option>
                   <option value="bearer">Bearer Token</option>
                   <option value="authheaders">Custom Headers</option>
+                  <option value="oauth">OAuth 2.0</option>
                 </select>
               </div>
               <div id="auth-basic-fields" style="display: none">
@@ -2920,57 +2917,48 @@
               >
               <div class="flex gap-x-6 mt-2">
                 <!-- Add gap-x-6 for more space between radio options -->
-                <div class="flex items-center flex-col align-start">
-                  <div class="flex items-center w-full">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="public"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      id="tool-visibility-public"
-                      checked
-                    />
-                    <label
-                      for="tool-visibility-public"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🌍Public</label
-                    >
-                  </div>
-                  <p class="ml-7 text-xs text-gray-500 dark:text-gray-400">Visible to all users in this gateway</p>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="public"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="tool-visibility-public"
+                    checked
+                  />
+                  <label
+                    for="tool-visibility-public"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🌍Public</label
+                  >
                 </div>
-                <div class="flex items-center flex-col align-start">
-                  <div class="flex items-center w-full">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="team"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      id="tool-visibility-team"
-                    />
-                    <label
-                      for="tool-visibility-team"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >👥Team</label
-                    >
-                  </div>
-                  <p class="ml-7 text-xs text-gray-500 dark:text-gray-400">Visible only to your team members</p>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="team"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="tool-visibility-team"
+                  />
+                  <label
+                    for="tool-visibility-team"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >👥Team</label
+                  >
                 </div>
-                <div class="flex items-center flex-col align-start">
-                  <div class="flex items-center w-full">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="private"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      id="tool-visibility-private"
-                    />
-                    <label
-                      for="tool-visibility-private"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🔒Private</label
-                    >
-                  </div>
-                  <p class="ml-7 text-xs text-gray-500 dark:text-gray-400">Visible only to you</p>
+                <div class="flex items-center">
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value="private"
+                    class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    id="tool-visibility-private"
+                  />
+                  <label
+                    for="tool-visibility-private"
+                    class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                    >🔒Private</label
+                  >
                 </div>
               </div>
             </div>
@@ -2980,7 +2968,7 @@
                 x-tooltip="'💡  Registers a new Tool from an existing REST endpoint. Use Gateways to add MCP servers.'"
                 class="inline-flex justify-center py-2 px-4 border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
-                🔧 Register REST API Tool
+                Add Tool
               </button>
             </div>
           </form>
@@ -3381,33 +3369,31 @@
 
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
-            Register Resource
+            Add New Resource
           </h3>
           <form method="POST" id="add-resource-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >URI <span class="text-red-600 dark:text-red-400">*</span></label
+                  >URI</label
                 >
                 <input
                   type="text"
                   name="uri"
                   required
-                  placeholder="file:///docs/api.md or https://example.com/docs"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Name <span class="text-red-600 dark:text-red-400">*</span></label
+                  >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  placeholder="e.g., api-documentation"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -3418,7 +3404,6 @@
                 >
                 <textarea
                   name="description"
-                  placeholder="e.g., API documentation for external developers"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
@@ -3820,7 +3805,7 @@
 
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
-            Create Prompt Template
+            Add New Prompt
           </h3>
           <form
             method="POST"
@@ -3831,13 +3816,12 @@
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Name <span class="text-red-600 dark:text-red-400">*</span></label
+                  >Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  placeholder="e.g., customer-greeting"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
@@ -3848,7 +3832,6 @@
                 >
                 <textarea
                   name="description"
-                  placeholder="e.g., Greet customer and offer assistance"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
@@ -3985,16 +3968,14 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
-        <div class="mb-4">
-          <h2 class="text-2xl font-bold dark:text-gray-200">
-            MCP Servers & Gateways
-          </h2>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 mb-4">
-            ℹ️ Gateways connect to external MCP servers (like GitHub, Notion, etc.)
-            Once connected, their tools appear in the Tool Catalog automatically.
-          </p>
-        </div>
         <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold dark:text-gray-200">
+            MCP Servers & Federated Gateways (MCP Registry)
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Register external MCP Servers (SSE/HTTP) to retrieve their
+            tools/resources/prompts.
+          </p>
           <div class="flex items-center">
             <input
               type="checkbox"
@@ -4345,10 +4326,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <!-- Auth Type: {{ gateway.auth_type }} -->
                     <!-- OAuth Config: {{ gateway.oauth_config }} -->
                     <!-- Grant Type: {{ gateway.oauth_config.grant_type if gateway.oauth_config else 'None' }} -->
-                    <script>
-                      console.log("Auth Type:", "{{ gateway.authType }}");
-                      console.log("OAuth Config:", "{{ gateway.oauthConfig }}");
-                    </script>
                   </td>
                 </tr>
                 {% endfor %}
@@ -4359,38 +4336,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
-            Register MCP Server
+            Add New MCP Server or Gateway
           </h3>
           <form method="POST" id="add-gateway-form">
             <div class="grid grid-cols-1 gap-6">
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Gateway Name <span class="text-red-600 dark:text-red-400">*</span></label
+                  >MCP Server Name</label
                 >
                 <input
                   type="text"
                   name="name"
                   required
-                  placeholder="e.g., GitHub-Production, Notion-Team"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Gateway URL <span class="text-red-600 dark:text-red-400">*</span></label
+                  >MCP Server URL</label
                 >
                 <input
                   type="url"
                   name="url"
                   required
-                  placeholder="https://mcp.example.com/sse"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Format: https://mcp.example.com/sse or http://localhost:8080/sse
-                </p>
               </div>
               <div>
                 <label
@@ -4399,7 +4371,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 >
                 <textarea
                   name="description"
-                  placeholder="e.g., GitHub MCP server for repository management"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 ></textarea>
               </div>
@@ -4414,8 +4385,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   placeholder="e.g., production,external,api-gateway (comma-separated)"
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
-                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                  Enter tags separated by commas. Tags help categorize and filter.
+                <p class="mt-1 text-sm text-gray-500">
+                  Separate multiple tags with commas. Tags will be automatically
+                  normalized (lowercase, spaces→hyphens).
                 </p>
               </div>
               <div>
@@ -4586,11 +4558,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       id="oauth-grant-type-gw"
                       class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                     >
+                      <option value="authorization_code" selected>
+                        Authorization Code (User Delegation)
+                      </option>
                       <option value="client_credentials">
                         Client Credentials (Machine-to-Machine)
-                      </option>
-                      <option value="authorization_code">
-                        Authorization Code (User Delegation)
                       </option>
                     </select>
                   </div>
@@ -4599,28 +4571,51 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <label
                       class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >
-                      Client ID
+                      Issuer URL
                     </label>
                     <input
-                      type="text"
-                      name="oauth_client_id"
+                      type="url"
+                      name="oauth_issuer"
                       class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="Your OAuth Client ID (from provider's developer console)"
+                      placeholder="http://localhost:3003 or https://oauth.example.com"
                     />
+                    <p class="mt-1 text-sm text-gray-500">
+                      The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
+                    </p>
                   </div>
 
                   <div>
                     <label
                       class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >
-                      Client Secret
+                      Client ID <span class="text-gray-500">(optional for DCR)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_client_id"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="Leave empty for auto-registration via DCR"
+                    />
+                    <p class="mt-1 text-sm text-blue-600">
+                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Client Secret <span class="text-gray-500">(optional for DCR)</span>
                     </label>
                     <input
                       type="password"
                       name="oauth_client_secret"
                       class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                      placeholder="Your OAuth Client Secret (keep this secure)"
+                      placeholder="Leave empty for auto-registration via DCR"
                     />
+                    <p class="mt-1 text-sm text-blue-600">
+                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                    </p>
                   </div>
 
                   <div>
@@ -4637,7 +4632,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     />
                   </div>
 
-                  <div id="oauth-auth-code-fields-gw" style="display: none">
+                  <div id="oauth-auth-code-fields-gw">
                     <div>
                       <label
                         class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -4650,7 +4645,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         placeholder="https://oauth.example.com/authorize"
                       />
-                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      <p class="mt-1 text-sm text-gray-500">
                         The OAuth provider's authorization endpoint URL
                       </p>
                     </div>
@@ -4667,7 +4662,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         placeholder="https://gateway.example.com/oauth/callback"
                       />
-                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      <p class="mt-1 text-sm text-gray-500">
                         This must match the redirect URI configured in your
                         OAuth application
                       </p>
@@ -4713,7 +4708,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           </span>
                         </label>
                       </div>
-                      <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                      <p class="mt-1 text-sm text-gray-500">
                         Token management options for Authorization Code flow
                       </p>
                     </div>
@@ -4791,7 +4786,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  x-tooltip="'💡 Forward specific headers from client requests to upstream server'"
                   >Passthrough Headers</label
                 >
                 <small class="text-gray-500 dark:text-gray-400 block mb-2">
@@ -7252,11 +7246,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                             id="oauth-grant-type-gw-edit"
                             class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                           >
+                            <option value="authorization_code" selected>
+                              Authorization Code (User Delegation)
+                            </option>
                             <option value="client_credentials">
                               Client Credentials (Machine-to-Machine)
-                            </option>
-                            <option value="authorization_code">
-                              Authorization Code (User Delegation)
                             </option>
                           </select>
                         </div>
@@ -7265,32 +7259,56 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >
-                            Client ID
+                            Issuer URL
                           </label>
                           <input
-                            type="text"
-                            name="oauth_client_id"
-                            id="oauth-client-id-gw-edit"
+                            type="url"
+                            name="oauth_issuer"
+                            id="oauth-issuer-gw-edit"
                             class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                            placeholder="Your OAuth client ID"
+                            placeholder="http://localhost:3003 or https://oauth.example.com"
                           />
+                          <p class="mt-1 text-sm text-gray-500">
+                            The OAuth Authorization Server issuer URL. Required for DCR.
+                          </p>
                         </div>
 
                         <div>
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >
-                            Client Secret
+                            Client ID <span class="text-gray-500">(optional for DCR)</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="oauth_client_id"
+                            id="oauth-client-id-gw-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="Leave empty for auto-registration via DCR"
+                          />
+                          <p class="mt-1 text-sm text-blue-600">
+                            💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                          </p>
+                        </div>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Client Secret <span class="text-gray-500">(optional for DCR)</span>
                           </label>
                           <input
                             type="password"
                             name="oauth_client_secret"
                             id="oauth-client-secret-gw-edit"
                             class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                            placeholder="Your OAuth client secret"
+                            placeholder="Leave empty for auto-registration via DCR"
                           />
                           <p class="mt-1 text-sm text-gray-500">
-                            Leave blank to retain the current secret.
+                            Leave blank to retain the current secret (when editing).
+                          </p>
+                          <p class="mt-1 text-sm text-blue-600">
+                            💡 Leave empty if the server supports DCR - credentials will be auto-registered
                           </p>
                         </div>
 
@@ -7311,7 +7329,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
                         <div
                           id="oauth-auth-code-fields-gw-edit"
-                          style="display: none"
                         >
                           <div>
                             <label
@@ -11365,155 +11382,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
-
-      // Configuration viewer functions
-      async function loadConfiguration() {
-        try {
-          const response = await fetch(window.ROOT_PATH + '/admin/config/settings', {
-            headers: {
-              'Authorization': 'Bearer ' + getCookie('jwt_token')
-            }
-          });
-
-          if (!response.ok) {
-            throw new Error('Failed to load configuration');
-          }
-
-          const data = await response.json();
-          renderSecurityStatus(data.security_status);
-          renderConfigurationGroups(data.groups);
-        } catch (error) {
-          console.error('Error loading configuration:', error);
-          document.getElementById('config-groups-container').innerHTML =
-            '<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">' +
-            '<p class="text-red-800 dark:text-red-200">Failed to load configuration. Please try again.</p>' +
-            '</div>';
-        }
-      }
-
-      function renderSecurityStatus(status) {
-        const container = document.getElementById('security-status-content');
-        const score = status.security_score || 0;
-        const scoreColor = score >= 80 ? 'green' : score >= 60 ? 'yellow' : 'red';
-
-        let html = `
-          <div class="mb-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-sm font-medium dark:text-gray-300">Security Score</span>
-              <span class="text-2xl font-bold text-${scoreColor}-600 dark:text-${scoreColor}-400">${score}/100</span>
-            </div>
-            <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
-              <div class="bg-${scoreColor}-600 h-2.5 rounded-full" style="width: ${score}%"></div>
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-2 mb-4 text-sm">
-            <div class="flex items-center">
-              <span class="${status.auth_enabled ? 'text-green-600' : 'text-red-600'}">
-                ${status.auth_enabled ? '✓' : '✗'}
-              </span>
-              <span class="ml-2 dark:text-gray-300">Auth Enabled</span>
-            </div>
-            <div class="flex items-center">
-              <span class="${status.ssl_verification ? 'text-green-600' : 'text-red-600'}">
-                ${status.ssl_verification ? '✓' : '✗'}
-              </span>
-              <span class="ml-2 dark:text-gray-300">SSL Verification</span>
-            </div>
-            <div class="flex items-center">
-              <span class="${status.secure_secrets ? 'text-green-600' : 'text-red-600'}">
-                ${status.secure_secrets ? '✓' : '✗'}
-              </span>
-              <span class="ml-2 dark:text-gray-300">Secure Secrets</span>
-            </div>
-            <div class="flex items-center">
-              <span class="${status.cors_restricted ? 'text-green-600' : 'text-red-600'}">
-                ${status.cors_restricted ? '✓' : '✗'}
-              </span>
-              <span class="ml-2 dark:text-gray-300">CORS Restricted</span>
-            </div>
-          </div>`;
-
-        if (status.warnings && status.warnings.length > 0) {
-          html += '<div class="mt-4"><h4 class="font-semibold mb-2 dark:text-gray-200">⚠️ Warnings:</h4><ul class="space-y-1 text-sm">';
-          status.warnings.forEach(warning => {
-            html += `<li class="text-yellow-700 dark:text-yellow-400">${escapeHtml(warning)}</li>`;
-          });
-          html += '</ul></div>';
-        }
-
-        container.innerHTML = html;
-      }
-
-      function renderConfigurationGroups(groups) {
-        const container = document.getElementById('config-groups-container');
-        let html = '';
-
-        for (const [groupName, settings] of Object.entries(groups)) {
-          html += `
-            <div class="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-              <div class="px-6 py-4 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
-                <h3 class="text-lg font-semibold dark:text-gray-200">${escapeHtml(groupName)}</h3>
-              </div>
-              <div class="p-6">
-                <dl class="space-y-3">`;
-
-          for (const [key, value] of Object.entries(settings)) {
-            const displayValue = formatConfigValue(value);
-            html += `
-              <div class="flex justify-between py-2 border-b border-gray-100 dark:border-gray-700">
-                <dt class="font-medium text-gray-700 dark:text-gray-300">${escapeHtml(key)}</dt>
-                <dd class="text-gray-900 dark:text-gray-100 text-right font-mono text-sm">${displayValue}</dd>
-              </div>`;
-          }
-
-          html += `
-                </dl>
-              </div>
-            </div>`;
-        }
-
-        container.innerHTML = html;
-      }
-
-      function formatConfigValue(value) {
-        if (value === null || value === undefined) {
-          return '<span class="text-gray-400">null</span>';
-        }
-        if (typeof value === 'boolean') {
-          return value ?
-            '<span class="text-green-600 dark:text-green-400">✓ true</span>' :
-            '<span class="text-red-600 dark:text-red-400">✗ false</span>';
-        }
-        if (Array.isArray(value)) {
-          if (value.length === 0) return '<span class="text-gray-400">[]</span>';
-          return '<span class="text-blue-600 dark:text-blue-400">[' + value.length + ' items]</span>';
-        }
-        if (typeof value === 'object') {
-          return '<span class="text-purple-600 dark:text-purple-400">{object}</span>';
-        }
-        return escapeHtml(String(value));
-      }
-
-      function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-      }
-
-      // Initialize configuration tab when selected
-      document.addEventListener('DOMContentLoaded', function() {
-        // Listen for hash changes to load configuration when tab is activated
-        window.addEventListener('hashchange', function() {
-          if (window.location.hash === '#configuration') {
-            loadConfiguration();
-          }
-        });
-
-        // Load configuration if already on the tab
-        if (window.location.hash === '#configuration') {
-          loadConfiguration();
-        }
-      });
     </script>
   </body>
 </html>
