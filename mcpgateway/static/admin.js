@@ -9306,6 +9306,8 @@ function handleAuthTypeChange() {
 function handleOAuthGrantTypeChange() {
     const grantType = this.value;
     const authCodeFields = safeGetElement("oauth-auth-code-fields-gw");
+    const usernameField = safeGetElement("oauth-username-field-gw");
+    const passwordField = safeGetElement("oauth-password-field-gw");
 
     if (authCodeFields) {
         if (grantType === "authorization_code") {
@@ -9333,11 +9335,48 @@ function handleOAuthGrantTypeChange() {
             });
         }
     }
+
+    // Handle password grant type fields
+    if (usernameField && passwordField) {
+        if (grantType === "password") {
+            usernameField.style.display = "block";
+            passwordField.style.display = "block";
+
+            // Make username and password required for password grant
+            const usernameInput = safeGetElement("oauth-username-gw");
+            const passwordInput = safeGetElement("oauth-password-gw");
+            if (usernameInput) {
+                usernameInput.required = true;
+            }
+            if (passwordInput) {
+                passwordInput.required = true;
+            }
+
+            console.log(
+                "Password grant flow selected - username and password are now required",
+            );
+        } else {
+            usernameField.style.display = "none";
+            passwordField.style.display = "none";
+
+            // Remove required validation for hidden fields
+            const usernameInput = safeGetElement("oauth-username-gw");
+            const passwordInput = safeGetElement("oauth-password-gw");
+            if (usernameInput) {
+                usernameInput.required = false;
+            }
+            if (passwordInput) {
+                passwordInput.required = false;
+            }
+        }
+    }
 }
 
 function handleEditOAuthGrantTypeChange() {
     const grantType = this.value;
     const authCodeFields = safeGetElement("oauth-auth-code-fields-gw-edit");
+    const usernameField = safeGetElement("oauth-username-field-edit");
+    const passwordField = safeGetElement("oauth-password-field-edit");
 
     if (authCodeFields) {
         if (grantType === "authorization_code") {
@@ -9363,6 +9402,41 @@ function handleEditOAuthGrantTypeChange() {
             requiredFields.forEach((field) => {
                 field.required = false;
             });
+        }
+    }
+
+    // Handle password grant type fields
+    if (usernameField && passwordField) {
+        if (grantType === "password") {
+            usernameField.style.display = "block";
+            passwordField.style.display = "block";
+
+            // Make username and password required for password grant
+            const usernameInput = safeGetElement("oauth-username-gw-edit");
+            const passwordInput = safeGetElement("oauth-password-gw-edit");
+            if (usernameInput) {
+                usernameInput.required = true;
+            }
+            if (passwordInput) {
+                passwordInput.required = true;
+            }
+
+            console.log(
+                "Password grant flow selected - username and password are now required",
+            );
+        } else {
+            usernameField.style.display = "none";
+            passwordField.style.display = "none";
+
+            // Remove required validation for hidden fields
+            const usernameInput = safeGetElement("oauth-username-gw-edit");
+            const passwordInput = safeGetElement("oauth-password-gw-edit");
+            if (usernameInput) {
+                usernameInput.required = false;
+            }
+            if (passwordInput) {
+                passwordInput.required = false;
+            }
         }
     }
 }
