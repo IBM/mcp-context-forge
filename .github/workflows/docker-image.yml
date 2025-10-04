@@ -127,7 +127,15 @@ jobs:
             .   # build context is mandatory
 
       # -------------------------------------------------------------
-      # 5️⃣  Image lint (Dockle CLI → SARIF)
+      # 5️⃣  Pull image for scanning (multiplatform builds don't load locally)
+      # -------------------------------------------------------------
+      - name: 📥  Pull image for local scanning
+        run: |
+          echo "📥  Pulling image for scanning (multiplatform images not available locally after --push)..."
+          docker pull $IMAGE_NAME:latest
+
+      # -------------------------------------------------------------
+      # 6️⃣  Image lint (Dockle CLI → SARIF)
       # -------------------------------------------------------------
       - name: 🔍  Image lint (Dockle)
         id: dockle
@@ -149,7 +157,7 @@ jobs:
           sarif_file: dockle-results.sarif
 
       # -------------------------------------------------------------
-      # 6️⃣  Generate SPDX SBOM with Syft
+      # 7️⃣  Generate SPDX SBOM with Syft
       # -------------------------------------------------------------
       - name: 📄  Generate SBOM (Syft)
         uses: anchore/sbom-action@v0.20.5
@@ -158,7 +166,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # -------------------------------------------------------------
-      # 7️⃣  Trivy, Grype CVE scan → SARIF
+      # 8️⃣  Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
         if: env.TRIVY_ENABLED == 'true'
@@ -193,7 +201,7 @@ jobs:
           sarif_file: grype-results.sarif
 
       # -------------------------------------------------------------
-      # 8️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
+      # 9️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
       # -------------------------------------------------------------
       - name: 📥 Install Cosign
         if: github.ref == 'refs/heads/main'
@@ -216,7 +224,7 @@ jobs:
           done
 
       # -------------------------------------------------------------
-      # 9️⃣  Single gate - fail job on any scanner error
+      # 🔟  Single gate - fail job on any scanner error
       # -------------------------------------------------------------
       - name: ⛔  Enforce lint & vuln gates
         if: |
