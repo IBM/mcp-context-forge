@@ -4,6 +4,7 @@ nav:
   - scale.md
   - tuning.md
   - backup.md
+  - catalog.md
   - bulk-import.md
   - metadata-tracking.md
   - export-import.md
