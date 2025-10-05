@@ -196,7 +196,7 @@ RUN set -euo pipefail \
     && mkdir -p "${ROOTFS_PATH:?}"/{etc,usr/bin,usr/lib64,var/tmp,tmp,proc,sys,dev,run} \
     && cp -a /etc/{passwd,group,nsswitch.conf,pki,ssl} "${ROOTFS_PATH:?}/etc/" \
     && cp -a /usr/bin/python${PYTHON_VERSION} "${ROOTFS_PATH:?}/usr/bin/" \
-    && cp -a /usr/bin/{bash,sh,ps} "${ROOTFS_PATH:?}/usr/bin/" \
+    && cp -a /usr/bin/{bash,sh} "${ROOTFS_PATH:?}/usr/bin/" \
     && cp -a /usr/lib64/python${PYTHON_VERSION} "${ROOTFS_PATH:?}/usr/lib64/" \
     && cp -a /usr/lib64/*.so* "${ROOTFS_PATH:?}/usr/lib64/" \
     && ln -sf python${PYTHON_VERSION} "${ROOTFS_PATH:?}/usr/bin/python3" \
