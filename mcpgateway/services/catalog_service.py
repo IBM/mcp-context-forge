@@ -31,6 +31,7 @@ from mcpgateway.schemas import (
     CatalogServerStatusResponse,
 )
 from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.utils.create_slug import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,9 @@ class CatalogService:
         for server_data in servers:
             server = CatalogServer(**server_data)
             server.is_registered = server.url in registered_urls
+            # Set availability based on registration status (registered servers are assumed available)
+            # Individual health checks can be done via the /status endpoint
+            server.is_available = server.is_registered or server_data.get("is_available", True)
             catalog_servers.append(server)
 
         # Apply filters
@@ -206,18 +210,22 @@ class CatalogService:
             # First-Party
             from mcpgateway.schemas import GatewayCreate  # pylint: disable=import-outside-toplevel
 
-            # Detect transport type from URL or use SSE as default
-            url = server_data["url"].lower()
-            # Check for SSE patterns (highest priority)
-            if url.endswith("/sse") or "/sse/" in url:
-                transport = "SSE"  # SSE endpoints or paths containing /sse/
-            elif url.startswith("ws://") or url.startswith("wss://"):
-                transport = "SSE"  # WebSocket URLs typically use SSE transport
-            # Then check for HTTP patterns
-            elif "/mcp" in url or url.endswith("/"):
-                transport = "STREAMABLEHTTP"  # Generic MCP endpoints typically use HTTP
-            else:
-                transport = "SSE"  # Default to SSE for most catalog servers
+            # Use explicit transport if provided, otherwise auto-detect from URL
+            transport = server_data.get("transport")
+            if not transport:
+                # Detect transport type from URL or use SSE as default
+                url = server_data["url"].lower()
+                # Check for WebSocket patterns (highest priority)
+                if url.startswith("ws://") or url.startswith("wss://"):
+                    transport = "WEBSOCKET"  # WebSocket transport for ws:// and wss:// URLs
+                # Check for SSE patterns
+                elif url.endswith("/sse") or "/sse/" in url:
+                    transport = "SSE"  # SSE endpoints or paths containing /sse/
+                # Then check for HTTP patterns
+                elif "/mcp" in url or url.endswith("/"):
+                    transport = "STREAMABLEHTTP"  # Generic MCP endpoints typically use HTTP
+                else:
+                    transport = "SSE"  # Default to SSE for most catalog servers
 
             # Check for IPv6 URLs early to provide a clear error message
             url = server_data["url"]
@@ -237,6 +245,8 @@ class CatalogService:
 
             # Set authentication based on server requirements
             auth_type = server_data.get("auth_type", "Open")
+            skip_initialization = False  # Flag to skip connection test for OAuth servers without creds
+
             if request and request.api_key and auth_type != "Open":
                 # Handle all possible auth types from the catalog
                 if auth_type in ["API Key", "API"]:
@@ -248,10 +258,54 @@ class CatalogService:
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
                 else:
-                    # For any other auth types, use custom headers
+                    # For any other auth types, use custom headers (as list of dicts)
                     gateway_data["auth_type"] = "authheaders"
-                    gateway_data["auth_header_key"] = "X-API-Key"
-                    gateway_data["auth_header_value"] = request.api_key
+                    gateway_data["auth_headers"] = [{"key": "X-API-Key", "value": request.api_key}]
+            elif auth_type in ["OAuth2.1", "OAuth"]:
+                # OAuth server without credentials - register but skip initialization
+                # User will need to complete OAuth flow later
+                skip_initialization = True
+                logger.info(f"Registering OAuth server {server_data['name']} without credentials - OAuth flow required later")
+
+            # For OAuth servers without credentials, register directly without connection test
+            if skip_initialization:
+                # Create minimal gateway entry without tool discovery
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                gateway_create = GatewayCreate(**gateway_data)
+                slug_name = slugify(gateway_data["name"])
+
+                db_gateway = DbGateway(
+                    name=gateway_data["name"],
+                    slug=slug_name,
+                    url=gateway_data["url"],
+                    description=gateway_data["description"],
+                    tags=gateway_data.get("tags", []),
+                    transport=gateway_data["transport"],
+                    capabilities={},
+                    auth_type=None,  # Will be set during OAuth configuration
+                    enabled=False,  # Disabled until OAuth is configured
+                    created_via="catalog",
+                    visibility="public",
+                    version=1,
+                )
+
+                db.add(db_gateway)
+                db.commit()
+                db.refresh(db_gateway)
+
+                # First-Party
+                from mcpgateway.schemas import GatewayRead  # pylint: disable=import-outside-toplevel
+
+                gateway_read = GatewayRead.model_validate(db_gateway)
+
+                return CatalogServerRegisterResponse(
+                    success=True,
+                    server_id=str(gateway_read.id),
+                    message=f"Successfully registered {gateway_read.name} - OAuth configuration required before activation",
+                    error=None,
+                )
 
             gateway_create = GatewayCreate(**gateway_data)
 
@@ -284,9 +338,31 @@ class CatalogService:
 
         except Exception as e:
             logger.error(f"Failed to register catalog server {catalog_id}: {e}")
+
+            # Map common exceptions to user-friendly messages
+            error_str = str(e)
+            user_message = "Registration failed"
+
+            if "Connection refused" in error_str or "connect" in error_str.lower():
+                user_message = "Server is offline or unreachable"
+            elif "SSL" in error_str or "certificate" in error_str.lower():
+                user_message = "SSL certificate verification failed - check server security settings"
+            elif "timeout" in error_str.lower() or "timed out" in error_str.lower():
+                user_message = "Server took too long to respond - it may be slow or unavailable"
+            elif "401" in error_str or "Unauthorized" in error_str:
+                user_message = "Authentication failed - check API key or OAuth credentials"
+            elif "403" in error_str or "Forbidden" in error_str:
+                user_message = "Access forbidden - check permissions and API key"
+            elif "404" in error_str or "Not Found" in error_str:
+                user_message = "Server endpoint not found - check URL is correct"
+            elif "500" in error_str or "Internal Server Error" in error_str:
+                user_message = "Remote server error - the MCP server is experiencing issues"
+            elif "IPv6" in error_str:
+                user_message = "IPv6 URLs are not supported - please use IPv4 or domain names"
+
             # Don't rollback here - let FastAPI handle it
             # db.rollback()
-            return CatalogServerRegisterResponse(success=False, server_id="", message="Registration failed", error=str(e))
+            return CatalogServerRegisterResponse(success=False, server_id="", message=user_message, error=error_str)
 
     async def check_server_availability(self, catalog_id: str) -> CatalogServerStatusResponse:
         """Check if a catalog server is available.

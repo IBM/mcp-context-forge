@@ -9801,12 +9801,19 @@ async def catalog_partial(
     root_path = request.scope.get("root_path", "")
 
     # Calculate pagination
-    page_size = 100
+    page_size = settings.mcpgateway_catalog_page_size
     offset = (page - 1) * page_size
 
     catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=False, limit=page_size, offset=offset)
 
     response = await catalog_service.get_catalog_servers(catalog_request, db)
+
+    # Pass filter parameters to template for pagination links
+    filter_params = {
+        "category": category,
+        "auth_type": auth_type,
+        "search": search,
+    }
 
     # Calculate statistics and pagination info
     total_servers = response.total
@@ -9842,6 +9849,7 @@ async def catalog_partial(
         "page": page,
         "total_pages": total_pages,
         "page_size": page_size,
+        "filter_params": filter_params,
     }
 
     return request.app.state.templates.TemplateResponse("mcp_registry_partial.html", context)

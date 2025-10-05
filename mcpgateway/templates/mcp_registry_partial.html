@@ -1,26 +1,44 @@
 <!-- htmlhint doctype-first:false -->
+<script>
+  // Set global ROOT_PATH for consistency across all JavaScript
+  if (typeof window.ROOT_PATH === 'undefined') {
+    window.ROOT_PATH = '{{ root_path }}';
+  }
+</script>
 <div class="space-y-6">
   <!-- MCP Registry Overview Card -->
   <div
     class="bg-gradient-to-r from-blue-500 to-cyan-600 rounded-lg shadow-lg p-6 text-white"
   >
-    <h2 class="text-2xl font-bold mb-4 flex items-center">
-      <svg
-        class="h-8 w-8 mr-3"
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
+    <div class="flex justify-between items-start mb-4">
+      <h2 class="text-2xl font-bold flex items-center">
+        <svg
+          class="h-8 w-8 mr-3"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+          />
+        </svg>
+        MCP Registry
+      </h2>
+      <button
+        onclick="refreshCatalog()"
+        class="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center gap-2"
+        title="Refresh catalog"
       >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-        />
-      </svg>
-      MCP Registry
-    </h2>
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        Refresh
+      </button>
+    </div>
 
     <div class="grid grid-cols-3 md:grid-cols-3 gap-4">
       <div class="text-center">
@@ -203,7 +221,7 @@
           id="mcp-search"
           placeholder="Search servers by name, description, or provider..."
           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-          oninput="filterServers()"
+          oninput="debouncedFilterServers()"
         />
       </div>
       <div class="flex gap-2">
@@ -253,8 +271,8 @@
     <!-- First Page -->
     {% if page > 1 %}
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page=1"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page=1"
+      href="{{ root_path }}/admin/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -263,8 +281,8 @@
     </a>
     <!-- Previous Page -->
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}"
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -294,8 +312,8 @@
     <!-- Next Page -->
     {% if page < total_pages %}
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}"
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -304,8 +322,8 @@
     </a>
     <!-- Last Page -->
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}"
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -438,19 +456,25 @@
         Add Server
       </button>
       {% else %}
-      <button
-        class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-        hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
-        hx-swap="outerHTML"
-        hx-indicator="#{{ server.id }}-spinner"
-      >
-        <span id="{{ server.id }}-spinner" class="htmx-indicator">
-          <span
-            class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"
-          ></span>
-        </span>
-        Add Server
-      </button>
+      <div id="{{ server.id }}-button-container">
+        <button
+          id="{{ server.id }}-register-btn"
+          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+          hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
+          hx-target="#{{ server.id }}-button-container"
+          hx-swap="innerHTML"
+          hx-indicator="#{{ server.id }}-spinner"
+          hx-on::after-request="if(event.detail.failed) { const btn = document.getElementById('{{ server.id }}-register-btn'); if(btn) btn.disabled = false; alert('Registration failed: ' + (event.detail.xhr.response ? JSON.parse(event.detail.xhr.response).error || 'Unknown error' : 'Network error')); }"
+        >
+          <span class="htmx-not-indicator">Add Server</span>
+          <span id="{{ server.id }}-spinner" class="htmx-indicator inline-flex items-center">
+            <span
+              class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"
+            ></span>
+            Registering...
+          </span>
+        </button>
+      </div>
       {% endif %} {% endif %}
     </div>
     {% endfor %}
@@ -527,6 +551,16 @@
         />
         <label
           class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+          >Custom Name (Optional)</label
+        >
+        <input
+          type="text"
+          id="modal-custom-name"
+          class="w-full px-4 py-2 mb-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          placeholder="Leave blank to use default name"
+        />
+        <label
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
           >API Key</label
         >
         <input
@@ -547,6 +581,9 @@
 </div>
 
 <script>
+// Debounce timer for search
+let searchDebounceTimer;
+
 // Filter servers by search and dropdowns
 function filterServers() {
   const searchTerm = document.getElementById('mcp-search').value.toLowerCase();
@@ -581,6 +618,12 @@ function filterServers() {
 
   // Update active badge highlighting
   updateBadgeHighlights();
+}
+
+// Debounced version of filterServers for search input
+function debouncedFilterServers() {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(filterServers, 300);
 }
 
 // Update badge highlights based on active filters
@@ -671,27 +714,44 @@ function closeApiKeyModal() {
 function registerServerWithApiKey() {
   const serverId = document.getElementById('modal-server-id').value;
   const apiKey = document.getElementById('modal-api-key').value;
+  const customName = document.getElementById('modal-custom-name').value;
 
   if (!apiKey) {
     alert('Please enter an API key');
     return;
   }
 
+  // Build request body
+  const requestBody = {
+    server_id: serverId,
+    api_key: apiKey
+  };
+
+  // Add custom name if provided
+  if (customName && customName.trim()) {
+    requestBody.name = customName.trim();
+  }
+
   // Use HTMX to post the registration
-  const rootPath = document.querySelector('[data-root-path]')?.dataset.rootPath || '';
+  const rootPath = document.querySelector('[data-root-path]')?.dataset.rootPath || window.ROOT_PATH || '';
   fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + (getCookie('jwt_token') || '')
     },
-    body: JSON.stringify({ api_key: apiKey })
+    body: JSON.stringify(requestBody)
   })
   .then(response => response.json())
   .then(data => {
     if (data.success) {
       closeApiKeyModal();
       // Refresh the server list
-      htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, '#mcp-registry-content');
+      if (window.htmx && window.htmx.ajax) {
+        window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, '#mcp-registry-content');
+      } else {
+        location.reload();
+      }
     } else {
       alert('Registration failed: ' + (data.error || data.message));
     }
@@ -699,5 +759,23 @@ function registerServerWithApiKey() {
   .catch(error => {
     alert('Registration failed: ' + error.message);
   });
+}
+
+// Helper function to get cookie
+function getCookie(name) {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return '';
+}
+
+// Refresh catalog by reloading the partial
+function refreshCatalog() {
+  const rootPath = window.ROOT_PATH || '';
+  if (window.htmx && window.htmx.ajax) {
+    window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, '#mcp-registry-content');
+  } else {
+    location.reload();
+  }
 }
 </script>
