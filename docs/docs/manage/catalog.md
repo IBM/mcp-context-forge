@@ -34,6 +34,9 @@ MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK=true
 
 # Catalog cache TTL in seconds (default: 3600)
 MCPGATEWAY_CATALOG_CACHE_TTL=3600
+
+# Number of catalog servers to display per page (default: 12)
+MCPGATEWAY_CATALOG_PAGE_SIZE=12
 ```
 
 ---
@@ -94,6 +97,7 @@ catalog_servers:
     name: "Production Time Server"
     category: "Utilities"
     url: "https://time.api.example.com/sse"
+    transport: "SSE"  # Optional: Explicitly specify transport type
     auth_type: "OAuth2.1"
     provider: "Internal Platform"
     description: "Production time server with geo-replication"
@@ -106,6 +110,21 @@ catalog_servers:
       - "geo-replicated"
     logo_url: "https://static.example.com/time-server-logo.png"
     documentation_url: "https://docs.example.com/time-server"
+
+  - id: "websocket-server"
+    name: "WebSocket MCP Server"
+    category: "Development Tools"
+    url: "wss://api.example.com/mcp"
+    transport: "WEBSOCKET"  # Specify WebSocket transport
+    auth_type: "API Key"
+    provider: "Internal Platform"
+    description: "Real-time MCP server using WebSocket protocol"
+    requires_api_key: true
+    secure: true
+    tags:
+      - "production"
+      - "websocket"
+      - "real-time"
 
   - id: "database-server"
     name: "Database Server"
@@ -177,6 +196,7 @@ Based on the `CatalogServer` schema (schemas.py:5371-5387):
 | `requires_api_key` | boolean | No | Whether API key is required (default: `false`) |
 | `secure` | boolean | No | Whether additional security is required (default: `false`) |
 | `tags` | array | No | Tags for categorization (default: `[]`) |
+| `transport` | string | No | Transport type: `SSE`, `STREAMABLEHTTP`, or `WEBSOCKET` (auto-detected if not specified) |
 | `logo_url` | string | No | URL to server logo/icon |
 | `documentation_url` | string | No | URL to server documentation |
 | `is_registered` | boolean | No | Whether server is already registered (set by system) |
@@ -447,6 +467,57 @@ auth_types:
 2. For OAuth servers, ensure you complete the OAuth flow after registration via the Admin UI
 
 3. For API Key servers, provide the API key during registration
+
+### Transport Type Issues
+
+**Symptoms:** WebSocket servers fail to connect after registration
+
+**Solutions:**
+
+1. Explicitly specify the `transport` field in your catalog YAML:
+   ```yaml
+   catalog_servers:
+     - id: "websocket-server"
+       url: "wss://api.example.com/mcp"
+       transport: "WEBSOCKET"  # Explicitly set transport
+   ```
+
+2. Verify URL scheme matches transport type:
+   - WebSocket: `ws://` or `wss://`
+   - SSE: `http://` or `https://` with `/sse` path
+   - HTTP: `http://` or `https://` with `/mcp` path
+
+---
+
+## Recent Improvements (v0.7.0)
+
+### Enhanced UI Features
+
+The catalog UI now includes several UX improvements:
+
+- **🔄 Refresh Button**: Manually refresh the catalog without page reload
+- **🔍 Debounced Search**: 300ms debounce on search input for better performance
+- **📝 Custom Server Names**: Ability to specify custom names when registering servers
+- **📄 Pagination with Filters**: Filter parameters preserved when navigating pages
+- **⚡ Better Error Messages**: User-friendly error messages for common issues (connection, auth, SSL, etc.)
+- **🔐 OAuth Support**: OAuth servers can be registered without credentials and configured later
+
+### Transport Type Detection
+
+The catalog now supports:
+
+- **Explicit Transport**: Specify `transport` field in catalog YAML (`SSE`, `WEBSOCKET`, `STREAMABLEHTTP`)
+- **Auto-Detection**: Automatically detects transport from URL if not specified
+  - `ws://` or `wss://` → `WEBSOCKET`
+  - URLs ending in `/sse` → `SSE`
+  - URLs with `/mcp` path → `STREAMABLEHTTP`
+  - Default fallback → `SSE`
+
+### Authentication Improvements
+
+- **Custom Auth Headers**: Properly mapped as list of header key-value pairs
+- **OAuth Registration**: OAuth servers can be registered in "disabled" state until OAuth flow is completed
+- **API Key Modal**: Enhanced modal with custom name field and proper authorization headers
 
 ---
 

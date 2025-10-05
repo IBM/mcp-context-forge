@@ -1103,73 +1103,7 @@
       <!-- MCP Registry Panel -->
       <div id="mcp-registry-panel" class="tab-panel hidden">
         <div class="container mx-auto px-4 py-8">
-          <div class="mb-6">
-            <h1 class="text-3xl font-bold mb-2 dark:text-gray-200">
-              MCP Registry
-            </h1>
-            <p class="text-gray-600 dark:text-gray-400">
-              Browse and add public MCP servers to your gateway
-            </p>
-          </div>
-
-          <!-- Filters -->
-          <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4 mb-6">
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  >Category</label
-                >
-                <select
-                  id="category-filter"
-                  name="category"
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
-                  hx-trigger="change"
-                  hx-target="#mcp-registry-servers"
-                  hx-include="[name='auth_type'],[name='search']"
-                >
-                  <option value="">All Categories</option>
-                </select>
-              </div>
-              <div>
-                <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  >Auth Type</label
-                >
-                <select
-                  id="auth-filter"
-                  name="auth_type"
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
-                  hx-trigger="change"
-                  hx-target="#mcp-registry-servers"
-                  hx-include="[name='category'],[name='search']"
-                >
-                  <option value="">All Auth Types</option>
-                </select>
-              </div>
-              <div class="md:col-span-2">
-                <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                  >Search</label
-                >
-                <input
-                  type="text"
-                  id="search-input"
-                  name="search"
-                  placeholder="Search servers..."
-                  class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  hx-get="{{ root_path }}/admin/mcp-registry/partial"
-                  hx-trigger="keyup changed delay:500ms"
-                  hx-target="#mcp-registry-servers"
-                  hx-include="[name='category'],[name='auth_type']"
-                />
-              </div>
-            </div>
-          </div>
-
-          <!-- Server Grid -->
+          <!-- Server Grid (includes filters and overview) -->
           <div id="mcp-registry-servers">
             <div class="text-center py-8">
               <div

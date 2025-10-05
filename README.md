@@ -461,7 +461,7 @@ When using a MCP Client such as Claude with stdio:
 
 ## Quick Start - Containers
 
-Use the official OCI image from GHCR with **Docker** *or* **Podman**. 
+Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
 
 ---
@@ -1307,6 +1307,15 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `MCPGATEWAY_CATALOG_FILE`           | Path to catalog configuration file               | `mcp-catalog.yml`  | string  |
 | `MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK` | Automatically health check catalog servers    | `true`             | bool    |
 | `MCPGATEWAY_CATALOG_CACHE_TTL`      | Catalog cache TTL in seconds                     | `3600`             | int > 0 |
+| `MCPGATEWAY_CATALOG_PAGE_SIZE`      | Number of catalog servers per page               | `12`               | int > 0 |
+
+**Key Features:**
+- 🔄 Refresh Button - Manually refresh catalog without page reload
+- 🔍 Debounced Search - Optimized search with 300ms debounce
+- 📝 Custom Server Names - Specify custom names when registering
+- 🔌 Transport Detection - Auto-detect SSE, WebSocket, or HTTP transports
+- 🔐 OAuth Support - Register OAuth servers and configure later
+- ⚡ Better Error Messages - User-friendly errors for common issues
 
 **Documentation:**
 - [MCP Server Catalog Guide](https://ibm.github.io/mcp-context-forge/manage/catalog/) - Complete catalog setup and configuration
