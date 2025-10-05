@@ -189,77 +189,33 @@ RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
     && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # ----------------------------------------------------------------------------
-# Build a minimal, fully-patched rootfs containing only the runtime Python
-# Include ca-certificates for HTTPS connections
-# Note: ca-certificates installed separately to avoid scriptlet issues with QEMU
-# ----------------------------------------------------------------------------
-# hadolint ignore=DL3041
-RUN set -euo pipefail \
-    && mkdir -p "${ROOTFS_PATH:?}" \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 upgrade -y \
-    && dnf --installroot="${ROOTFS_PATH:?}" \
-         --releasever=10 \
-         --setopt=install_weak_deps=0 \
-         --setopt=tsflags=nodocs \
-         --setopt=skip_if_unavailable=1 \
-         install -y \
-         filesystem \
-         bash \
-         python${PYTHON_VERSION} \
-         procps-ng \
-    && dnf reinstall --downloadonly --downloaddir=. ca-certificates \
-    && rpm --root="${ROOTFS_PATH:?}" --install --nodeps --noscripts ca-certificates-*.rpm \
-    && rm -f ca-certificates-*.rpm \
-    && dnf clean all --installroot="${ROOTFS_PATH:?}"
-
-# ----------------------------------------------------------------------------
-# Create `python3` symlink in the rootfs for compatibility
-# ----------------------------------------------------------------------------
-RUN ln -sf /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
-
-# ----------------------------------------------------------------------------
-# Clean up unnecessary files from rootfs (if they exist)
-#  - Remove development headers, documentation
-#  - Use ${var:?} to prevent accidental deletion of host directories
+# Build minimal rootfs by copying essential files from builder
+# This avoids complex --installroot issues with QEMU emulation
 # ----------------------------------------------------------------------------
 RUN set -euo pipefail \
-    && rm -rf ${ROOTFS_PATH:?}/usr/include/* \
-    ${ROOTFS_PATH:?}/usr/share/man/* \
-    ${ROOTFS_PATH:?}/usr/share/doc/* \
-    ${ROOTFS_PATH:?}/usr/share/info/* \
-    ${ROOTFS_PATH:?}/usr/share/locale/* \
-    ${ROOTFS_PATH:?}/var/log/* \
-    ${ROOTFS_PATH:?}/boot \
-    ${ROOTFS_PATH:?}/media \
-    ${ROOTFS_PATH:?}/srv \
-    ${ROOTFS_PATH:?}/usr/games \
-    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "test" -exec rm -rf {} + 2>/dev/null || true \
+    && mkdir -p "${ROOTFS_PATH:?}"/{etc,usr,var,tmp,proc,sys,dev,run} \
+    && cp -a /etc/{passwd,group,nsswitch.conf,pki,ssl} "${ROOTFS_PATH:?}/etc/" \
+    && cp -a /usr/bin/python${PYTHON_VERSION} "${ROOTFS_PATH:?}/usr/bin/" \
+    && cp -a /usr/bin/{bash,sh,ps} "${ROOTFS_PATH:?}/usr/bin/" \
+    && cp -a /usr/lib64/python${PYTHON_VERSION} "${ROOTFS_PATH:?}/usr/lib64/" \
+    && cp -a /usr/lib64/*.so* "${ROOTFS_PATH:?}/usr/lib64/" \
+    && ln -sf python${PYTHON_VERSION} "${ROOTFS_PATH:?}/usr/bin/python3" \
+    && ln -sf bash "${ROOTFS_PATH:?}/usr/bin/sh" \
+    && chmod 1777 "${ROOTFS_PATH:?}/tmp" "${ROOTFS_PATH:?}/var/tmp"
+
+# ----------------------------------------------------------------------------
+# Clean up Python test files to reduce image size
+# ----------------------------------------------------------------------------
+RUN find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "test" -exec rm -rf {} + 2>/dev/null || true \
     && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true \
     && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "idle_test" -exec rm -rf {} + 2>/dev/null || true \
     && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -name "*.mo" -delete 2>/dev/null || true \
     && rm -rf ${ROOTFS_PATH:?}/usr/lib*/python*/ensurepip \
     ${ROOTFS_PATH:?}/usr/lib*/python*/idlelib \
-    ${ROOTFS_PATH:?}/usr/lib*/python*/tkinter \
-    ${ROOTFS_PATH:?}/usr/lib*/python*/turtle* \
-    ${ROOTFS_PATH:?}/usr/lib*/python*/distutils/command/*.exe
+    ${ROOTFS_PATH:?}/usr/lib*/python*/tkinter 2>/dev/null || true
 
 # ----------------------------------------------------------------------------
-# Remove package managers and unnecessary system tools from rootfs
-# - Keep RPM database for security scanning with Trivy/Dockle
-# - This keeps the final image size minimal while allowing vulnerability scanning
-# ----------------------------------------------------------------------------
-RUN rm -rf ${ROOTFS_PATH:?}/usr/bin/dnf* \
-    ${ROOTFS_PATH:?}/usr/bin/yum* \
-    ${ROOTFS_PATH:?}/usr/bin/rpm* \
-    ${ROOTFS_PATH:?}/usr/bin/microdnf \
-    ${ROOTFS_PATH:?}/usr/lib/rpm \
-    ${ROOTFS_PATH:?}/usr/lib/dnf \
-    ${ROOTFS_PATH:?}/usr/lib/yum* \
-    ${ROOTFS_PATH:?}/etc/dnf \
-    ${ROOTFS_PATH:?}/etc/yum*
-
-# ----------------------------------------------------------------------------
-# Strip unneeded symbols from shared libraries and remove binutils
+# Strip unneeded symbols from shared libraries
 # - This reduces the final image size and removes the build tool in one step
 # ----------------------------------------------------------------------------
 RUN find "${ROOTFS_PATH:?}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true \
