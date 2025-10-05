@@ -5676,6 +5676,188 @@ class SSOCallbackResponse(BaseModelWithConfigDict):
     user: Dict[str, Any] = Field(..., description="User information")
 
 
+# gRPC Service schemas
+
+
+class GrpcServiceCreate(BaseModel):
+    """Schema for creating a new gRPC service."""
+
+    name: str = Field(..., min_length=1, max_length=255, description="Unique name for the gRPC service")
+    target: str = Field(..., description="gRPC server target address (host:port)")
+    description: Optional[str] = Field(None, description="Description of the gRPC service")
+    reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection")
+    tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connection")
+    tls_cert_path: Optional[str] = Field(None, description="Path to TLS certificate file")
+    tls_key_path: Optional[str] = Field(None, description="Path to TLS key file")
+    grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata headers")
+    tags: List[str] = Field(default_factory=list, description="Tags for categorization")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: str = Field(default="public", description="Visibility level: private, team, or public")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate service name.
+
+        Args:
+            v: Service name to validate
+
+        Returns:
+            Validated service name
+        """
+        return SecurityValidator.validate_name(v, "gRPC service name")
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: str) -> str:
+        """Validate target address format (host:port).
+
+        Args:
+            v: Target address to validate
+
+        Returns:
+            Validated target address
+
+        Raises:
+            ValueError: If target is not in host:port format
+        """
+        if not v or ":" not in v:
+            raise ValueError("Target must be in host:port format")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate description.
+
+        Args:
+            v: Description to validate
+
+        Returns:
+            Validated and sanitized description
+        """
+        if v is None:
+            return None
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
+            return SecurityValidator.sanitize_display_text(truncated, "Description")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+
+class GrpcServiceUpdate(BaseModel):
+    """Schema for updating an existing gRPC service."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255, description="Service name")
+    target: Optional[str] = Field(None, description="gRPC server target address")
+    description: Optional[str] = Field(None, description="Service description")
+    reflection_enabled: Optional[bool] = Field(None, description="Enable server reflection")
+    tls_enabled: Optional[bool] = Field(None, description="Enable TLS")
+    tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
+    tls_key_path: Optional[str] = Field(None, description="TLS key path")
+    grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
+    tags: Optional[List[str]] = Field(None, description="Service tags")
+    visibility: Optional[str] = Field(None, description="Visibility level")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate service name.
+
+        Args:
+            v: Service name to validate
+
+        Returns:
+            Validated service name or None
+        """
+        if v is None:
+            return None
+        return SecurityValidator.validate_name(v, "gRPC service name")
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: Optional[str]) -> Optional[str]:
+        """Validate target address.
+
+        Args:
+            v: Target address to validate
+
+        Returns:
+            Validated target address or None
+
+        Raises:
+            ValueError: If target is not in host:port format
+        """
+        if v is None:
+            return None
+        if ":" not in v:
+            raise ValueError("Target must be in host:port format")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate description.
+
+        Args:
+            v: Description to validate
+
+        Returns:
+            Validated and sanitized description
+        """
+        if v is None:
+            return None
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
+            return SecurityValidator.sanitize_display_text(truncated, "Description")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+
+class GrpcServiceRead(BaseModel):
+    """Schema for reading gRPC service information."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    slug: str = Field(..., description="URL-safe slug")
+    target: str = Field(..., description="gRPC server target (host:port)")
+    description: Optional[str] = Field(None, description="Service description")
+
+    # Configuration
+    reflection_enabled: bool = Field(..., description="Reflection enabled")
+    tls_enabled: bool = Field(..., description="TLS enabled")
+    tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
+    tls_key_path: Optional[str] = Field(None, description="TLS key path")
+    grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata")
+
+    # Status
+    enabled: bool = Field(..., description="Service enabled")
+    reachable: bool = Field(..., description="Service reachable")
+
+    # Discovery
+    service_count: int = Field(default=0, description="Number of gRPC services discovered")
+    method_count: int = Field(default=0, description="Number of methods discovered")
+    discovered_services: Dict[str, Any] = Field(default_factory=dict, description="Discovered service descriptors")
+    last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
+
+    # Tags
+    tags: List[str] = Field(default_factory=list, description="Service tags")
+
+    # Timestamps
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+
+    # Team scoping
+    team_id: Optional[str] = Field(None, description="Team ID")
+    owner_email: Optional[str] = Field(None, description="Owner email")
+    visibility: str = Field(default="public", description="Visibility level")
+
+
 # Plugin-related schemas
 
 

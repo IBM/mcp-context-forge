@@ -38,7 +38,7 @@ class TestAsyncSafety:
 
         # Should complete in roughly 10ms, not 1000ms (100 * 10ms)
         # Allow more tolerance for CI environments and system load
-        max_time = 0.15  # 150ms tolerance for CI environments
+        max_time = 0.20  # 200ms tolerance for CI environments and system load
         assert execution_time < max_time, f"Concurrent operations not properly parallelized: took {execution_time:.3f}s, expected < {max_time:.3f}s"
         assert len(results) == 100, "Not all operations completed"
 

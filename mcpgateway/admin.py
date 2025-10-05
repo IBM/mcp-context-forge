@@ -70,6 +70,9 @@ from mcpgateway.schemas import (
     GatewayUpdate,
     GlobalConfigRead,
     GlobalConfigUpdate,
+    GrpcServiceCreate,
+    GrpcServiceRead,
+    GrpcServiceUpdate,
     PaginationMeta,
     PluginDetail,
     PluginListResponse,
@@ -95,6 +98,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNameConflictError, GrpcServiceNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -181,6 +185,8 @@ export_service: ExportService = ExportService()
 import_service: ImportService = ImportService()
 # Initialize A2A service only if A2A features are enabled
 a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
+# Initialize gRPC service only if gRPC features are enabled
+grpc_service_mgr: Optional[GrpcService] = GrpcService() if settings.mcpgateway_grpc_enabled else None
 
 # Set up basic authentication
 
@@ -2381,6 +2387,22 @@ async def admin_ui(
         a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
         a2a_agents = _to_dict_and_filter(a2a_agents) if isinstance(a2a_agents, (list, tuple)) else a2a_agents
 
+    # Load gRPC services if enabled
+    grpc_services = []
+    try:
+        if grpc_service_mgr and settings.mcpgateway_grpc_enabled:
+            grpc_services_raw = await grpc_service_mgr.list_services(
+                db,
+                include_inactive=include_inactive,
+                user_email=user_email,
+                team_id=selected_team_id,
+            )
+            grpc_services = [service.model_dump(by_alias=True) for service in grpc_services_raw]
+            grpc_services = _to_dict_and_filter(grpc_services) if isinstance(grpc_services, (list, tuple)) else grpc_services
+    except Exception as e:
+        LOGGER.exception("Failed to load gRPC services: %s", e)
+        grpc_services = []
+
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
@@ -2396,6 +2418,7 @@ async def admin_ui(
             "prompts": prompts,
             "gateways": gateways,
             "a2a_agents": a2a_agents,
+            "grpc_services": grpc_services,
             "roots": roots,
             "include_inactive": include_inactive,
             "root_path": root_path,
@@ -2403,6 +2426,7 @@ async def admin_ui(
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
+            "grpc_enabled": settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
             "current_user": get_user_email(user),
@@ -9555,6 +9579,258 @@ async def admin_test_a2a_agent(
     except Exception as e:
         LOGGER.error(f"Error testing A2A agent {agent_id}: {e}")
         return JSONResponse(content={"success": False, "error": str(e), "agent_id": agent_id}, status_code=500)
+
+
+# gRPC Service Management Endpoints
+
+
+@admin_router.get("/grpc", response_model=List[GrpcServiceRead])
+async def admin_list_grpc_services(
+    include_inactive: bool = False,
+    team_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """List all gRPC services.
+
+    Args:
+        include_inactive: Include disabled services
+        team_id: Filter by team ID
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of gRPC services
+
+    Raises:
+        HTTPException: If gRPC support is disabled
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    user_email = get_user_email(user)
+    return await grpc_service_mgr.list_services(db, include_inactive, user_email, team_id)
+
+
+@admin_router.post("/grpc")
+async def admin_create_grpc_service(
+    service: GrpcServiceCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Create a new gRPC service.
+
+    Args:
+        service: gRPC service creation data
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Created gRPC service
+
+    Raises:
+        HTTPException: If gRPC support is disabled or creation fails
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    try:
+        metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
+        user_email = get_user_email(user)
+        result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
+        return JSONResponse(content=jsonable_encoder(result), status_code=201)
+    except GrpcServiceNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error creating gRPC service: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.get("/grpc/{service_id}", response_model=GrpcServiceRead)
+async def admin_get_grpc_service(
+    service_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Get a specific gRPC service.
+
+    Args:
+        service_id: Service ID
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        The gRPC service
+
+    Raises:
+        HTTPException: If gRPC support is disabled or service not found
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    try:
+        user_email = get_user_email(user)
+        return await grpc_service_mgr.get_service(db, service_id, user_email)
+    except GrpcServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@admin_router.put("/grpc/{service_id}")
+async def admin_update_grpc_service(
+    service_id: str,
+    service: GrpcServiceUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Update a gRPC service.
+
+    Args:
+        service_id: Service ID
+        service: Update data
+        request: FastAPI request object
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Updated gRPC service
+
+    Raises:
+        HTTPException: If gRPC support is disabled or update fails
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    try:
+        metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
+        user_email = get_user_email(user)
+        result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)
+        return JSONResponse(content=jsonable_encoder(result))
+    except GrpcServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except GrpcServiceNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@admin_router.post("/grpc/{service_id}/toggle")
+async def admin_toggle_grpc_service(
+    service_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Toggle a gRPC service's enabled status.
+
+    Args:
+        service_id: Service ID
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Updated gRPC service
+
+    Raises:
+        HTTPException: If gRPC support is disabled or toggle fails
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    try:
+        service = await grpc_service_mgr.get_service(db, service_id)
+        result = await grpc_service_mgr.toggle_service(db, service_id, not service.enabled)
+        return JSONResponse(content=jsonable_encoder(result))
+    except GrpcServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@admin_router.post("/grpc/{service_id}/delete")
+async def admin_delete_grpc_service(
+    service_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Delete a gRPC service.
+
+    Args:
+        service_id: Service ID
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        No content response
+
+    Raises:
+        HTTPException: If gRPC support is disabled or deletion fails
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    try:
+        await grpc_service_mgr.delete_service(db, service_id)
+        return Response(status_code=204)
+    except GrpcServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@admin_router.post("/grpc/{service_id}/reflect")
+async def admin_reflect_grpc_service(
+    service_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Trigger re-reflection on a gRPC service.
+
+    Args:
+        service_id: Service ID
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        Updated gRPC service with reflection results
+
+    Raises:
+        HTTPException: If gRPC support is disabled or reflection fails
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    try:
+        result = await grpc_service_mgr.reflect_service(db, service_id)
+        return JSONResponse(content=jsonable_encoder(result))
+    except GrpcServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except GrpcServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.get("/grpc/{service_id}/methods")
+async def admin_get_grpc_methods(
+    service_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Get methods for a gRPC service.
+
+    Args:
+        service_id: Service ID
+        db: Database session
+        user: Authenticated user
+
+    Returns:
+        List of gRPC methods
+
+    Raises:
+        HTTPException: If gRPC support is disabled or service not found
+    """
+    if not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+
+    try:
+        methods = await grpc_service_mgr.get_service_methods(db, service_id)
+        return JSONResponse(content={"methods": methods})
+    except GrpcServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 # Team-scoped resource section endpoints

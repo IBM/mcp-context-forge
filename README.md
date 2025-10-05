@@ -129,6 +129,7 @@ It currently supports:
 
 * Federation across multiple MCP and REST services
 * **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
+* **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
 * An Admin UI for real-time management, configuration, and log monitoring
@@ -169,6 +170,8 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 
 * Wraps non-MCP services as virtual MCP servers
 * Registers tools, prompts, and resources with minimal configuration
+* **gRPC-to-MCP translation** via server reflection protocol
+* Automatic service discovery and method introspection
 
 </details>
 
