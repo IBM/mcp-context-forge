@@ -40,8 +40,8 @@ def upgrade() -> None:
         sa.Column("enabled", sa.Boolean, nullable=False, server_default=sa.true()),
         sa.Column("reachable", sa.Boolean, nullable=False, server_default=sa.false()),
         # Discovery
-        sa.Column("service_count", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("method_count", sa.Integer, nullable=False, server_default="0"),
+        sa.Column("service_count", sa.Integer, nullable=False, server_default=sa.text("0")),
+        sa.Column("method_count", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("discovered_services", sa.JSON, nullable=True),
         sa.Column("last_reflection", sa.DateTime(timezone=True), nullable=True),
         # Tags
@@ -60,7 +60,7 @@ def upgrade() -> None:
         sa.Column("modified_user_agent", sa.Text, nullable=True),
         sa.Column("import_batch_id", sa.String(36), nullable=True),
         sa.Column("federation_source", sa.String(255), nullable=True),
-        sa.Column("version", sa.Integer, nullable=False, server_default="1"),
+        sa.Column("version", sa.Integer, nullable=False, server_default=sa.text("1")),
         # Team scoping
         sa.Column("team_id", sa.String(36), sa.ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
