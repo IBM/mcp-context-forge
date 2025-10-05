@@ -511,7 +511,7 @@
           hx-target="#{{ server.id }}-button-container"
           hx-swap="innerHTML"
           hx-indicator="#{{ server.id }}-spinner"
-          hx-on::after-request="if(event.detail.failed) { const btn = document.getElementById('{{ server.id }}-register-btn'); if(btn) btn.disabled = false; alert('Registration failed: ' + (event.detail.xhr.response ? JSON.parse(event.detail.xhr.response).error || 'Unknown error' : 'Network error')); }"
+          hx-on::after-request="if(event.detail.successful) { setTimeout(() => { const rootPath = window.ROOT_PATH || ''; if(window.htmx) { window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {target: '#mcp-registry-servers', swap: 'innerHTML'}); } }, 500); } else { const btn = document.getElementById('{{ server.id }}-register-btn'); if(btn) btn.disabled = false; alert('Registration failed: ' + (event.detail.xhr.response ? JSON.parse(event.detail.xhr.response).error || 'Unknown error' : 'Network error')); }"
         >
           <span class="htmx-not-indicator">Add Server</span>
           <span id="{{ server.id }}-spinner" class="htmx-indicator inline-flex items-center">
@@ -678,7 +678,7 @@ function registerServerWithApiKey() {
       closeApiKeyModal();
       // Refresh the server list
       if (window.htmx && window.htmx.ajax) {
-        window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, '#mcp-registry-content');
+        window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
       } else {
         location.reload();
       }
@@ -703,7 +703,7 @@ function getCookie(name) {
 function refreshCatalog() {
   const rootPath = window.ROOT_PATH || '';
   if (window.htmx && window.htmx.ajax) {
-    window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, '#mcp-registry-content');
+    window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
   } else {
     location.reload();
   }
