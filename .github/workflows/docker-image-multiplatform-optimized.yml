@@ -1,0 +1,122 @@
+# ===============================================================
+# 📦 Optimized Multiplatform Docker Build Workflow
+# ===============================================================
+#
+# This workflow builds multiplatform Docker images more efficiently by:
+# 1. Building AMD64 and ARM64 images in parallel on native runners
+# 2. Using matrix strategy to run builds simultaneously
+# 3. Combining results into a single multiplatform manifest
+#
+# This approach is much faster than cross-compilation with emulation.
+# ===============================================================
+
+name: Optimized Multiplatform Docker Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (comma-separated)'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+  push:
+    branches: ["main"]
+    paths:
+      - 'Containerfile.lite'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'Containerfile.lite'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME_LOWER: ${{ github.repository }}
+
+jobs:
+  # Build individual platform images in parallel
+  build-platform:
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runs-on: ubuntu-latest
+          - platform: linux/arm64
+            runs-on: ubuntu-latest-arm64
+
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏗️  Build single-platform image
+        run: |
+          TAG=$(date +%s)
+          IMAGE_NAME_LOWER=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')
+          echo "🏗️  Building ${{ matrix.platform }} image..."
+
+          docker buildx build \
+            --platform ${{ matrix.platform }} \
+            --file Containerfile.lite \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:$TAG \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest \
+            --push \
+            --progress=plain \
+            .
+
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "IMAGE_NAME_LOWER=$IMAGE_NAME_LOWER" >> $GITHUB_OUTPUT
+
+  # Combine individual platform images into multiplatform manifest
+  create-manifest:
+    needs: build-platform
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️  Create multiplatform manifest
+        run: |
+          # Get outputs from the first matrix job (both should have same TAG and IMAGE_NAME_LOWER)
+          TAG=${{ needs.build-platform.outputs.TAG }}
+          IMAGE_NAME_LOWER=${{ needs.build-platform.outputs.IMAGE_NAME_LOWER }}
+          echo "🏷️  Creating multiplatform manifest for tag: $TAG"
+
+          docker buildx imagetools create \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:$TAG \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest \
+            ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:$TAG
+
+          echo "✅ Multiplatform manifest created successfully!"
+
+      - name: 🔍  Verify multiplatform manifest
+        run: |
+          IMAGE_NAME_LOWER=${{ needs.build-platform.outputs.IMAGE_NAME_LOWER }}
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest
