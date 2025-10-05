@@ -207,7 +207,7 @@ RUN set -euo pipefail \
          bash \
          python${PYTHON_VERSION} \
          procps-ng \
-    && dnf download --installroot="${ROOTFS_PATH:?}" --releasever=10 ca-certificates \
+    && dnf download --releasever=10 ca-certificates \
     && rpm --root="${ROOTFS_PATH:?}" --install --nodeps --noscripts ca-certificates-*.rpm \
     && rm -f ca-certificates-*.rpm \
     && dnf clean all --installroot="${ROOTFS_PATH:?}"
