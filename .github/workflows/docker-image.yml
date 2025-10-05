@@ -148,6 +148,15 @@ jobs:
                  --output dockle-results.sarif \
                  $IMAGE_NAME:latest || true
           echo "DOCKLE_EXIT=$?" >> "$GITHUB_ENV"
+      - name: 🧹  Sanitize Dockle SARIF (remove invalid URIs)
+        if: always() && hashFiles('dockle-results.sarif') != ''
+        run: |
+          # Filter out results with invalid URIs (containing spaces or non-file-path characters)
+          jq '.runs[].results |= map(select(
+            (.locations // []) | length == 0 or
+            all(.physicalLocation.artifactLocation.uri | test("^[^\\s]+$"))
+          ))' dockle-results.sarif > dockle-results-clean.sarif || cp dockle-results.sarif dockle-results-clean.sarif
+          mv dockle-results-clean.sarif dockle-results.sarif
       - name: ☁️  Upload Dockle SARIF
         if: always() && hashFiles('dockle-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
