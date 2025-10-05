@@ -191,24 +191,25 @@ RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
 # ----------------------------------------------------------------------------
 # Build a minimal, fully-patched rootfs containing only the runtime Python
 # Include ca-certificates for HTTPS connections
+# Note: ca-certificates installed separately to avoid scriptlet issues with QEMU
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN set -euo pipefail \
     && mkdir -p "${ROOTFS_PATH:?}" \
     && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 upgrade -y \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" \
+         --releasever=10 \
          --setopt=install_weak_deps=0 \
          --setopt=tsflags=nodocs \
          --setopt=skip_if_unavailable=1 \
+         install -y \
          filesystem \
          bash \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
-         --setopt=install_weak_deps=0 \
-         --setopt=tsflags=nodocs,noscripts \
-         --setopt=skip_if_unavailable=1 \
          python${PYTHON_VERSION} \
-         ca-certificates \
          procps-ng \
+    && dnf download --installroot="${ROOTFS_PATH:?}" --releasever=10 ca-certificates \
+    && rpm --root="${ROOTFS_PATH:?}" --install --nodeps --noscripts ca-certificates-*.rpm \
+    && rm -f ca-certificates-*.rpm \
     && dnf clean all --installroot="${ROOTFS_PATH:?}"
 
 # ----------------------------------------------------------------------------
