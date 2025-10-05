@@ -9801,34 +9801,45 @@ async def catalog_partial(
     root_path = request.scope.get("root_path", "")
 
     # Calculate pagination
-    page_size = 100
+    page_size = settings.mcpgateway_catalog_page_size
     offset = (page - 1) * page_size
 
     catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=False, limit=page_size, offset=offset)
 
     response = await catalog_service.get_catalog_servers(catalog_request, db)
 
+    # Get ALL servers (no filters, no pagination) for counting statistics
+    all_servers_request = CatalogListRequest(show_available_only=False, limit=1000, offset=0)
+    all_servers_response = await catalog_service.get_catalog_servers(all_servers_request, db)
+
+    # Pass filter parameters to template for pagination links
+    filter_params = {
+        "category": category,
+        "auth_type": auth_type,
+        "search": search,
+    }
+
     # Calculate statistics and pagination info
     total_servers = response.total
     registered_count = sum(1 for s in response.servers if s.is_registered)
     total_pages = (total_servers + page_size - 1) // page_size  # Ceiling division
 
-    # Count servers by category, auth type, and provider
+    # Count ALL servers by category, auth type, and provider (not just current page)
     servers_by_category = {}
     servers_by_auth_type = {}
     servers_by_provider = {}
 
-    for server in response.servers:
+    for server in all_servers_response.servers:
         servers_by_category[server.category] = servers_by_category.get(server.category, 0) + 1
         servers_by_auth_type[server.auth_type] = servers_by_auth_type.get(server.auth_type, 0) + 1
         servers_by_provider[server.provider] = servers_by_provider.get(server.provider, 0) + 1
 
     stats = {
-        "total_servers": total_servers,
+        "total_servers": all_servers_response.total,  # Use total from all servers
         "registered_servers": registered_count,
-        "categories": response.categories,
-        "auth_types": response.auth_types,
-        "providers": response.providers,
+        "categories": all_servers_response.categories,
+        "auth_types": all_servers_response.auth_types,
+        "providers": all_servers_response.providers,
         "servers_by_category": servers_by_category,
         "servers_by_auth_type": servers_by_auth_type,
         "servers_by_provider": servers_by_provider,
@@ -9842,6 +9853,7 @@ async def catalog_partial(
         "page": page,
         "total_pages": total_pages,
         "page_size": page_size,
+        "filter_params": filter_params,
     }
 
     return request.app.state.templates.TemplateResponse("mcp_registry_partial.html", context)

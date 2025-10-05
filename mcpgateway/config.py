@@ -311,6 +311,7 @@ class Settings(BaseSettings):
     mcpgateway_catalog_file: str = Field(default="mcp-catalog.yml", description="Path to catalog configuration file")
     mcpgateway_catalog_auto_health_check: bool = Field(default=True, description="Automatically health check catalog servers")
     mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
+    mcpgateway_catalog_page_size: int = Field(default=100, description="Number of catalog servers per page")
 
     # Security
     skip_ssl_verify: bool = False

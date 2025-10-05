@@ -1,26 +1,72 @@
 <!-- htmlhint doctype-first:false -->
+<script>
+  // Set global ROOT_PATH for consistency across all JavaScript
+  if (typeof window.ROOT_PATH === 'undefined') {
+    window.ROOT_PATH = '{{ root_path }}';
+  }
+
+  // Filter badge click handlers - these trigger the HTMX selects in the partial
+  function filterByCategory(category) {
+    const select = document.getElementById('category-filter');
+    if (select) {
+      select.value = category;
+      // Trigger HTMX change event
+      if (window.htmx) {
+        window.htmx.trigger(select, 'change');
+      }
+    }
+  }
+
+  function filterByAuthType(authType) {
+    const select = document.getElementById('auth-filter');
+    if (select) {
+      select.value = authType;
+      // Trigger HTMX change event
+      if (window.htmx) {
+        window.htmx.trigger(select, 'change');
+      }
+    }
+  }
+
+  function filterByProvider(provider) {
+    // Provider filter not implemented yet
+    console.log('Provider filter clicked:', provider);
+  }
+</script>
 <div class="space-y-6">
   <!-- MCP Registry Overview Card -->
   <div
     class="bg-gradient-to-r from-blue-500 to-cyan-600 rounded-lg shadow-lg p-6 text-white"
   >
-    <h2 class="text-2xl font-bold mb-4 flex items-center">
-      <svg
-        class="h-8 w-8 mr-3"
-        xmlns="http://www.w3.org/2000/svg"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
+    <div class="flex justify-between items-start mb-4">
+      <h2 class="text-2xl font-bold flex items-center">
+        <svg
+          class="h-8 w-8 mr-3"
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+          />
+        </svg>
+        MCP Registry
+      </h2>
+      <button
+        onclick="refreshCatalog()"
+        class="px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center gap-2"
+        title="Refresh catalog"
       >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-        />
-      </svg>
-      MCP Registry
-    </h2>
+        <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        Refresh
+      </button>
+    </div>
 
     <div class="grid grid-cols-3 md:grid-cols-3 gap-4">
       <div class="text-center">
@@ -34,6 +80,72 @@
       <div class="text-center">
         <div class="text-3xl font-bold">{{ stats.categories|length }}</div>
         <div class="text-blue-100 text-sm">Categories</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm p-4">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div>
+        <label
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+          >Category</label
+        >
+        <select
+          id="category-filter"
+          name="category"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          hx-get="{{ root_path }}/admin/mcp-registry/partial"
+          hx-trigger="change"
+          hx-target="#mcp-registry-servers"
+          hx-include="[name='auth_type'],[name='search']"
+        >
+          <option value="" {% if not filter_params.category %}selected{% endif %}>All Categories</option>
+          {% for category in stats.categories %}
+          {% set is_selected = (filter_params.category == category) %}
+          <option value="{{ category }}" {% if is_selected %}selected{% endif %}>{{ category }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+          >Auth Type</label
+        >
+        <select
+          id="auth-filter"
+          name="auth_type"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          hx-get="{{ root_path }}/admin/mcp-registry/partial"
+          hx-trigger="change"
+          hx-target="#mcp-registry-servers"
+          hx-include="[name='category'],[name='search']"
+        >
+          <option value="" {% if not filter_params.auth_type %}selected{% endif %}>All Auth Types</option>
+          {% for auth_type in stats.auth_types %}
+          {% set is_selected = (filter_params.auth_type == auth_type) %}
+          <option value="{{ auth_type }}" {% if is_selected %}selected{% endif %}>{{ auth_type }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="md:col-span-2">
+        <label
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
+          >Search</label
+        >
+        <input
+          type="text"
+          id="search-input"
+          name="search"
+          placeholder="Search servers..."
+          value="{{ filter_params.search or '' }}"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          hx-get="{{ root_path }}/admin/mcp-registry/partial"
+          hx-trigger="keyup changed delay:500ms"
+          hx-target="#mcp-registry-servers"
+          hx-include="[name='category'],[name='auth_type']"
+        />
       </div>
     </div>
   </div>
@@ -59,27 +171,29 @@
         Categories
       </h3>
       <div class="flex flex-wrap gap-2">
+        {% set is_all_selected = not filter_params.category %}
         <span
-          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if is_all_selected %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %} cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
           data-filter-type="category"
           data-filter-value=""
           onclick="filterByCategory('')"
         >
           All Categories
-          <span class="ml-1 text-xs text-blue-600 dark:text-blue-300"
+          <span class="ml-1 text-xs {% if is_all_selected %}text-blue-600 dark:text-blue-300{% else %}text-gray-500 dark:text-gray-400{% endif %}"
             >({{ stats.total_servers }})</span
           >
         </span>
         {% for category, count in stats.servers_by_category.items() %}
         {% if count > 0 %}
+        {% set is_selected = (filter_params.category == category) %}
         <span
-          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+          class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if is_selected %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %} cursor-pointer hover:bg-blue-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="category"
           data-filter-value="{{ category }}"
           onclick="filterByCategory('{{ category }}')"
         >
           {{ category }}
-          <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
+          <span class="ml-1 text-xs {% if is_selected %}text-blue-600 dark:text-blue-300{% else %}text-gray-500 dark:text-gray-400{% endif %}"
             >({{ count }})</span
           >
         </span>
@@ -107,35 +221,37 @@
         Authentication Types
       </h3>
       <div class="space-y-2">
+        {% set is_all_auth_selected = not filter_params.auth_type %}
         <div
-          class="flex justify-between items-center p-2 bg-blue-50 rounded dark:bg-blue-900/20 cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors border border-blue-200 dark:border-blue-800"
+          class="flex justify-between items-center p-2 {% if is_all_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
           data-filter-type="auth"
           data-filter-value=""
           onclick="filterByAuthType('')"
         >
           <span
-            class="text-sm font-medium text-blue-700 dark:text-blue-300"
+            class="text-sm font-medium {% if is_all_auth_selected %}text-blue-700 dark:text-blue-300{% else %}text-gray-700 dark:text-gray-300{% endif %}"
             >All Auth Types</span
           >
           <span
-            class="bg-blue-200 text-blue-900 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-800 dark:text-blue-100"
+            class="{% if is_all_auth_selected %}bg-blue-200 text-blue-900 dark:bg-blue-800 dark:text-blue-100{% else %}bg-gray-200 text-gray-900 dark:bg-gray-800 dark:text-gray-100{% endif %} text-xs font-medium px-2.5 py-0.5 rounded"
           >
             {{ stats.total_servers }}
           </span>
         </div>
         {% for auth_type, count in stats.servers_by_auth_type.items() %}
         {% if count > 0 %}
+        {% set is_auth_selected = (filter_params.auth_type == auth_type) %}
         <div
-          class="flex justify-between items-center p-2 bg-gray-50 rounded dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+          class="flex justify-between items-center p-2 {% if is_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="auth"
           data-filter-value="{{ auth_type }}"
           onclick="filterByAuthType('{{ auth_type }}')"
         >
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300"
+          <span class="text-sm font-medium {% if is_auth_selected %}text-blue-700 dark:text-blue-300{% else %}text-gray-700 dark:text-gray-300{% endif %}"
             >{{ auth_type }}</span
           >
           <span
-            class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded dark:bg-blue-900 dark:text-blue-200"
+            class="{% if is_auth_selected %}bg-blue-200 text-blue-900 dark:bg-blue-800 dark:text-blue-100{% else %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200{% endif %} text-xs font-medium px-2.5 py-0.5 rounded"
           >
             {{ count }}
           </span>
@@ -194,58 +310,7 @@
     </div>
   </div>
 
-  <!-- Search and Filter Controls -->
-  <div class="bg-white rounded-lg shadow p-4 dark:bg-gray-800">
-    <div class="flex flex-col md:flex-row gap-4">
-      <div class="flex-1">
-        <input
-          type="text"
-          id="mcp-search"
-          placeholder="Search servers by name, description, or provider..."
-          class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-          oninput="filterServers()"
-        />
-      </div>
-      <div class="flex gap-2">
-        <select
-          id="category-filter"
-          onchange="filterServers()"
-          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-        >
-          <option value="">All Categories</option>
-          {% for category, count in stats.servers_by_category.items() %}
-          {% if count > 0 %}
-          <option value="{{ category }}">{{ category }}</option>
-          {% endif %}
-          {% endfor %}
-        </select>
-        <select
-          id="auth-filter"
-          onchange="filterServers()"
-          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-        >
-          <option value="">All Auth Types</option>
-          {% for auth_type, count in stats.servers_by_auth_type.items() %}
-          {% if count > 0 %}
-          <option value="{{ auth_type }}">{{ auth_type }}</option>
-          {% endif %}
-          {% endfor %}
-        </select>
-        <select
-          id="provider-filter"
-          onchange="filterServers()"
-          class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-        >
-          <option value="">All Providers</option>
-          {% for provider, count in stats.servers_by_provider.items() %}
-          {% if count > 0 %}
-          <option value="{{ provider | lower }}">{{ provider }}</option>
-          {% endif %}
-          {% endfor %}
-        </select>
-      </div>
-    </div>
-  </div>
+  <!-- Note: Filter controls are in the main admin.html template and use HTMX for server-side filtering -->
 
   <!-- Pagination Controls -->
   {% if total_pages > 1 %}
@@ -253,8 +318,8 @@
     <!-- First Page -->
     {% if page > 1 %}
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page=1"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page=1"
+      href="{{ root_path }}/admin/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page=1{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -263,8 +328,8 @@
     </a>
     <!-- Previous Page -->
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}"
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page - 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -294,8 +359,8 @@
     <!-- Next Page -->
     {% if page < total_pages %}
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}"
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ page + 1 }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -304,8 +369,8 @@
     </a>
     <!-- Last Page -->
     <a
-      href="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}"
-      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}"
+      href="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
+      hx-get="{{ root_path }}/admin/mcp-registry/partial?page={{ total_pages }}{% if filter_params.category %}&category={{ filter_params.category }}{% endif %}{% if filter_params.auth_type %}&auth_type={{ filter_params.auth_type }}{% endif %}{% if filter_params.search %}&search={{ filter_params.search }}{% endif %}"
       hx-target="#mcp-registry-content"
       hx-swap="innerHTML"
       class="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
@@ -438,19 +503,25 @@
         Add Server
       </button>
       {% else %}
-      <button
-        class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-        hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
-        hx-swap="outerHTML"
-        hx-indicator="#{{ server.id }}-spinner"
-      >
-        <span id="{{ server.id }}-spinner" class="htmx-indicator">
-          <span
-            class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"
-          ></span>
-        </span>
-        Add Server
-      </button>
+      <div id="{{ server.id }}-button-container">
+        <button
+          id="{{ server.id }}-register-btn"
+          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-left"
+          hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
+          hx-target="#{{ server.id }}-button-container"
+          hx-swap="innerHTML"
+          hx-indicator="#{{ server.id }}-spinner"
+          hx-on::after-request="if(event.detail.successful) { setTimeout(() => { const rootPath = window.ROOT_PATH || ''; if(window.htmx) { window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {target: '#mcp-registry-servers', swap: 'innerHTML'}); } }, 500); } else { const btn = document.getElementById('{{ server.id }}-register-btn'); if(btn) btn.disabled = false; alert('Registration failed: ' + (event.detail.xhr.response ? JSON.parse(event.detail.xhr.response).error || 'Unknown error' : 'Network error')); }"
+        >
+          <span class="htmx-not-indicator">Add Server</span>
+          <span id="{{ server.id }}-spinner" class="htmx-indicator inline-flex items-center">
+            <span
+              class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"
+            ></span>
+            Registering...
+          </span>
+        </button>
+      </div>
       {% endif %} {% endif %}
     </div>
     {% endfor %}
@@ -527,6 +598,16 @@
         />
         <label
           class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+          >Custom Name (Optional)</label
+        >
+        <input
+          type="text"
+          id="modal-custom-name"
+          class="w-full px-4 py-2 mb-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          placeholder="Leave blank to use default name"
+        />
+        <label
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
           >API Key</label
         >
         <input
@@ -547,114 +628,6 @@
 </div>
 
 <script>
-// Filter servers by search and dropdowns
-function filterServers() {
-  const searchTerm = document.getElementById('mcp-search').value.toLowerCase();
-  const categoryFilter = document.getElementById('category-filter').value;
-  const authFilter = document.getElementById('auth-filter').value;
-  const providerFilter = document.getElementById('provider-filter').value.toLowerCase();
-
-  const cards = document.querySelectorAll('.server-card');
-  let visibleCount = 0;
-
-  cards.forEach(card => {
-    const name = card.dataset.name || '';
-    const description = card.dataset.description || '';
-    const provider = card.dataset.provider || '';
-    const category = card.dataset.category || '';
-    const authType = card.getAttribute('data-auth-type') || '';
-
-    const matchesSearch = !searchTerm || name.includes(searchTerm) ||
-                         description.includes(searchTerm) ||
-                         provider.includes(searchTerm);
-    const matchesCategory = !categoryFilter || category === categoryFilter;
-    const matchesAuth = !authFilter || authType === authFilter;
-    const matchesProvider = !providerFilter || provider === providerFilter;
-
-    if (matchesSearch && matchesCategory && matchesAuth && matchesProvider) {
-      card.style.display = '';
-      visibleCount++;
-    } else {
-      card.style.display = 'none';
-    }
-  });
-
-  // Update active badge highlighting
-  updateBadgeHighlights();
-}
-
-// Update badge highlights based on active filters
-function updateBadgeHighlights() {
-  const categoryFilter = document.getElementById('category-filter').value;
-  const authFilter = document.getElementById('auth-filter').value;
-  const providerFilter = document.getElementById('provider-filter').value;
-
-  // Category badges
-  document.querySelectorAll('[data-filter-type="category"]').forEach(badge => {
-    const value = badge.getAttribute('data-filter-value');
-    if (value === categoryFilter) {
-      badge.classList.add('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
-      badge.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'bg-blue-100', 'dark:bg-blue-900');
-    } else if (value === '') {
-      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
-    } else {
-      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
-      badge.classList.add('bg-gray-100', 'dark:bg-gray-700');
-    }
-  });
-
-  // Auth type badges
-  document.querySelectorAll('[data-filter-type="auth"]').forEach(badge => {
-    const value = badge.getAttribute('data-filter-value');
-    if (value === authFilter) {
-      badge.classList.add('ring-2', 'ring-blue-500');
-    } else {
-      badge.classList.remove('ring-2', 'ring-blue-500');
-    }
-  });
-
-  // Provider badges
-  document.querySelectorAll('[data-filter-type="provider"]').forEach(badge => {
-    const value = badge.getAttribute('data-filter-value');
-    if (value === providerFilter) {
-      badge.classList.add('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
-      badge.classList.remove('bg-gray-100', 'dark:bg-gray-700', 'bg-blue-100', 'dark:bg-blue-900');
-    } else if (value === '') {
-      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
-    } else {
-      badge.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-200', 'dark:bg-blue-700');
-      badge.classList.add('bg-gray-100', 'dark:bg-gray-700');
-    }
-  });
-}
-
-// Quick filter functions
-function filterByCategory(category) {
-  document.getElementById('category-filter').value = category;
-  document.getElementById('auth-filter').value = '';
-  document.getElementById('provider-filter').value = '';
-  filterServers();
-}
-
-function filterByAuthType(authType) {
-  document.getElementById('category-filter').value = '';
-  document.getElementById('auth-filter').value = authType;
-  document.getElementById('provider-filter').value = '';
-  filterServers();
-}
-
-function filterByProvider(provider) {
-  document.getElementById('category-filter').value = '';
-  document.getElementById('auth-filter').value = '';
-  document.getElementById('provider-filter').value = provider;
-  filterServers();
-}
-
-// Initialize on page load
-document.addEventListener('DOMContentLoaded', function() {
-  updateBadgeHighlights();
-});
-
 // API Key modal functions
 function showApiKeyModal(serverId, serverName, serverUrl) {
   document.getElementById('modal-server-id').value = serverId;
@@ -671,27 +644,44 @@ function closeApiKeyModal() {
 function registerServerWithApiKey() {
   const serverId = document.getElementById('modal-server-id').value;
   const apiKey = document.getElementById('modal-api-key').value;
+  const customName = document.getElementById('modal-custom-name').value;
 
   if (!apiKey) {
     alert('Please enter an API key');
     return;
   }
 
+  // Build request body
+  const requestBody = {
+    server_id: serverId,
+    api_key: apiKey
+  };
+
+  // Add custom name if provided
+  if (customName && customName.trim()) {
+    requestBody.name = customName.trim();
+  }
+
   // Use HTMX to post the registration
-  const rootPath = document.querySelector('[data-root-path]')?.dataset.rootPath || '';
+  const rootPath = document.querySelector('[data-root-path]')?.dataset.rootPath || window.ROOT_PATH || '';
   fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + (getCookie('jwt_token') || '')
     },
-    body: JSON.stringify({ api_key: apiKey })
+    body: JSON.stringify(requestBody)
   })
   .then(response => response.json())
   .then(data => {
     if (data.success) {
       closeApiKeyModal();
       // Refresh the server list
-      htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, '#mcp-registry-content');
+      if (window.htmx && window.htmx.ajax) {
+        window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
+      } else {
+        location.reload();
+      }
     } else {
       alert('Registration failed: ' + (data.error || data.message));
     }
@@ -699,5 +689,23 @@ function registerServerWithApiKey() {
   .catch(error => {
     alert('Registration failed: ' + error.message);
   });
+}
+
+// Helper function to get cookie
+function getCookie(name) {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return '';
+}
+
+// Refresh catalog by reloading the partial
+function refreshCatalog() {
+  const rootPath = window.ROOT_PATH || '';
+  if (window.htmx && window.htmx.ajax) {
+    window.htmx.ajax('GET', `${rootPath}/admin/mcp-registry/partial`, {target: '#mcp-registry-servers', swap: 'innerHTML'});
+  } else {
+    location.reload();
+  }
 }
 </script>

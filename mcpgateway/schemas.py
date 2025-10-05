@@ -5381,6 +5381,7 @@ class CatalogServer(BaseModel):
     requires_api_key: bool = Field(default=False, description="Whether API key is required")
     secure: bool = Field(default=False, description="Whether additional security is required")
     tags: List[str] = Field(default_factory=list, description="Tags for categorization")
+    transport: Optional[str] = Field(None, description="Transport type: SSE, STREAMABLEHTTP, or WEBSOCKET")
     logo_url: Optional[str] = Field(None, description="URL to server logo/icon")
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
     is_registered: bool = Field(default=False, description="Whether server is already registered")
