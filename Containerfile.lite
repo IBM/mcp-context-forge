@@ -193,7 +193,7 @@ RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
 # This avoids complex --installroot issues with QEMU emulation
 # ----------------------------------------------------------------------------
 RUN set -euo pipefail \
-    && mkdir -p "${ROOTFS_PATH:?}"/{etc,usr,var,tmp,proc,sys,dev,run} \
+    && mkdir -p "${ROOTFS_PATH:?}"/{etc,usr/bin,usr/lib64,var/tmp,tmp,proc,sys,dev,run} \
     && cp -a /etc/{passwd,group,nsswitch.conf,pki,ssl} "${ROOTFS_PATH:?}/etc/" \
     && cp -a /usr/bin/python${PYTHON_VERSION} "${ROOTFS_PATH:?}/usr/bin/" \
     && cp -a /usr/bin/{bash,sh,ps} "${ROOTFS_PATH:?}/usr/bin/" \
