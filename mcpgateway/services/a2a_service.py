@@ -70,7 +70,7 @@ class A2AAgentNotFoundError(A2AAgentError):
 class A2AAgentNameConflictError(A2AAgentError):
     """Raised when an A2A agent name conflicts with an existing one."""
 
-    def __init__(self, name: str, is_active: bool = True, agent_id: Optional[str] = None):
+    def __init__(self, name: str, is_active: bool = True, agent_id: Optional[str] = None,visibility: Optional[str]="public"):
         """Initialize an A2AAgentNameConflictError exception.
 
         Creates an exception that indicates an agent name conflict, with additional
@@ -106,7 +106,7 @@ class A2AAgentNameConflictError(A2AAgentError):
         self.name = name
         self.is_active = is_active
         self.agent_id = agent_id
-        message = f"A2A Agent already exists with name: {name}"
+        message = f"{visibility.capitalize()} A2A Agent already exists with name: {name}"
         if not is_active:
             message += f" (currently inactive, ID: {agent_id})"
         super().__init__(message)
@@ -172,54 +172,76 @@ class A2AAgentService:
             A2AAgentNameConflictError: If an agent with the same name already exists.
         """
         # Check for existing agent with same name
-        existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
-        existing_agent = db.execute(existing_query).scalar_one_or_none()
+        # existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
+        # existing_agent = db.execute(existing_query).scalar_one_or_none()
 
-        if existing_agent:
-            raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
+        # if existing_agent:
+        #     raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
 
         # Create new agent
-        new_agent = DbA2AAgent(
-            name=agent_data.name,
-            description=agent_data.description,
-            endpoint_url=agent_data.endpoint_url,
-            agent_type=agent_data.agent_type,
-            protocol_version=agent_data.protocol_version,
-            capabilities=agent_data.capabilities,
-            config=agent_data.config,
-            auth_type=agent_data.auth_type,
-            auth_value=agent_data.auth_value,  # This should be encrypted in practice
-            tags=agent_data.tags,
-            # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-            team_id=getattr(agent_data, "team_id", None) or team_id,
-            owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
-            visibility=getattr(agent_data, "visibility", None) or visibility,
-            created_by=created_by,
-            created_from_ip=created_from_ip,
-            created_via=created_via,
-            created_user_agent=created_user_agent,
-            import_batch_id=import_batch_id,
-            federation_source=federation_source,
-        )
+        try:
+            new_agent = DbA2AAgent(
+                name=agent_data.name,
+                description=agent_data.description,
+                endpoint_url=agent_data.endpoint_url,
+                agent_type=agent_data.agent_type,
+                protocol_version=agent_data.protocol_version,
+                capabilities=agent_data.capabilities,
+                config=agent_data.config,
+                auth_type=agent_data.auth_type,
+                auth_value=agent_data.auth_value,  # This should be encrypted in practice
+                tags=agent_data.tags,
+                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
+                team_id=getattr(agent_data, "team_id", None) or team_id,
+                owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
+                visibility=getattr(agent_data, "visibility", None) or visibility,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                import_batch_id=import_batch_id,
+                federation_source=federation_source,
+            )
+            # Check for existing server with the same slug within the same team or public scope
+                if visibility.lower() == "public":
+                    # Check for existing public a2a agent with the same slug
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                    if existing_agent:
+                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+                elif visibility.lower() == "team" and team_id:
+                    # Check for existing team a2a agent with the same slug
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                    if existing_agent:
+                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
-        db.add(new_agent)
-        db.commit()
-        db.refresh(new_agent)
 
-        # Automatically create a tool for the A2A agent if not already present
-        tool_service = ToolService()
-        await tool_service.create_tool_from_a2a_agent(
-            db=db,
-            agent=new_agent,
-            created_by=created_by,
-            created_from_ip=created_from_ip,
-            created_via=created_via,
-            created_user_agent=created_user_agent,
-        )
+            db.add(new_agent)
+            db.commit()
+            db.refresh(new_agent)
 
-        logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
-        return self._db_to_schema(new_agent)
+            # Automatically create a tool for the A2A agent if not already present
+            tool_service = ToolService()
+            await tool_service.create_tool_from_a2a_agent(
+                db=db,
+                agent=new_agent,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+            )
 
+            logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
+            return self._db_to_schema(new_agent)
+        except A2AAgentNameConflictError as ie:
+            db.rollback()
+            raise ie
+        except IntegrityError as ie:
+            db.rollback()
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie    
+        except Exception as e:
+            db.rollback()
+            raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
     async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
         """List A2A agents with optional filtering.
 
