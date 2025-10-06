@@ -7692,6 +7692,10 @@ async function handleGatewayFormSubmit(e) {
         // if (authType === "oauth") {
         //     ... backend handles this now ...
         // }
+        const authType = formData.get("auth_type");
+        if (authType !== "oauth") {
+            formData.set("oauth_grant_type", "");
+        }
 
         formData.append("visibility", formData.get("visibility"));
 
@@ -8282,6 +8286,10 @@ async function handleEditGatewayFormSubmit(e) {
         // if (authType === "oauth") {
         //     ... backend handles this now ...
         // }
+        const authType = formData.get("auth_type");
+        if (authType !== "oauth") {
+            formData.set("oauth_grant_type", "");
+        }
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
