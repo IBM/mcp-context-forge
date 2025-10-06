@@ -16,6 +16,22 @@ The MCP Context Forge Plugin Framework provides a comprehensive, production-grad
 - **Operational Excellence** - Health‑oriented design, clear errors, sensible defaults
 - **Enterprise Features** - Multi-tenant isolation, conditional execution, sophisticated context management
 
+## Enabling Plugins
+
+### Environment Configuration
+
+Enable the plugin framework in your `.env` file:
+
+```bash
+# Enable plugin framework
+PLUGINS_ENABLED=true
+
+# Optional: Custom plugin config path
+PLUGIN_CONFIG_FILE=plugins/config.yaml
+```
+
+If deploying the gateway as a container, set these environment variables in your compose file or in the container's `run` command.
+
 ## Architecture
 
 !!! details "Plugin Framework Specification"
@@ -56,20 +72,6 @@ class Plugin:
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload,
                                  context: PluginContext) -> ResourcePostFetchResult: ...
     # ... additional hook methods
-```
-
-## Enabling Plugins
-
-### Environment Configuration
-
-Enable the plugin framework in your `.env` file:
-
-```bash
-# Enable plugin framework
-PLUGINS_ENABLED=true
-
-# Optional: Custom plugin config path
-PLUGIN_CONFIG_FILE=plugins/config.yaml
 ```
 
 ## Build Your First Plugin (Quickstart)
