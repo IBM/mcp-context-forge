@@ -78,18 +78,19 @@ class ResourceNotFoundError(ResourceError):
 class ResourceURIConflictError(ResourceError):
     """Raised when a resource URI conflicts with existing (active or inactive) resource."""
 
-    def __init__(self, uri: str, is_active: bool = True, resource_id: Optional[int] = None):
+    def __init__(self, uri: str, is_active: bool = True, resource_id: Optional[int] = None, visibility: str = "public") -> None:
         """Initialize the error with resource information.
 
         Args:
             uri: The conflicting resource URI
             is_active: Whether the existing resource is active
             resource_id: ID of the existing resource if available
+            visibility: Visibility status of the resource
         """
         self.uri = uri
         self.is_active = is_active
         self.resource_id = resource_id
-        message = f"Resource already exists with URI: {uri}"
+        message = f"{visibility.capitalize()} Resource already exists with name: {name}"
         if not is_active:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
@@ -361,6 +362,17 @@ class ResourceService:
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(resource, "visibility", None) or visibility,
             )
+            # Check for existing server with the same uri
+            if visibility.lower() == "public":
+                # Check for existing public resource with the same uri
+                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                if existing_resource:
+                    raise ResourceNameConflictError(resource.uri, is_active=existing_resource.is_active, server_id=existing_resource.id, visibility=existing_resource.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team resource with the same uri
+                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                if existing_resource:
+                    raise ResourceNameConflictError(resource.uri, is_active=existing_resource.is_active, server_id=existing_resource.id, visibility=existing_resource.visibility)
 
             # Add to DB
             db.add(db_resource)
