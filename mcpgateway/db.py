@@ -1828,7 +1828,7 @@ class Resource(Base):
     __tablename__ = "resources"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    uri: Mapped[str] = mapped_column(String(767), unique=True)
+    uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -1869,7 +1869,9 @@ class Resource(Base):
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
-
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+    )
     @property
     def content(self) -> "ResourceContent":
         """
@@ -2066,7 +2068,7 @@ class Prompt(Base):
     __tablename__ = "prompts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
@@ -2103,6 +2105,11 @@ class Prompt(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+    )
+
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -2403,7 +2410,9 @@ class Server(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
-    __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),)
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),
+    )
 
 
 class Gateway(Base):
