@@ -2545,8 +2545,8 @@ class A2AAgent(Base):
     __tablename__ = "a2a_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
@@ -2591,6 +2591,9 @@ class A2AAgent(Base):
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
+    __table_args__ = (
+        UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
+    )
 
     @property
     def execution_count(self) -> int:
