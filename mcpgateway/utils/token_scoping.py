@@ -12,6 +12,7 @@ from typing import Optional
 
 # Third-Party
 from fastapi import HTTPException, Request
+from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.utils.verify_credentials import verify_jwt_token
@@ -144,3 +145,29 @@ def validate_server_access(scopes: Optional[dict], requested_server_id: str) -> 
         return True  # Global scope token
 
     return server_id == requested_server_id
+
+
+def validate_token_team_membership(payload: dict, db: Session) -> None:
+    """
+    Validate that user still belongs to teams in the token.
+
+    Args:
+        payload: Decoded JWT payload
+        db: Database session
+
+    Raises:
+        HTTPException: If team membership is invalid
+    """
+    teams = payload.get("teams", [])
+    user_email = payload.get("sub")
+
+    if not teams or not user_email:
+        return  # No team validation needed
+
+    for team_id in teams:
+        membership = db.execute(
+            select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active == True))
+        ).scalar_one_or_none()
+
+        if not membership:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"User is no longer a member of team {team_id}. Token is invalid.")

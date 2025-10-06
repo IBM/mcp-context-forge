@@ -71,7 +71,7 @@ class TokenScopingMiddleware:
         try:
             # Use the centralized verify_jwt_token function for consistent JWT validation
             payload = await verify_jwt_token(token)
-            return payload.get("scopes")
+            return payload
         except HTTPException:
             # Token validation failed (expired, invalid, etc.)
             return None
@@ -336,8 +336,153 @@ class TokenScopingMiddleware:
         # Default allow for unmatched paths
         return True
 
+    def _check_team_membership(self, payload: dict) -> bool:
+        """
+        Check if user still belongs to teams in the token.
+
+        Args:
+            payload: Decoded JWT payload containing teams
+
+        Returns:
+            bool: True if team membership is valid, False otherwise
+        """
+        teams = payload.get("teams", [])
+        user_email = payload.get("sub")
+
+        if not teams or not user_email:
+            logger.warning("Token missing team or user information")
+            return False  # Tokens MUST have team association
+
+        # Third-Party
+        from sqlalchemy import and_, select
+
+        # First-Party
+        from mcpgateway.db import EmailTeamMember, get_db
+
+        db = next(get_db())
+        try:
+            for team_id in teams:
+                membership = db.execute(
+                    select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active == True))
+                ).scalar_one_or_none()
+
+                if not membership:
+                    logger.warning(f"Token invalid: User {user_email} no longer member of team {team_id}")
+                    return False
+
+            return True
+        finally:
+            db.close()
+
+    def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:
+        """
+        Check if the requested resource belongs to one of the token's teams.
+
+        Args:
+            request_path: The request path/URL
+            token_teams: List of team IDs from the token
+
+        Returns:
+            bool: True if resource access is allowed, False otherwise
+        """
+        if not token_teams:
+            logger.warning("Token has no team associations - denying access")
+            return False
+
+        # Extract resource ID from path (server, tool, resource, prompt, etc.)
+        # Patterns: /servers/{id}, /tools/{id}, /resources/{id}, /prompts/{id}
+        resource_patterns = [
+            r"/servers/([a-f0-9\-]+)",
+            r"/tools/([a-f0-9\-]+)",
+            r"/resources/(\d+)",
+            r"/prompts/(\d+)",
+        ]
+
+        resource_id = None
+        for pattern in resource_patterns:
+            match = re.search(pattern, request_path)
+            if match:
+                resource_id = match.group(1)
+                break
+
+        # If no resource ID in path, allow (general endpoints)
+        if not resource_id:
+            return True
+
+        # Query database to check resource ownership
+        # Third-Party
+        from sqlalchemy import or_, select
+
+        # First-Party
+        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool
+
+        db = next(get_db())
+        try:
+            # Check servers
+            if "/servers/" in request_path:
+                server = db.execute(select(Server).where(Server.id == resource_id)).scalar_one_or_none()
+
+                if server:
+                    # Check if server belongs to any of the token's teams
+                    if server.team_id in token_teams:
+                        return True
+                    logger.warning(f"Access denied: Server {resource_id} belongs to team {server.team_id}, " f"token is for teams {token_teams}")
+                    return False
+
+            # Check tools
+            elif "/tools/" in request_path:
+                tool = db.execute(select(Tool).where(Tool.id == resource_id)).scalar_one_or_none()
+
+                if tool:
+                    # Check visibility: public, team, or user
+                    if tool.visibility == "public":
+                        return True
+                    elif tool.visibility == "team" and tool.team_id in token_teams:
+                        return True
+                    elif tool.visibility == "user" and tool.owner_email == token_teams:
+                        # For user visibility, check if user matches
+                        return False  # Cross-team access not allowed
+
+                    logger.warning(f"Access denied: Tool {resource_id} not accessible by token teams {token_teams}")
+                    return False
+
+            # Check resources
+            elif "/resources/" in request_path:
+                resource = db.execute(select(Resource).where(Resource.id == int(resource_id))).scalar_one_or_none()
+
+                if resource:
+                    if resource.visibility == "public":
+                        return True
+                    elif resource.visibility == "team" and resource.team_id in token_teams:
+                        return True
+
+                    logger.warning(f"Access denied: Resource {resource_id} not accessible by token teams {token_teams}")
+                    return False
+
+            # Check prompts
+            elif "/prompts/" in request_path:
+                prompt = db.execute(select(Prompt).where(Prompt.id == int(resource_id))).scalar_one_or_none()
+
+                if prompt:
+                    if prompt.visibility == "public":
+                        return True
+                    elif prompt.visibility == "team" and prompt.team_id in token_teams:
+                        return True
+
+                    logger.warning(f"Access denied: Prompt {resource_id} not accessible by token teams {token_teams}")
+                    return False
+
+            # Resource not found or not checked - allow (will be handled by other auth)
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking resource team ownership: {e}")
+            return False
+        finally:
+            db.close()
+
     async def __call__(self, request: Request, call_next):
-        """Middleware function to check token scoping.
+        """Middleware function to check token scoping including team-level validation.
 
         Args:
             request: FastAPI request object
@@ -369,12 +514,26 @@ class TokenScopingMiddleware:
             if any(request.url.path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
-            # Extract token scopes
-            scopes = await self._extract_token_scopes(request)
+            # Extract full token payload (not just scopes)
+            payload = await self._extract_token_scopes(request)
 
-            # If no scopes, continue (regular auth will handle this)
-            if not scopes:
+            # If no payload, continue (regular auth will handle this)
+            if not payload:
                 return await call_next(request)
+
+            # TEAM VALIDATION: Check team membership
+            if not self._check_team_membership(payload):
+                logger.warning("Token rejected: User no longer member of associated team(s)")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
+
+            # TEAM VALIDATION: Check resource team ownership
+            token_teams = payload.get("teams", [])
+            if not self._check_resource_team_ownership(request.url.path, token_teams):
+                logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+
+            # Extract scopes from payload
+            scopes = payload.get("scopes", {})
 
             # Check server ID restriction
             server_id = scopes.get("server_id")

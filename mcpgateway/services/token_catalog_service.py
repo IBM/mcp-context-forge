@@ -299,98 +299,115 @@ class TokenCatalogService:
         tags: Optional[List[str]] = None,
         team_id: Optional[str] = None,
     ) -> tuple[EmailApiToken, str]:
-        """Create a new API token for user or team.
+        """
+        Create a new API token with mandatory team-level scoping.
+
+        This method creates JWT-based API tokens with team-level scoping enforcement.
+        All tokens must be associated with a specific team for proper access control
+        and multi-tenancy support.
 
         Args:
             user_email: Owner's email address
-            name: Human-readable token name
+            name: Human-readable token name (must be unique per user+team)
             description: Optional token description
-            scope: Token scoping configuration
-            expires_in_days: Optional expiry in days
+            scope: Token scoping configuration (server, permissions, IP, time restrictions)
+            expires_in_days: Optional expiry in days (None = no expiration)
             tags: Optional organizational tags
-            team_id: Optional team ID for team-scoped tokens
+            team_id: REQUIRED - Team ID for team-level scoping
 
         Returns:
-            Tuple of (EmailApiToken, raw_token_string)
+            Tuple of (EmailApiToken database record, raw JWT token string)
 
         Raises:
-            ValueError: If user not found, token name exists, or team access denied
+            ValueError: If validation fails (missing team_id, user not found,
+                    team not found, user not team member, duplicate token name)
 
         Examples:
-            >>> # This method requires database operations, shown for reference
-            >>> service = TokenCatalogService(None)  # Would use real DB session
-            >>> # token, raw_token = await service.create_token(...)
-            >>> # Returns (EmailApiToken, raw_token_string) tuple
+            >>> service = TokenCatalogService(db_session)
+            >>> token, raw_jwt = await service.create_token(
+            ...     user_email="user@example.com",
+            ...     name="production-api-key",
+            ...     team_id="team-123",
+            ...     expires_in_days=90
+            ... )
+            >>> print(f"Token ID: {token.id}")
+            >>> # raw_jwt is the actual JWT string to give to user (show only once)
         """
+
+        # Enforce team-level scoping requirement
+        if not team_id:
+            raise ValueError("team_id is required for token creation. " "Please select a specific team before creating a token. " "You cannot create tokens while viewing 'All Teams'.")
+
         # Validate user exists
         user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
 
         if not user:
             raise ValueError(f"User not found: {user_email}")
 
-        # Validate team access if team_id is provided
-        if team_id:
-            # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+        # Validate team exists and user is active member
+        # First-Party
+        from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
 
-            # Check if team exists
-            team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
-            if not team:
-                raise ValueError(f"Team not found: {team_id}")
+        # Check if team exists
+        team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
 
-            # Check if user is a team OWNER
-            membership = self.db.execute(
-                select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)))
-            ).scalar_one_or_none()
+        if not team:
+            raise ValueError(f"Team not found: {team_id}")
 
-            if not membership:
-                raise ValueError(f"Only team owners can create API keys for team {team_id}")
+        # Verify user is an active member of the team
+        membership = self.db.execute(
+            select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
+        ).scalar_one_or_none()
 
-        # Check for duplicate token name (scoped by user and team)
-        name_check_conditions = [EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.is_active.is_(True)]
+        if not membership:
+            raise ValueError(f"User {user_email} is not an active member of team {team_id}. " f"Only team members can create tokens for the team.")
 
-        if team_id:
-            name_check_conditions.append(EmailApiToken.team_id == team_id)
-        else:
-            name_check_conditions.append(EmailApiToken.team_id.is_(None))
-
-        existing_token = self.db.execute(select(EmailApiToken).where(and_(*name_check_conditions))).scalar_one_or_none()
+        # Check for duplicate active token name for this user+team
+        existing_token = self.db.execute(
+            select(EmailApiToken).where(and_(EmailApiToken.user_email == user_email, EmailApiToken.name == name, EmailApiToken.team_id == team_id, EmailApiToken.is_active.is_(True)))
+        ).scalar_one_or_none()
 
         if existing_token:
-            scope_desc = f" for team {team_id}" if team_id else ""
-            raise ValueError(f"Token name '{name}' already exists{scope_desc}")
+            raise ValueError(f"Token with name '{name}' already exists for user {user_email} " f"in team {team_id}. Please choose a different name.")
 
-        # Calculate expiry
+        # CALCULATE EXPIRATION DATE
         expires_at = None
         if expires_in_days:
             expires_at = utc_now() + timedelta(days=expires_in_days)
 
-        # Generate JWT token with proper claims and user admin status
-        raw_token = await self._generate_token(user_email=user_email, team_id=team_id, expires_at=expires_at, scope=scope, user=user)
+        # Generate JWT token with all necessary claims
+        raw_token = await self._generate_token(user_email=user_email, team_id=team_id, expires_at=expires_at, scope=scope, user=user)  # Pass user object to include admin status
+
+        # Hash token for secure storage
         token_hash = self._hash_token(raw_token)
 
-        # Create token record
+        # Create database record
         api_token = EmailApiToken(
+            id=str(uuid.uuid4()),
             user_email=user_email,
+            team_id=team_id,  # Store team association
             name=name,
-            token_hash=token_hash,
             description=description,
+            token_hash=token_hash,  # Store hash, not raw token
             expires_at=expires_at,
             tags=tags or [],
-            team_id=team_id,
+            # Store scoping information
             server_id=scope.server_id if scope else None,
             resource_scopes=scope.permissions if scope else [],
             ip_restrictions=scope.ip_restrictions if scope else [],
             time_restrictions=scope.time_restrictions if scope else {},
             usage_limits=scope.usage_limits if scope else {},
+            # Token status
+            is_active=True,
+            created_at=utc_now(),
+            last_used=None,
         )
 
         self.db.add(api_token)
         self.db.commit()
         self.db.refresh(api_token)
 
-        scope_desc = f" for team {team_id}" if team_id else ""
-        logger.info(f"Created API token '{name}' for user {user_email}{scope_desc}")
+        logger.info(f"Created API token '{name}' for user {user_email} in team {team_id}. " f"Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
 
         return api_token, raw_token
 

@@ -4770,7 +4770,7 @@ function showTab(tabName) {
                     if (tokensList) {
                         const hasLoadingMessage =
                             tokensList.innerHTML.includes("Loading tokens...");
-                        const isEmpty = tokensList.innerHTML.trim() === "";
+                        const isEmpty = !tokensList.innerHTML.trim();
                         if (hasLoadingMessage || isEmpty) {
                             loadTokensList();
                         }
@@ -4782,6 +4782,9 @@ function showTab(tabName) {
                         setupCreateTokenForm();
                         createForm.setAttribute("data-setup", "true");
                     }
+
+                    // Update team scoping warning when switching to tokens tab
+                    updateTeamScopingWarning();
                 }
 
                 if (tabName === "a2a-agents") {
@@ -10194,6 +10197,10 @@ function initializeTagFiltering() {
 // Initialize tag filtering when page loads
 document.addEventListener("DOMContentLoaded", function () {
     initializeTagFiltering();
+
+    if (typeof initializeTeamScopingMonitor === "function") {
+        initializeTeamScopingMonitor();
+    }
 });
 
 // Expose tag filtering functions to global scope
@@ -11534,14 +11541,17 @@ async function loadTokensList() {
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to load tokens: ${response.status}`);
+            throw new Error(`Failed to load tokens: (${response.status})`);
         }
 
         const data = await response.json();
         displayTokensList(data.tokens);
     } catch (error) {
         console.error("Error loading tokens:", error);
-        tokensList.innerHTML = `<div class="text-red-500">Error loading tokens: ${escapeHtml(error.message)}</div>`;
+        tokensList.innerHTML =
+            '<div class="text-red-500">Error loading tokens: ' +
+            escapeHtml(error.message) +
+            "</div>";
     }
 }
 
@@ -11618,6 +11628,155 @@ function displayTokensList(tokens) {
 }
 
 /**
+ * Get the currently selected team ID from the team selector
+ */
+function getCurrentTeamId() {
+    // First, try to get from Alpine.js component (most reliable)
+    const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
+    if (
+        teamSelector &&
+        teamSelector._x_dataStack &&
+        teamSelector._x_dataStack[0]
+    ) {
+        const alpineData = teamSelector._x_dataStack[0];
+        const selectedTeam = alpineData.selectedTeam;
+
+        // Return null if empty string or falsy (means "All Teams")
+        if (!selectedTeam || selectedTeam === "" || selectedTeam === "all") {
+            return null;
+        }
+
+        return selectedTeam;
+    }
+
+    // Fallback: check URL parameters
+    const urlParams = new URLSearchParams(window.location.search);
+    const teamId = urlParams.get("teamid");
+
+    if (!teamId || teamId === "" || teamId === "all") {
+        return null;
+    }
+
+    return teamId;
+}
+
+/**
+ * Get the currently selected team name from Alpine.js team selector
+ * @returns {string|null} Team name or null if not found
+ */
+function getCurrentTeamName() {
+    const currentTeamId = getCurrentTeamId();
+
+    if (!currentTeamId) {
+        return null;
+    }
+
+    // Method 1: Try from window.USERTEAMSDATA (most reliable)
+    if (window.USERTEAMSDATA && Array.isArray(window.USERTEAMSDATA)) {
+        const teamObj = window.USERTEAMSDATA.find(
+            (t) => t.id === currentTeamId,
+        );
+        if (teamObj) {
+            // Return the personal team name format if it's a personal team
+            return teamObj.ispersonal ? `${teamObj.name}` : teamObj.name;
+        }
+    }
+
+    // Method 2: Try from Alpine.js component
+    const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
+    if (
+        teamSelector &&
+        teamSelector._x_dataStack &&
+        teamSelector._x_dataStack[0]
+    ) {
+        const alpineData = teamSelector._x_dataStack[0];
+
+        // Get the selected team name directly from Alpine
+        if (
+            alpineData.selectedTeamName &&
+            alpineData.selectedTeamName !== "All Teams"
+        ) {
+            return alpineData.selectedTeamName;
+        }
+
+        // Try to find in teams array
+        if (alpineData.teams && Array.isArray(alpineData.teams)) {
+            const selectedTeamObj = alpineData.teams.find(
+                (t) => t.id === currentTeamId,
+            );
+            if (selectedTeamObj) {
+                return selectedTeamObj.ispersonal
+                    ? `${selectedTeamObj.name}`
+                    : selectedTeamObj.name;
+            }
+        }
+    }
+
+    // Fallback: return the team ID if name not found
+    return currentTeamId;
+}
+
+/**
+ * Update the team scoping warning/info visibility based on team selection
+ */
+function updateTeamScopingWarning() {
+    const warningDiv = document.getElementById("team-scoping-warning");
+    const infoDiv = document.getElementById("team-scoping-info");
+    const teamNameSpan = document.getElementById("selected-team-name");
+
+    if (!warningDiv || !infoDiv) {
+        return;
+    }
+
+    const currentTeamId = getCurrentTeamId();
+
+    if (!currentTeamId) {
+        // Show warning when "All Teams" is selected
+        warningDiv.classList.remove("hidden");
+        infoDiv.classList.add("hidden");
+    } else {
+        // Hide warning and show info when a specific team is selected
+        warningDiv.classList.add("hidden");
+        infoDiv.classList.remove("hidden");
+
+        // Get team name to display
+        const teamName = getCurrentTeamName() || currentTeamId;
+        if (teamNameSpan) {
+            teamNameSpan.textContent = teamName;
+        }
+    }
+}
+
+/**
+ * Monitor team selection changes using Alpine.js watcher
+ */
+function initializeTeamScopingMonitor() {
+    // Use Alpine.js $watch to monitor team selection changes
+    document.addEventListener("alpine:init", () => {
+        const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
+        if (teamSelector && window.Alpine) {
+            // The Alpine component will notify us of changes
+            const checkInterval = setInterval(() => {
+                updateTeamScopingWarning();
+            }, 500); // Check every 500ms
+
+            // Store interval ID for cleanup if needed
+            window._teamMonitorInterval = checkInterval;
+        }
+    });
+
+    // Also update when tokens tab is shown
+    document.addEventListener("DOMContentLoaded", () => {
+        const tokensTab = document.querySelector('a[href="#tokens"]');
+        if (tokensTab) {
+            tokensTab.addEventListener("click", () => {
+                setTimeout(updateTeamScopingWarning, 100);
+            });
+        }
+    });
+}
+
+/**
  * Set up create token form handling
  */
 function setupCreateTokenForm() {
@@ -11626,8 +11785,21 @@ function setupCreateTokenForm() {
         return;
     }
 
+    // Check team selection and show/hide warning
+    updateTeamScopingWarning();
+
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
+
+        // Check if user is in "All Teams" context
+        const currentTeamId = getCurrentTeamId();
+        if (!currentTeamId || currentTeamId === "") {
+            showErrorMessage(
+                'Please select a specific team from the header before creating a token. You cannot create tokens while viewing "All Teams".',
+            );
+            return; // Prevent form submission
+        }
+
         await createToken(form);
     });
 }
@@ -11635,12 +11807,21 @@ function setupCreateTokenForm() {
 /**
  * Create a new API token
  */
+// Create a new API token
 async function createToken(form) {
     const formData = new FormData(form);
     const submitButton = form.querySelector('button[type="submit"]');
     const originalText = submitButton.textContent;
 
     try {
+        // Validate team selection
+        const currentTeamId = getCurrentTeamId();
+        if (!currentTeamId) {
+            throw new Error(
+                'Please select a specific team before creating a token. You cannot create tokens while viewing "All Teams".',
+            );
+        }
+
         submitButton.textContent = "Creating...";
         submitButton.disabled = true;
 
@@ -11651,14 +11832,17 @@ async function createToken(form) {
             expires_in_days: formData.get("expires_in_days")
                 ? parseInt(formData.get("expires_in_days"))
                 : null,
-            tags: [], // Always include empty tags array
+            tags: [],
+            team_id: currentTeamId,
         };
 
         // Add scoping if provided
         const scope = {};
+
         if (formData.get("server_id")) {
             scope.server_id = formData.get("server_id");
         }
+
         if (formData.get("ip_restrictions")) {
             // Parse IP restrictions as array (split by comma if multiple)
             const ipRestrictions = formData.get("ip_restrictions").trim();
@@ -11677,7 +11861,7 @@ async function createToken(form) {
         } else {
             scope.permissions = [];
         }
-
+        
         // Always include time_restrictions and usage_limits as empty objects
         scope.time_restrictions = {};
         scope.usage_limits = {};
@@ -11697,7 +11881,7 @@ async function createToken(form) {
         if (!response.ok) {
             const error = await response.json();
             throw new Error(
-                error.detail || `Failed to create token: ${response.status}`,
+                error.detail || `Failed to create token (${response.status})`,
             );
         }
 
@@ -11709,8 +11893,8 @@ async function createToken(form) {
         // Reset form and reload tokens list
         form.reset();
         await loadTokensList();
-
-        showNotification("Token created successfully", "success");
+        
+        showNotification("Token created successfully!", "success");
     } catch (error) {
         console.error("Error creating token:", error);
         showNotification(`Error creating token: ${error.message}`, "error");
