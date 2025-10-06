@@ -58,7 +58,7 @@ class PromptNotFoundError(PromptError):
 class PromptNameConflictError(PromptError):
     """Raised when a prompt name conflicts with existing (active or inactive) prompt."""
 
-    def __init__(self, name: str, is_active: bool = True, prompt_id: Optional[int] = None):
+    def __init__(self, name: str, is_active: bool = True, prompt_id: Optional[int] = None, visibility: str = "public") -> None:
         """Initialize the error with prompt information.
 
         Args:
@@ -84,11 +84,11 @@ class PromptNameConflictError(PromptError):
         self.name = name
         self.is_active = is_active
         self.prompt_id = prompt_id
-        message = f"Prompt already exists with name: {name}"
+        message = f"{visibility.capitalize()} Prompt already exists with name: {name}"
         if not is_active:
             message += f" (currently inactive, ID: {prompt_id})"
         super().__init__(message)
-
+        
 
 class PromptValidationError(PromptError):
     """Raised when prompt validation fails."""
@@ -314,6 +314,7 @@ class PromptService:
 
         Raises:
             IntegrityError: If a database integrity error occurs.
+            PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other prompt registration errors
 
         Examples:
@@ -373,6 +374,19 @@ class PromptService:
                 owner_email=getattr(prompt, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(prompt, "visibility", None) or visibility,
             )
+            # Check for existing server with the same name
+            if visibility.lower() == "public":
+                # Check for existing public prompt with the same name
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                if existing_prompt:
+                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, server_id=existing_prompt.id, visibility=existing_prompt.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team prompt with the same name
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                if existing_prompt:
+                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, server_id=existing_prompt.id, visibility=existing_prompt.visibility)
+
+
 
             # Add to DB
             db.add(db_prompt)
@@ -389,6 +403,9 @@ class PromptService:
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except PromptNameConflictError as se:
+            db.rollback()
+            raise se    
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to register prompt: {str(e)}")
@@ -754,6 +771,7 @@ class PromptService:
         Raises:
             PromptNotFoundError: If the prompt is not found
             IntegrityError: If a database integrity error occurs.
+            PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other update errors
 
         Examples:
@@ -781,6 +799,20 @@ class PromptService:
                     raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
 
                 raise PromptNotFoundError(f"Prompt not found: {name}")
+            # Check for name conflict if name is being changed and visibility is public
+            if prompt_update.name and prompt_update.name != prompt.name:
+                visibility = prompt_update.visibility or prompt.visibility
+                team_id = prompt_update.team_id or prompt.team_id
+                if visibility.lower() == "public":
+                    # Check for existing public server with the same name
+                    existing_server = db.execute(select(DbServer).where(DbServer.name == prompt_update.name, DbServer.visibility == "public")).scalar_one_or_none()
+                    if existing_server:
+                        raise PromptNameConflictError(prompt_update.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
+                elif visibility.lower() == "team" and team_id:
+                    # Check for existing team server with the same name
+                    existing_server = db.execute(select(DbServer).where(DbServer.name == prompt_update.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
+                    if existing_server:
+                        raise PromptNameConflictError(prompt_update.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
 
             if prompt_update.name is not None:
                 prompt.name = prompt_update.name
@@ -840,6 +872,10 @@ class PromptService:
             db.rollback()
             logger.error(f"Prompt not found: {e}")
             raise e
+        except PromptNameConflictError as pnce:
+            db.rollback()
+            logger.error(f"Prompt name conflict: {pnce}")
+            raise pnce
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to update prompt: {str(e)}")
