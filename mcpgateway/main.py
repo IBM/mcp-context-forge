@@ -198,7 +198,8 @@ if getattr(settings, "session_pooling_enabled", False):
 
 
 def get_user_email(user):
-    """Extract email from user object, handling both string and dict formats.
+    """
+    Extract email from user object, handling both string and dict formats.
 
     Args:
         user: User object, can be either a dict (new RBAC format) or string (legacy format)
