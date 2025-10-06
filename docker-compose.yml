@@ -70,6 +70,11 @@ services:
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
+      # Uncomment to enable plugins
+      # - PLUGINS_ENABLED=true
+      # Uncomment to enable catalog
+      # - MCPGATEWAY_CATALOG_ENABLED=true
+      # - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
@@ -96,6 +101,7 @@ services:
       start_period: 30s
 
     # volumes:
+    #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
     #   - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # For JWT asymmetric keys:
