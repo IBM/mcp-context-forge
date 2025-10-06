@@ -334,7 +334,11 @@ class SessionRegistry(SessionBackend):
             server_id: Server identifier
 
         Returns:
+<<<<<<< HEAD
             Session_id if found and valid, else None
+=======
+            return: session_id if found and valid, else None
+>>>>>>> b4739a5 (fix lint issues)
         """
         key = (user, server_id)
         entry = self._pooled_sessions.get(key)
@@ -400,7 +404,11 @@ class SessionRegistry(SessionBackend):
         """Return current pool hit/miss/evict counts.
 
         Returns:
+<<<<<<< HEAD
             A dict with hit/miss/evict counts
+=======
+            dict: A dict with hit/miss/evict counts
+>>>>>>> b4739a5 (fix lint issues)
         """
         return dict(self._pool_metrics)
 
