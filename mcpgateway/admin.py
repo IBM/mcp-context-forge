@@ -2441,8 +2441,13 @@ async def admin_login_page(request: Request) -> Response:
 
     root_path = settings.app_root_path
 
+    # Only show secure cookie warning if there's a login error AND problematic config
+    secure_cookie_warning = None
+    if settings.secure_cookies and settings.environment == "development":
+        secure_cookie_warning = "Serving over HTTP with secure cookies enabled. If you have login issues, try disabling secure cookies in your configuration."
+
     # Use external template file
-    return request.app.state.templates.TemplateResponse("login.html", {"request": request, "root_path": root_path})
+    return request.app.state.templates.TemplateResponse("login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning})
 
 
 @admin_router.post("/login")
@@ -2537,6 +2542,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
         except Exception as e:
             LOGGER.warning(f"Login failed for {email}: {e}")
+
+            if settings.secure_cookies and settings.environment == "development":
+                LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
+
             root_path = request.scope.get("root_path", "")
             return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 

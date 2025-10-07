@@ -95,6 +95,15 @@
               </div>
             </div>
 
+            {% if secure_cookie_warning %}
+            <div class="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 rounded-xl text-sm">
+              <div class="flex items-start">
+                <i class="fas fa-exclamation-triangle mr-2 mt-0.5 flex-shrink-0"></i>
+                <div class="text-sm">{{ secure_cookie_warning }}</div>
+              </div>
+            </div>
+            {% endif %}
+
             <!-- SSO Providers Section -->
             <div id="sso-section" class="mb-6">
               <div class="text-center mb-6">
