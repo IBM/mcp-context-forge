@@ -211,3 +211,8 @@
 /* .hidden {
   display: none;
 } */
+
+/* Modal z-index to prevent sticky header overlap */
+.fixed.z-10 {
+    z-index: 9999 !important;
+}
