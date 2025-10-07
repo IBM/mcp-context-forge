@@ -5074,6 +5074,66 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               ></textarea>
             </div>
 
+            <!-- Team Scoping Info/Warning -->
+            <div id="team-scoping-warning" class="hidden">
+                <div class="bg-yellow-50 dark:bg-yellow-900 border border-yellow-300 dark:border-yellow-700 rounded-md p-4">
+                    <div class="flex">
+                        <div class="flex-shrink-0">
+                        </div>
+                        <div class="ml-3 flex-1">
+                            <!-- Public Access Token Section -->
+                            <div class="space-y-2">
+                                <div class="flex items-center">
+                                    <h3 class="text-sm font-bold text-yellow-800 dark:text-yellow-200">
+                                        ⚠️ <span class="font-semibold">Public Access Token</span>
+                                    </h3>
+                                </div>
+                                <div class="mt-1 text-sm text-yellow-700 dark:text-yellow-300">
+                                    <p class="mb-1">
+                                        You are currently viewing <span class="font-semibold">"All Teams"</span>. Tokens created in this context will have <span class="font-semibold">public-only access</span>.
+                                    </p>
+                                    <p class="mb-1"><span class="font-semibold">✅ This token CAN access:</span></p>
+                                    <ul class="list-disc list-inside ml-4 space-y-1">
+                                        <li>Public servers (virtual servers marked as public)</li>
+                                        <li>Public tools, resources, and prompts</li>
+                                    </ul>
+                                    <p class="mt-2 mb-1"><span class="font-semibold">❌ This token CANNOT access:</span></p>
+                                    <ul class="list-disc list-inside ml-4 space-y-1">
+                                        <li>Team-scoped or private servers, tools, resources, and prompts</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Tip Section  -->
+                            <div class="mt-4 bg-yellow-50 dark:bg-yellow-900 p-2 rounded-md border border-yellow-200 dark:border-yellow-600 flex items-center">
+                                <span class="text-yellow-600 dark:text-yellow-400 text-lg">💡</span>
+                                <p class="ml-2 text-sm font-semibold text-yellow-700 dark:text-yellow-300">
+                                    To create a token with full Team Access, select a specific team from the header above.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Info when a specific team is selected -->
+            <div id="team-scoping-info" class="hidden">
+                <div class="bg-blue-50 dark:bg-blue-900 border border-blue-300 dark:border-blue-700 rounded-md p-3">
+                    <div class="flex items-center">
+                        <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                        </svg>
+                        <p class="text-sm font-medium text-blue-800 dark:text-blue-200">
+                            <span class="font-semibold">Team-level scoping enabled.</span> This token will be scoped to: <span id="selected-team-name" class="font-bold"></span>
+                        </p>
+                    </div>
+                    <p class="text-xs text-blue-700 dark:text-blue-300 mt-2 ml-7">
+                        Token can access all resources (public, team, and private) within this team.
+                    </p>
+                </div>
+            </div>
+
+
             <!-- Token Scoping -->
             <div class="border-t pt-4">
               <h4

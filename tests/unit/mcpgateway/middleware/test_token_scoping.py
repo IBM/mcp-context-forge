@@ -100,7 +100,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return server-scoped token
         with patch.object(middleware, '_extract_token_scopes') as mock_extract:
-            mock_extract.return_value = {"server_id": "specific-server"}
+            mock_extract.return_value = {"scopes": {"server_id": "specific-server"}}
 
             # Mock call_next (the next middleware or request handler)
             call_next = AsyncMock()
@@ -125,7 +125,7 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return permission-scoped token without admin permissions
         with patch.object(middleware, '_extract_token_scopes') as mock_extract:
-            mock_extract.return_value = {"permissions": [Permissions.TOOLS_READ]}
+            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
 
             # Mock call_next (the next middleware or request handler)
             call_next = AsyncMock()
