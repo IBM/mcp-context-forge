@@ -290,7 +290,7 @@ class TestBootstrapDefaultRoles:
                                 role_id=platform_admin_role.id,
                                 scope="global",
                                 scope_id=None,
-                                granted_by="system"
+                                granted_by=mock_admin_user.email
                             )
 
                             mock_logger.info.assert_any_call(
