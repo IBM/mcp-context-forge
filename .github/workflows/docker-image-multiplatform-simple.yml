@@ -1,0 +1,89 @@
+# ===============================================================
+# 📦 Simple Multiplatform Docker Build Workflow (DISABLED)
+# ===============================================================
+#
+# ⚠️  DISABLED: This workflow is too slow due to ARM64 emulation on AMD64 runners
+#
+# This workflow builds multiplatform Docker images using a simpler approach:
+# 1. Builds both platforms in a single job
+# 2. Uses proper lowercase repository names
+# 3. Creates timestamped tags for traceability
+# 4. More reliable than matrix-based approach
+#
+# ❌ PROBLEM: ARM64 builds on AMD64 runners take 3+ hours due to emulation
+# ✅ SOLUTION: Use docker-image-multiplatform-optimized.yml instead
+# ===============================================================
+
+name: Simple Multiplatform Docker Build (DISABLED - TOO SLOW)
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (comma-separated)'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+  # DISABLED: This workflow is too slow due to ARM64 emulation on AMD64 runners
+  # Use docker-image-multiplatform-optimized.yml instead which uses native ARM64 runners
+  # push:
+  #   branches: ["main"]
+  #   paths:
+  #     - 'Containerfile.lite'
+  #     - 'mcpgateway/**'
+  #     - 'plugins/**'
+  #     - 'pyproject.toml'
+  # pull_request:
+  #   branches: ["main"]
+  #   paths:
+  #     - 'Containerfile.lite'
+  #     - 'mcpgateway/**'
+  #     - 'plugins/**'
+  #     - 'pyproject.toml'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-multiplatform:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.11.1
+
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3.1.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏗️  Build multiplatform image
+        run: |
+          TAG=$(date +%s)
+          IMAGE_NAME_LOWER=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')
+          echo "🏗️  Building multiplatform image (linux/amd64,linux/arm64)..."
+          echo "📦 Repository: ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER"
+          echo "🏷️  Tags: $TAG, latest"
+          echo "⚠️  Note: ARM64 build on AMD64 runners uses emulation and may take longer"
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --file Containerfile.lite \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:$TAG \
+            --tag ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest \
+            --push \
+            --progress=plain \
+            .
+
+          echo "✅ Multiplatform image built and pushed successfully!"
+
+      - name: 🔍  Verify multiplatform image
+        run: |
+          IMAGE_NAME_LOWER=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')
+          echo "🔍 Verifying multiplatform image..."
+          docker buildx imagetools inspect ${{ env.REGISTRY }}/$IMAGE_NAME_LOWER:latest

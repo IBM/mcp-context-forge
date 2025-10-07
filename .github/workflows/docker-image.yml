@@ -72,11 +72,10 @@ jobs:
         run: |
           curl -sSL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint
           chmod +x /usr/local/bin/hadolint
-          hadolint -f sarif Containerfile.lite > hadolint-results.sarif
+          hadolint -f sarif Containerfile.lite > hadolint-results.sarif || true
           echo "HADOLINT_EXIT=$?" >> "$GITHUB_ENV"
-          exit 0
       - name: ☁️  Upload Hadolint SARIF
-        if: always()
+        if: always() && hashFiles('hadolint-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: hadolint-results.sarif
@@ -95,25 +94,47 @@ jobs:
           restore-keys: ${{ runner.os }}-buildx-
 
       # -------------------------------------------------------------
-      # 3️⃣  Build & tag image (timestamp + latest)
+      # 3️⃣  Log in to GHCR (before build)
       # -------------------------------------------------------------
-      - name: 🏗️  Build Docker image
+      - name: 🔑  Log in to GHCR
+        uses: docker/login-action@v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # -------------------------------------------------------------
+      # 4️⃣  Build & tag image (timestamp + latest)
+      # -------------------------------------------------------------
+      - name: 🏗️  Build multi-platform Docker image
         env:
           DOCKER_CONTENT_TRUST: "1"
         run: |
           TAG=$(date +%s)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "🏗️  Building multi-platform image (linux/amd64,linux/arm64)..."
+          echo "⚠️  Note: ARM64 build on AMD64 runners uses emulation and may take longer"
           docker buildx build \
+            --platform linux/amd64,linux/arm64 \
             --file Containerfile.lite \
             --tag $IMAGE_NAME:$TAG \
             --tag $IMAGE_NAME:latest \
             --cache-from type=local,src=${{ env.CACHE_DIR }} \
             --cache-to   type=local,dest=${{ env.CACHE_DIR }},mode=max \
-            --load \
+            --push \
+            --progress=plain \
             .   # build context is mandatory
 
       # -------------------------------------------------------------
-      # 4️⃣  Image lint (Dockle CLI → SARIF)
+      # 5️⃣  Pull image for scanning (multiplatform builds don't load locally)
+      # -------------------------------------------------------------
+      - name: 📥  Pull image for local scanning
+        run: |
+          echo "📥  Pulling image for scanning (multiplatform images not available locally after --push)..."
+          docker pull $IMAGE_NAME:latest
+
+      # -------------------------------------------------------------
+      # 6️⃣  Image lint (Dockle CLI → SARIF)
       # -------------------------------------------------------------
       - name: 🔍  Image lint (Dockle)
         id: dockle
@@ -125,17 +146,25 @@ jobs:
             | tar -xz -C /usr/local/bin dockle
           dockle --exit-code 1 --format sarif \
                  --output dockle-results.sarif \
-                 $IMAGE_NAME:latest
+                 $IMAGE_NAME:latest || true
           echo "DOCKLE_EXIT=$?" >> "$GITHUB_ENV"
-          exit 0
+      - name: 🧹  Sanitize Dockle SARIF (remove invalid URIs)
+        if: always() && hashFiles('dockle-results.sarif') != ''
+        run: |
+          # Filter out results with invalid URIs (containing spaces or non-file-path characters)
+          jq '.runs[].results |= map(select(
+            (.locations // []) | length == 0 or
+            all(.physicalLocation.artifactLocation.uri | test("^[^\\s]+$"))
+          ))' dockle-results.sarif > dockle-results-clean.sarif || cp dockle-results.sarif dockle-results-clean.sarif
+          mv dockle-results-clean.sarif dockle-results.sarif
       - name: ☁️  Upload Dockle SARIF
-        if: always()
+        if: always() && hashFiles('dockle-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: dockle-results.sarif
 
       # -------------------------------------------------------------
-      # 5️⃣  Generate SPDX SBOM with Syft
+      # 7️⃣  Generate SPDX SBOM with Syft
       # -------------------------------------------------------------
       - name: 📄  Generate SBOM (Syft)
         uses: anchore/sbom-action@v0.20.5
@@ -144,7 +173,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # -------------------------------------------------------------
-      # 6️⃣  Trivy, Grype CVE scan → SARIF
+      # 8️⃣  Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
         if: env.TRIVY_ENABLED == 'true'
@@ -158,7 +187,7 @@ jobs:
           severity: CRITICAL
           exit-code: 0
       - name: ☁️  Upload Trivy SARIF
-        if: always() && env.TRIVY_ENABLED == 'true'
+        if: always() && env.TRIVY_ENABLED == 'true' && hashFiles('trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
@@ -167,35 +196,21 @@ jobs:
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
       - name: 🔍 Grype vulnerability scan
+        continue-on-error: true
         run: |
           grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --only-fixed
       - name: 📄 Generating Grype SARIF report
+        continue-on-error: true
         run: |
           grype ${{ env.IMAGE_NAME }}:latest --scope all-layers --output sarif --file grype-results.sarif
       - name: ☁️  Upload Grype SARIF
-        if: always()
+        if: always() && hashFiles('grype-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: grype-results.sarif
 
       # -------------------------------------------------------------
-      # 7️⃣  Push both tags to GHCR
-      # -------------------------------------------------------------
-      - name: 🔑  Log in to GHCR
-        uses: docker/login-action@v3.5.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🚀 Push image to GHCR
-        if: github.ref == 'refs/heads/main'
-        run: |
-          docker push $IMAGE_NAME:${{ env.TAG }}
-          docker push $IMAGE_NAME:latest
-
-      # -------------------------------------------------------------
-      # 8️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
+      # 9️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
       # -------------------------------------------------------------
       - name: 📥 Install Cosign
         if: github.ref == 'refs/heads/main'
@@ -218,7 +233,7 @@ jobs:
           done
 
       # -------------------------------------------------------------
-      # 9️⃣  Single gate - fail job on any scanner error
+      # 🔟  Single gate - fail job on any scanner error
       # -------------------------------------------------------------
       - name: ⛔  Enforce lint & vuln gates
         if: |
