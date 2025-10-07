@@ -363,16 +363,16 @@ class TokenScopingMiddleware:
             return False
 
         # Third-Party
-        from sqlalchemy import and_, select
+        from sqlalchemy import and_, select # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db
+        from mcpgateway.db import EmailTeamMember, get_db # pylint: disable=import-outside-toplevel
 
         db = next(get_db())
         try:
             for team_id in teams:
                 membership = db.execute(
-                    select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active == True))
+                    select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active))
                 ).scalar_one_or_none()
 
                 if not membership:
@@ -415,8 +415,6 @@ class TokenScopingMiddleware:
 
         # Determine token type
         is_public_token = not token_teams or len(token_teams) == 0
-        print("IN CHECK RESOURCE TEAM OWNERSHIP")
-        print("IS PUBLIC TOKEN:",is_public_token)
 
         if is_public_token:
             logger.debug("Processing request with PUBLIC-ONLY token")
@@ -444,15 +442,15 @@ class TokenScopingMiddleware:
 
         # If no resource ID in path, allow (general endpoints like /health, /tokens, /metrics)
         if not resource_id or not resource_type:
-            logger.debug(f"No resource ID found in path {request_path}, allowing access")
+            logger.info(f"No resource ID found in path {request_path}, allowing access")
             return True
 
         # Import database models
         # Third-Party
-        from sqlalchemy import select
+        from sqlalchemy import select # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool
+        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool # pylint: disable=import-outside-toplevel
 
         db = next(get_db())
         try:
@@ -482,25 +480,26 @@ class TokenScopingMiddleware:
                     if server.team_id in token_teams:
                         logger.debug(f"Access granted: Team server {resource_id} belongs to token's team {server.team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', " f"token is scoped to teams {token_teams}")
-                        return False
+
+                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', " f"token is scoped to teams {token_teams}")
+                    return False
 
                 # PRIVATE SERVERS: Check if server belongs to token's teams
                 if server_visibility == "private":
                     if server.team_id in token_teams:
                         logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
-                        return False
+
+                    logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
+                    return False
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Server {resource_id} has unknown visibility: {server_visibility}")
                 return False
 
             # CHECK TOOLS
-            elif resource_type == "tool":
+            if resource_type == "tool":
+                print("INSIDE TOOL CEHCK")
                 tool = db.execute(select(Tool).where(Tool.id == resource_id)).scalar_one_or_none()
 
                 if not tool:
@@ -526,9 +525,9 @@ class TokenScopingMiddleware:
                     if tool_team_id and tool_team_id in token_teams:
                         logger.debug(f"Access granted: Team tool {resource_id} belongs to token's team {tool_team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', " f"token is scoped to teams {token_teams}")
-                        return False
+
+                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', " f"token is scoped to teams {token_teams}")
+                    return False
 
                 # PRIVATE TOOLS: Check if tool is in token's team context
                 if tool_visibility in ["private", "user"]:
@@ -536,16 +535,16 @@ class TokenScopingMiddleware:
                     if tool_team_id and tool_team_id in token_teams:
                         logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
-                        return False
+
+                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
+                    return False
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Tool {resource_id} has unknown visibility: {tool_visibility}")
                 return False
 
             # CHECK RESOURCES
-            elif resource_type == "resource":
+            if resource_type == "resource":
                 resource = db.execute(select(Resource).where(Resource.id == int(resource_id))).scalar_one_or_none()
 
                 if not resource:
@@ -571,9 +570,9 @@ class TokenScopingMiddleware:
                     if resource_team_id and resource_team_id in token_teams:
                         logger.debug(f"Access granted: Team resource {resource_id} belongs to token's team {resource_team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', " f"token is scoped to teams {token_teams}")
-                        return False
+
+                    logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', " f"token is scoped to teams {token_teams}")
+                    return False
 
                 # PRIVATE RESOURCES: Check if resource is in token's team context
                 if resource_visibility in ["private", "user"]:
@@ -581,16 +580,16 @@ class TokenScopingMiddleware:
                     if resource_team_id and resource_team_id in token_teams:
                         logger.debug(f"Access granted: Private resource {resource_id} in token's team {resource_team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility} and not in token's teams")
-                        return False
+
+                    logger.warning(f"Access denied: Resource {resource_id} is {resource_visibility} and not in token's teams")
+                    return False
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Resource {resource_id} has unknown visibility: {resource_visibility}")
                 return False
 
             # CHECK PROMPTS
-            elif resource_type == "prompt":
+            if resource_type == "prompt":
                 prompt = db.execute(select(Prompt).where(Prompt.id == int(resource_id))).scalar_one_or_none()
 
                 if not prompt:
@@ -616,9 +615,9 @@ class TokenScopingMiddleware:
                     if prompt_team_id and prompt_team_id in token_teams:
                         logger.debug(f"Access granted: Team prompt {resource_id} belongs to token's team {prompt_team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', " f"token is scoped to teams {token_teams}")
-                        return False
+
+                    logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', " f"token is scoped to teams {token_teams}")
+                    return False
 
                 # PRIVATE PROMPTS: Check if prompt is in token's team context
                 if prompt_visibility in ["private", "user"]:
@@ -626,18 +625,17 @@ class TokenScopingMiddleware:
                     if prompt_team_id and prompt_team_id in token_teams:
                         logger.debug(f"Access granted: Private prompt {resource_id} in token's team {prompt_team_id}")
                         return True
-                    else:
-                        logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility} and not in token's teams")
-                        return False
+
+                    logger.warning(f"Access denied: Prompt {resource_id} is {prompt_visibility} and not in token's teams")
+                    return False
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Prompt {resource_id} has unknown visibility: {prompt_visibility}")
                 return False
 
             # UNKNOWN RESOURCE TYPE
-            else:
-                logger.warning(f"Unknown resource type '{resource_type}' for path: {request_path}")
-                return False
+            logger.warning(f"Unknown resource type '{resource_type}' for path: {request_path}")
+            return False
 
         except Exception as e:
             logger.error(f"Error checking resource team ownership for {request_path}: {e}", exc_info=True)
