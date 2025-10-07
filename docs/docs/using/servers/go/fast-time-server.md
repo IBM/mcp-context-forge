@@ -1676,7 +1676,7 @@ print(f"Converted time: {result['converted_time']}")
 
 ## Version History
 
-- **v0.7.0** - Current Docker image version with full MCP protocol support
+- **v0.8.0** - Current Docker image version with full MCP protocol support
 
 ## Security Considerations
 
