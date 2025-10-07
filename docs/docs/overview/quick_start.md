@@ -112,7 +112,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e PLATFORM_ADMIN_EMAIL=admin@example.com \
           -e PLATFORM_ADMIN_PASSWORD=changeme \
           -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-          ghcr.io/ibm/mcp-context-forge:0.7.0
+          ghcr.io/ibm/mcp-context-forge:0.8.0
         ```
 
     2. **(Optional) persist the DB**
@@ -130,7 +130,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:0.7.0
+              ghcr.io/ibm/mcp-context-forge:0.8.0
             ```
 
         === "MySQL"
@@ -155,7 +155,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:0.7.0
+              ghcr.io/ibm/mcp-context-forge:0.8.0
             ```
 
         === "PostgreSQL"
@@ -179,7 +179,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
               -e PLATFORM_ADMIN_PASSWORD=changeme \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-              ghcr.io/ibm/mcp-context-forge:0.7.0
+              ghcr.io/ibm/mcp-context-forge:0.8.0
             ```
 
     3. **Generate a token inside the container**
@@ -216,7 +216,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     2. **Pull the published image**
 
         ```bash
-        docker pull ghcr.io/ibm/mcp-context-forge:0.7.0
+        docker pull ghcr.io/ibm/mcp-context-forge:0.8.0
         ```
 
     3. **Start the stack**

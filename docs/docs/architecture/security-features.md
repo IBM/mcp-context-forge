@@ -1,8 +1,6 @@
 # MCP Gateway Security Features
 
-**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
-
-**Current Version: 0.7.0 (Beta)** - MCP Gateway is currently in early beta. Security features are continuously evolving toward the 1.0 release.
+**Current Version: 0.8.0 (Beta)** - MCP Gateway is currently in beta. Security features are continuously evolving toward the 1.0 release.
 
 ## Comprehensive Security Capabilities
 

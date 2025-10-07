@@ -4,11 +4,9 @@ This guide provides essential security configurations and best practices for dep
 
 ## ⚠️ Critical Security Notice
 
-**MCP Gateway is currently in early beta (v0.7.0)** and requires careful security configuration for production use:
+**MCP Gateway is currently in beta (v0.8.0)** and requires careful security configuration for production use:
 
 - The **Admin UI is development-only** and must be disabled in production
-- MCP Gateway is **not a standalone product** - it's an open source component to integrate into your solution
-- **No official support** is provided - security is your responsibility
 - Expect **breaking changes** between versions until 1.0 release
 - Do not use it with insecure MCP servers.
 

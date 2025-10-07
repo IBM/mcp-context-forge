@@ -1,14 +1,10 @@
 # 🔐 Security Policy
 
-**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
+## ⚠️ Beta Software Notice
 
-**⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle.
+**Current Version: 0.8.0 (Beta)**
 
-## ⚠️ Early Beta Software Notice
-
-**Current Version: 0.7.0 (Beta)**
-
-MCP Gateway is currently in early beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
+MCP Gateway is currently in beta and should be treated as such until the 1.0 release. While we implement comprehensive security measures and follow best practices, important limitations exist:
 
 ### Admin UI is Development-Only
 
@@ -59,16 +55,8 @@ For production deployments:
 
 ### Multi-Tenancy Considerations
 
-**MCP Gateway is not yet multi-tenant ready**. If you're building a platform that serves multiple users or teams, you must implement the following in your own application layer:
+Please review https://ibm.github.io/mcp-context-forge/architecture/multitenancy/
 
-- **User isolation and data segregation** - ensure users cannot access each other's configurations
-- **Role-Based Access Control (RBAC)** - manage permissions per user/team/organization
-- **Resource cleanup and lifecycle management** - handle orphaned resources and quota enforcement
-- **Additional input validation** - enforce tenant-specific business rules and limits
-- **Audit logging** - track actions per user for compliance and security
-- **Team and organization management** - handle user groups and hierarchies
-
-MCP Gateway should be deployed as a **single-tenant component** within your larger multi-tenant architecture. Many enterprise features including native RBAC, team management, and tenant isolation are planned - see our [Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) for upcoming releases.
 
 ### General Beta Limitations
 

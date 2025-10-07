@@ -16,7 +16,7 @@
 | 1.0.0   | 11 Nov 2025 | 0  %        | Open       | General Availability & Release Candidate Hardening - stable & audited |
 | 0.9.0   | 14 Oct 2025 | 8  %        | Open       | Interoperability, marketplaces & advanced connectivity |
 | 0.8.0   | 30 Sep 2025 | 3  %        | Open       | Enterprise Security & Policy Guardrails |
-| 0.7.0   | 16 Sep 2025 | 78 %        | Open       | Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A) |
+| 0.8.0   | 16 Sep 2025 | 78 %        | Open       | Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A) |
 | 0.6.0   | 19 Aug 2025 | 100 %        | **Closed** | Security, Scale & Smart Automation |
 | 0.5.0   | 05 Aug 2025 | 100 %        | **Closed** | Enterprise Operability, Auth, Configuration & Observability |
 | 0.4.0   | 22 Jul 2025 | 100 %        | **Closed** | Bugfixes, Security, Resilience (retry with exponential backoff), code quality and technical debt |
@@ -301,9 +301,9 @@
 
 ---
 
-## Release 0.7.0 - Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A)
+## Release 0.8.0 - Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A)
 
-!!! success "Release 0.7.0 - Nearly Complete (78%)"
+!!! success "Release 0.8.0 - Nearly Complete (78%)"
     **Due:** 16 Sep 2025 | **Status:** Open
     Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A)
 
