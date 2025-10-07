@@ -11780,20 +11780,21 @@ function initializeTeamScopingMonitor() {
  * Set up create token form handling
  */
 function setupCreateTokenForm() {
-    const form = safeGetElement('create-token-form');
-    if (!form) return;
+    const form = safeGetElement("create-token-form");
+    if (!form) {
+        return;
+    }
 
     // Update team scoping warning/info display
     updateTeamScopingWarning();
 
-    form.addEventListener('submit', async (e) => {
+    form.addEventListener("submit", async (e) => {
         e.preventDefault();
-        
+
         // User can create public-only tokens in that context
         await createToken(form);
     });
 }
-
 
 /**
  * Create a new API token
@@ -11805,41 +11806,45 @@ async function createToken(form) {
     const originalText = submitButton.textContent;
 
     try {
-        submitButton.textContent = 'Creating...';
+        submitButton.textContent = "Creating...";
         submitButton.disabled = true;
 
         // Get current team ID (null means "All Teams" = public-only token)
         const currentTeamId = getCurrentTeamId();
-        
+
         // Build request payload
         const payload = {
-            name: formData.get('name'),
-            description: formData.get('description') || null,
-            expires_in_days: formData.get('expires_in_days') ? parseInt(formData.get('expires_in_days')) : null,
+            name: formData.get("name"),
+            description: formData.get("description") || null,
+            expires_in_days: formData.get("expires_in_days")
+                ? parseInt(formData.get("expires_in_days"))
+                : null,
             tags: [],
-            team_id: currentTeamId || null  // null = public-only token
+            team_id: currentTeamId || null, // null = public-only token
         };
 
         // Add scoping if provided
         const scope = {};
-        
-        if (formData.get('server_id')) {
-            scope.server_id = formData.get('server_id');
+
+        if (formData.get("server_id")) {
+            scope.server_id = formData.get("server_id");
         }
-        
-        if (formData.get('ip_restrictions')) {
-            const ipRestrictions = formData.get('ip_restrictions').trim();
-            scope.ip_restrictions = ipRestrictions ? ipRestrictions.split(',').map(ip => ip.trim()) : [];
+
+        if (formData.get("ip_restrictions")) {
+            const ipRestrictions = formData.get("ip_restrictions").trim();
+            scope.ip_restrictions = ipRestrictions
+                ? ipRestrictions.split(",").map((ip) => ip.trim())
+                : [];
         } else {
             scope.ip_restrictions = [];
         }
-        
-        if (formData.get('permissions')) {
+
+        if (formData.get("permissions")) {
             scope.permissions = formData
-                .get('permissions')
-                .split(',')
-                .map(p => p.trim())
-                .filter(p => p.length > 0);
+                .get("permissions")
+                .split(",")
+                .map((p) => p.trim())
+                .filter((p) => p.length > 0);
         } else {
             scope.permissions = [];
         }
@@ -11849,37 +11854,37 @@ async function createToken(form) {
         payload.scope = scope;
 
         const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
-            method: 'POST',
+            method: "POST",
             headers: {
-                'Authorization': `Bearer ${await getAuthToken()}`,
-                'Content-Type': 'application/json',
+                Authorization: `Bearer ${await getAuthToken()}`,
+                "Content-Type": "application/json",
             },
             body: JSON.stringify(payload),
         });
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || `Failed to create token (${response.status})`);
+            throw new Error(
+                error.detail || `Failed to create token (${response.status})`,
+            );
         }
 
         const result = await response.json();
         showTokenCreatedModal(result);
         form.reset();
         await loadTokensList();
-        
+
         // Show appropriate success message
-        const tokenType = currentTeamId ? 'team-scoped' : 'public-only';
-        showNotification(`${tokenType} token created successfully!`, 'success');
-        
+        const tokenType = currentTeamId ? "team-scoped" : "public-only";
+        showNotification(`${tokenType} token created successfully!`, "success");
     } catch (error) {
-        console.error('Error creating token:', error);
-        showNotification(`Error creating token: ${error.message}`, 'error');
+        console.error("Error creating token:", error);
+        showNotification(`Error creating token: ${error.message}`, "error");
     } finally {
         submitButton.textContent = originalText;
         submitButton.disabled = false;
     }
 }
-
 
 /**
  * Show modal with new token (one-time display)
