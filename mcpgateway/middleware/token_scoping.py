@@ -363,10 +363,10 @@ class TokenScopingMiddleware:
             return False
 
         # Third-Party
-        from sqlalchemy import and_, select # pylint: disable=import-outside-toplevel
+        from sqlalchemy import and_, select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
 
         db = next(get_db())
         try:
@@ -447,20 +447,20 @@ class TokenScopingMiddleware:
 
         # Import database models
         # Third-Party
-        from sqlalchemy import select # pylint: disable=import-outside-toplevel
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
 
         db = next(get_db())
         try:
-            # CHECK SERVERS (Virtual Servers)
+            # Check Virtual Servers
             if resource_type == "server":
                 server = db.execute(select(Server).where(Server.id == resource_id)).scalar_one_or_none()
 
                 if not server:
                     logger.warning(f"Server {resource_id} not found in database")
-                    return False
+                    return True
 
                 # Get server visibility (default to 'team' if field doesn't exist)
                 server_visibility = getattr(server, "visibility", "team")
@@ -499,12 +499,11 @@ class TokenScopingMiddleware:
 
             # CHECK TOOLS
             if resource_type == "tool":
-                print("INSIDE TOOL CEHCK")
                 tool = db.execute(select(Tool).where(Tool.id == resource_id)).scalar_one_or_none()
 
                 if not tool:
                     logger.warning(f"Tool {resource_id} not found in database")
-                    return False
+                    return True
 
                 # Get tool visibility (default to 'team' if field doesn't exist)
                 tool_visibility = getattr(tool, "visibility", "team")
@@ -549,7 +548,7 @@ class TokenScopingMiddleware:
 
                 if not resource:
                     logger.warning(f"Resource {resource_id} not found in database")
-                    return False
+                    return True
 
                 # Get resource visibility (default to 'team' if field doesn't exist)
                 resource_visibility = getattr(resource, "visibility", "team")
@@ -594,7 +593,7 @@ class TokenScopingMiddleware:
 
                 if not prompt:
                     logger.warning(f"Prompt {resource_id} not found in database")
-                    return False
+                    return True
 
                 # Get prompt visibility (default to 'team' if field doesn't exist)
                 prompt_visibility = getattr(prompt, "visibility", "team")

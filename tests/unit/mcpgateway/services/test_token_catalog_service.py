@@ -347,7 +347,7 @@ class TestTokenCatalogService:
             mock_api_token,  # Token with same name exists
         ]
 
-        with pytest.raises(ValueError, match="Token name 'Duplicate' already exists"):
+        with pytest.raises(ValueError, match="Token with name 'Duplicate' already exists for user test@example.com in team None. Please choose a different name."):
             await token_service.create_token(user_email="test@example.com", name="Duplicate")
 
     @pytest.mark.asyncio
@@ -389,7 +389,7 @@ class TestTokenCatalogService:
             None,  # User is not team owner
         ]
 
-        with pytest.raises(ValueError, match="Only team owners can create API keys"):
+        with pytest.raises(ValueError, match="User test@example.com is not an active member of team team-123. Only team members can create tokens for the team."):
             await token_service.create_token(user_email="test@example.com", name="Token", team_id="team-123")
 
     @pytest.mark.asyncio

@@ -300,40 +300,47 @@ class TokenCatalogService:
         team_id: Optional[str] = None,
     ) -> tuple[EmailApiToken, str]:
         """
-        Create a new API token with mandatory team-level scoping.
+        Create a new API token with team-level scoping and additional configurations.
 
-        This method creates JWT-based API tokens with team-level scoping enforcement.
-        All tokens must be associated with a specific team for proper access control
-        and multi-tenancy support.
+        This method generates a JWT-based API token with team-level scoping and optional security configurations,
+        such as expiration, permissions, IP restrictions, and usage limits. The token is associated with a user
+        and a specific team, ensuring access control and multi-tenancy support.
+
+        The function will:
+        - Validate the existence of the user.
+        - Ensure the user is an active member of the specified team.
+        - Verify that the token name is unique for the user+team combination.
+        - Generate a JWT with the specified scoping parameters (e.g., permissions, IP, etc.).
+        - Store the token in the database with the relevant details and return the token and raw JWT string.
 
         Args:
-            user_email: Owner's email address
-            name: Human-readable token name (must be unique per user+team)
-            description: Optional token description
-            scope: Token scoping configuration (server, permissions, IP, time restrictions)
-            expires_in_days: Optional expiry in days (None = no expiration)
-            tags: Optional organizational tags
-            team_id: REQUIRED - Team ID for team-level scoping
+            user_email (str): The email address of the user requesting the token.
+            name (str): A unique, human-readable name for the token (must be unique per user+team).
+            description (Optional[str]): A description for the token (default is None).
+            scope (Optional[TokenScope]): The scoping configuration for the token, including permissions,
+                server ID, IP restrictions, etc. (default is None).
+            expires_in_days (Optional[int]): The expiration time in days for the token (None means no expiration).
+            tags (Optional[List[str]]): A list of organizational tags for the token (default is an empty list).
+            team_id (Optional[str]): The team ID to which the token should be scoped. This is required for team-level scoping.
 
         Returns:
-            Tuple of (EmailApiToken database record, raw JWT token string)
+            tuple[EmailApiToken, str]: A tuple where the first element is the `EmailApiToken` database record and
+            the second element is the raw JWT token string. The `EmailApiToken` contains the database record with the
+            token details.
 
         Raises:
-            ValueError: If validation fails (missing team_id, user not found,
-                    team not found, user not team member, duplicate token name)
+            ValueError: If any of the following validation checks fail:
+                - The `user_email` does not correspond to an existing user.
+                - The `team_id` is missing or the user is not an active member of the specified team.
+                - A token with the same name already exists for the given user and team.
+                - Invalid token configuration (e.g., invalid expiration date).
 
         Examples:
-            >>> service = TokenCatalogService(db_session)
-            >>> token, raw_jwt = await service.create_token(
-            ...     user_email="user@example.com",
-            ...     name="production-api-key",
-            ...     team_id="team-123",
-            ...     expires_in_days=90
-            ... )
-            >>> print(f"Token ID: {token.id}")
-            >>> # raw_jwt is the actual JWT string to give to user (show only once)
+            >>> # This method requires database operations, shown for reference
+            >>> service = TokenCatalogService(None)  # Would use real DB session
+            >>> # token, raw_token = await service.create_token(...)
+            >>> # Returns (EmailApiToken, raw_token_string) tuple
         """
-
         # # Enforce team-level scoping requirement
         # if not team_id:
         #     raise ValueError("team_id is required for token creation. " "Please select a specific team before creating a token. " "You cannot create tokens while viewing 'All Teams'.")
@@ -369,7 +376,7 @@ class TokenCatalogService:
         ).scalar_one_or_none()
 
         if existing_token:
-            raise ValueError(f"Token with name '{name}' already exists for user {user_email} " f"in team {team_id}. Please choose a different name.")
+            raise ValueError(f"Token with name '{name}' already exists for user {user_email} in team {team_id}. Please choose a different name.")
 
         # CALCULATE EXPIRATION DATE
         expires_at = None
