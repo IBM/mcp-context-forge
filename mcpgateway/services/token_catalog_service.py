@@ -334,9 +334,9 @@ class TokenCatalogService:
             >>> # raw_jwt is the actual JWT string to give to user (show only once)
         """
 
-        # Enforce team-level scoping requirement
-        if not team_id:
-            raise ValueError("team_id is required for token creation. " "Please select a specific team before creating a token. " "You cannot create tokens while viewing 'All Teams'.")
+        # # Enforce team-level scoping requirement
+        # if not team_id:
+        #     raise ValueError("team_id is required for token creation. " "Please select a specific team before creating a token. " "You cannot create tokens while viewing 'All Teams'.")
 
         # Validate user exists
         user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
@@ -345,22 +345,23 @@ class TokenCatalogService:
             raise ValueError(f"User not found: {user_email}")
 
         # Validate team exists and user is active member
-        # First-Party
-        from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+        if team_id:
+            # First-Party
+            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
 
-        # Check if team exists
-        team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
+            # Check if team exists
+            team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
 
-        if not team:
-            raise ValueError(f"Team not found: {team_id}")
+            if not team:
+                raise ValueError(f"Team not found: {team_id}")
 
-        # Verify user is an active member of the team
-        membership = self.db.execute(
-            select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
-        ).scalar_one_or_none()
+            # Verify user is an active member of the team
+            membership = self.db.execute(
+                select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
+            ).scalar_one_or_none()
 
-        if not membership:
-            raise ValueError(f"User {user_email} is not an active member of team {team_id}. " f"Only team members can create tokens for the team.")
+            if not membership:
+                raise ValueError(f"User {user_email} is not an active member of team {team_id}. " f"Only team members can create tokens for the team.")
 
         # Check for duplicate active token name for this user+team
         existing_token = self.db.execute(
@@ -407,8 +408,8 @@ class TokenCatalogService:
         self.db.commit()
         self.db.refresh(api_token)
 
-        logger.info(f"Created API token '{name}' for user {user_email} in team {team_id}. " f"Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
-
+        token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
+        logger.info(f"Created {token_type} API token '{name}' for user {user_email}. " f"Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
         return api_token, raw_token
 
     async def list_user_tokens(self, user_email: str, include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[EmailApiToken]:

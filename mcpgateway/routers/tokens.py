@@ -59,10 +59,10 @@ async def create_token(
     """
     service = TokenCatalogService(db)
 
-    if not request.team_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="team_id is required. Please select a specific team before creating a token. You cannot create tokens while viewing 'All Teams'."
-        )
+    # if not request.team_id:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST, detail="team_id is required. Please select a specific team before creating a token. You cannot create tokens while viewing 'All Teams'."
+    #     )
 
     # Convert request to TokenScope if provided
     scope = None
