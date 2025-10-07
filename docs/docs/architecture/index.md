@@ -52,6 +52,7 @@ graph TD
 ## Additional Architecture Documentation
 
 - [Export/Import System Architecture](export-import-architecture.md) - Technical design of configuration management system
+- [Plugin Framework Specification](plugins.md) - Technical design of the gateway plugin system
 
 ## ADRs and Design Decisions
 
