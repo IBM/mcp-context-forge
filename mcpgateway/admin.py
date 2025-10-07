@@ -6980,6 +6980,10 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
+
         )
         return JSONResponse(
             content={"message": "Prompt registered successfully!", "success": True},

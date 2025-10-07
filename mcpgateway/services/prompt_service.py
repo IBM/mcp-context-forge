@@ -379,14 +379,12 @@ class PromptService:
                 # Check for existing public prompt with the same name
                 existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "public")).scalar_one_or_none()
                 if existing_prompt:
-                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, server_id=existing_prompt.id, visibility=existing_prompt.visibility)
-            elif visibility.lower() == "team" and team_id:
+                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+            elif visibility.lower() == "team":
                 # Check for existing team prompt with the same name
                 existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
                 if existing_prompt:
-                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, server_id=existing_prompt.id, visibility=existing_prompt.visibility)
-
-
+                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             # Add to DB
             db.add(db_prompt)
@@ -804,15 +802,15 @@ class PromptService:
                 visibility = prompt_update.visibility or prompt.visibility
                 team_id = prompt_update.team_id or prompt.team_id
                 if visibility.lower() == "public":
-                    # Check for existing public server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == prompt_update.name, DbServer.visibility == "public")).scalar_one_or_none()
-                    if existing_server:
-                        raise PromptNameConflictError(prompt_update.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
+                    # Check for existing public prompts with the same name
+                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                    if existing_prompt:
+                        raise PromptNameConflictError(prompt_update.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
                 elif visibility.lower() == "team" and team_id:
-                    # Check for existing team server with the same name
-                    existing_server = db.execute(select(DbServer).where(DbServer.name == prompt_update.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
-                    if existing_server:
-                        raise PromptNameConflictError(prompt_update.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
+                    # Check for existing team prompt with the same name
+                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                    if existing_prompt:
+                        raise PromptNameConflictError(prompt_update.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             if prompt_update.name is not None:
                 prompt.name = prompt_update.name

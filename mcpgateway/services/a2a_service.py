@@ -170,16 +170,24 @@ class A2AAgentService:
 
         Raises:
             A2AAgentNameConflictError: If an agent with the same name already exists.
+            IntegrityError: If a database integrity error occurs.
+            A2AAgentError: For other errors during registration.
         """
-        # Check for existing agent with same name
-        # existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
-        # existing_agent = db.execute(existing_query).scalar_one_or_none()
-
-        # if existing_agent:
-        #     raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
-
-        # Create new agent
         try:
+            # Check for existing server with the same slug within the same team or public scope
+            if visibility.lower() == "public":
+                # Check for existing public a2a agent with the same slug
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                if existing_agent:
+                    raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team a2a agent with the same slug
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                if existing_agent:
+                    raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+
+
+            # Create new agent
             new_agent = DbA2AAgent(
                 name=agent_data.name,
                 description=agent_data.description,
@@ -202,19 +210,7 @@ class A2AAgentService:
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
             )
-            # Check for existing server with the same slug within the same team or public scope
-                if visibility.lower() == "public":
-                    # Check for existing public a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
-                    if existing_agent:
-                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
-                elif visibility.lower() == "team" and team_id:
-                    # Check for existing team a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
-                    if existing_agent:
-                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
-
-
+           
             db.add(new_agent)
             db.commit()
             db.refresh(new_agent)
@@ -416,43 +412,60 @@ class A2AAgentService:
             A2AAgentNotFoundError: If the agent is not found.
             A2AAgentNameConflictError: If name conflicts with another agent.
         """
-        query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-        agent = db.execute(query).scalar_one_or_none()
+        try:
+            query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
+            agent = db.execute(query).scalar_one_or_none()
 
-        if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        # Check for name conflict if name is being updated
-        if agent_data.name and agent_data.name != agent.name:
-            existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name, DbA2AAgent.id != agent_id)
-            existing_agent = db.execute(existing_query).scalar_one_or_none()
+            # Check for name conflict if name is being updated
+            if agent_data.name and agent_data.name != agent.name:
+                # Check for existing server with the same slug within the same team or public scope
+                    if visibility.lower() == "public":
+                        # Check for existing public a2a agent with the same slug
+                        existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                        if existing_agent:
+                            raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+                    elif visibility.lower() == "team" and team_id:
+                        # Check for existing team a2a agent with the same slug
+                        existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                        if existing_agent:
+                            raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
-            if existing_agent:
-                raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
+            # Update fields
+            update_data = agent_data.model_dump(exclude_unset=True)
+            for field, value in update_data.items():
+                if hasattr(agent, field):
+                    setattr(agent, field, value)
 
-        # Update fields
-        update_data = agent_data.model_dump(exclude_unset=True)
-        for field, value in update_data.items():
-            if hasattr(agent, field):
-                setattr(agent, field, value)
+            # Update metadata
+            if modified_by:
+                agent.modified_by = modified_by
+            if modified_from_ip:
+                agent.modified_from_ip = modified_from_ip
+            if modified_via:
+                agent.modified_via = modified_via
+            if modified_user_agent:
+                agent.modified_user_agent = modified_user_agent
 
-        # Update metadata
-        if modified_by:
-            agent.modified_by = modified_by
-        if modified_from_ip:
-            agent.modified_from_ip = modified_from_ip
-        if modified_via:
-            agent.modified_via = modified_via
-        if modified_user_agent:
-            agent.modified_user_agent = modified_user_agent
+            agent.version += 1
 
-        agent.version += 1
+            db.commit()
+            db.refresh(agent)
 
-        db.commit()
-        db.refresh(agent)
-
-        logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
-        return self._db_to_schema(agent)
+            logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
+            return self._db_to_schema(agent)
+        except A2AAgentNameConflictError as ie:
+            db.rollback()
+            raise ie 
+        except IntegrityError as ie:
+            db.rollback()
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie               
+        except Exception as e:
+            db.rollback()
+            raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")       
 
     async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None) -> A2AAgentRead:
         """Toggle the activation status of an A2A agent.
