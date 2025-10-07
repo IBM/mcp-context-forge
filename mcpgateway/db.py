@@ -35,7 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session, sessionmaker
 from sqlalchemy.orm.attributes import get_history
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import NullPool, QueuePool
 
 # First-Party
 from mcpgateway.config import settings
@@ -90,26 +90,42 @@ elif backend == "sqlite":
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
 if backend == "sqlite":
-    # SQLite supports connection pooling with proper configuration
-    # For SQLite, we use a smaller pool size since it's file-based
-    sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
-    sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
+    # Check if we should use NullPool (for macOS I/O issues or single-worker dev mode)
+    # Standard
+    import os
+    import platform
 
-    logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+    use_null_pool = os.environ.get("SQLITE_USE_NULL_POOL", "false").lower() == "true"
 
-    engine = create_engine(
-        settings.database_url,
-        pool_pre_ping=True,  # quick liveness check per checkout
-        pool_size=sqlite_pool_size,
-        max_overflow=sqlite_max_overflow,
-        pool_timeout=settings.db_pool_timeout,
-        pool_recycle=settings.db_pool_recycle,
-        # SQLite specific optimizations
-        poolclass=QueuePool,  # Explicit pool class
-        connect_args=connect_args,
-        # Log pool events in debug mode
-        echo_pool=settings.log_level == "DEBUG",
-    )
+    if use_null_pool:
+        logger.warning("Using NullPool for SQLite - connections will not be pooled (dev/macOS mode)")
+        engine = create_engine(
+            settings.database_url,
+            poolclass=NullPool,  # No connection pooling
+            connect_args=connect_args,
+            echo_pool=settings.log_level == "DEBUG",
+        )
+    else:
+        # SQLite supports connection pooling with proper configuration
+        # For SQLite, we use a smaller pool size since it's file-based
+        sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
+        sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
+
+        logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+
+        engine = create_engine(
+            settings.database_url,
+            pool_pre_ping=True,  # quick liveness check per checkout
+            pool_size=sqlite_pool_size,
+            max_overflow=sqlite_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            # SQLite specific optimizations
+            poolclass=QueuePool,  # Explicit pool class
+            connect_args=connect_args,
+            # Log pool events in debug mode
+            echo_pool=settings.log_level == "DEBUG",
+        )
 else:
     # Other databases support full pooling configuration
     engine = create_engine(
@@ -162,12 +178,31 @@ if backend == "sqlite":
                 information about the connection's context.
         """
         cursor = dbapi_conn.cursor()
+
+        # macOS-specific: Disable memory-mapped I/O which can cause issues on APFS
+        # Reference: https://www.sqlite.org/mmap.html
+        cursor.execute("PRAGMA mmap_size=0")
+
         # Enable WAL mode for better concurrency
         cursor.execute("PRAGMA journal_mode=WAL")
+
         # Set busy timeout to 10 seconds (10000 ms) to handle lock contention
         cursor.execute("PRAGMA busy_timeout=10000")
+
         # Synchronous=NORMAL is safe with WAL mode and improves performance
         cursor.execute("PRAGMA synchronous=NORMAL")
+
+        # Set locking mode to NORMAL (not EXCLUSIVE) for multi-process access
+        cursor.execute("PRAGMA locking_mode=NORMAL")
+
+        # Enable full fsync on macOS for better reliability
+        # Reference: https://www.sqlite.org/pragma.html#pragma_fullfsync
+        # Standard
+        import platform
+
+        if platform.system() == "Darwin":
+            cursor.execute("PRAGMA fullfsync=ON")
+
         cursor.close()
 
 
