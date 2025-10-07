@@ -155,6 +155,11 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem & MCP Reg
 - Closes #1035 - Add "Team" Column to All Admin UI Tables
 - Closes #1022 - "Join Request" button shows no pending request
 
+**A2A (Agent-to-Agent) Integration:**
+- Closes #298 - A2A Initial Support - Add A2A Servers as Tools
+- Closes #841 - Global Tools not listed for A2A Agents
+- Closes #1125 - GET /a2a/ returns 500 due to datatype mismatch
+
 **Plugins & Framework:**
 - Closes #1129 - Plugin Management API and UI to Admin Dashboard
 - Closes #1076 - Summarizer Plugin
@@ -183,12 +188,10 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem & MCP Reg
 **Bug Fixes:**
 - Closes #1178 - Header overlaps with modals
 - Closes #1025 - OAuth2 gateway edit requires tool fetch
-- Closes #1125 - GET /a2a/ returns 500 error
 - Closes #1046 - Pass-through headers not functioning
 - Closes #1039 - Update Gateway fails
 - Closes #1104 - X-Upstream-Authorization Header not working
 - Closes #1105 - Too many redirects in Helm deployment
-- Closes #841 - Global Tools not listed for A2A Agents
 - Closes #1081 - STDIO transport support
 
 **Documentation & Infrastructure:**
