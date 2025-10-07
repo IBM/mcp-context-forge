@@ -19,6 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from sqlalchemy import and_, case, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -27,6 +28,7 @@ from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.create_slug import slugify
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -174,15 +176,20 @@ class A2AAgentService:
             A2AAgentError: For other errors during registration.
         """
         try:
+            agent_data.slug = slugify(agent_data.name)
             # Check for existing server with the same slug within the same team or public scope
             if visibility.lower() == "public":
+                logger.info(f"visibility.lower(): {visibility.lower()}")
+                logger.info(f"agent_data.name: {agent_data.name}")
+
+                logger.info(f"agent_data.slug: {agent_data.slug}")
                 # Check for existing public a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.name, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
@@ -190,6 +197,7 @@ class A2AAgentService:
             # Create new agent
             new_agent = DbA2AAgent(
                 name=agent_data.name,
+                slug=agent_data.slug,
                 description=agent_data.description,
                 endpoint_url=agent_data.endpoint_url,
                 agent_type=agent_data.agent_type,

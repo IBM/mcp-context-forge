@@ -3572,6 +3572,7 @@ class A2AAgentCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the agent")
+    slug: Optional[str] = Field(None, description="Optional slug for the agent (auto-generated if not provided)")
     description: Optional[str] = Field(None, description="Agent description")
     endpoint_url: str = Field(..., description="URL endpoint for the agent")
     agent_type: str = Field(default="generic", description="Type of agent (e.g., 'openai', 'anthropic', 'custom')")

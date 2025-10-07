@@ -5266,6 +5266,7 @@ async def admin_edit_tool(
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
+    LOGGER.info(f"before Verifying team for user {user_email} with team_id {team_id}")
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -6790,12 +6791,12 @@ async def admin_toggle_resource(
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
-@admin_router.get("/prompts/{name}")
-async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+@admin_router.get("/prompts/{prompt_id}")
+async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
-        name: Prompt name.
+        prompt_id: Prompt ID.
         db: Database session.
         user: Authenticated user.
 
@@ -6878,15 +6879,15 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depend
         >>>
         >>> prompt_service.get_prompt_details = original_get_prompt_details
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for prompt name {name}")
+    LOGGER.info(f"User {get_user_email(user)} requested details for prompt ID {prompt_id}")
     try:
-        prompt_details = await prompt_service.get_prompt_details(db, name)
+        prompt_details = await prompt_service.get_prompt_details(db, prompt_id)
         prompt = PromptRead.model_validate(prompt_details)
         return prompt.model_dump(by_alias=True)
     except PromptNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting prompt {name}: {e}")
+        LOGGER.error(f"Error getting prompt {prompt.name}: {e}")
         raise e
 
 
@@ -7004,9 +7005,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/prompts/{name}/edit")
+@admin_router.post("/prompts/{prompt_id}/edit")
 async def admin_edit_prompt(
-    name: str,
+    prompt_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -7076,16 +7077,19 @@ async def admin_edit_prompt(
         True
         >>> prompt_service.update_prompt = original_update_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing prompt name {name}")
+    LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
+    LOGGER.info(f"form data: {form}")
 
     visibility = str(form.get("visibility", "private"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
+    LOGGER.info(f"befor Verifying team for user {user_email} with team_id {team_id}")
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
-
+    LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
+    
     args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
     # Parse tags from comma-separated string
@@ -7105,7 +7109,7 @@ async def admin_edit_prompt(
         )
         await prompt_service.update_prompt(
             db,
-            name,
+            prompt_id,
             prompt,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -7131,17 +7135,17 @@ async def admin_edit_prompt(
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/prompts/{name}/delete")
-async def admin_delete_prompt(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+@admin_router.post("/prompts/{prompt_id}/delete")
+async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a prompt via the admin UI.
 
-    This endpoint permanently deletes a prompt from the database using its name.
+    This endpoint permanently deletes a prompt from the database using its ID.
     Deletion is irreversible and requires authentication. All actions are logged
     for administrative auditing.
 
     Args:
-        name (str): The name of the prompt to delete.
+        prompt_id (str): The ID of the prompt to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -7186,8 +7190,8 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
         True
         >>> prompt_service.delete_prompt = original_delete_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting prompt name {name}")
-    await prompt_service.delete_prompt(db, name)
+    LOGGER.info(f"User {get_user_email(user)} is deleting prompt id {prompt_id}")
+    await prompt_service.delete_prompt(db, prompt_id)
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
@@ -9015,6 +9019,9 @@ async def admin_add_a2a_agent(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=form.get("visibility", "private"),
         )
 
         return JSONResponse(

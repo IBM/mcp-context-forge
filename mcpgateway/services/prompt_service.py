@@ -744,7 +744,7 @@ class PromptService:
     async def update_prompt(
         self,
         db: Session,
-        name: str,
+        prompt_id,
         prompt_update: PromptUpdate,
         modified_by: Optional[str] = None,
         modified_from_ip: Optional[str] = None,
@@ -789,18 +789,17 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
+            prompt = db.get(DbPrompt, prompt_id)
             if not prompt:
-                inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
-                if inactive_prompt:
-                    raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
-
-                raise PromptNotFoundError(f"Prompt not found: {name}")
-            # Check for name conflict if name is being changed and visibility is public
+            # # Check for name conflict if name is being changed and visibility is public
             if prompt_update.name and prompt_update.name != prompt.name:
                 visibility = prompt_update.visibility or prompt.visibility
+                logger.info(f"Prompt prompt_update.team_id on update: {prompt_update.team_id}")
+                logger.info(f"Prompt prompt.team_id on update: {prompt.team_id}")
                 team_id = prompt_update.team_id or prompt.team_id
+                logger.info(f"Checking for name conflict on update: {prompt_update.name} with visibility {visibility} and team_id {team_id} ")
                 if visibility.lower() == "public":
                     # Check for existing public prompts with the same name
                     existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "public")).scalar_one_or_none()
@@ -809,6 +808,7 @@ class PromptService:
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team prompt with the same name
                     existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                    logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
                         raise PromptNameConflictError(prompt_update.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
@@ -933,13 +933,13 @@ class PromptService:
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
 
     # Get prompt details for admin ui
-    async def get_prompt_details(self, db: Session, name: str, include_inactive: bool = False) -> Dict[str, Any]:
+    async def get_prompt_details(self, db: Session, prompt_id: str, include_inactive: bool = False) -> Dict[str, Any]:
         """
-        Get prompt details by name.
+        Get prompt details by ID.
 
         Args:
             db: Database session
-            name: Name of prompt
+            prompt_id: ID of prompt
             include_inactive: Whether to include inactive prompts
 
         Returns:
@@ -961,32 +961,25 @@ class PromptService:
             >>> result == prompt_dict
             True
         """
-        query = select(DbPrompt).where(DbPrompt.name == name)
-        if not include_inactive:
-            query = query.where(DbPrompt.is_active)
-        prompt = db.execute(query).scalar_one_or_none()
+        logger.info(f"prompt_id:::{prompt_id}")
+        prompt = db.get(DbPrompt, prompt_id)
         if not prompt:
-            if not include_inactive:
-                inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
-                if inactive_prompt:
-                    raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
-            raise PromptNotFoundError(f"Prompt not found: {name}")
+            raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
         # Return the fully converted prompt including metrics
         prompt.team = self._get_team_name(db, prompt.team_id)
         return self._convert_db_prompt(prompt)
 
-    async def delete_prompt(self, db: Session, name: str) -> None:
+    async def delete_prompt(self, db: Session, prompt_id: str) -> None:
         """
-        Delete a prompt template.
+        Delete a prompt template by its ID.
 
         Args:
-            db: Database session
-            name: Name of prompt to delete
+            db (Session): Database session
+            prompt_id (str): ID of the prompt to delete
 
         Raises:
             PromptNotFoundError: If the prompt is not found
             PromptError: For other deletion errors
-            Exception: For unexpected errors
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -1000,25 +993,23 @@ class PromptService:
             >>> service._notify_prompt_deleted = MagicMock()
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.delete_prompt(db, 'prompt_name'))
+            ...     asyncio.run(service.delete_prompt(db, '123'))
             ... except Exception:
             ...     pass
         """
         try:
-            prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
+            prompt = db.get(DbPrompt, prompt_id)
             if not prompt:
-                raise PromptNotFoundError(f"Prompt not found: {name}")
+                raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
+
             prompt_info = {"id": prompt.id, "name": prompt.name}
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
-            logger.info(f"Permanently deleted prompt: {name}")
+            logger.info(f"Deleted prompt: {prompt_info['name']}")
         except Exception as e:
             db.rollback()
-            if isinstance(e, PromptNotFoundError):
-                raise e
             raise PromptError(f"Failed to delete prompt: {str(e)}")
-
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to prompt events.
 
