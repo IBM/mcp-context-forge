@@ -91,7 +91,7 @@ services:
         network_mode: host
 
     context-forge:
-        image: ghcr.io/ibm/mcp-context-forge:0.7.0
+        image: ghcr.io/ibm/mcp-context-forge:0.8.0
         ports:
             - 4444:4444
         volumes:

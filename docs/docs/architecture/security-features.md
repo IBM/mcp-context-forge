@@ -1,8 +1,6 @@
 # MCP Gateway Security Features
 
-**⚠️ Important**: MCP Gateway is an **OPEN SOURCE PROJECT** provided "as-is" with **NO OFFICIAL SUPPORT** from IBM or its affiliates. Community contributions and best-effort maintenance are provided by project maintainers and contributors.
-
-**Current Version: 0.7.0 (Beta)** - MCP Gateway is currently in early beta. Security features are continuously evolving toward the 1.0 release.
+**Current Version: 0.8.0 (Beta)** - MCP Gateway is currently in beta. Security features are continuously evolving toward the 1.0 release.
 
 ## Comprehensive Security Capabilities
 
@@ -248,10 +246,16 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 
 ## Security Compliance & Standards
 
-### 🏆 Currently Implemented (v0.7.0)
+### 🏆 Currently Implemented (v0.8.0)
 
-* **Authentication**: JWT tokens with configurable secrets, Basic Auth support (✅ [#663](https://github.com/IBM/mcp-context-forge/issues/663), ✅ [#705](https://github.com/IBM/mcp-context-forge/issues/705))
-* **Input Validation**: Comprehensive validation across all API endpoints using Pydantic (✅ [#339](https://github.com/IBM/mcp-context-forge/issues/339), ✅ [#340](https://github.com/IBM/mcp-context-forge/issues/340))
+* **Multi-Tenancy & RBAC** (v0.7.0): Complete enterprise multi-tenancy with team-based resource scoping, role-based access control (Platform Admin, Team Owner, Team Member), and resource visibility controls (Private/Team/Public)
+* **Advanced Authentication**:
+  - Email-based authentication with Argon2id password hashing
+  - JWT tokens with team context and asymmetric algorithm support (HS256/384/512, RS256/384/512, ES256/384/512)
+  - OAuth 2.0 with Password Grant Flow, Dynamic Client Registration (DCR), and PKCE support (v0.8.0)
+  - Multi-provider SSO (GitHub, Google, IBM Security Verify, Okta)
+  - Per-virtual-server API keys and team-level token scoping (v0.8.0)
+* **Input Validation**: Comprehensive validation across all API endpoints using Pydantic v2 (✅ [#339](https://github.com/IBM/mcp-context-forge/issues/339), ✅ [#340](https://github.com/IBM/mcp-context-forge/issues/340))
 * **XSS Prevention**: Character restrictions, URL scheme validation, JSON depth limits (✅ [#409](https://github.com/IBM/mcp-context-forge/issues/409))
 * **Security Scanning**: 30+ security tools integrated, 100% Bandit pass rate (✅ [#421](https://github.com/IBM/mcp-context-forge/issues/421), ✅ [#638](https://github.com/IBM/mcp-context-forge/issues/638), ✅ [#590](https://github.com/IBM/mcp-context-forge/issues/590))
 * **Container Hardening**:
@@ -268,40 +272,54 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 * **Secret Detection**: Gitleaks, Dodgy integration preventing credential leaks (✅ [#558](https://github.com/IBM/mcp-context-forge/issues/558))
 * **Security Headers**: HTTP header passthrough with authorization support (✅ [#685](https://github.com/IBM/mcp-context-forge/issues/685))
 * **Authentication Masking**: Auth values masked in API responses (✅ [#601](https://github.com/IBM/mcp-context-forge/issues/601), ✅ [#471](https://github.com/IBM/mcp-context-forge/issues/471), ✅ [#472](https://github.com/IBM/mcp-context-forge/issues/472))
-* **Plugin Framework**: Comprehensive plugin system with pre/post hooks and CLI tools (✅ [#319](https://github.com/IBM/mcp-context-forge/issues/319), ✅ [#682](https://github.com/IBM/mcp-context-forge/issues/682), ✅ [#720](https://github.com/IBM/mcp-context-forge/issues/720))
+* **Plugin Framework** (v0.8.0):
+  - Comprehensive plugin system with pre/post hooks and CLI tools (✅ [#319](https://github.com/IBM/mcp-context-forge/issues/319), ✅ [#682](https://github.com/IBM/mcp-context-forge/issues/682), ✅ [#720](https://github.com/IBM/mcp-context-forge/issues/720))
+  - Plugin Management API & UI (✅ [#1129](https://github.com/IBM/mcp-context-forge/issues/1129), ✅ [#1130](https://github.com/IBM/mcp-context-forge/issues/1130))
+  - 15+ security plugins: Content Moderation, Safe HTML Sanitizer, Harmful Content Detector, SQL Sanitizer, PII Filter, Circuit Breaker, and more
+* **Policy-as-Code** (v0.8.0): Enhanced OPA policy engine with customizable policy paths, multi-arch support, and input data mapping
 * **OpenTelemetry Observability**: Vendor-agnostic observability with Phoenix integration (✅ [#735](https://github.com/IBM/mcp-context-forge/issues/735), ✅ [#727](https://github.com/IBM/mcp-context-forge/issues/727))
-* **OAuth Integration**: OAuth 2.0 authentication support for enhanced access control (✅ [#605](https://github.com/IBM/mcp-context-forge/issues/605))
 * **Well-Known URI Security**: Configurable handlers for security.txt and robots.txt (✅ [#540](https://github.com/IBM/mcp-context-forge/issues/540))
 * **Enhanced Testing**: Mutation testing, fuzz testing, and comprehensive security validation (✅ [#280](https://github.com/IBM/mcp-context-forge/issues/280), ✅ [#256](https://github.com/IBM/mcp-context-forge/issues/256))
 
-### 🚀 Upcoming Security Enhancements
+### 🚀 Security Release History & Roadmap
 
-**Release 0.7.0 - Completed August 2025**
+**Release 0.7.0 - Completed September 2025**
+- ✅ Enterprise multi-tenancy architecture
+- ✅ Full RBAC implementation (Platform Admin, Team Owner, Team Member)
+- ✅ Email-based authentication with Argon2id password hashing
+- ✅ Team management system with resource scoping
+- ✅ Multi-provider SSO (GitHub, Google, IBM Security Verify, Okta)
+- ✅ Resource visibility controls (Private/Team/Public)
+- ✅ Password policy engine
+- ✅ JWT asymmetric algorithm support (RSA, ECDSA)
 - ✅ Plugin framework with security hooks
 - ✅ OpenTelemetry observability integration
-- ✅ OAuth 2.0 authentication support
 - ✅ Well-known URI security handlers
 - ✅ Enhanced testing (mutation, fuzz testing)
 
-**Release 0.7.0 - September 2025**
-- Full RBAC implementation
-- Multi-tenancy support
-- Correlation ID tracking
+**Release 0.8.0 - Completed October 2025**
+- ✅ Advanced OAuth 2.0 (Password Grant Flow, DCR, PKCE)
+- ✅ Plugin Management API & UI
+- ✅ 15+ Security Plugins (Content Moderation, SQL Sanitizer, Safe HTML Sanitizer, Circuit Breaker, etc.)
+- ✅ Enhanced OPA Policy Engine (customizable paths, multi-arch support)
+- ✅ Team-level API token scoping
+- ✅ MCP Server Registry & Catalog
+- ✅ Secure cookie warnings for development environments
+- ✅ Pydantic v2 configuration validation
 
-**Release 0.8.0 - September 2025**
-- Policy-as-Code engine
-- Advanced guardrails
-- DDoS protection
+**Release 0.9.0 - Planned Q1 2026**
+- Advanced rate limiting and DDoS protection
+- Marketplace security validation
+- Enhanced plugin guardrails
+- Correlation ID tracking across distributed systems
+- Advanced audit logging
 
-**Release 0.9.0 - September 2025**
-- Marketplace security
-- Protocol negotiation
-- Advanced connectivity
-
-**Release 1.0.0 - October 2025**
+**Release 1.0.0 - Planned Q2 2026**
 - Security audit completion
-- Production hardening
-- GA security certification
+- Production hardening certification
+- GA security compliance certification
+- Enhanced vulnerability scanning
+- Security documentation for compliance frameworks
 
 ## Production Deployment Security
 

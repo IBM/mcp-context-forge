@@ -1,4 +1,4 @@
-# 🧪 MCP Gateway v0.7.0 - YAML-Based Manual Testing Suite
+# 🧪 MCP Gateway v0.8.0 - YAML-Based Manual Testing Suite
 
 **Maintainable, scalable manual testing with YAML test definitions**
 

@@ -25,8 +25,8 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
+    #image: ghcr.io/ibm/mcp-context-forge:0.8.0 # Use the release MCP Context Forge image
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
-    #image: ghcr.io/ibm/mcp-context-forge:0.6.0 # Use the release MCP Context Forge image
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds
@@ -167,7 +167,7 @@ services:
   #   networks: [mcpnet]
 
   # migration:
-  #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Use the release MCP Context Forge image
+  #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
   #   build:
   #     context: .
