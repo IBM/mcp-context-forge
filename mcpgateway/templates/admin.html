@@ -1112,14 +1112,14 @@
       <!-- LLM Chat Panel -->
 <div id="llm-chat-panel" class="tab-panel hidden">
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-    <div class="flex flex-col h-[calc(100vh-16rem)]">
+    <div class="flex flex-col h-calc100vh-16rem">
       <!-- Main Container -->
       <div class="flex gap-4 h-full min-h-0">
         
         <!-- Left Sidebar - Server Selection (30%) -->
         <div class="w-30 flex flex-col space-y-4 min-h-0">
           <!-- Server Selection Card -->
-          <div class="bg-white dark:bg-gray-800 shadow rounded-lg p-4 flex-shrink-0">
+          <div class="bg-white dark:bg-gray-800 shadow rounded-lg p-4 card-grow">
             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Virtual Servers</h3>
             
             <!-- Refresh Button -->
@@ -1137,7 +1137,7 @@
           </div>
 
           <!-- Info Card -->
-          <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4 flex-shrink-0">
+          <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-lg p-4 card-grow">
             <div class="flex">
               <div class="flex-shrink-0">
                 <svg class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
@@ -1160,7 +1160,7 @@
         </div>
 
         <!-- Right Chat Area (70%) -->
-        <div class="w-70 flex flex-col bg-white dark:bg-gray-800 shadow rounded-lg min-h-0">
+        <div class="w-70 flex flex-col bg-white dark:bg-gray-800 shadow rounded-lg card-grow">
           
           <!-- LLM Configuration Header (Collapsible) -->
           <div id="llm-config-container" class="border-b border-gray-200 dark:border-gray-700">
