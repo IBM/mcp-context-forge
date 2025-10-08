@@ -1069,13 +1069,13 @@ class ResourceService:
                 raise e
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
-    async def delete_resource(self, db: Session, uri: str) -> None:
+    async def delete_resource(self, db: Session, resource_id: str) -> None:
         """
         Delete a resource.
 
         Args:
             db: Database session
-            uri: Resource URI
+            resource_id: Resource ID
 
         Raises:
             ResourceNotFoundError: If the resource is not found
@@ -1092,16 +1092,16 @@ class ResourceService:
             >>> db.commit = MagicMock()
             >>> service._notify_resource_deleted = AsyncMock()
             >>> import asyncio
-            >>> asyncio.run(service.delete_resource(db, 'uri'))
+            >>> asyncio.run(service.delete_resource(db, 'resource_id'))
         """
         try:
             # Find resource by its URI.
-            resource = db.execute(select(DbResource).where(DbResource.uri == uri)).scalar_one_or_none()
+            resource = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
 
             if not resource:
                 # If resource doesn't exist, rollback and re-raise a ResourceNotFoundError.
                 db.rollback()
-                raise ResourceNotFoundError(f"Resource not found: {uri}")
+                raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
             # Store resource info for notification before deletion.
             resource_info = {
@@ -1120,11 +1120,11 @@ class ResourceService:
             # Notify subscribers.
             await self._notify_resource_deleted(resource_info)
 
-            logger.info(f"Permanently deleted resource: {uri}")
+            logger.info(f"Permanently deleted resource: {resource.uri}")
 
         except ResourceNotFoundError:
             # ResourceNotFoundError is re-raised to be handled in the endpoint.
-            raise
+            raise   
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to delete resource: {str(e)}")

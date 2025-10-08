@@ -6618,8 +6618,8 @@ async def admin_edit_resource(
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/resources/{uri:path}/delete")
-async def admin_delete_resource(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+@admin_router.post("/resources/{resource_id}/delete")
+async def admin_delete_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a resource via the admin UI.
 
@@ -6673,8 +6673,8 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
         True
         >>> resource_service.delete_resource = original_delete_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting resource URI {uri}")
-    await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, uri)
+    LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
+    await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id)
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
