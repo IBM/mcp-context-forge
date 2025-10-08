@@ -489,7 +489,7 @@ auth_types:
 
 ---
 
-## Recent Improvements (v0.7.0)
+## Recent Improvements (v0.8.0)
 
 ### Enhanced UI Features
 

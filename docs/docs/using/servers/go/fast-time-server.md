@@ -33,16 +33,16 @@ The **fast-time-server** is an ultra-fast Go-based MCP server that provides comp
 
 ```bash
 # Pull the official Docker image
-docker pull ghcr.io/ibm/fast-time-server:0.7.0
+docker pull ghcr.io/ibm/fast-time-server:0.8.0
 
 # Run with stdio transport (for MCP clients)
-docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio
+docker run --rm -i ghcr.io/ibm/fast-time-server:0.8.0 -transport=stdio
 
 # Run with HTTP transport
-docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.7.0 -transport=http
+docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.8.0 -transport=http
 
 # Run with dual mode (MCP + REST API)
-docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.7.0 -transport=dual
+docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.8.0 -transport=dual
 ```
 
 ### Using MCP Gateway's Translate Module
@@ -52,7 +52,7 @@ The MCP Gateway's `translate` module can expose the stdio server via HTTP/SSE:
 ```bash
 # Expose fast-time-server via SSE on port 8003
 python3 -m mcpgateway.translate \
-  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio" \
+  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.8.0 -transport=stdio" \
   --expose-sse \
   --port 8003
 
@@ -1161,7 +1161,7 @@ The fast-time-server integrates seamlessly with MCP Gateway in multiple ways:
 docker run --rm -d \
   --name fast-time-server \
   -p 8080:8080 \
-  ghcr.io/ibm/fast-time-server:0.7.0 \
+  ghcr.io/ibm/fast-time-server:0.8.0 \
   -transport=dual
 
 # Register with MCP Gateway
@@ -1179,7 +1179,7 @@ curl -X POST http://localhost:4444/gateways \
 ```bash
 # Start the translate wrapper
 python3 -m mcpgateway.translate \
-  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio" \
+  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.8.0 -transport=stdio" \
   --expose-sse \
   --port 8003
 
@@ -1199,7 +1199,7 @@ curl -X POST http://localhost:4444/gateways \
 version: '3.8'
 services:
   fast-time-server:
-    image: ghcr.io/ibm/fast-time-server:0.7.0
+    image: ghcr.io/ibm/fast-time-server:0.8.0
     command: ["-transport=dual", "-port=8080"]
     ports:
       - "8080:8080"
@@ -1273,21 +1273,21 @@ make run-rest
 docker pull ghcr.io/ibm/fast-time-server:latest
 
 # Run in stdio mode (for MCP clients)
-docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 \
+docker run --rm -i ghcr.io/ibm/fast-time-server:0.8.0 \
   -transport=stdio
 
 # Run in HTTP mode with custom port
-docker run --rm -p 9090:8080 ghcr.io/ibm/fast-time-server:0.7.0 \
+docker run --rm -p 9090:8080 ghcr.io/ibm/fast-time-server:0.8.0 \
   -transport=http -port=8080
 
 # Run in SSE mode with authentication
 docker run --rm -p 8080:8080 \
   -e AUTH_TOKEN=mysecret \
-  ghcr.io/ibm/fast-time-server:0.7.0 \
+  ghcr.io/ibm/fast-time-server:0.8.0 \
   -transport=sse
 
 # Run in dual mode with debug logging
-docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.7.0 \
+docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.8.0 \
   -transport=dual -log-level=debug
 ```
 
@@ -1297,7 +1297,7 @@ docker run --rm -p 8080:8080 ghcr.io/ibm/fast-time-server:0.7.0 \
 version: '3.8'
 services:
   fast-time:
-    image: ghcr.io/ibm/fast-time-server:0.7.0
+    image: ghcr.io/ibm/fast-time-server:0.8.0
     command:
       - "-transport=dual"
       - "-port=8080"
@@ -1359,7 +1359,7 @@ The fast-time-server is engineered for exceptional performance:
 ```bash
 # Start the server
 docker run --rm -d -p 8080:8080 --name perf-test \
-  ghcr.io/ibm/fast-time-server:0.7.0 -transport=rest
+  ghcr.io/ibm/fast-time-server:0.8.0 -transport=rest
 
 # Run performance test (install hey first: go install github.com/rakyll/hey@latest)
 hey -n 10000 -c 100 http://localhost:8080/api/v1/time
@@ -1451,7 +1451,7 @@ chmod +x fast-time-server
 curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8080/api/v1/time
 
 # Environment variable in Docker
-docker run -e AUTH_TOKEN=mysecret ghcr.io/ibm/fast-time-server:0.7.0
+docker run -e AUTH_TOKEN=mysecret ghcr.io/ibm/fast-time-server:0.8.0
 
 # Note: /health and /version endpoints bypass authentication
 curl http://localhost:8080/health  # Works without auth
@@ -1475,7 +1475,7 @@ curl http://localhost:8080/api/v1/timezones
 ```bash
 # Container exits immediately
 # Add -i flag for stdio mode:
-docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio
+docker run --rm -i ghcr.io/ibm/fast-time-server:0.8.0 -transport=stdio
 
 # Can't connect to server
 # Ensure port mapping is correct:
@@ -1503,7 +1503,7 @@ docker images | grep fast-time-server
 #### Performance issues
 ```bash
 # Reduce logging overhead
-docker run ... ghcr.io/ibm/fast-time-server:0.7.0 -log-level=error
+docker run ... ghcr.io/ibm/fast-time-server:0.8.0 -log-level=error
 # Or completely disable:
 ... -log-level=none
 
@@ -1538,7 +1538,7 @@ docker stats fast-time-server
 ```bash
 # 1. Get current time in New York (using Docker)
 docker run --rm -p 8080:8080 -d --name time-demo \
-  ghcr.io/ibm/fast-time-server:0.7.0 -transport=rest
+  ghcr.io/ibm/fast-time-server:0.8.0 -transport=rest
 
 curl "http://localhost:8080/api/v1/time?timezone=America/New_York"
 
@@ -1591,7 +1591,7 @@ done
 # Start the server if not running
 if ! docker ps | grep -q fast-time-server; then
   docker run --rm -d -p 8080:8080 --name fast-time-server \
-    ghcr.io/ibm/fast-time-server:0.7.0 -transport=dual
+    ghcr.io/ibm/fast-time-server:0.8.0 -transport=dual
   sleep 2
 fi
 
@@ -1614,7 +1614,7 @@ curl -s -X POST http://localhost:8080/api/v1/prompts/schedule_meeting/execute \
 # 1. Start fast-time-server with translate
 echo "Starting fast-time-server with translate module..."
 python3 -m mcpgateway.translate \
-  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.7.0 -transport=stdio" \
+  --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:0.8.0 -transport=stdio" \
   --expose-sse \
   --port 8003 &
 TRANSLATE_PID=$!
@@ -1676,7 +1676,7 @@ print(f"Converted time: {result['converted_time']}")
 
 ## Version History
 
-- **v0.7.0** - Current Docker image version with full MCP protocol support
+- **v0.8.0** - Current Docker image version with full MCP protocol support
 
 ## Security Considerations
 

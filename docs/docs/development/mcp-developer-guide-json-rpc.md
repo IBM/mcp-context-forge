@@ -123,7 +123,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
     },
     "serverInfo": {
       "name": "MCP_Gateway",
-      "version": "0.7.0"
+      "version": "0.8.0"
     },
     "instructions": "MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."
   }
