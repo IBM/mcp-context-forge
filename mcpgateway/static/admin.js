@@ -4746,6 +4746,9 @@ function showTab(tabName) {
                         loadAggregatedMetrics();
                     }
                 }
+                if (tabName === 'llm-chat') {
+                    initializeLLMChat();
+                    }
 
                 if (tabName === "teams") {
                     // Load Teams list if not already loaded
@@ -13978,3 +13981,683 @@ if (typeof window.getCookie === "undefined") {
         return "";
     };
 }
+
+
+// ==================== LLM CHAT FUNCTIONALITY ====================
+
+// State management for LLM chat
+const llmChatState = {
+  selectedServerId: null,
+  selectedServerName: null,
+  isConnected: false,
+  userId: null, // Will be set from JWT or session
+  messageHistory: []
+};
+
+/**
+ * Initialize LLM Chat when tab is shown
+ */
+function initializeLLMChat() {
+  console.log('Initializing LLM Chat...');
+  
+  // Generate or retrieve user ID
+  llmChatState.userId = generateUserId();
+  
+  // Load servers if not already loaded
+  const serversList = document.getElementById('llm-chat-servers-list');
+  if (serversList && serversList.children.length <= 1) {
+    loadVirtualServersForChat();
+  }
+}
+
+/**
+ * Generate a unique user ID for the session
+ */
+function generateUserId() {
+  // Check if user ID exists in session storage
+  let userId = sessionStorage.getItem('llm_chat_user_id');
+  if (!userId) {
+    // Generate a unique ID
+    userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    sessionStorage.setItem('llm_chat_user_id', userId);
+  }
+  return userId;
+}
+
+/**
+ * Load virtual servers for chat
+ */
+async function loadVirtualServersForChat() {
+  const serversList = document.getElementById('llm-chat-servers-list');
+  if (!serversList) return;
+
+  // Show loading state
+  serversList.innerHTML = `
+    <div class="flex items-center justify-center py-8">
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+    </div>
+  `;
+
+  try {
+    const response = await fetchWithTimeout(`${window.ROOT_PATH}/admin/servers`, {
+      method: 'GET',
+      credentials: 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    // const servers = await response.json();
+    let servers = [];
+
+    try {
+    const data = await response.json();
+    servers = Array.isArray(data) ? data : [];
+    } catch (e) {
+    servers = [];
+    }
+
+    console.log('Fetched servers for chat:', servers);
+    // const servers = data.servers || [];
+
+    if (servers.length === 0) {
+      serversList.innerHTML = `
+        <div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">
+          No virtual servers available
+        </div>
+      `;
+      return;
+    }
+
+    // Render server list
+    serversList.innerHTML = servers.map(server => {
+      const toolCount = (server.associatedTools || []).length;
+      const isActive = server.isActive;
+      
+      return `
+        <div class="server-item p-3 border rounded-lg cursor-pointer transition-colors ${
+          llmChatState.selectedServerId === server.id 
+            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900' 
+            : 'border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600'
+        } ${!isActive ? 'opacity-50' : ''}" 
+             onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive})">
+          <div class="flex justify-between items-start">
+            <div class="flex-1 min-w-0">
+              <h4 class="text-sm font-medium text-gray-900 dark:text-white truncate">
+                ${escapeHtml(server.name)}
+              </h4>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                ${toolCount} tool${toolCount !== 1 ? 's' : ''}
+              </p>
+            </div>
+            ${!isActive ? `
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
+                Inactive
+              </span>
+            ` : ''}
+          </div>
+          ${server.description ? `
+            <p class="text-xs text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">
+              ${escapeHtml(server.description)}
+            </p>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+
+  } catch (error) {
+    console.error('Error loading servers for chat:', error);
+    serversList.innerHTML = `
+      <div class="text-center text-red-600 dark:text-red-400 text-sm py-4">
+        Failed to load servers: ${escapeHtml(error.message)}
+      </div>
+    `;
+  }
+}
+
+/**
+ * Select a server for chat
+ */
+function selectServerForChat(serverId, serverName, isActive) {
+  if (!isActive) {
+    showErrorMessage('This server is inactive. Please select an active server.');
+    return;
+  }
+
+  // Update state
+  llmChatState.selectedServerId = serverId;
+  llmChatState.selectedServerName = serverName;
+
+  // Update UI to show selected server
+  const serverItems = document.querySelectorAll('.server-item');
+  serverItems.forEach(item => {
+    if (item.onclick.toString().includes(serverId)) {
+      item.classList.add('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
+      item.classList.remove('border-gray-200', 'dark:border-gray-600');
+    } else {
+      item.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
+      item.classList.add('border-gray-200', 'dark:border-gray-600');
+    }
+  });
+
+  // Show and expand LLM configuration
+  const configForm = document.getElementById('llm-config-form');
+  if (configForm && configForm.classList.contains('hidden')) {
+    toggleLLMConfig();
+  }
+
+  // Enable connect button if provider is selected
+  updateConnectButtonState();
+
+  console.log(`Selected server: ${serverName} (${serverId})`);
+}
+
+/**
+ * Toggle LLM configuration visibility
+ */
+function toggleLLMConfig() {
+  const configForm = document.getElementById('llm-config-form');
+  const chevron = document.getElementById('llm-config-chevron');
+  
+  if (configForm && chevron) {
+    configForm.classList.toggle('hidden');
+    chevron.classList.toggle('rotate-180');
+  }
+}
+
+/**
+ * Handle LLM provider selection change
+ */
+function handleLLMProviderChange() {
+  const provider = document.getElementById('llm-provider').value;
+  const azureFields = document.getElementById('azure-openai-fields');
+  const ollamaFields = document.getElementById('ollama-fields');
+
+  // Hide all fields first
+  azureFields.classList.add('hidden');
+  ollamaFields.classList.add('hidden');
+
+  // Show relevant fields
+  if (provider === 'azure_openai') {
+    azureFields.classList.remove('hidden');
+  } else if (provider === 'ollama') {
+    ollamaFields.classList.remove('hidden');
+  }
+
+  // Update connect button state
+  updateConnectButtonState();
+}
+
+/**
+ * Update connect button state
+ */
+function updateConnectButtonState() {
+  const connectBtn = document.getElementById('llm-connect-btn');
+  const provider = document.getElementById('llm-provider').value;
+  const hasServer = llmChatState.selectedServerId !== null;
+
+  if (connectBtn) {
+    connectBtn.disabled = !hasServer || !provider;
+  }
+}
+
+/**
+ * Connect to LLM chat
+ */
+async function connectLLMChat() {
+  if (!llmChatState.selectedServerId) {
+    showErrorMessage('Please select a virtual server first');
+    return;
+  }
+
+  const provider = document.getElementById('llm-provider').value;
+  if (!provider) {
+    showErrorMessage('Please select an LLM provider');
+    return;
+  }
+
+  // Show loading state
+  const connectBtn = document.getElementById('llm-connect-btn');
+  const originalText = connectBtn.textContent;
+  connectBtn.textContent = 'Connecting...';
+  connectBtn.disabled = true;
+
+  try {
+    // Prepare LLM config
+    const llmConfig = buildLLMConfig(provider);
+
+    // Get JWT token from cookie
+    // const jwtToken = getCookie('jwt_token');
+    // if (!jwtToken) {
+    //   throw new Error('Authentication token not found');
+    // }
+
+    const jwtToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbkBleGFtcGxlLmNvbSIsImlzcyI6Im1jcGdhdGV3YXkiLCJhdWQiOiJtY3BnYXRld2F5LWFwaSIsImlhdCI6MTc1OTg1NTkzMywianRpIjoiYTNkYWFjYjMtZmY5ZS00ZjllLTkyNzAtYmRlOTQxZmJiM2FjIiwidXNlciI6eyJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIiwiZnVsbF9uYW1lIjoiQVBJIFRva2VuIFVzZXIiLCJpc19hZG1pbiI6dHJ1ZSwiYXV0aF9wcm92aWRlciI6ImFwaV90b2tlbiJ9LCJ0ZWFtcyI6W10sIm5hbWVzcGFjZXMiOlsidXNlcjphZG1pbkBleGFtcGxlLmNvbSIsInB1YmxpYyJdLCJleHAiOjE3NjA0NjA3MzMsInNjb3BlcyI6eyJzZXJ2ZXJfaWQiOm51bGwsInBlcm1pc3Npb25zIjpbIioiXSwiaXBfcmVzdHJpY3Rpb25zIjpbXSwidGltZV9yZXN0cmljdGlvbnMiOnt9fX0.XMuTEqpaTSqOWhwmE8j3ZqM1bbwtUbll0v_7GK2qF0A"
+
+    // Prepare server config
+    
+
+    const serverUrl = `${location.protocol}//${location.hostname}${location.port && !["80","443"].includes(location.port) ? `:${location.port}` : ""}/servers/${llmChatState.selectedServerId}/mcp`;
+
+    console.log('Selected server URL:', serverUrl);
+    
+    const payload = {
+      user_id: llmChatState.userId,
+      server: {
+        url: serverUrl,
+        transport: "streamable_http",
+        auth_token: jwtToken
+      },
+      llm: llmConfig,
+      streaming: true
+    };
+
+    console.log('Connecting with payload:', { ...payload, server: { ...payload.server, auth_token: '[REDACTED]' } });
+
+    // Make connection request
+    const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/connect`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${jwtToken}`
+      },
+      body: JSON.stringify(payload),
+      credentials: 'same-origin'
+    }, 30000); // 30 second timeout
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Connection failed: ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log('Connection successful:', result);
+
+    // Update state
+    llmChatState.isConnected = true;
+
+    // Update UI
+    showConnectionSuccess();
+    
+    // Clear welcome message and show chat input
+    const welcomeMsg = document.getElementById('chat-welcome-message');
+    if (welcomeMsg) welcomeMsg.remove();
+    
+    const chatInput = document.getElementById('chat-input-container');
+    if (chatInput) {
+      chatInput.classList.remove('hidden');
+      document.getElementById('chat-input').disabled = false;
+      document.getElementById('chat-send-btn').disabled = false;
+      document.getElementById('chat-input').focus();
+    }
+
+  } catch (error) {
+    console.error('Connection error:', error);
+    showConnectionError(error.message);
+  } finally {
+    connectBtn.textContent = originalText;
+    connectBtn.disabled = false;
+  }
+}
+
+/**
+ * Build LLM config object from form inputs
+ */
+function buildLLMConfig(provider) {
+  const config = {
+    provider: provider,
+    config: {}
+  };
+
+  if (provider === 'azure_openai') {
+    const apiKey = document.getElementById('azure-api-key').value.trim();
+    const endpoint = document.getElementById('azure-endpoint').value.trim();
+    const deployment = document.getElementById('azure-deployment').value.trim();
+    const apiVersion = document.getElementById('azure-api-version').value.trim();
+    const temperature = document.getElementById('azure-temperature').value.trim();
+
+    // Only include non-empty values
+    if (apiKey) config.config.api_key = apiKey;
+    if (endpoint) config.config.azure_endpoint = endpoint;
+    if (deployment) config.config.azure_deployment = deployment;
+    if (apiVersion) config.config.api_version = apiVersion;
+    if (temperature) config.config.temperature = parseFloat(temperature);
+    
+  } else if (provider === 'ollama') {
+    const model = document.getElementById('ollama-model').value.trim();
+    const baseUrl = document.getElementById('ollama-base-url').value.trim();
+    const temperature = document.getElementById('ollama-temperature').value.trim();
+
+    // Only include non-empty values
+    if (model) config.config.model = model;
+    if (baseUrl) config.config.base_url = baseUrl;
+    if (temperature) config.config.temperature = parseFloat(temperature);
+  }
+
+  return config;
+}
+
+/**
+ * Show connection success
+ */
+function showConnectionSuccess() {
+  // Update connection status badge
+  const statusBadge = document.getElementById('llm-connection-status');
+  if (statusBadge) {
+    statusBadge.classList.remove('hidden');
+  }
+
+  // Hide connect button, show disconnect button
+  const connectBtn = document.getElementById('llm-connect-btn');
+  const disconnectBtn = document.getElementById('llm-disconnect-btn');
+  if (connectBtn) connectBtn.classList.add('hidden');
+  if (disconnectBtn) disconnectBtn.classList.remove('hidden');
+
+  // Auto-collapse configuration
+  const configForm = document.getElementById('llm-config-form');
+  const chevron = document.getElementById('llm-config-chevron');
+  if (configForm && !configForm.classList.contains('hidden')) {
+    configForm.classList.add('hidden');
+    chevron.classList.remove('rotate-180');
+  }
+
+  // Show success message
+  showNotification(`Connected to ${llmChatState.selectedServerName}`, 'success');
+}
+
+/**
+ * Show connection error
+ */
+function showConnectionError(message) {
+  const statusDiv = document.getElementById('llm-config-status');
+  if (statusDiv) {
+    statusDiv.className = 'text-sm text-red-600 dark:text-red-400 p-2 bg-red-50 dark:bg-red-900 rounded';
+    statusDiv.textContent = `Connection failed: ${message}`;
+    statusDiv.classList.remove('hidden');
+    
+    // Hide after 5 seconds
+    setTimeout(() => {
+      statusDiv.classList.add('hidden');
+    }, 5000);
+  }
+}
+
+/**
+ * Disconnect from LLM chat
+ */
+async function disconnectLLMChat() {
+  if (!llmChatState.isConnected) return;
+
+  const disconnectBtn = document.getElementById('llm-disconnect-btn');
+  const originalText = disconnectBtn.textContent;
+  disconnectBtn.textContent = 'Disconnecting...';
+  disconnectBtn.disabled = true;
+
+  try {
+    const jwtToken = getCookie('jwt_token');
+    
+    const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/disconnect`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${jwtToken}`
+      },
+      body: JSON.stringify({
+        user_id: llmChatState.userId
+      }),
+      credentials: 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error('Disconnection failed');
+    }
+
+    // Update state
+    llmChatState.isConnected = false;
+    llmChatState.messageHistory = [];
+
+    // Update UI
+    const statusBadge = document.getElementById('llm-connection-status');
+    if (statusBadge) statusBadge.classList.add('hidden');
+
+    const connectBtn = document.getElementById('llm-connect-btn');
+    if (connectBtn) connectBtn.classList.remove('hidden');
+    if (disconnectBtn) disconnectBtn.classList.add('hidden');
+
+    // Hide chat input
+    const chatInput = document.getElementById('chat-input-container');
+    if (chatInput) {
+      chatInput.classList.add('hidden');
+      document.getElementById('chat-input').disabled = true;
+      document.getElementById('chat-send-btn').disabled = true;
+    }
+
+    // Clear messages
+    clearChatMessages();
+
+    showNotification('Disconnected successfully', 'info');
+
+  } catch (error) {
+    console.error('Disconnection error:', error);
+    showErrorMessage('Failed to disconnect: ' + error.message);
+  } finally {
+    disconnectBtn.textContent = originalText;
+    disconnectBtn.disabled = false;
+  }
+}
+
+/**
+ * Send chat message
+ */
+async function sendChatMessage(event) {
+  event.preventDefault();
+
+  const input = document.getElementById('chat-input');
+  const message = input.value.trim();
+
+  if (!message) return;
+  if (!llmChatState.isConnected) {
+    showErrorMessage('Please connect to a server first');
+    return;
+  }
+
+  // Add user message to chat
+  appendChatMessage('user', message);
+  
+  // Clear input
+  input.value = '';
+  input.style.height = 'auto';
+
+  // Disable input while processing
+  input.disabled = true;
+  document.getElementById('chat-send-btn').disabled = true;
+
+  try {
+    const jwtToken = getCookie('jwt_token');
+    
+    // Create assistant message placeholder for streaming
+    const assistantMsgId = appendChatMessage('assistant', '', true);
+
+    const response = await fetch(`${window.ROOT_PATH}/llmchat/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${jwtToken}`
+      },
+      body: JSON.stringify({
+        user_id: llmChatState.userId,
+        message: message,
+        streaming: true
+      }),
+      credentials: 'same-origin'
+    });
+
+    if (!response.ok) {
+      throw new Error(`Chat request failed: ${response.status}`);
+    }
+
+    // Handle streaming response
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulatedText = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      accumulatedText += chunk;
+      
+      // Update the assistant message
+      updateChatMessage(assistantMsgId, accumulatedText);
+      
+      // Auto-scroll to bottom
+      scrollChatToBottom();
+    }
+
+    // Mark streaming as complete
+    markMessageComplete(assistantMsgId);
+
+  } catch (error) {
+    console.error('Chat error:', error);
+    appendChatMessage('system', `Error: ${error.message}`);
+  } finally {
+    // Re-enable input
+    input.disabled = false;
+    document.getElementById('chat-send-btn').disabled = false;
+    input.focus();
+  }
+}
+
+/**
+ * Append chat message to UI
+ */
+function appendChatMessage(role, content, isStreaming = false) {
+  const container = document.getElementById('chat-messages-container');
+  const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  
+  const messageDiv = document.createElement('div');
+  messageDiv.id = messageId;
+  messageDiv.className = `chat-message ${role}-message`;
+  
+  if (role === 'user') {
+    messageDiv.innerHTML = `
+      <div class="flex justify-end">
+        <div class="max-w-[80%] rounded-lg px-4 py-2 bg-indigo-600 text-white">
+          <p class="text-sm whitespace-pre-wrap">${escapeHtml(content)}</p>
+        </div>
+      </div>
+    `;
+  } else if (role === 'assistant') {
+    messageDiv.innerHTML = `
+      <div class="flex justify-start">
+        <div class="max-w-[80%] rounded-lg px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100">
+          <p class="text-sm whitespace-pre-wrap message-content">${escapeHtml(content)}</p>
+          ${isStreaming ? '<span class="streaming-indicator inline-block ml-2">▋</span>' : ''}
+        </div>
+      </div>
+    `;
+  } else if (role === 'system') {
+    messageDiv.innerHTML = `
+      <div class="flex justify-center">
+        <div class="rounded-lg px-4 py-2 bg-yellow-50 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-xs">
+          ${escapeHtml(content)}
+        </div>
+      </div>
+    `;
+  }
+  
+  container.appendChild(messageDiv);
+  scrollChatToBottom();
+  
+  return messageId;
+}
+
+/**
+ * Update chat message content (for streaming)
+ */
+function updateChatMessage(messageId, content) {
+  const messageDiv = document.getElementById(messageId);
+  if (messageDiv) {
+    const contentEl = messageDiv.querySelector('.message-content');
+    if (contentEl) {
+      contentEl.textContent = content;
+    }
+  }
+}
+
+/**
+ * Mark message as complete (remove streaming indicator)
+ */
+function markMessageComplete(messageId) {
+  const messageDiv = document.getElementById(messageId);
+  if (messageDiv) {
+    const indicator = messageDiv.querySelector('.streaming-indicator');
+    if (indicator) {
+      indicator.remove();
+    }
+  }
+}
+
+/**
+ * Clear all chat messages
+ */
+function clearChatMessages() {
+  const container = document.getElementById('chat-messages-container');
+  if (container) {
+    container.innerHTML = `
+      <div id="chat-welcome-message" class="flex items-center justify-center h-full">
+        <div class="text-center text-gray-500 dark:text-gray-400">
+          <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+          </svg>
+          <p class="mt-4 text-lg font-medium">Select a server and connect to start chatting</p>
+          <p class="mt-2 text-sm">Choose a virtual server from the left and configure your LLM settings</p>
+        </div>
+      </div>
+    `;
+  }
+}
+
+/**
+ * Scroll chat to bottom
+ */
+function scrollChatToBottom() {
+  const container = document.getElementById('chat-messages-container');
+  if (container) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+/**
+ * Handle Enter key in chat input (send on Enter, new line on Shift+Enter)
+ */
+function handleChatInputKeydown(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendChatMessage(event);
+  }
+}
+
+// Add CSS for streaming indicator animation
+const style = document.createElement('style');
+style.textContent = `
+  .streaming-indicator {
+    animation: blink 1s infinite;
+  }
+  
+  @keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+  
+  #chat-input {
+    max-height: 120px;
+    overflow-y: auto;
+  }
+`;
+document.head.appendChild(style);
+
+

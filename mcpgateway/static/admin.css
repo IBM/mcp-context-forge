@@ -216,3 +216,194 @@
 .fixed.z-10 {
     z-index: 9999 !important;
 }
+
+/* LLM Chat Styles */
+.chat-message {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+#chat-messages-container {
+  scroll-behavior: smooth;
+}
+
+#chat-messages-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+#chat-messages-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+#chat-messages-container::-webkit-scrollbar-thumb {
+  background: #888;
+  border-radius: 4px;
+}
+
+#chat-messages-container::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+.dark #chat-messages-container::-webkit-scrollbar-track {
+  background: #374151;
+}
+
+.dark #chat-messages-container::-webkit-scrollbar-thumb {
+  background: #6b7280;
+}
+
+.dark #chat-messages-container::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
+.server-item {
+  transition: all 0.2s ease;
+}
+
+.server-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+#llm-config-chevron {
+  transition: transform 0.2s ease;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+
+/* ===== LLM Chat – balanced layout & cards ===== */
+
+/* Provide definitions for custom utilities used in HTML */
+.h-calc100vh-16rem { height: calc(100vh - 16rem); }                 /* main chat area targets full height minus header space */ 
+.max-h-300px { max-height: 300px; }                                  /* server list scroller cap */
+.w-30 { flex-basis: 30%; }                                           /* left column width */
+.w-70 { flex-basis: 70%; }                                           /* right column width */
+
+/* Ensure the LLM chat panel can host scrollable children without overflow clipping */
+#llm-chat-panel .flex.h-full { min-height: 0; }                      /* allow children to size properly */
+#llm-chat-panel .w-30,
+#llm-chat-panel .w-70 { min-height: 0; display: flex; flex-direction: column; }
+
+/* Normalize “card” look for all LLM chat blocks */
+#llm-chat-panel .rounded-lg { border-radius: 0.5rem; }               /* consistent rounding */
+#llm-chat-panel .shadow { box-shadow: 0 1px 2px rgba(0,0,0,0.06); }  /* light, consistent shadow */
+.dark #llm-chat-panel .shadow { box-shadow: 0 1px 2px rgba(0,0,0,0.35); }
+
+/* Left: Server selection column */
+#llm-chat-servers-list {
+  /* switch from a tall stacked list to a tidy grid when there is room */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.5rem;
+  padding-bottom: 0.25rem;
+}
+
+/* Server card sizing and alignment */
+#llm-chat-servers-list .server-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;    /* keep name/labels up and description space consistent */
+  min-height: 6.5rem;                /* harmonize heights across cards */
+  border-width: 1px;
+}
+
+/* Tighten internals for uniform typography and truncation */
+#llm-chat-servers-list .server-item h4 { line-height: 1.25rem; }
+#llm-chat-servers-list .server-item p { line-height: 1.125rem; }
+
+/* Selected/hover states remain visible and consistent */
+#llm-chat-servers-list .server-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+.dark #llm-chat-servers-list .server-item:hover {
+  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+}
+
+/* Right: Chat area structure */
+#llm-chat-panel #llm-config-container { position: sticky; top: 0; z-index: 1; } /* keep config header visible within the right card */
+#llm-chat-panel #chat-messages-container { 
+  flex: 1; 
+  overflow-y: auto; 
+  padding: 1rem; 
+  scroll-behavior: smooth; 
+  min-height: 0; 
+}
+
+/* Chat bubbles: make widths natural and consistent across viewports */
+#llm-chat-panel .user-message .rounded-lg,
+#llm-chat-panel .assistant-message .rounded-lg {
+  /* override max-w-80 from markup to a more readable, responsive width */
+  max-width: min(72ch, 75%);
+  word-wrap: break-word;
+}
+
+/* Give messages a comfortable vertical rhythm */
+#llm-chat-panel .chat-message { margin-block: 0.25rem; }
+
+/* Subtle visual differentiation for roles without harsh contrast */
+#llm-chat-panel .assistant-message .rounded-lg {
+  background-color: rgba(229, 231, 235, 1); /* gray-200 */
+  color: #111827;                            /* gray-900 */
+}
+.dark #llm-chat-panel .assistant-message .rounded-lg {
+  background-color: rgba(55, 65, 81, 1);    /* gray-700 */
+  color: #F3F4F6;                            /* gray-100 */
+}
+#llm-chat-panel .user-message .rounded-lg {
+  background-color: #4F46E5;                /* indigo-600 */
+  color: #FFF;
+}
+
+/* Streaming indicator remains subtle and aligned with bubbles */
+#llm-chat-panel .streaming-indicator {
+  width: 6px; height: 6px; border-radius: 9999px;
+  background-color: #34D399;                /* green-400 */
+  display: inline-block; vertical-align: middle;
+  margin-left: 6px;
+  animation: blink 1s infinite;
+}
+
+/* Input bar: keep it visually attached and elevated */
+#llm-chat-panel #chat-input-container {
+  border-top: 1px solid rgba(229, 231, 235, 1);
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(6px);
+}
+.dark #llm-chat-panel #chat-input-container {
+  border-top-color: rgba(55, 65, 81, 1);
+  background: rgba(17, 24, 39, 0.9);
+}
+
+/* Improve the textarea UX without changing behavior */
+#llm-chat-panel #chat-input {
+  line-height: 1.35;
+  max-height: 10rem;   /* matches the JS constraint idea */
+  overflow-y: auto;
+}
+
+/* Welcome state remains vertically centered */
+#llm-chat-panel #chat-welcome-message { 
+  display: flex; 
+  align-items: center; 
+  justify-content: center; 
+}
+
+/* Make non-standard Tailwind utilities in markup effective, scoped */
+#llm-chat-panel .max-w-80 { max-width: min(72ch, 75%); } /* align bubble width token with readable measure */

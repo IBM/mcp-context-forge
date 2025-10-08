@@ -4341,6 +4341,17 @@ try:
 except ImportError:
     logger.debug("Reverse proxy router not available")
 
+# Include LLMChat router
+if settings.llmchat_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.llmchat_router import llmchat_router
+
+        app.include_router(llmchat_router)
+        logger.info("LLM Chat router included")
+    except ImportError:
+        logger.debug("LLM Chat router not available")
+
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled
 ADMIN_API_ENABLED = settings.mcpgateway_admin_api_enabled
