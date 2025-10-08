@@ -735,6 +735,7 @@ class Settings(BaseSettings):
                     # Check if the string looks like JSON (starts with [ or {)
                     # and try to parse it again
                     parsed_str = parsed.strip()
+
                     if parsed_str.startswith(("[", "{")):
                         try:
                             nested_parsed = json.loads(parsed_str)
@@ -752,7 +753,12 @@ class Settings(BaseSettings):
                 logger.warning(f"Invalid federation_peers format: expected list or CSV, got {type(parsed).__name__}")
                 return []
             except json.JSONDecodeError:
-                pass
+                if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
+                    v = v[1:-1]
+
+                parsed = json.loads(v)
+
+                return parsed
 
             # If JSON parsing failed, try removing outer quotes and retry
             if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
