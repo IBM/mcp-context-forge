@@ -719,13 +719,63 @@ class Settings(BaseSettings):
 
         if isinstance(v, str):
             v = v.strip()
-            if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
-                v = v[1:-1]
+            
+            # Handle empty string cases
+            if not v or v in ('""', "''"):
+                return []
+            
+            # Try JSON parsing first without quote stripping
             try:
-                peers = json.loads(v)
+                parsed = json.loads(v)
+                # Ensure we always return a list for federation peers
+                if isinstance(parsed, list):
+                    return parsed
+                elif isinstance(parsed, str):
+                    # Check if the string looks like JSON (starts with [ or {)
+                    # and try to parse it again
+                    parsed_str = parsed.strip()
+                    if parsed_str.startswith(('[', '{')):
+                        try:
+                            nested_parsed = json.loads(parsed_str)
+                            if isinstance(nested_parsed, list):
+                                return nested_parsed
+                            else:
+                                logger.warning(f"Invalid federation_peers format: expected list or CSV, got {type(nested_parsed).__name__}")
+                                return []
+                        except json.JSONDecodeError:
+                            pass
+                    # Single quoted string, treat as single URL
+                    return [parsed]
+                else:
+                    # Objects or other types don't make sense for federation peers
+                    logger.warning(f"Invalid federation_peers format: expected list or CSV, got {type(parsed).__name__}")
+                    return []
             except json.JSONDecodeError:
-                peers = [s.strip() for s in v.split(",") if s.strip()]
-            return peers
+                pass
+            
+            # If JSON parsing failed, try removing outer quotes and retry
+            if len(v) > 1 and v[0] in "\"'" and v[-1] == v[0]:
+                inner_v = v[1:-1]
+                try:
+                    parsed = json.loads(inner_v)
+                    if isinstance(parsed, list):
+                        return parsed
+                    elif isinstance(parsed, str):
+                        return [parsed]
+                    else:
+                        logger.warning(f"Invalid federation_peers format: expected list or CSV, got {type(parsed).__name__}")
+                        return []
+                except json.JSONDecodeError:
+                    pass
+            
+            # Fallback to CSV parsing with improved quote handling
+            csv_v = v
+            # Remove outer quotes if they wrap the entire string
+            if csv_v.startswith(("'", '"')) and csv_v.endswith(("'", '"')) and csv_v[0] == csv_v[-1]:
+                csv_v = csv_v[1:-1]
+            
+            # Split by comma and clean each item
+            return [s.strip().strip("'\"") for s in csv_v.split(",") if s.strip()]
 
         # Convert other iterables to list
         return list(v)
