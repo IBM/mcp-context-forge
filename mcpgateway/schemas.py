@@ -1386,6 +1386,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     Similar to ResourceCreate but URI is not required and all fields are optional.
     """
 
+    uri: Optional[str] = Field(None, description="Unique URI for the resource") 
     name: Optional[str] = Field(None, description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")

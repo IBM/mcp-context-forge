@@ -6275,12 +6275,12 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
-@admin_router.get("/resources/{uri:path}")
-async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+@admin_router.get("/resources/{resource_id}")
+async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
-        uri: Resource URI.
+        resource_id: Resource ID.
         db: Database session.
         user: Authenticated user.
 
@@ -6317,24 +6317,24 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         >>> mock_content = ResourceContent(type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
         >>>
         >>> # Mock service methods
-        >>> original_get_resource_by_uri = resource_service.get_resource_by_uri
+        >>> original_get_resource_by_id = resource_service.get_resource_by_id
         >>> original_read_resource = resource_service.read_resource
-        >>> resource_service.get_resource_by_uri = AsyncMock(return_value=mock_resource)
+        >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource)
         >>> resource_service.read_resource = AsyncMock(return_value=mock_content)
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_resource_success():
-        ...     result = await admin_get_resource(resource_uri, mock_db, mock_user)
-        ...     return isinstance(result, dict) and result['resource']['uri'] == resource_uri and result['content'].text == "Hello content" # Corrected to .text
+        ...     result = await admin_get_resource(resource_id, mock_db, mock_user)
+        ...     return isinstance(result, dict) and result['resource']['id'] == resource_id and result['content'].text == "Hello content" # Corrected to .text
         >>>
         >>> asyncio.run(test_admin_get_resource_success())
         True
         >>>
         >>> # Test resource not found
-        >>> resource_service.get_resource_by_uri = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
+        >>> resource_service.get_resource_by_id = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
         >>> async def test_admin_get_resource_not_found():
         ...     try:
-        ...         await admin_get_resource("nonexistent://uri", mock_db, mock_user)
+        ...         await admin_get_resource(999, mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Resource not found" in e.detail
@@ -6359,15 +6359,15 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         >>> resource_service.get_resource_by_uri = original_get_resource_by_uri
         >>> resource_service.read_resource = original_read_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for resource URI {uri}")
+    LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
-        resource = await resource_service.get_resource_by_uri(db, uri)
-        content = await resource_service.read_resource(db, uri)
+        resource = await resource_service.get_resource_by_id(db, resource_id)
+        content = await resource_service.read_resource(db, resource_id)
         return {"resource": resource.model_dump(by_alias=True), "content": content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting resource {uri}: {e}")
+        LOGGER.error(f"Error getting resource {resource_id}: {e}")
         raise e
 
 
@@ -6576,7 +6576,7 @@ async def admin_edit_resource(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing resource ID {resource_id}")
     form = await request.form()
-
+    LOGGER.info(f"Form data received for resource edit: {form}")
     visibility = str(form.get("visibility", "private"))
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -6585,14 +6585,16 @@ async def admin_edit_resource(
     try:
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         resource = ResourceUpdate(
-            name=str(form["name"]),
+            uri=str(form.get("uri", "")),
+            name=str(form.get("name", "")),
             description=str(form.get("description")),
             mime_type=str(form.get("mimeType")),
-            content=str(form["content"]),
+            content=str(form.get("content", "")),
             template=str(form.get("template")),
             tags=tags,
             visibility=visibility,
         )
+        LOGGER.info(f"ResourceUpdate object created: {resource}")
         await resource_service.update_resource(
             db,
             resource_id,

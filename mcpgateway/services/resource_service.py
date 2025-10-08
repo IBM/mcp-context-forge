@@ -632,12 +632,12 @@ class ResourceService:
         db.add(metric)
         db.commit()
 
-    async def read_resource(self, db: Session, uri: str, request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
+    async def read_resource(self, db: Session, resource_id: str, request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 
         Args:
             db: Database session
-            uri: Resource URI to read
+            resource_id: ID of the resource to read
             request_id: Optional request ID for tracing
             user: Optional user making the request
             server_id: Optional server ID for context
@@ -679,7 +679,8 @@ class ResourceService:
         success = False
         error_message = None
         resource = None
-
+        resource_db = db.get(DbResource, resource_id)
+        uri=resource_db.uri if resource_db else None
         # Create trace span for resource reading
         with create_span(
             "resource.read",
@@ -739,16 +740,16 @@ class ResourceService:
                     content = await self._read_template_resource(uri)
                 else:
                     # Find resource
-                    resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(DbResource.is_active)).scalar_one_or_none()
+                    resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(DbResource.is_active)).scalar_one_or_none()
 
                     if not resource:
                         # Check if inactive resource exists
-                        inactive_resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(not_(DbResource.is_active))).scalar_one_or_none()
+                        inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.is_active))).scalar_one_or_none()
 
                         if inactive_resource:
-                            raise ResourceNotFoundError(f"Resource '{uri}' exists but is inactive")
+                            raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
-                        raise ResourceNotFoundError(f"Resource not found: {uri}")
+                        raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
                     content = resource.content
 
@@ -998,6 +999,7 @@ class ResourceService:
             'resource_read'
         """
         try:
+            logger.info(f"Updating resource: {resource_id}")
             resource = db.get(DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
@@ -1012,15 +1014,17 @@ class ResourceService:
                     # Check for existing public resources with the same uri
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public")).scalar_one_or_none()
                     if existing_resource:
-                        raise PromptNameConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                        raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
                     logger.info(f"Existing resource check result: {existing_resource}")
                     if existing_resource:
-                        raise PromptNameConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                        raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
             # Update fields if provided
+            if resource_update.uri is not None:
+                resource.uri = resource_update.uri
             if resource_update.name is not None:
                 resource.name = resource_update.name
             if resource_update.description is not None:
@@ -1067,12 +1071,15 @@ class ResourceService:
             # Notify subscribers
             await self._notify_resource_updated(resource)
 
-            logger.info(f"Updated resource: {uri}")
+            logger.info(f"Updated resource: {resource.uri}")
             return self._convert_resource_to_read(resource)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except ResourceURIConflictError as pe:    
+            logger.error(f"Resource URI conflict: {pe}")
+            raise pe
         except Exception as e:
             db.rollback()
             if isinstance(e, ResourceNotFoundError):
@@ -1139,13 +1146,13 @@ class ResourceService:
             db.rollback()
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_uri(self, db: Session, uri: str, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(self, db: Session, resource_id: int, include_inactive: bool = False) -> ResourceRead:
         """
-        Get a resource by URI.
+        Get a resource by ID.
 
         Args:
             db: Database session
-            uri: Resource URI
+            resource_id: Resource ID
             include_inactive: Whether to include inactive resources
 
         Returns:
@@ -1163,10 +1170,10 @@ class ResourceService:
             >>> db.execute.return_value.scalar_one_or_none.return_value = resource
             >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.get_resource_by_uri(db, 'uri'))
+            >>> asyncio.run(service.get_resource_by_id(db, 999))
             'resource_read'
         """
-        query = select(DbResource).where(DbResource.uri == uri)
+        query = select(DbResource).where(DbResource.id == resource_id)
 
         if not include_inactive:
             query = query.where(DbResource.is_active)
@@ -1176,12 +1183,12 @@ class ResourceService:
         if not resource:
             if not include_inactive:
                 # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(not_(DbResource.is_active))).scalar_one_or_none()
+                inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.is_active))).scalar_one_or_none()
 
                 if inactive_resource:
-                    raise ResourceNotFoundError(f"Resource '{uri}' exists but is inactive")
+                    raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
-            raise ResourceNotFoundError(f"Resource not found: {uri}")
+            raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
         return self._convert_resource_to_read(resource)
 
