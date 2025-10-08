@@ -332,6 +332,9 @@ temp/
 #----------------------------------------------------------------------
 *.md
 !README.md
+
+# Application configuration files (explicitly include)
+!mcp-catalog.yml
 LICENSE
 CHANGELOG
 AUTHORS

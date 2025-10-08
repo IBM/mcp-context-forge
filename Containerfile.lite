@@ -85,6 +85,7 @@ COPY run-gunicorn.sh /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY gunicorn.config.py /app/
 COPY plugins/ /app/plugins/
+COPY mcp-catalog.yml /app/
 
 # Optional: Copy run.sh if it's needed in production
 COPY run.sh /app/
