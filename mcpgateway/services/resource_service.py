@@ -952,7 +952,7 @@ class ResourceService:
     async def update_resource(
         self,
         db: Session,
-        uri: str,
+        resource_id: str,
         resource_update: ResourceUpdate,
         modified_by: Optional[str] = None,
         modified_from_ip: Optional[str] = None,
@@ -994,21 +994,31 @@ class ResourceService:
             >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.update_resource(db, 'uri', MagicMock()))
+            >>> asyncio.run(service.update_resource(db, 'resource_id', MagicMock()))
             'resource_read'
         """
         try:
-            # Find resource
-            resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(DbResource.is_active)).scalar_one_or_none()
-
+            resource = db.get(DbResource, resource_id)
             if not resource:
-                # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == uri).where(not_(DbResource.is_active))).scalar_one_or_none()
+                raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
-                if inactive_resource:
-                    raise ResourceNotFoundError(f"Resource '{uri}' exists but is inactive")
-
-                raise ResourceNotFoundError(f"Resource not found: {uri}")
+            # # Check for uri conflict if uri is being changed and visibility is public
+            if resource_update.uri and resource_update.uri != resource.uri:
+                visibility = resource_update.visibility or resource.visibility
+                logger.info(f"Resource resource_update.team_id on update: {resource_update.team_id}")
+                logger.info(f"Resource resource.team_id on update: {resource.team_id}")
+                team_id = resource_update.team_id or resource.team_id
+                if visibility.lower() == "public":
+                    # Check for existing public resources with the same uri
+                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                    if existing_resource:
+                        raise PromptNameConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                elif visibility.lower() == "team" and team_id:
+                    # Check for existing team resource with the same uri
+                    existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                    logger.info(f"Existing resource check result: {existing_resource}")
+                    if existing_resource:
+                        raise PromptNameConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
             # Update fields if provided
             if resource_update.name is not None:

@@ -796,10 +796,7 @@ class PromptService:
             # # Check for name conflict if name is being changed and visibility is public
             if prompt_update.name and prompt_update.name != prompt.name:
                 visibility = prompt_update.visibility or prompt.visibility
-                logger.info(f"Prompt prompt_update.team_id on update: {prompt_update.team_id}")
-                logger.info(f"Prompt prompt.team_id on update: {prompt.team_id}")
                 team_id = prompt_update.team_id or prompt.team_id
-                logger.info(f"Checking for name conflict on update: {prompt_update.name} with visibility {visibility} and team_id {team_id} ")
                 if visibility.lower() == "public":
                     # Check for existing public prompts with the same name
                     existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "public")).scalar_one_or_none()

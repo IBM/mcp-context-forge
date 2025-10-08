@@ -6483,9 +6483,9 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/resources/{uri:path}/edit")
+@admin_router.post("/resources/{resource_id}/edit")
 async def admin_edit_resource(
-    uri: str,
+    resource_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -6500,7 +6500,7 @@ async def admin_edit_resource(
       - content
 
     Args:
-        uri: Resource URI.
+        resource_id: Resource ID.
         request: FastAPI request containing form data.
         db: Database session.
         user: Authenticated user.
@@ -6574,7 +6574,7 @@ async def admin_edit_resource(
         >>> # Reset mock
         >>> resource_service.update_resource = original_update_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing resource URI {uri}")
+    LOGGER.debug(f"User {get_user_email(user)} is editing resource ID {resource_id}")
     form = await request.form()
 
     visibility = str(form.get("visibility", "private"))
@@ -6595,7 +6595,7 @@ async def admin_edit_resource(
         )
         await resource_service.update_resource(
             db,
-            uri,
+            resource_id,
             resource,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -6614,6 +6614,9 @@ async def admin_edit_resource(
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
+        if isinstance(ex, ResourceURIConflictError):
+            LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
+            return JSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
