@@ -90,7 +90,8 @@ class ResourceURIConflictError(ResourceError):
         self.uri = uri
         self.is_active = is_active
         self.resource_id = resource_id
-        message = f"{visibility.capitalize()} Resource already exists with name: {name}"
+        message = f"{visibility.capitalize()} Resource already exists with URI: {uri}"
+        logger.info(f"ResourceURIConflictError: {message}")
         if not is_active:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
@@ -331,6 +332,20 @@ class ResourceService:
             'resource_read'
         """
         try:
+            logger.info(f"Registering resource: {resource.uri}")
+            # Check for existing server with the same uri
+            if visibility.lower() == "public":
+                logger.info(f"visibility:: {visibility}")
+                # Check for existing public resource with the same uri
+                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
+                if existing_resource:
+                    raise ResourceURIConflictError(resource.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team resource with the same uri
+                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                if existing_resource:
+                    raise ResourceURIConflictError(resource.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+
             # Detect mime type if not provided
             mime_type = resource.mime_type
             if not mime_type:
@@ -362,18 +377,7 @@ class ResourceService:
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(resource, "visibility", None) or visibility,
             )
-            # Check for existing server with the same uri
-            if visibility.lower() == "public":
-                # Check for existing public resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
-                if existing_resource:
-                    raise ResourceNameConflictError(resource.uri, is_active=existing_resource.is_active, server_id=existing_resource.id, visibility=existing_resource.visibility)
-            elif visibility.lower() == "team" and team_id:
-                # Check for existing team resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
-                if existing_resource:
-                    raise ResourceNameConflictError(resource.uri, is_active=existing_resource.is_active, server_id=existing_resource.id, visibility=existing_resource.visibility)
-
+          
             # Add to DB
             db.add(db_resource)
             db.commit()
@@ -388,6 +392,9 @@ class ResourceService:
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except ResourceURIConflictError as re:
+            logger.error(f"ResourceURIConflictError in group: {resource.uri}")
+            raise re
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to register resource: {str(e)}")
