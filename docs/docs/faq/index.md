@@ -7,9 +7,9 @@
 
     ```bash
     # Using pipx - pip install pipx
-    pipx run mcp-contextforge-gateway
+    pipx run --spec mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 
-    # Or uvx - pip install uv (default: admin/changeme)
+    # Or uvx - pip install uv (default login: admin@example.com/changeme)
     uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
     ```
 
@@ -198,8 +198,8 @@
     - `SSE_RETRY_TIMEOUT`
 
 ???+ example "🧵 How do I scale the number of worker processes?"
-    - `GUNICORN_WORKERS` (for Gunicorn)
-    - `UVICORN_WORKERS` (for Uvicorn)
+    - Run `mcpgateway --workers 4` (Uvicorn CLI flag)
+    - Set `GUNICORN_WORKERS` when using the bundled Gunicorn scripts
 
 ???+ example "📊 How can I benchmark performance?"
     Use `hey` against `/rpc` with sample payloads from `tests/hey`.
@@ -245,9 +245,20 @@
 
 ???+ example "🦜 How do I use MCP Gateway with LangChain?"
     ```python
-    from langchain.tools import MCPTool
-    tool = MCPTool(endpoint="http://localhost:4444/rpc",
-                   token=os.environ["MCPGATEWAY_BEARER_TOKEN"])
+    import os
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langgraph.prebuilt import create_react_agent
+
+    client = MultiServerMCPClient(
+        {
+            "gateway": {
+                "url": "http://localhost:4444/mcp",
+                "transport": "streamable_http",
+                "headers": {"Authorization": f"Bearer {os.environ['MCPGATEWAY_BEARER_TOKEN']}"}
+            }
+        }
+    )
+    agent = create_react_agent(tools=client.get_tools(), llm=your_language_model)
     ```
 
 ???+ example "🦾 How do I connect GitHub's mcp-server-git via Translate Bridge?"
@@ -257,7 +268,7 @@
 
 ---
 
-## 👥 Multi‑Tenancy & Migration (v0.8.0)
+## 👥 Multi‑Tenancy & Migration (v0.7.0)
 
 ???+ example "🔐 How do I enable email/password login and teams?"
     Add the following to your `.env`:
@@ -269,7 +280,7 @@
     AUTO_CREATE_PERSONAL_TEAMS=true
     ```
 
-    Upgrading from v0.8.0? Follow [MIGRATION-0.8.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.8.0.md).
+    Upgrading from earlier releases? Follow [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
 
 ???+ info "🔁 Does basic auth still work?"
     Yes. Email auth is recommended for multi‑tenancy; basic auth remains available. Use `AUTH_REQUIRED` to enforce authentication.
@@ -282,20 +293,20 @@
 ## 🔐 SSO & Team Mapping
 
 ???+ example "👥 Can I auto‑assign users to teams via SSO?"
-    Yes. Use provider‑specific mappings to assign users on first login:
+    Yes. Add **Team Mapping** rules to each SSO provider (Admin UI → Manage → SSO → Provider → Team Mapping). Example JSON:
 
-    ```bash
-    # GitHub
-    GITHUB_ORG_TEAM_MAPPING={"your-org": "team-id"}
-
-    # Google Groups
-    GOOGLE_GROUPS_MAPPING={"group@yourcompany.com": "team-id"}
-
-    # Okta
-    OKTA_GROUP_MAPPING={"MCP Gateway Users": "team-id"}
+    ```json
+    {
+      "team_mapping": {
+        "your-org": {
+          "team_id": "team-uuid",
+          "role": "member"
+        }
+      }
+    }
     ```
 
-    See the SSO guides under Manage › SSO for details.
+    You can manage the same payload via the Admin API (`/auth/sso/admin/providers/{id}`) — see the SSO guides under Manage › SSO.
 
 ---
 
