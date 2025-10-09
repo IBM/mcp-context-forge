@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "fast-time-convert-time",
+    "arguments": {
+      "time": "09:00",
+      "source_timezone": "Europe/London",
+      "target_timezone": "Asia/Tokyo"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+# Ignore test results
+results/
+*.txt
+*.csv
+*.log
+
+# Ignore generated auth tokens
+.auth_token
+
+# Keep directory structure
+!results/.gitkeep
