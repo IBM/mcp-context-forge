@@ -454,6 +454,11 @@ class StdIOEndpoint:
         finally:
             if self._pump_task:
                 self._pump_task.cancel()
+                # Wait for pump task to actually finish, suppressing all exceptions
+                # since the pump task logs its own errors. Use BaseException to catch
+                # CancelledError which inherits from BaseException in Python 3.8+
+                with suppress(BaseException):
+                    await self._pump_task
             self._proc = None
             self._stdin = None  # Reset stdin too!
 
