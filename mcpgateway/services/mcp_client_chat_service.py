@@ -609,22 +609,48 @@ class MCPChatService:
         
         try:
             # Connect to MCP server
-            await self.mcp_client.connect()
+            try:
+                await self.mcp_client.connect()
+            except ConnectionError as ce:
+                logger.error(f"MCP server connection failed: {ce}")
+                raise ConnectionError(
+                    f"Unable to connect to MCP server at {self.config.mcp_server.url}. "
+                    f"Please verify the server is running and the URL is correct. Details: {ce}"
+                ) from ce
+            except Exception as conn_error:
+                logger.error(f"Unexpected error connecting to MCP server: {conn_error}")
+                raise ConnectionError(f"MCP server connection error: {conn_error}") from conn_error
             
             # Load tools from MCP server
-            tools = await self.mcp_client.get_tools()
-            self._tools = tools
-            
-            if not tools:
-                logger.warning("No tools loaded from MCP server")
+            try:
+                tools = await self.mcp_client.get_tools()
+                self._tools = tools
+                
+                if not tools:
+                    logger.warning("No tools loaded from MCP server - service will have limited functionality")
+            except Exception as tool_error:
+                logger.error(f"Failed to load tools from MCP server: {tool_error}")
+                await self.shutdown()
+                raise RuntimeError(f"Failed to load tools: {tool_error}") from tool_error
             
             # Get LLM instance
-            llm = self.llm_provider.get_llm()
+            try:
+                llm = self.llm_provider.get_llm()
+            except Exception as llm_error:
+                logger.error(f"Failed to initialize LLM provider: {llm_error}")
+                await self.shutdown()
+                raise ValueError(
+                    f"LLM initialization failed. Please check your API credentials and configuration. Details: {llm_error}"
+                ) from llm_error
             
             # Create ReAct agent
-            logger.info("Creating ReAct agent...")
-            self._agent = create_react_agent(llm, tools)
-            print("LLM DETAILS:",llm)
+            try:
+                logger.info("Creating ReAct agent...")
+                self._agent = create_react_agent(llm, tools)
+            except Exception as agent_error:
+                logger.error(f"Failed to create ReAct agent: {agent_error}")
+                await self.shutdown()
+                raise RuntimeError(f"Agent creation failed: {agent_error}") from agent_error
             
             self._initialized = True
             logger.info(
@@ -632,10 +658,14 @@ class MCPChatService:
                 f"{len(tools)} tools and {self.llm_provider.get_model_name()} model"
             )
             
-        except Exception as e:
-            logger.error(f"Failed to initialize chat service: {e}")
-            await self.shutdown()
+        except (ConnectionError, ValueError, RuntimeError):
+            # Re-raise expected exceptions
             raise
+        except Exception as e:
+            logger.error(f"Unexpected error during initialization: {e}", exc_info=True)
+            await self.shutdown()
+            raise RuntimeError(f"Service initialization failed: {e}") from e
+
     
     async def chat(self, message: str) -> str:
         """Send a message and get a response.
@@ -772,78 +802,106 @@ class MCPChatService:
         """
         if not self._initialized or not self._agent:
             raise RuntimeError("Chat service not initialized. Call initialize() first.")
-
+        
+        # Validate message
+        if not message or not message.strip():
+            raise ValueError("Message cannot be empty")
+        
         # Append user message
         user_message = HumanMessage(content=message)
         self._conversation_history.append(user_message)
-
+        
         full_response = ""
         start_ts = time.time()
         tool_runs: dict[str, dict[str, Any]] = {}
+        
+        try:
+            async for event in self._agent.astream_events({"messages": self._conversation_history}, version="v2"):
+                kind = event.get("event")
+                now_iso = datetime.now(timezone.utc).isoformat()
+                
+                try:
+                    if kind == "on_tool_start":
+                        run_id = str(event.get("run_id") or uuid4())
+                        name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
+                        input_data = event.get("data", {}).get("input")
+                        
+                        # Serialize input safely
+                        if hasattr(input_data, "dict"):
+                            input_data = input_data.dict()
+                        elif hasattr(input_data, "__dict__"):
+                            input_data = str(input_data)
+                        
+                        rec = {"id": run_id, "name": name, "input": input_data, "start": now_iso}
+                        tool_runs[run_id] = rec
+                        yield {"type": "tool_start", **rec}
+                        
+                    elif kind == "on_tool_end":
+                        run_id = str(event.get("run_id") or uuid4())
+                        name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
+                        output = event.get("data", {}).get("output")
+                        
+                        # Serialize output safely
+                        if hasattr(output, "content"):
+                            output = output.content
+                        elif hasattr(output, "dict"):
+                            output = output.dict()
+                        elif not isinstance(output, (str, int, float, bool, list, dict, type(None))):
+                            output = str(output)
+                        
+                        rec = tool_runs.get(run_id, {"id": run_id, "name": name, "start": now_iso})
+                        rec["end"] = now_iso
+                        rec["output"] = output
+                        tool_runs[run_id] = rec
+                        yield {"type": "tool_end", **rec}
+                        
+                    elif kind == "on_tool_error":
+                        run_id = str(event.get("run_id") or uuid4())
+                        err = event.get("data", {}).get("error")
+                        yield {
+                            "type": "tool_error", 
+                            "id": run_id, 
+                            "error": str(err) if err else "Tool execution failed", 
+                            "time": now_iso
+                        }
+                        
+                    elif kind == "on_chat_model_stream":
+                        chunk = event.get("data", {}).get("chunk")
+                        if chunk and hasattr(chunk, "content") and chunk.content:
+                            content = chunk.content
+                            full_response += content
+                            yield {"type": "token", "content": content}
+                            
+                except Exception as event_error:
+                    logger.warning(f"Error processing event {kind}: {event_error}")
+                    # Continue processing other events
+                    continue
+            
+            # Append AI message and trim
+            if full_response:
+                ai_message = AIMessage(content=full_response)
+                self._conversation_history.append(ai_message)
+                self._trim_history()
+            
+            used_tools_list = list({rec.get("name") for rec in tool_runs.values() if rec.get("name")})
+            yield {
+                "type": "final",
+                "content": full_response,
+                "tool_used": len(used_tools_list) > 0,
+                "tools": used_tools_list,
+                "elapsed_ms": int((time.time() - start_ts) * 1000),
+            }
+            
+        except ConnectionError as ce:
+            logger.error(f"Connection error during chat: {ce}")
+            raise ConnectionError(f"Lost connection to MCP server: {ce}") from ce
+        except TimeoutError as te:
+            logger.error(f"Timeout during chat: {te}")
+            raise TimeoutError("LLM request timed out") from te
+        except Exception as e:
+            logger.error(f"Error in chat_events: {e}", exc_info=True)
+            raise RuntimeError(f"Chat processing error: {e}") from e
 
-        async for event in self._agent.astream_events({"messages": self._conversation_history}, version="v2"):
-            kind = event.get("event")
-            now_iso = datetime.now(timezone.utc).isoformat()
-
-            if kind == "on_tool_start":
-                run_id = str(event.get("run_id") or uuid4())
-                name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
-                input_data = event.get("data", {}).get("input")
-                # Serialize input safely
-                if hasattr(input_data, "dict"):
-                    input_data = input_data.dict()
-                elif hasattr(input_data, "__dict__"):
-                    input_data = str(input_data)
-                rec = {"id": run_id, "name": name, "input": input_data, "start": now_iso}
-                tool_runs[run_id] = rec
-                yield {"type": "tool_start", **rec}
-
-
-            elif kind == "on_tool_end":
-                run_id = str(event.get("run_id") or uuid4())
-                name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
-                output = event.get("data", {}).get("output")
-                # Serialize output safely
-                if hasattr(output, "content"):
-                    # It's a message object; extract content
-                    output = output.content
-                elif hasattr(output, "dict"):
-                    output = output.dict()
-                elif not isinstance(output, (str, int, float, bool, list, dict, type(None))):
-                    output = str(output)
-                rec = tool_runs.get(run_id, {"id": run_id, "name": name, "start": now_iso})
-                rec["end"] = now_iso
-                rec["output"] = output
-                tool_runs[run_id] = rec
-                yield {"type": "tool_end", **rec}
-
-
-            elif kind == "on_tool_error":
-                run_id = str(event.get("run_id") or uuid4())
-                err = event.get("data", {}).get("error")
-                yield {"type": "tool_error", "id": run_id, "error": str(err) if err else "Tool error", "time": now_iso}
-
-            elif kind == "on_chat_model_stream":
-                chunk = event.get("data", {}).get("chunk")
-                if chunk and hasattr(chunk, "content") and chunk.content:
-                    content = chunk.content
-                    full_response += content
-                    yield {"type": "token", "content": content}
-
-        # Append AI message and trim
-        if full_response:
-            ai_message = AIMessage(content=full_response)
-            self._conversation_history.append(ai_message)
-            self._trim_history()
-
-        used_tools_list = list({rec.get("name") for rec in tool_runs.values() if rec.get("name")})
-        yield {
-            "type": "final",
-            "content": full_response,
-            "tool_used": len(used_tools_list) > 0,
-            "tools": used_tools_list,
-            "elapsed_ms": int((time.time() - start_ts) * 1000),
-        }
 
     def _trim_history(self) -> None:
         """Trim conversation history to max messages."""

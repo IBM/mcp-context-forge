@@ -14249,65 +14249,99 @@ function updateConnectButtonState() {
  */
 async function connectLLMChat() {
     if (!llmChatState.selectedServerId) {
-        showErrorMessage('Please select a virtual server first');
+        showErrorMessage("Please select a virtual server first");
         return;
     }
     
-    const provider = document.getElementById('llm-provider').value;
+    const provider = document.getElementById("llm-provider").value;
     if (!provider) {
-        showErrorMessage('Please select an LLM provider');
+        showErrorMessage("Please select an LLM provider");
         return;
     }
     
     // Show loading state
-    const connectBtn = document.getElementById('llm-connect-btn');
+    const connectBtn = document.getElementById("llm-connect-btn");
     const originalText = connectBtn.textContent;
-    connectBtn.textContent = 'Connecting...';
+    connectBtn.textContent = "Connecting...";
     connectBtn.disabled = true;
+    
+    // Clear any previous error messages
+    const statusDiv = document.getElementById("llm-config-status");
+    if (statusDiv) {
+        statusDiv.classList.add("hidden");
+    }
     
     try {
         // Build LLM config
         const llmConfig = buildLLMConfig(provider);
         
         // Build server URL
-        const serverUrl = `${location.protocol}//${location.hostname}${location.port && !['80','443'].includes(location.port) ? ':' + location.port : ''}/servers/${llmChatState.selectedServerId}/mcp`;
-        
-        console.log('Selected server URL:', serverUrl);
+        const serverUrl = `${location.protocol}//${location.hostname}${![80,443].includes(location.port) ? `:${location.port}` : ""}/servers/${llmChatState.selectedServerId}/mcp`;
+        console.log("Selected server URL:", serverUrl);
         
         // Use the stored server token (empty string for public servers)
-        const jwtToken = llmChatState.serverToken || '';
+        const jwtToken = llmChatState.serverToken || "";
         
         const payload = {
             user_id: llmChatState.userId,
             server: {
                 url: serverUrl,
-                transport: 'streamable_http',
-                auth_token: jwtToken  // Use the token from user input or empty string
+                transport: "streamable_http",
+                auth_token: jwtToken
             },
             llm: llmConfig,
             streaming: true
         };
         
-        console.log('Connecting with payload:', {...payload, server: {...payload.server, auth_token: 'REDACTED'}});
+        console.log("Connecting with payload:", {...payload, server: {...payload.server, auth_token: "REDACTED"}});
         
-        // Make connection request
-        const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/connect`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${jwtToken}`
-            },
-            body: JSON.stringify(payload),
-            credentials: 'same-origin'
-        }, 30000);
-        
-        if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.detail || `Connection failed: ${response.status}`);
+        // Make connection request with timeout handling
+        let response;
+        try {
+            response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/connect`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${jwtToken}`
+                },
+                body: JSON.stringify(payload),
+                credentials: "same-origin"
+            }, 30000);
+        } catch (fetchError) {
+            // Handle network/timeout errors
+            if (fetchError.name === 'AbortError' || fetchError.message.includes('timeout')) {
+                throw new Error("Connection timed out. Please check if the server is responsive and try again.");
+            }
+            throw new Error(`Network error: ${fetchError.message}`);
         }
         
-        const result = await response.json();
-        console.log('Connection successful:', result);
+        // Handle HTTP errors - extract backend error message
+        if (!response.ok) {
+            let errorMessage = `Connection failed (HTTP ${response.status})`;
+            
+            try {
+                const errorData = await response.json();
+                if (errorData.detail) {
+                    // Use the backend error message directly
+                    errorMessage = errorData.detail;
+                }
+            } catch (parseError) {
+                console.warn("Could not parse error response:", parseError);
+                // Keep generic error message
+            }
+            
+            throw new Error(errorMessage);
+        }
+        
+        // Parse successful response
+        let result;
+        try {
+            result = await response.json();
+        } catch (parseError) {
+            throw new Error("Failed to parse server response. Please try again.");
+        }
+        
+        console.log("Connection successful:", result);
         
         // Update state
         llmChatState.isConnected = true;
@@ -14318,25 +14352,45 @@ async function connectLLMChat() {
         showConnectionSuccess();
         
         // Clear welcome message and show chat input
-        const welcomeMsg = document.getElementById('chat-welcome-message');
-        if (welcomeMsg) welcomeMsg.remove();
-        
-        const chatInput = document.getElementById('chat-input-container');
-        if (chatInput) {
-            chatInput.classList.remove('hidden');
-            document.getElementById('chat-input').disabled = false;
-            document.getElementById('chat-send-btn').disabled = false;
-            document.getElementById('chat-input').focus();
+        const welcomeMsg = document.getElementById("chat-welcome-message");
+        if (welcomeMsg) {
+            welcomeMsg.remove();
         }
         
+        const chatInput = document.getElementById("chat-input-container");
+        if (chatInput) {
+            chatInput.classList.remove("hidden");
+            document.getElementById("chat-input").disabled = false;
+            document.getElementById("chat-send-btn").disabled = false;
+            document.getElementById("chat-input").focus();
+        }
+        
+        // Hide connect button, show disconnect button
+        const disconnectBtn = document.getElementById("llm-disconnect-btn");
+        if (connectBtn) connectBtn.classList.add("hidden");
+        if (disconnectBtn) disconnectBtn.classList.remove("hidden");
+        
+        // Auto-collapse configuration
+        const configForm = document.getElementById("llm-config-form");
+        const chevron = document.getElementById("llm-config-chevron");
+        if (configForm && !configForm.classList.contains("hidden")) {
+            configForm.classList.add("hidden");
+            chevron.classList.remove("rotate-180");
+        }
+        
+        // Show success message
+        showNotification(`Connected to ${llmChatState.selectedServerName}`, "success");
+        
     } catch (error) {
-        console.error('Connection error:', error);
+        console.error("Connection error:", error);
+        // Display the backend error message to the user
         showConnectionError(error.message);
     } finally {
         connectBtn.textContent = originalText;
         connectBtn.disabled = false;
     }
 }
+
 
 
 /**
@@ -14526,220 +14580,392 @@ if (toolsBadge && toolCountSpan && toolListDiv) {
 /**
  * Show connection error
  */
+/**
+ * Display connection error with proper formatting
+ */
 function showConnectionError(message) {
-  const statusDiv = document.getElementById('llm-config-status');
-  if (statusDiv) {
-    statusDiv.className = 'text-sm text-red-600 dark:text-red-400 p-2 bg-red-50 dark:bg-red-900 rounded';
-    statusDiv.textContent = `Connection failed: ${message}`;
-    statusDiv.classList.remove('hidden');
-    
-    // Hide after 5 seconds
-    setTimeout(() => {
-      statusDiv.classList.add('hidden');
-    }, 5000);
-  }
+    const statusDiv = document.getElementById("llm-config-status");
+    if (statusDiv) {
+        statusDiv.className = "text-sm text-red-600 dark:text-red-400 p-3 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-700";
+        statusDiv.innerHTML = `
+            <div class="flex items-start gap-2">
+                <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                </svg>
+                <div class="flex-1">
+                    <strong class="font-semibold">Connection Failed</strong>
+                    <p class="mt-1">${escapeHtml(message)}</p>
+                </div>
+            </div>
+        `;
+        statusDiv.classList.remove("hidden");
+    }
 }
+
 
 /**
  * Disconnect from LLM chat
  */
 async function disconnectLLMChat() {
-  if (!llmChatState.isConnected) return;
-
-  const disconnectBtn = document.getElementById('llm-disconnect-btn');
-  const originalText = disconnectBtn.textContent;
-  disconnectBtn.textContent = 'Disconnecting...';
-  disconnectBtn.disabled = true;
-
-  try {
-    const jwtToken = getCookie('jwt_token');
+    if (!llmChatState.isConnected) {
+        console.warn("No active connection to disconnect");
+        return;
+    }
     
-    const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/disconnect`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${jwtToken}`
-      },
-      body: JSON.stringify({
-        user_id: llmChatState.userId
-      }),
-      credentials: 'same-origin'
-    });
-
-    if (!response.ok) {
-      throw new Error('Disconnection failed');
+    const disconnectBtn = document.getElementById("llm-disconnect-btn");
+    const originalText = disconnectBtn.textContent;
+    disconnectBtn.textContent = "Disconnecting...";
+    disconnectBtn.disabled = true;
+    
+    try {
+        const jwtToken = getCookie("jwt_token");
+        
+        // Attempt graceful disconnection
+        let response;
+        let backendError = null;
+        
+        try {
+            response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/disconnect`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${jwtToken}`
+                },
+                body: JSON.stringify({
+                    user_id: llmChatState.userId
+                }),
+                credentials: "same-origin"
+            }, 10000); // Shorter timeout for disconnect
+        } catch (fetchError) {
+            console.warn("Disconnect request failed, cleaning up locally:", fetchError);
+            backendError = fetchError.message;
+            // Continue with local cleanup even if server request fails
+        }
+        
+        // Parse response if available
+        let disconnectStatus = "unknown";
+        if (response) {
+            if (response.ok) {
+                try {
+                    const result = await response.json();
+                    disconnectStatus = result.status || "disconnected";
+                    
+                    if (result.warning) {
+                        console.warn("Disconnect warning:", result.warning);
+                    }
+                } catch (parseError) {
+                    console.warn("Could not parse disconnect response");
+                }
+            } else {
+                // Extract backend error message
+                try {
+                    const errorData = await response.json();
+                    if (errorData.detail) {
+                        backendError = errorData.detail;
+                    }
+                } catch (parseError) {
+                    backendError = `HTTP ${response.status}`;
+                }
+                console.warn(`Disconnect returned error: ${backendError}, cleaning up locally`);
+            }
+        }
+        
+        // Always update local state regardless of server response
+        llmChatState.isConnected = false;
+        llmChatState.messageHistory = [];
+        llmChatState.connectedTools = [];
+        llmChatState.toolCount = 0;
+        llmChatState.serverToken = "";
+        
+        // Update UI
+        const statusBadge = document.getElementById("llm-connection-status");
+        if (statusBadge) {
+            statusBadge.classList.add("hidden");
+        }
+        
+        const toolsBadge = document.getElementById("llm-active-tools-badge");
+        if (toolsBadge) {
+            toolsBadge.classList.add("hidden");
+        }
+        
+        const connectBtn = document.getElementById("llm-connect-btn");
+        if (connectBtn) {
+            connectBtn.classList.remove("hidden");
+        }
+        if (disconnectBtn) {
+            disconnectBtn.classList.add("hidden");
+        }
+        
+        // Hide chat input
+        const chatInput = document.getElementById("chat-input-container");
+        if (chatInput) {
+            chatInput.classList.add("hidden");
+            document.getElementById("chat-input").disabled = true;
+            document.getElementById("chat-send-btn").disabled = true;
+        }
+        
+        // Clear messages
+        clearChatMessages();
+        
+        // Show appropriate notification
+        if (backendError) {
+            showNotification(`Disconnected (server error: ${backendError})`, "warning");
+        } else if (disconnectStatus === "no_active_session") {
+            showNotification("Already disconnected", "info");
+        } else if (disconnectStatus === "disconnected_with_errors") {
+            showNotification("Disconnected (with cleanup warnings)", "warning");
+        } else {
+            showNotification("Disconnected successfully", "info");
+        }
+        
+    } catch (error) {
+        console.error("Unexpected disconnection error:", error);
+        
+        // Force cleanup even on error
+        llmChatState.isConnected = false;
+        llmChatState.messageHistory = [];
+        llmChatState.connectedTools = [];
+        llmChatState.toolCount = 0;
+        
+        // Display backend error if available
+        showErrorMessage(`Disconnection error: ${error.message}. Local session cleared.`);
+    } finally {
+        disconnectBtn.textContent = originalText;
+        disconnectBtn.disabled = false;
     }
-
-    // Update state
-    llmChatState.isConnected = false;
-    llmChatState.messageHistory = [];
-
-    llmChatState.connectedTools = [];
-    llmChatState.toolCount = 0;
-
-
-    // Update UI
-    const statusBadge = document.getElementById('llm-connection-status');
-    if (statusBadge) statusBadge.classList.add('hidden');
-
-    // Hide active tools badge on disconnect
-    const toolsBadge = document.getElementById("llm-active-tools-badge");
-    if (toolsBadge) {
-    toolsBadge.classList.add("hidden");
-    }
-
-    const connectBtn = document.getElementById('llm-connect-btn');
-    if (connectBtn) connectBtn.classList.remove('hidden');
-    if (disconnectBtn) disconnectBtn.classList.add('hidden');
-
-    // Hide chat input
-    const chatInput = document.getElementById('chat-input-container');
-    if (chatInput) {
-      chatInput.classList.add('hidden');
-      document.getElementById('chat-input').disabled = true;
-      document.getElementById('chat-send-btn').disabled = true;
-    }
-
-    // Clear messages
-    clearChatMessages();
-
-    showNotification('Disconnected successfully', 'info');
-
-  } catch (error) {
-    console.error('Disconnection error:', error);
-    showErrorMessage('Failed to disconnect: ' + error.message);
-  } finally {
-    disconnectBtn.textContent = originalText;
-    disconnectBtn.disabled = false;
-  }
 }
+
 
 /**
  * Send chat message
  */
 async function sendChatMessage(event) {
-  event.preventDefault();
-
-  const input = document.getElementById('chat-input');
-  const message = input.value.trim();
-
-  if (!message) return;
-  if (!llmChatState.isConnected) {
-    showErrorMessage('Please connect to a server first');
-    return;
-  }
-
-  // Add user message to chat
-  appendChatMessage('user', message);
-  
-  // Clear input
-  input.value = '';
-  input.style.height = 'auto';
-
-  // Disable input while processing
-  input.disabled = true;
-  document.getElementById('chat-send-btn').disabled = true;
-
-  try {
-    const jwtToken = getCookie('jwt_token');
+    event.preventDefault();
     
-    // Create assistant message placeholder for streaming
-    const assistantMsgId = appendChatMessage('assistant', '', true);
-
-    const response = await fetch(`${window.ROOT_PATH}/llmchat/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${jwtToken}`
-      },
-      body: JSON.stringify({
-        user_id: llmChatState.userId,
-        message: message,
-        streaming: true
-      }),
-      credentials: 'same-origin'
-    });
-
-    if (!response.ok) {
-      throw new Error(`Chat request failed: ${response.status}`);
+    const input = document.getElementById("chat-input");
+    const message = input.value.trim();
+    
+    if (!message) return;
+    
+    if (!llmChatState.isConnected) {
+        showErrorMessage("Please connect to a server first");
+        return;
     }
-
-    // Handle streaming SSE response
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let accumulatedText = "";
-
-    while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    // Process complete SSE events separated by blank line
-    let boundary;
-    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
-        const rawEvent = buffer.slice(0, boundary).trim();
-        buffer = buffer.slice(boundary + 2);
-        if (!rawEvent) continue;
-
-        let eventType = "message";
-        const dataLines = [];
-        for (const line of rawEvent.split("\n")) {
-        if (line.startsWith("event:")) eventType = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-        }
-
-        let payload = {};
-        const dataStr = dataLines.join("\n");
-        try { payload = dataStr ? JSON.parse(dataStr) : {}; } catch {}
-
-        switch (eventType) {
-        case "token": {
-            const text = payload.content || "";
-            if (text) {
-            accumulatedText += text;
-            updateChatMessage(assistantMsgId, accumulatedText);
+    
+    // Add user message to chat
+    appendChatMessage("user", message);
+    
+    // Clear input
+    input.value = "";
+    input.style.height = "auto";
+    
+    // Disable input while processing
+    input.disabled = true;
+    document.getElementById("chat-send-btn").disabled = true;
+    
+    let assistantMsgId = null;
+    let reader = null;
+    
+    try {
+        const jwtToken = getCookie("jwt_token");
+        
+        // Create assistant message placeholder for streaming
+        assistantMsgId = appendChatMessage("assistant", "", true);
+        
+        // Make request with timeout handling
+        let response;
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
+            
+            response = await fetch(`${window.ROOT_PATH}/llmchat/chat`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${jwtToken}`
+                },
+                body: JSON.stringify({
+                    user_id: llmChatState.userId,
+                    message: message,
+                    streaming: true
+                }),
+                credentials: "same-origin",
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+        } catch (fetchError) {
+            if (fetchError.name === 'AbortError') {
+                throw new Error("Request timed out. The response took too long.");
             }
-            break;
+            throw new Error(`Network error: ${fetchError.message}`);
         }
-        case "tool_start":
-        case "tool_end":
-        case "tool_error":
-            addToolEventToCard(assistantMsgId, eventType, payload);
-            break;
-
-        case "final":
-            if (payload.tool_used) {
-                setToolUsedSummary(assistantMsgId, true, payload.tools || []);
+        
+        // Handle HTTP errors - extract backend error message
+        if (!response.ok) {
+            let errorMessage = `Chat request failed (HTTP ${response.status})`;
+            
+            try {
+                const errorData = await response.json();
+                if (errorData.detail) {
+                    // Use backend error message directly
+                    errorMessage = errorData.detail;
+                }
+            } catch (parseError) {
+                console.warn("Could not parse error response");
             }
-            // Ensure scroll after all DOM updates complete
-            setTimeout(() => {
-                scrollChatToBottom();
-            }, 50);
-            break;
-
-
-        default:
-            break;
+            
+            throw new Error(errorMessage);
         }
+        
+        // Validate response has body stream
+        if (!response.body) {
+            throw new Error("No response stream received from server");
+        }
+        
+        // Handle streaming SSE response
+        reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let accumulatedText = "";
+        let hasReceivedData = false;
+        
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                
+                hasReceivedData = true;
+                buffer += decoder.decode(value, { stream: true });
+                
+                // Process complete SSE events (separated by blank line)
+                let boundary;
+                while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+                    const rawEvent = buffer.slice(0, boundary).trim();
+                    buffer = buffer.slice(boundary + 2);
+                    
+                    if (!rawEvent) continue;
+                    
+                    let eventType = "message";
+                    const dataLines = [];
+                    
+                    for (const line of rawEvent.split("\n")) {
+                        if (line.startsWith("event:")) {
+                            eventType = line.slice(6).trim();
+                        } else if (line.startsWith("data:")) {
+                            dataLines.push(line.slice(5).trim());
+                        }
+                    }
+                    
+                    let payload = {};
+                    const dataStr = dataLines.join("");
+                    
+                    try {
+                        payload = dataStr ? JSON.parse(dataStr) : {};
+                    } catch (parseError) {
+                        console.warn("Failed to parse SSE data:", dataStr, parseError);
+                        continue;
+                    }
+                    
+                    // Handle different event types
+                    try {
+                        switch (eventType) {
+                            case "token":
+                            const text = payload.content;
+                            if (text) {
+                                accumulatedText += text;
+                                // Process and render with think tags
+                                updateChatMessageWithThinkTags(assistantMsgId, accumulatedText);
+                            }
+                            break;
+
+                                
+                            case "tool_start":
+                            case "tool_end":
+                            case "tool_error":
+                                addToolEventToCard(assistantMsgId, eventType, payload);
+                                break;
+                                
+                            case "final":
+                                if (payload.tool_used) {
+                                    setToolUsedSummary(assistantMsgId, true, payload.tools);
+                                }
+                                setTimeout(scrollChatToBottom, 50);
+                                break;
+                                
+                            case "error":
+                                // Handle server-sent error events from backend
+                                const errorMsg = payload.error || "An error occurred during processing";
+                                const isRecoverable = payload.recoverable !== false;
+                                
+                                // Display error in the assistant message
+                                updateChatMessage(assistantMsgId, `❌ Error: ${errorMsg}`);
+                                
+                                if (!isRecoverable) {
+                                    // For non-recoverable errors, suggest reconnection
+                                    appendChatMessage("system", "⚠️ Connection lost. Please reconnect to continue.");
+                                    llmChatState.isConnected = false;
+                                    
+                                    // Update UI to show disconnected state
+                                    const connectBtn = document.getElementById("llm-connect-btn");
+                                    const disconnectBtn = document.getElementById("llm-disconnect-btn");
+                                    if (connectBtn) connectBtn.classList.remove("hidden");
+                                    if (disconnectBtn) disconnectBtn.classList.add("hidden");
+                                }
+                                break;
+                                
+                            default:
+                                console.warn("Unknown event type:", eventType);
+                                break;
+                        }
+                    } catch (eventError) {
+                        console.error(`Error handling event ${eventType}:`, eventError);
+                        // Continue processing other events
+                    }
+                }
+                
+                setTimeout(scrollChatToBottom, 100);
+            }
+        } catch (streamError) {
+            console.error("Stream reading error:", streamError);
+            throw new Error(`Stream error: ${streamError.message}`);
+        }
+        
+        // Validate we received some data
+        if (!hasReceivedData) {
+            throw new Error("No data received from server");
+        }
+        
+        // Mark streaming as complete
+        markMessageComplete(assistantMsgId);
+        
+    } catch (error) {
+        console.error("Chat error:", error);
+        
+        // Display backend error message to user
+        const errorMsg = error.message || "An unexpected error occurred";
+        appendChatMessage("system", `❌ ${errorMsg}`);
+        
+        // If we have a partial assistant message, mark it as complete
+        if (assistantMsgId) {
+            markMessageComplete(assistantMsgId);
+        }
+        
+    } finally {
+        // Clean up reader if it exists
+        if (reader) {
+            try {
+                await reader.cancel();
+            } catch (cancelError) {
+                console.warn("Error canceling reader:", cancelError);
+            }
+        }
+        
+        // Re-enable input
+        input.disabled = false;
+        document.getElementById("chat-send-btn").disabled = false;
+        input.focus();
     }
-    setTimeout(() => {
-        scrollChatToBottom();
-        }, 100);
-    } 
-
-    // Mark streaming as complete
-    markMessageComplete(assistantMsgId);
-
-  } catch (error) {
-    console.error('Chat error:', error);
-    appendChatMessage('system', `Error: ${error.message}`);
-  } finally {
-    // Re-enable input
-    input.disabled = false;
-    document.getElementById('chat-send-btn').disabled = false;
-    input.focus();
-  }
 }
 
 /**
