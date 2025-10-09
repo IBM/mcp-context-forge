@@ -28,6 +28,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import tempfile
 import time
 from typing import Any, cast, Dict, List, Optional, Union
 import urllib.parse
@@ -9866,3 +9867,90 @@ async def catalog_partial(
     }
 
     return request.app.state.templates.TemplateResponse("mcp_registry_partial.html", context)
+
+
+# ===================================
+# Support Bundle Endpoints
+# ===================================
+
+
+@admin_router.get("/support-bundle/generate")
+async def admin_generate_support_bundle(
+    log_lines: int = Query(default=1000, description="Number of log lines to include"),
+    include_logs: bool = Query(default=True, description="Include log files"),
+    include_env: bool = Query(default=True, description="Include environment config"),
+    include_system: bool = Query(default=True, description="Include system info"),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Generate and download a support bundle with sanitized diagnostics.
+
+    Creates a ZIP file containing version info, system diagnostics, configuration,
+    and logs with automatic sanitization of sensitive data (passwords, tokens, secrets).
+
+    Args:
+        log_lines: Number of log lines to include (default: 1000, 0 = all)
+        include_logs: Include log files in bundle (default: True)
+        include_env: Include environment configuration (default: True)
+        include_system: Include system diagnostics (default: True)
+        user: Authenticated user from dependency
+
+    Returns:
+        Response: ZIP file download with support bundle
+
+    Raises:
+        HTTPException: If bundle generation fails
+
+    Examples:
+        >>> # Request support bundle via API
+        >>> # GET /admin/support-bundle/generate?log_lines=500
+        >>> # Returns: mcpgateway-support-YYYY-MM-DD-HHMMSS.zip
+    """
+    try:
+        LOGGER.info(f"Support bundle generation requested by user: {user}")
+
+        # First-Party
+        from mcpgateway.services.support_bundle_service import SupportBundleConfig, SupportBundleService
+
+        # Create configuration
+        config = SupportBundleConfig(
+            include_logs=include_logs,
+            include_env=include_env,
+            include_system_info=include_system,
+            log_tail_lines=log_lines,
+            output_dir=Path(tempfile.gettempdir()),
+        )
+
+        # Generate bundle
+        service = SupportBundleService()
+        bundle_path = service.generate_bundle(config)
+
+        # Read bundle file
+        with open(bundle_path, "rb") as f:
+            bundle_content = f.read()
+
+        # Clean up temp file
+        try:
+            bundle_path.unlink()
+        except Exception as cleanup_error:
+            LOGGER.warning(f"Failed to cleanup temporary bundle file: {cleanup_error}")
+
+        # Return as downloadable file
+        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        filename = f"mcpgateway-support-{timestamp}.zip"
+
+        LOGGER.info(f"Support bundle generated successfully for user {user}: {filename} ({len(bundle_content)} bytes)")
+
+        return Response(
+            content=bundle_content,
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(bundle_content)),
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Support bundle generation failed for user {user}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate support bundle: {str(e)}")
