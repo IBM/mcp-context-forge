@@ -387,7 +387,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            return [types.TextContent(type=result.content[0].type, text=result.content[0].text)]
+            return [types.TextContent(type=content.type, text=content.text) for content in result.content]
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
         return []
