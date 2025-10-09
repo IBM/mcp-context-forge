@@ -67,6 +67,7 @@ services:
       - ENVIRONMENT=development
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
+      - SECURE_COOKIES=false
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
