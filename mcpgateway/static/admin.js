@@ -13988,14 +13988,16 @@ if (typeof window.getCookie === "undefined") {
 
 // State management for LLM chat
 const llmChatState = {
-  selectedServerId: null,
-  selectedServerName: null,
-  isConnected: false,
-  userId: null,
-  messageHistory: [],
-  connectedTools: [],
-  toolCount: 0
+    selectedServerId: null,
+    selectedServerName: null,
+    isConnected: false,
+    userId: null,
+    messageHistory: [],
+    connectedTools: [],
+    toolCount: 0,
+    serverToken: ''  
 };
+
 
 
 /**
@@ -14035,130 +14037,163 @@ function generateUserId() {
  * Load virtual servers for chat
  */
 async function loadVirtualServersForChat() {
-  const serversList = document.getElementById('llm-chat-servers-list');
-  if (!serversList) return;
-
-  // Show loading state
-  serversList.innerHTML = `
-    <div class="flex items-center justify-center py-8">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
-    </div>
-  `;
-
-  try {
-    const response = await fetchWithTimeout(`${window.ROOT_PATH}/admin/servers`, {
-      method: 'GET',
-      credentials: 'same-origin'
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    // const servers = await response.json();
-    let servers = [];
-
+    const serversList = document.getElementById('llm-chat-servers-list');
+    if (!serversList) return;
+    
+    serversList.innerHTML = '<div class="flex items-center justify-center py-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div></div>';
+    
     try {
-    const data = await response.json();
-    servers = Array.isArray(data) ? data : [];
-    } catch (e) {
-    servers = [];
+        const response = await fetchWithTimeout(`${window.ROOT_PATH}/admin/servers`, {
+            method: 'GET',
+            credentials: 'same-origin'
+        });
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        
+        const data = await response.json();
+        const servers = Array.isArray(data) ? data : data.servers || [];
+        
+        if (servers.length === 0) {
+            serversList.innerHTML = '<div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">No virtual servers available</div>';
+            return;
+        }
+        
+        // Render server list with "Requires Token" pill and tooltip
+        serversList.innerHTML = servers.map(server => {
+            const toolCount = (server.associatedTools || []).length;
+            const isActive = server.isActive;
+            const visibility = server.visibility || 'public';
+            const requiresToken = (visibility === 'team' || visibility === 'private');
+            
+            // Generate appropriate tooltip message
+            const tooltipMessage = requiresToken 
+                ? (server.visibility === 'team' 
+                    ? 'This is a team-level server. An access token will be required to connect.' 
+                    : 'This is a private server. An access token will be required to connect.')
+                : '';
+            
+            return `
+                <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors 
+                    ${llmChatState.selectedServerId === server.id ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900' : 'border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600'} 
+                    ${!isActive ? 'opacity-50' : ''}" 
+                    onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
+                    style="position: relative;">
+                    
+                    ${requiresToken ? `
+                        <div class="tooltip" 
+                        style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px; 
+                                background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px; 
+                                padding: 4px 20px; /* More horizontal width */
+                                opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in; 
+                                z-index: 1000;"> <!-- Added higher z-index to ensure it's above other elements -->
+                        ${tooltipMessage}
+                        <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); 
+                                    width: 0; height: 0; border-left: 5px solid transparent; 
+                                    border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
+                        </div>` : ''}
+                    
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1 min-w-0">
+                            <h4 class="text-sm font-medium text-gray-900 dark:text-white truncate">${escapeHtml(server.name)}</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${toolCount} tool${toolCount !== 1 ? 's' : ''}</p>
+                        </div>
+                        <div class="flex flex-col items-end gap-1">
+                            ${!isActive ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Inactive</span>' : ''}
+                            ${requiresToken ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-100 text-yellow-800">Requires Token</span>' : ''}
+                        </div>
+                    </div>
+                    ${server.description ? `<p class="text-xs text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">${escapeHtml(server.description)}</p>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        // Add hover event to show tooltip immediately on hover
+        const serverItems = document.querySelectorAll('.server-item');
+        serverItems.forEach(item => {
+            const tooltip = item.querySelector('.tooltip');
+            item.addEventListener('mouseenter', () => {
+                if (tooltip) {
+                    tooltip.style.opacity = '1'; // Make tooltip visible
+                    tooltip.style.visibility = 'visible'; // Show tooltip immediately
+                }
+            });
+            item.addEventListener('mouseleave', () => {
+                if (tooltip) {
+                    tooltip.style.opacity = '0'; // Hide tooltip
+                    tooltip.style.visibility = 'hidden'; // Keep tooltip hidden when not hovering
+                }
+            });
+        });
+
+    } catch (error) {
+        console.error('Error loading servers for chat:', error);
+        serversList.innerHTML = '<div class="text-center text-red-600 dark:text-red-400 text-sm py-4">Failed to load servers: ' + escapeHtml(error.message) + '</div>';
     }
-
-    console.log('Fetched servers for chat:', servers);
-    // const servers = data.servers || [];
-
-    if (servers.length === 0) {
-      serversList.innerHTML = `
-        <div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">
-          No virtual servers available
-        </div>
-      `;
-      return;
-    }
-
-    // Render server list
-    serversList.innerHTML = servers.map(server => {
-      const toolCount = (server.associatedTools || []).length;
-      const isActive = server.isActive;
-      
-      return `
-        <div class="server-item p-3 border rounded-lg cursor-pointer transition-colors ${
-          llmChatState.selectedServerId === server.id 
-            ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900' 
-            : 'border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600'
-        } ${!isActive ? 'opacity-50' : ''}" 
-             onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive})">
-          <div class="flex justify-between items-start">
-            <div class="flex-1 min-w-0">
-              <h4 class="text-sm font-medium text-gray-900 dark:text-white truncate">
-                ${escapeHtml(server.name)}
-              </h4>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                ${toolCount} tool${toolCount !== 1 ? 's' : ''}
-              </p>
-            </div>
-            ${!isActive ? `
-              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
-                Inactive
-              </span>
-            ` : ''}
-          </div>
-          ${server.description ? `
-            <p class="text-xs text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">
-              ${escapeHtml(server.description)}
-            </p>
-          ` : ''}
-        </div>
-      `;
-    }).join('');
-
-  } catch (error) {
-    console.error('Error loading servers for chat:', error);
-    serversList.innerHTML = `
-      <div class="text-center text-red-600 dark:text-red-400 text-sm py-4">
-        Failed to load servers: ${escapeHtml(error.message)}
-      </div>
-    `;
-  }
 }
+
+
 
 /**
  * Select a server for chat
  */
-function selectServerForChat(serverId, serverName, isActive) {
-  if (!isActive) {
-    showErrorMessage('This server is inactive. Please select an active server.');
-    return;
-  }
-
-  // Update state
-  llmChatState.selectedServerId = serverId;
-  llmChatState.selectedServerName = serverName;
-
-  // Update UI to show selected server
-  const serverItems = document.querySelectorAll('.server-item');
-  serverItems.forEach(item => {
-    if (item.onclick.toString().includes(serverId)) {
-      item.classList.add('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
-      item.classList.remove('border-gray-200', 'dark:border-gray-600');
-    } else {
-      item.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
-      item.classList.add('border-gray-200', 'dark:border-gray-600');
+async function selectServerForChat(serverId, serverName, isActive, requiresToken, serverVisibility) {
+    if (!isActive) {
+        showErrorMessage('This server is inactive. Please select an active server.');
+        return;
     }
-  });
-
-  // Show and expand LLM configuration
-  const configForm = document.getElementById('llm-config-form');
-  if (configForm && configForm.classList.contains('hidden')) {
-    toggleLLMConfig();
-  }
-
-  // Enable connect button if provider is selected
-  updateConnectButtonState();
-
-  console.log(`Selected server: ${serverName} (${serverId})`);
+    
+    // If server requires token (team or private), prompt for it
+    if (requiresToken) {
+        // Create context-aware message based on visibility level
+        const visibilityMessage = serverVisibility === 'team' 
+            ? 'This is a team-level server that requires authentication for access.'
+            : 'This is a private server that requires authentication for access.';
+        
+        const token = prompt(
+            `Authentication Required\n\n${visibilityMessage}\n\nPlease enter the access token for "${serverName}":`
+        );
+        
+        if (token === null) {
+            // User cancelled
+            return;
+        }
+        
+        // Store the token temporarily for this server
+        llmChatState.serverToken = token || '';
+    } else {
+        // Public server - no token needed
+        llmChatState.serverToken = '';
+    }
+    
+    // Update state
+    llmChatState.selectedServerId = serverId;
+    llmChatState.selectedServerName = serverName;
+    
+    // Update UI to show selected server
+    const serverItems = document.querySelectorAll('.server-item');
+    serverItems.forEach(item => {
+        if (item.onclick.toString().includes(serverId)) {
+            item.classList.add('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
+            item.classList.remove('border-gray-200', 'dark:border-gray-600');
+        } else {
+            item.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
+            item.classList.add('border-gray-200', 'dark:border-gray-600');
+        }
+    });
+    
+    // Show and expand LLM configuration
+    const configForm = document.getElementById('llm-config-form');
+    if (configForm && configForm.classList.contains('hidden')) {
+        toggleLLMConfig();
+    }
+    
+    // Enable connect button if provider is selected
+    updateConnectButtonState();
+    
+    console.log(`Selected server: ${serverName} (${serverId}), Visibility: ${serverVisibility}, Token: ${requiresToken ? 'Required' : 'Not required'}`);
 }
+
+
 
 /**
  * Toggle LLM configuration visibility
@@ -14213,95 +14248,96 @@ function updateConnectButtonState() {
  * Connect to LLM chat
  */
 async function connectLLMChat() {
-  if (!llmChatState.selectedServerId) {
-    showErrorMessage('Please select a virtual server first');
-    return;
-  }
-
-  const provider = document.getElementById('llm-provider').value;
-  if (!provider) {
-    showErrorMessage('Please select an LLM provider');
-    return;
-  }
-
-  // Show loading state
-  const connectBtn = document.getElementById('llm-connect-btn');
-  const originalText = connectBtn.textContent;
-  connectBtn.textContent = 'Connecting...';
-  connectBtn.disabled = true;
-
-  try {
-
-    jwtToken=""; //needs to be updated
-
-    const serverUrl = `${location.protocol}//${location.hostname}${location.port && !["80","443"].includes(location.port) ? `:${location.port}` : ""}/servers/${llmChatState.selectedServerId}/mcp`;
-
-    console.log('Selected server URL:', serverUrl);
-    
-    const payload = {
-      user_id: llmChatState.userId,
-      server: {
-        url: serverUrl,
-        transport: "streamable_http",
-        auth_token: jwtToken
-      },
-      llm: llmConfig,
-      streaming: true
-    };
-
-    console.log('Connecting with payload:', { ...payload, server: { ...payload.server, auth_token: '[REDACTED]' } });
-
-    // Make connection request
-    const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/connect`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        // 'Authorization': `Bearer ${jwtToken}`
-      },
-      body: JSON.stringify(payload),
-    //   credentials: 'same-origin'
-    credentials: 'include'
-    }, 30000); // 30 second timeout
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || `Connection failed: ${response.status}`);
+    if (!llmChatState.selectedServerId) {
+        showErrorMessage('Please select a virtual server first');
+        return;
     }
-
-    const result = await response.json();
-    console.log('Connection successful:', result);
-
-    // Update state
-    llmChatState.isConnected = true;
-
-    // Store tool information from connection response
-    llmChatState.connectedTools = result.tools || [];
-    llmChatState.toolCount = result.tool_count || 0;
-
-
-    // Update UI
-    showConnectionSuccess();
     
-    // Clear welcome message and show chat input
-    const welcomeMsg = document.getElementById('chat-welcome-message');
-    if (welcomeMsg) welcomeMsg.remove();
-    
-    const chatInput = document.getElementById('chat-input-container');
-    if (chatInput) {
-      chatInput.classList.remove('hidden');
-      document.getElementById('chat-input').disabled = false;
-      document.getElementById('chat-send-btn').disabled = false;
-      document.getElementById('chat-input').focus();
+    const provider = document.getElementById('llm-provider').value;
+    if (!provider) {
+        showErrorMessage('Please select an LLM provider');
+        return;
     }
-
-  } catch (error) {
-    console.error('Connection error:', error);
-    showConnectionError(error.message);
-  } finally {
-    connectBtn.textContent = originalText;
-    connectBtn.disabled = false;
-  }
+    
+    // Show loading state
+    const connectBtn = document.getElementById('llm-connect-btn');
+    const originalText = connectBtn.textContent;
+    connectBtn.textContent = 'Connecting...';
+    connectBtn.disabled = true;
+    
+    try {
+        // Build LLM config
+        const llmConfig = buildLLMConfig(provider);
+        
+        // Build server URL
+        const serverUrl = `${location.protocol}//${location.hostname}${location.port && !['80','443'].includes(location.port) ? ':' + location.port : ''}/servers/${llmChatState.selectedServerId}/mcp`;
+        
+        console.log('Selected server URL:', serverUrl);
+        
+        // Use the stored server token (empty string for public servers)
+        const jwtToken = llmChatState.serverToken || '';
+        
+        const payload = {
+            user_id: llmChatState.userId,
+            server: {
+                url: serverUrl,
+                transport: 'streamable_http',
+                auth_token: jwtToken  // Use the token from user input or empty string
+            },
+            llm: llmConfig,
+            streaming: true
+        };
+        
+        console.log('Connecting with payload:', {...payload, server: {...payload.server, auth_token: 'REDACTED'}});
+        
+        // Make connection request
+        const response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/connect`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${jwtToken}`
+            },
+            body: JSON.stringify(payload),
+            credentials: 'same-origin'
+        }, 30000);
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `Connection failed: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        console.log('Connection successful:', result);
+        
+        // Update state
+        llmChatState.isConnected = true;
+        llmChatState.connectedTools = result.tools || [];
+        llmChatState.toolCount = result.tool_count || 0;
+        
+        // Update UI
+        showConnectionSuccess();
+        
+        // Clear welcome message and show chat input
+        const welcomeMsg = document.getElementById('chat-welcome-message');
+        if (welcomeMsg) welcomeMsg.remove();
+        
+        const chatInput = document.getElementById('chat-input-container');
+        if (chatInput) {
+            chatInput.classList.remove('hidden');
+            document.getElementById('chat-input').disabled = false;
+            document.getElementById('chat-send-btn').disabled = false;
+            document.getElementById('chat-input').focus();
+        }
+        
+    } catch (error) {
+        console.error('Connection error:', error);
+        showConnectionError(error.message);
+    } finally {
+        connectBtn.textContent = originalText;
+        connectBtn.disabled = false;
+    }
 }
+
 
 /**
  * Build LLM config object from form inputs
@@ -14349,7 +14385,7 @@ async function fetchActiveToolsForServer(serverId) {
   
   try {
     const response = await fetchWithTimeout(
-      `${window.ROOTPATH}admin/servers/${serverId}`,
+      `${window.ROOT_PATH}/admin/servers/${serverId}`,
       {
         method: "GET",
         credentials: "same-origin"

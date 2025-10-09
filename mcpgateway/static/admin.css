@@ -675,6 +675,23 @@
   background: rgba(96, 165, 250, 0.7);
 }
 
+/* Token requirement badge */
+.bg-yellow-100 {
+    background-color: #fef3c7;
+}
+
+.text-yellow-800 {
+    color: #92400e;
+}
+
+.dark .bg-yellow-100 {
+    background-color: rgba(217, 119, 6, 0.2);
+}
+
+.dark .text-yellow-800 {
+    color: #fbbf24;
+}
+
 
 
 /* ================================
