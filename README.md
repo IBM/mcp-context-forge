@@ -482,7 +482,10 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
+  -e SECURE_COOKIES=false \
   ghcr.io/ibm/mcp-context-forge:0.8.0
+
+# Note: when not running over SSL, use SECURE_COOKIES=false to prevent the browser denying access.
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
