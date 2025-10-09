@@ -170,6 +170,9 @@ async def token_streamer(chat_service, message: str):
 async def chat(input_data: ChatInput):
     """Send a message for a given user session."""
     user_id = input_data.user_id
+    print("USER IDDDDDD:", user_id)
+    print("ACTIVE SESSIONSS:",active_sessions)
+
     chat_service = active_sessions.get(user_id)
     
     if not chat_service:

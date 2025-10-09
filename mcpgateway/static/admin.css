@@ -219,200 +219,454 @@
 
 /* ===== LLM Chat — equal heights + fixed, scrollable servers card ===== */
 
-/* Fill the viewport minus header area used by this tab */
-#llm-chat-panel .h-calc100vh-16rem { height: calc(100vh - 16rem); }
+/* ========================================
+   LLM CHAT PANEL - IMPROVED UI
+   ======================================== */
 
-/* The row that holds left and right columns must be allowed to stretch and scroll properly */
-#llm-chat-panel .flex.h-full {
-  height: 100%;
-  min-height: 0;              /* critical for scrollable children in flex */
-  align-items: stretch;       /* ensure columns are equal height */
+/* Main Container */
+#llm-chat-panel {
+    width: 100%;
 }
 
-/* Columns: equal height, with proper inner layout */
-#llm-chat-panel .w-30 {
-  /* Left column width and layout */
-  flex: 0 0 clamp(260px, 28%, 360px);
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-#llm-chat-panel .w-70 {
-  /* Right column expands and stays full-height */
-  flex: 1 1 auto;
-  height: 100%;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+#llm-chat-panel .max-w-7xl {
+    max-width: none !important;
+    padding-inline: clamp(12px, 1.6vw, 24px);
 }
 
-/* Use full available width in this tab so the chat card doesn't look squashed */
-#llm-chat-panel > .max-w-7xl {
-  max-width: none !important;
-  padding-inline: clamp(12px, 1.6vw, 20px);
+/* Layout: Left Sidebar + Right Chat */
+#llm-chat-panel .flex.gap-6 {
+    min-height: 0;
 }
 
-/* Fixed, scrollable virtual server card:
-   - Apply a fixed height to the servers region
-   - Scroll the list when content exceeds that height */
-#llm-chat-panel { --servers-card-height: 360px; }       /* adjust as preferred */
+/* Left Sidebar - Virtual Servers */
+#llm-chat-panel .w-80 {
+    flex: 0 0 clamp(280px, 22%, 340px);
+    min-height: 0;
+}
+
+/* Server List Scrollable Container */
 #llm-chat-servers-list {
-  height: var(--servers-card-height);
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); /* slightly narrower cards */
-  gap: 0.5rem;
-  padding-bottom: 0.25rem;
-  min-height: 0;                                        /* needed for proper inner scrolling */
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-bottom: 0.5rem;
+    overflow-y: auto;
+    min-height: 0;
+    max-height: 100%;
 }
 
-/* Server cards compact styling */
-#llm-chat-servers-list .server-item {
-  padding: 0.4rem 0.5rem;
-  border-width: 1px;
-  border-radius: 0.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-#llm-chat-servers-list .server-item h4 { line-height: 1.2rem; }
-#llm-chat-servers-list .server-item p { line-height: 1.1rem; }
-#llm-chat-servers-list .server-item:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-}
-.dark #llm-chat-servers-list .server-item:hover {
-  box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+/* Server Item Card */
+.server-item {
+    padding: 0.75rem;
+    border-width: 2px;
+    border-radius: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.8), rgba(249, 250, 251, 0.8));
 }
 
-/* Right chat card: keep full height, sticky config, scrollable messages */
-#llm-config-container { position: sticky; top: 0; z-index: 1; }
-#chat-messages-container {
-  flex: 1;
-  overflow-y: auto;
-  padding: 1rem;
-  scroll-behavior: smooth;
-  min-height: 0;               /* prevents container from forcing shrink */
+.server-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    border-color: rgb(99, 102, 241);
 }
 
-/* Input bar stays attached; no behavior changes */
-#chat-input-container {
-  border-top: 1px solid rgba(229, 231, 235, 1);
-  background: rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(6px);
+.server-item.border-indigo-500 {
+    background: linear-gradient(to bottom, rgba(238, 242, 255, 1), rgba(224, 231, 255, 1));
+    border-color: rgb(99, 102, 241);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
 }
-.dark #chat-input-container {
-  border-top-color: rgba(55, 65, 81, 1);
-  background: rgba(17, 24, 39, 0.9);
-}
-#chat-input { line-height: 1.35; max-height: 10rem; overflow-y: auto; }
 
-/* LLM Config dropdown affordance (unchanged behavior) */
+.dark .server-item {
+    background: linear-gradient(to bottom, rgba(31, 41, 55, 0.8), rgba(17, 24, 39, 0.8));
+}
+
+.dark .server-item:hover {
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+}
+
+.dark .server-item.border-indigo-500 {
+    background: linear-gradient(to bottom, rgba(49, 46, 129, 0.4), rgba(67, 56, 202, 0.3));
+}
+
+/* Right Chat Area */
+#llm-chat-panel .flex-1 {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Configuration Toggle Button */
 #llm-config-toggle {
-  border: 1px solid rgba(229,231,235,1);
-  background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(249,250,251,0.9));
-  transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    transition: all 0.2s ease;
 }
-.dark #llm-config-toggle {
-  border-color: rgba(55,65,81,1);
-  background: linear-gradient(180deg, rgba(17,24,39,0.95), rgba(31,41,55,0.95));
-}
+
 #llm-config-toggle:hover {
-  border-color: rgba(99,102,241,0.6);
-  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
-}
-#llm-config-toggle .font-medium::after {
-  content: " ▼";
-  font-size: 0.85em;
-  color: #6B7280;
-  margin-left: 6px;
-}
-.dark #llm-config-toggle .font-medium::after { color: #9CA3AF; }
-#llm-config-container:has(#llm-config-form:not(.hidden)) #llm-config-chevron { transform: rotate(180deg); }
-
-/* Chat bubbles: wide enough for comfortable reading; emojis outside bubbles */
-#llm-chat-panel .chat-message { margin-block: 0.25rem; }
-#llm-chat-panel .assistant-message .rounded-lg,
-#llm-chat-panel .user-message .rounded-lg {
-  max-width: min(90ch, 92%);
-  word-wrap: break-word;
-}
-#llm-chat-panel .assistant-message .rounded-lg {
-  background-color: rgba(229, 231, 235, 1);
-  color: #111827;
-}
-.dark #llm-chat-panel .assistant-message .rounded-lg {
-  background-color: rgba(55, 65, 81, 1);
-  color: #F3F4F6;
-}
-#llm-chat-panel .user-message .rounded-lg {
-  background-color: #4F46E5;
-  color: #FFF;
+    background-color: rgba(243, 244, 246, 1);
 }
 
-/* Emojis positioned outside the bubbles */
-#llm-chat-panel .assistant-message .rounded-lg::before,
-#llm-chat-panel .user-message .rounded-lg::before {
-  content: none !important; /* ensure no in-bubble emoji */
-}
-#llm-chat-panel .assistant-message,
-#llm-chat-panel .user-message {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.375rem;
-}
-#llm-chat-panel .assistant-message { justify-content: flex-start; }
-#llm-chat-panel .assistant-message::before {
-  content: "🤖";
-  font-size: 1rem;
-  line-height: 1;
-  margin-top: 0.25rem;
-  margin-right: 0.25rem;
-}
-#llm-chat-panel .user-message { justify-content: flex-end; }
-#llm-chat-panel .user-message::after {
-  content: "🧑";
-  font-size: 1rem;
-  line-height: 1;
-  margin-top: 0.25rem;
-  margin-left: 0.25rem;
+.dark #llm-config-toggle:hover {
+    background-color: rgba(55, 65, 81, 1);
 }
 
-/* Typing indicator */
-.spinner {
-  width: 6px;
-  height: 6px;
-  border: none;
-  border-radius: 50%;
-  color: #34D399;
-  background: currentColor;
-  box-shadow: 12px 0 0 currentColor, 24px 0 0 currentColor;
-  animation: typing-dots 1s infinite linear;
-  display: inline-block;
-  margin: 10px 0 10px 10px;
-  vertical-align: middle;
+#llm-config-chevron {
+    transition: transform 0.2s ease;
 }
+
+#llm-config-container:has(#llm-config-form:not(.hidden)) #llm-config-chevron {
+    transform: rotate(180deg);
+}
+
+/* Chat Messages Container */
+#chat-messages-container {
+    flex: 1;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+    min-height: 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+}
+
+#chat-messages-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+#chat-messages-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#chat-messages-container::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.5);
+    border-radius: 3px;
+}
+
+#chat-messages-container::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.7);
+}
+
+/* Chat Message Bubbles */
+.chat-message {
+    display: flex;
+    align-items: flex-start;
+    width: 100%;
+    margin: 0.375rem 0;
+    animation: messageSlideIn 0.3s ease-out;
+}
+
+
+@keyframes messageSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* User Message (Right-aligned) */
+.user-message {
+    justify-content: flex-end;
+}
+
+.user-message .rounded-lg {
+    max-width: 75%;
+    background: linear-gradient(135deg, rgb(99, 102, 241), rgb(139, 92, 246));
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 1rem 1rem 0.25rem 1rem;
+    line-height: 1.3;
+    word-break: break-word;
+    white-space: pre-wrap;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+/* Assistant Message (Left-aligned) */
+.assistant-message {
+    justify-content: flex-start;
+}
+
+.assistant-message .rounded-lg {
+    max-width: 75%;
+    background: white;
+    color: rgb(17, 24, 39);
+    padding: 0.375rem 0.75rem;
+    border-radius: 1rem 1rem 1rem 0.25rem;
+    line-height: 1.3;
+    word-break: break-word;
+    white-space: pre-wrap;
+    border: 1px solid rgb(229, 231, 235);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+
+
+.dark .assistant-message .rounded-lg {
+    background: rgb(31, 41, 55);
+    color: rgb(243, 244, 246);
+    border-color: rgb(55, 65, 81);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+/* System Message (Centered) */
+.system-message {
+    justify-content: center;
+}
+
+.system-message .rounded-lg {
+    max-width: 80%;
+    background: rgba(254, 243, 199, 0.9);
+    color: rgb(146, 64, 14);
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.813rem;
+    text-align: center;
+}
+
+.dark .system-message .rounded-lg {
+    background: rgba(120, 53, 15, 0.3);
+    color: rgb(253, 224, 71);
+}
+
+/* Streaming Indicator (Typing dots) */
+.streaming-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 0.5rem;
+}
+
+.streaming-indicator::before,
+.streaming-indicator::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.4;
+    animation: typing-dots 1.4s infinite ease-in-out;
+}
+
+.streaming-indicator::before {
+    animation-delay: 0s;
+}
+
+.streaming-indicator::after {
+    animation-delay: 0.2s;
+}
+
 @keyframes typing-dots {
-  0%   { box-shadow: 0 0 0 currentColor, 12px 0 0 currentColor, 24px 0 0 currentColor; opacity: 0.4; }
-  33%  { box-shadow: 0 0 0 currentColor, 12px 0 0 currentColor, 24px 0 0 currentColor; opacity: 1; }
-  50%  { box-shadow: 0 0 0 currentColor, 12px 0 0 currentColor, 24px 0 0 currentColor; opacity: 0.8; }
-  66%  { box-shadow: 0 0 0 currentColor, 12px 0 0 currentColor, 24px 0 0 currentColor; opacity: 1; }
-  100% { box-shadow: 0 0 0 currentColor, 12px 0 0 currentColor, 24px 0 0 currentColor; opacity: 0.4; }
+    0%, 60%, 100% {
+        opacity: 0.4;
+        transform: scale(0.8);
+    }
+    30% {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
-/* Welcome state centered */
-#chat-welcome-message { display: flex; align-items: center; justify-content: center; }
+/* Chat Input Area */
+#chat-input-container {
+    background: rgba(255, 255, 255, 0.98);
+    backdrop-filter: blur(8px);
+}
 
-/* Guard utilities referenced by markup */
-#llm-chat-panel .max-h-300px { max-height: 300px; }
-#llm-chat-panel .max-w-80 { max-width: min(90ch, 92%); }
+.dark #chat-input-container {
+    background: rgba(17, 24, 39, 0.98);
+}
 
-/* Make the cards stretch equally in left and right columns */
-#llm-chat-panel .card-grow {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
+#chat-input {
+    line-height: 1.5;
+    max-height: 120px;
+    min-height: 48px;
+    overflow-y: auto;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#chat-input:focus {
+    outline: none;
+    border-color: rgb(99, 102, 241);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+#chat-send-btn {
+    transition: all 0.2s ease;
+}
+
+#chat-send-btn:not(:disabled):hover {
+    transform: translateY(-1px);
+}
+
+#chat-send-btn:not(:disabled):active {
+    transform: translateY(0);
+}
+
+/* Welcome Message Animations */
+#chat-welcome-message {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 1024px) {
+    #llm-chat-panel .flex.gap-6 {
+        flex-direction: column;
+        height: auto;
+    }
+    
+    #llm-chat-panel .w-80 {
+        width: 100%;
+        flex: none;
+        max-height: 300px;
+    }
+    
+    #llm-chat-panel .flex-1 {
+        min-height: 500px;
+    }
+}
+
+/* Scrollbar Styling for Server List */
+#llm-chat-servers-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+#llm-chat-servers-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#llm-chat-servers-list::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.4);
+    border-radius: 3px;
+}
+
+#llm-chat-servers-list::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.6);
+}
+
+/* Configuration Form Scrollbar */
+#llm-config-form {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+}
+
+#llm-config-form::-webkit-scrollbar {
+    width: 6px;
+}
+
+#llm-config-form::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#llm-config-form::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.5);
+    border-radius: 3px;
+}
+
+#llm-config-form::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.7);
+}
+
+/* Remove default paragraph margins in messages */
+.chat-message .message-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1.4;
+}
+
+.chat-message p {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Chat Bubble Padding - Override Tailwind */
+.user-bubble {
+    padding: 6px 12px !important;
+}
+
+
+.assistant-bubble {
+    padding: 6px 12px !important;
+}
+
+.system-bubble {
+    padding: 4px 10px !important;
+}
+
+/* Ensure text has no extra spacing */
+.user-bubble p,
+.assistant-bubble p,
+.system-bubble p {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1.3 !important;
+}
+
+
+
+
+/* ================================
+ */
+ .chat-message {
+    font-family: sans-serif;
+}
+
+.bg-blue-600 {
+    background-color: #2563eb;
+}
+
+.text-white {
+    color: white;
+}
+
+.bg-gray-100 {
+    background-color: #f3f4f6;
+}
+
+.dark .bg-gray-800 {
+    background-color: #1f2937;
+}
+
+.rounded-2xl {
+    border-radius: 1rem;
+}
+
+.px-4 {
+    padding-left: 1rem;
+    padding-right: 1rem;
+}
+
+.py-2 {
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+
+.max-w-xs {
+    max-width: 20rem;
+}
+
+.shadow-sm {
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.animate-pulse {
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
 }

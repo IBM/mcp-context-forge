@@ -13998,16 +13998,19 @@ const llmChatState = {
  * Initialize LLM Chat when tab is shown
  */
 function initializeLLMChat() {
-  console.log('Initializing LLM Chat...');
-  
-  // Generate or retrieve user ID
-  llmChatState.userId = generateUserId();
-  
-  // Load servers if not already loaded
-  const serversList = document.getElementById('llm-chat-servers-list');
-  if (serversList && serversList.children.length <= 1) {
-    loadVirtualServersForChat();
-  }
+    console.log('Initializing LLM Chat...');
+    
+    // Generate or retrieve user ID
+    llmChatState.userId = generateUserId();
+    
+    // Load servers if not already loaded
+    const serversList = document.getElementById('llm-chat-servers-list');
+    if (serversList && serversList.children.length <= 1) {
+        loadVirtualServersForChat();
+    }
+    
+    // Initialize chat input resize behavior
+    initializeChatInputResize();
 }
 
 /**
@@ -14534,46 +14537,90 @@ async function sendChatMessage(event) {
 /**
  * Append chat message to UI
  */
+// Append chat message to UI
+// Append chat message to UI
+// Append chat message to UI
+// function appendChatMessage(role, content, isStreaming = false) {
+//     const container = document.getElementById('chat-messages-container');
+//     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+//     const messageDiv = document.createElement('div');
+//     messageDiv.id = messageId;
+//     messageDiv.className = `chat-message ${role}-message`;
+    
+//     if (role === 'user') {
+//         messageDiv.innerHTML = `
+//             <div class="flex justify-end" style="margin: 0;">
+//                 <div class="max-w-80 rounded-lg bg-indigo-600 text-white" style="padding: 6px 12px;">
+//                     <div class="text-sm whitespace-pre-wrap" style="margin: 0; padding: 0; line-height: 1.3;">${escapeHtml(content)}</div>
+//                 </div>
+//             </div>
+//         `;
+//     } else if (role === 'assistant') {
+//         messageDiv.innerHTML = `
+//             <div class="flex justify-start" style="margin: 0;">
+//                 <div class="max-w-80 rounded-lg bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100" style="padding: 6px 12px;">
+//                     <div class="text-sm whitespace-pre-wrap message-content" style="margin: 0; padding: 0; line-height: 1.3; display: inline-block;">${escapeHtml(content)}</div>
+//                     ${isStreaming ? '<span class="streaming-indicator inline-block ml-2"></span>' : ''}
+//                 </div>
+//             </div>
+//         `;
+//     } else if (role === 'system') {
+//         messageDiv.innerHTML = `
+//             <div class="flex justify-center">
+//                 <div class="rounded-lg bg-yellow-50 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-xs" style="padding: 4px 10px; margin: 0;">
+//                     ${escapeHtml(content)}
+//                 </div>
+//             </div>
+//         `;
+//     }
+    
+//     container.appendChild(messageDiv);
+//     scrollChatToBottom();
+//     return messageId;
+// }
+
 function appendChatMessage(role, content, isStreaming = false) {
-  const container = document.getElementById('chat-messages-container');
-  const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  const messageDiv = document.createElement('div');
-  messageDiv.id = messageId;
-  messageDiv.className = `chat-message ${role}-message`;
-  
-  if (role === 'user') {
-    messageDiv.innerHTML = `
-      <div class="flex justify-end">
-        <div class="max-w-[80%] rounded-lg px-4 py-2 bg-indigo-600 text-white">
-          <p class="text-sm whitespace-pre-wrap">${escapeHtml(content)}</p>
-        </div>
-      </div>
-    `;
-  } else if (role === 'assistant') {
-    messageDiv.innerHTML = `
-      <div class="flex justify-start">
-        <div class="max-w-[80%] rounded-lg px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100">
-          <p class="text-sm whitespace-pre-wrap message-content">${escapeHtml(content)}</p>
-          ${isStreaming ? '<span class="streaming-indicator inline-block ml-2">▋</span>' : ''}
-        </div>
-      </div>
-    `;
-  } else if (role === 'system') {
-    messageDiv.innerHTML = `
-      <div class="flex justify-center">
-        <div class="rounded-lg px-4 py-2 bg-yellow-50 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 text-xs">
-          ${escapeHtml(content)}
-        </div>
-      </div>
-    `;
-  }
-  
-  container.appendChild(messageDiv);
-  scrollChatToBottom();
-  
-  return messageId;
+    const container = document.getElementById('chat-messages-container');
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    const messageDiv = document.createElement('div');
+    messageDiv.id = messageId;
+    messageDiv.className = `chat-message ${role}-message`;
+    messageDiv.style.marginBottom = '6px'; // compact spacing between messages
+
+    if (role === 'user') {
+        messageDiv.innerHTML = `
+            <div class="flex justify-end px-2">
+                <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl px-4 py-2 max-w-xs shadow-sm text-sm whitespace-pre-wrap flex items-end gap-1">
+                    <div class="message-content">${escapeHtml(content)}</div>
+                </div>
+            </div>
+        `;
+    } else if (role === 'assistant') {
+        messageDiv.innerHTML = `
+            <div class="flex justify-start px-2">
+                <div class="bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl px-4 py-2 max-w-xs shadow-sm text-sm whitespace-pre-wrap flex items-end gap-1">
+                    <div class="message-content">${escapeHtml(content)}</div>
+                    ${isStreaming ? '<span class="streaming-indicator w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>' : ''}
+                </div>
+            </div>
+        `;
+    } else if (role === 'system') {
+        messageDiv.innerHTML = `
+            <div class="flex justify-center px-2">
+                <div class="bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-100 text-xs px-3 py-1 rounded-md shadow-sm">
+                    ${escapeHtml(content)}
+                </div>
+            </div>
+        `;
+    }
+
+    container.appendChild(messageDiv);
+    scrollChatToBottom();
+    return messageId;
 }
+
 
 /**
  * Update chat message content (for streaming)
@@ -14625,11 +14672,17 @@ function clearChatMessages() {
  * Scroll chat to bottom
  */
 function scrollChatToBottom() {
-  const container = document.getElementById('chat-messages-container');
-  if (container) {
-    container.scrollTop = container.scrollHeight;
-  }
+    const container = document.getElementById('chat-messages-container');
+    if (container) {
+        requestAnimationFrame(() => {
+            container.scrollTo({
+                top: container.scrollHeight,
+                behavior: 'smooth'
+            });
+        });
+    }
 }
+
 
 /**
  * Handle Enter key in chat input (send on Enter, new line on Shift+Enter)
@@ -14639,6 +14692,26 @@ function handleChatInputKeydown(event) {
     event.preventDefault();
     sendChatMessage(event);
   }
+}
+
+function initializeChatInputResize() {
+    const chatInput = document.getElementById('chat-input');
+    if (chatInput) {
+        chatInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+        
+        // Reset height when message is sent
+        const form = document.getElementById('chat-input-form');
+        if (form) {
+            form.addEventListener('submit', () => {
+                setTimeout(() => {
+                    chatInput.style.height = 'auto';
+                }, 0);
+            });
+        }
+    }
 }
 
 // Add CSS for streaming indicator animation
