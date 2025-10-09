@@ -683,7 +683,7 @@ class MCPChatService:
             raise RuntimeError("Chat service not initialized. Call initialize() first.")
         
         try:
-            logger.info(f"Processing chat message: {message[:50]}...")
+            logger.debug(f"Processing chat message:...")
             
             # Add user message to history
             user_message = HumanMessage(content=message)
@@ -707,7 +707,7 @@ class MCPChatService:
                     # Trim history if needed
                     self._trim_history()
                     
-                    logger.info("Chat message processed successfully")
+                    logger.debug("Chat message processed successfully")
                     return ai_content
             
             logger.warning("No response from agent")
@@ -760,7 +760,7 @@ class MCPChatService:
             return
         
         try:
-            logger.info(f"Processing streaming chat message...")
+            logger.debug(f"Processing streaming chat message...")
             
             # Add user message to history
             user_message = HumanMessage(content=message)
@@ -789,7 +789,7 @@ class MCPChatService:
                 self._conversation_history.append(ai_message)
                 self._trim_history()
             
-            logger.info("Streaming chat message processed successfully")
+            logger.debug("Streaming chat message processed successfully")
             
         except Exception as e:
             logger.error(f"Error processing streaming chat message: {e}")

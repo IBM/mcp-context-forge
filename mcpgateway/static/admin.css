@@ -691,6 +691,311 @@
 .dark .text-yellow-800 {
     color: #fbbf24;
 }
+/* ============================================
+   THINKING TAGS UI STYLING
+   ============================================ */
+
+/* Thinking Container - Main wrapper */
+.thinking-container {
+    margin-bottom: 0.75rem;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(139, 92, 246, 0.05));
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    transition: all 0.2s ease;
+}
+
+.dark .thinking-container {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(139, 92, 246, 0.08));
+    border-color: rgba(99, 102, 241, 0.3);
+}
+
+/* Thinking Header - Clickable area */
+.thinking-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    user-select: none;
+    background: rgba(255, 255, 255, 0.5);
+    transition: background-color 0.2s ease;
+}
+
+.thinking-header:hover {
+    background: rgba(255, 255, 255, 0.8);
+}
+
+.dark .thinking-header {
+    background: rgba(31, 41, 55, 0.3);
+}
+
+.dark .thinking-header:hover {
+    background: rgba(31, 41, 55, 0.5);
+}
+
+/* Header Content - Left side */
+.thinking-header-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+}
+
+/* Thinking Icon */
+.thinking-icon {
+    width: 1rem;
+    height: 1rem;
+    color: rgb(99, 102, 241);
+    flex-shrink: 0;
+}
+
+.dark .thinking-icon {
+    color: rgb(147, 197, 253);
+}
+
+/* Thinking Label */
+.thinking-label {
+    font-size: 0.813rem;
+    font-weight: 600;
+    color: rgb(75, 85, 99);
+    letter-spacing: 0.01em;
+}
+
+.dark .thinking-label {
+    color: rgb(209, 213, 219);
+}
+
+/* Thinking Count Badge */
+.thinking-count {
+    font-size: 0.688rem;
+    padding: 0.125rem 0.5rem;
+    background: rgba(99, 102, 241, 0.15);
+    color: rgb(67, 56, 202);
+    border-radius: 0.75rem;
+    font-weight: 500;
+}
+
+.dark .thinking-count {
+    background: rgba(99, 102, 241, 0.25);
+    color: rgb(165, 180, 252);
+}
+
+/* Toggle Button */
+.thinking-toggle {
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.thinking-toggle:hover {
+    background: rgba(99, 102, 241, 0.1);
+}
+
+.dark .thinking-toggle:hover {
+    background: rgba(99, 102, 241, 0.2);
+}
+
+/* Chevron Icon */
+.thinking-chevron {
+    width: 1rem;
+    height: 1rem;
+    color: rgb(107, 114, 128);
+    transition: transform 0.2s ease;
+}
+
+.dark .thinking-chevron {
+    color: rgb(156, 163, 175);
+}
+
+/* Thinking Content - Collapsible area */
+.thinking-content {
+    max-height: 600px;
+    overflow-y: auto;
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.3);
+    transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease;
+    opacity: 1;
+}
+
+.thinking-content.collapsed {
+    max-height: 0;
+    padding: 0;
+    opacity: 0;
+    overflow: hidden;
+}
+
+.dark .thinking-content {
+    background: rgba(17, 24, 39, 0.3);
+}
+
+/* Custom scrollbar for thinking content */
+.thinking-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.thinking-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.thinking-content::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.4);
+    border-radius: 3px;
+}
+
+.thinking-content::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.6);
+}
+
+/* Individual Thinking Step */
+.thinking-step {
+    display: flex;
+    gap: 0.625rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(229, 231, 235, 0.5);
+}
+
+.thinking-step:last-child {
+    border-bottom: none;
+}
+
+.dark .thinking-step {
+    border-bottom-color: rgba(55, 65, 81, 0.5);
+}
+
+/* Step Number Circle */
+.thinking-step-number {
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgb(99, 102, 241), rgb(139, 92, 246));
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.688rem;
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
+}
+
+.dark .thinking-step-number {
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.5);
+}
+
+/* Step Text Content */
+.thinking-step-text {
+    flex: 1;
+    font-size: 0.813rem;
+    line-height: 1.5;
+    color: rgb(55, 65, 81);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.dark .thinking-step-text {
+    color: rgb(209, 213, 219);
+}
+
+/* Final Answer Content - After thinking */
+.final-answer-content {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: rgb(17, 24, 39);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.dark .final-answer-content {
+    color: rgb(243, 244, 246);
+}
+
+/* When thinking exists, add subtle separator */
+.thinking-container + .final-answer-content {
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(229, 231, 235, 0.3);
+}
+
+.dark .thinking-container + .final-answer-content {
+    border-top-color: rgba(55, 65, 81, 0.3);
+}
+
+/* Animation for thinking steps appearing */
+@keyframes thinkingStepIn {
+    from {
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.thinking-step {
+    animation: thinkingStepIn 0.3s ease-out;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+    .thinking-container {
+        margin-bottom: 0.5rem;
+    }
+    
+    .thinking-header {
+        padding: 0.4rem 0.6rem;
+    }
+    
+    .thinking-content {
+        padding: 0.5rem;
+    }
+    
+    .thinking-step {
+        gap: 0.5rem;
+    }
+    
+    .thinking-step-number {
+        width: 1.25rem;
+        height: 1.25rem;
+        font-size: 0.625rem;
+    }
+    
+    .thinking-step-text {
+        font-size: 0.75rem;
+    }
+}
+
+/* ============================================
+   NOTIFICATION ANIMATIONS
+   ============================================ */
+
+/* Fade in animation for notifications */
+@keyframes fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+}
+
+/* Smooth transitions for hover states on copy buttons */
+.group:hover svg {
+    transform: scale(1.1);
+}
 
 
 

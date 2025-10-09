@@ -14467,6 +14467,105 @@ async function fetchActiveToolsForServer(serverId) {
   }
 }
 
+/**
+ * Copy environment variables to clipboard for the specified provider
+ */
+async function copyEnvVariables(provider) {
+    const envVariables = {
+        azure: `AZURE_OPENAI_API_KEY=<api_key>
+AZURE_OPENAI_ENDPOINT=https://test-url.openai.azure.com
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+AZURE_OPENAI_DEPLOYMENT=gpt4o
+AZURE_OPENAI_MODEL=gpt4o`,
+        
+        ollama: `OLLAMA_MODEL=qwen3:1.7b`,
+        
+        openai: `OPENAI_API_KEY=<api_key>
+OPENAI_MODEL=gpt-4o-mini`
+    };
+    
+    const variables = envVariables[provider];
+    
+    if (!variables) {
+        console.error('Unknown provider:', provider);
+        showErrorMessage('Unknown provider');
+        return;
+    }
+    
+    try {
+        // Try modern clipboard API first
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(variables);
+            showCopySuccessNotification(provider);
+        } else {
+            // Fallback for older browsers
+            const textArea = document.createElement('textarea');
+            textArea.value = variables;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showCopySuccessNotification(provider);
+                } else {
+                    throw new Error('Copy command failed');
+                }
+            } catch (err) {
+                console.error('Fallback copy failed:', err);
+                showErrorMessage('Failed to copy to clipboard');
+            } finally {
+                document.body.removeChild(textArea);
+            }
+        }
+    } catch (err) {
+        console.error('Failed to copy environment variables:', err);
+        showErrorMessage('Failed to copy to clipboard. Please copy manually.');
+    }
+}
+
+/**
+ * Show success notification when environment variables are copied
+ */
+function showCopySuccessNotification(provider) {
+    const providerNames = {
+        azure: 'Azure OpenAI',
+        ollama: 'Ollama',
+        openai: 'OpenAI'
+    };
+    
+    const displayName = providerNames[provider] || provider;
+    
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = 'fixed top-4 right-4 z-50 animate-fade-in';
+    notification.innerHTML = `
+        <div class="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+            <span class="font-medium">${displayName} variables copied!</span>
+        </div>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Remove notification after 3 seconds
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        notification.style.transition = 'opacity 0.3s ease-out';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                document.body.removeChild(notification);
+            }
+        }, 300);
+    }, 3000);
+}
+
 
 /**
  * Show connection success
@@ -14871,15 +14970,14 @@ async function sendChatMessage(event) {
                     try {
                         switch (eventType) {
                             case "token":
-                            const text = payload.content;
-                            if (text) {
-                                accumulatedText += text;
-                                // Process and render with think tags
-                                updateChatMessageWithThinkTags(assistantMsgId, accumulatedText);
-                            }
-                            break;
+                                const text = payload.content;
+                                if (text) {
+                                    accumulatedText += text;
+                                    // Process and render with think tags
+                                    updateChatMessageWithThinkTags(assistantMsgId, accumulatedText);
+                                }
+                                break;
 
-                                
                             case "tool_start":
                             case "tool_end":
                             case "tool_error":
@@ -14967,6 +15065,152 @@ async function sendChatMessage(event) {
         input.focus();
     }
 }
+
+/**
+ * Parse content with <think> tags and separate thinking from final answer
+ * Returns: { thinkingSteps: [{content: string}], finalAnswer: string, rawContent: string }
+ */
+function parseThinkTags(content) {
+    const thinkingSteps = [];
+    let finalAnswer = '';
+    let rawContent = content;
+    
+    // Extract all <think>...</think> blocks
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+    let match;
+    let lastIndex = 0;
+    
+    while ((match = thinkRegex.exec(content)) !== null) {
+        const thinkContent = match[1].trim();
+        if (thinkContent) {
+            thinkingSteps.push({ content: thinkContent });
+        }
+        lastIndex = match.index + match[0].length;
+    }
+    
+    // Remove all <think> tags to get final answer
+    finalAnswer = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    
+    return { thinkingSteps, finalAnswer, rawContent };
+}
+
+/**
+ * Update chat message with think tags support
+ * Renders thinking steps in collapsible UI and final answer separately
+ */
+function updateChatMessageWithThinkTags(messageId, content) {
+    const messageDiv = document.getElementById(messageId);
+    if (!messageDiv) return;
+    
+    const contentEl = messageDiv.querySelector('.message-content');
+    if (!contentEl) return;
+    
+    // Parse content for think tags
+    const { thinkingSteps, finalAnswer } = parseThinkTags(content);
+    
+    // Clear existing content
+    contentEl.innerHTML = '';
+    
+    // Render thinking steps if present
+    if (thinkingSteps.length > 0) {
+        const thinkingContainer = createThinkingUI(thinkingSteps);
+        contentEl.appendChild(thinkingContainer);
+    }
+    
+    // Render final answer
+    if (finalAnswer) {
+        const answerDiv = document.createElement('div');
+        answerDiv.className = 'final-answer-content';
+        answerDiv.textContent = finalAnswer;
+        contentEl.appendChild(answerDiv);
+    }
+    
+    // Throttle scroll during streaming
+    if (!scrollThrottle) {
+        scrollChatToBottom();
+        scrollThrottle = setTimeout(() => {
+            scrollThrottle = null;
+        }, 100);
+    }
+}
+
+/**
+ * Create the thinking UI component with collapsible steps
+ */
+function createThinkingUI(thinkingSteps) {
+    const container = document.createElement('div');
+    container.className = 'thinking-container';
+    
+    // Create header with icon and label
+    const header = document.createElement('div');
+    header.className = 'thinking-header';
+    header.innerHTML = `
+        <div class="thinking-header-content">
+            <svg class="thinking-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
+            </svg>
+            <span class="thinking-label">Thinking</span>
+            <span class="thinking-count">${thinkingSteps.length} step${thinkingSteps.length !== 1 ? 's' : ''}</span>
+        </div>
+        <button class="thinking-toggle" aria-label="Toggle thinking steps">
+            <svg class="thinking-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+            </svg>
+        </button>
+    `;
+    
+    // Create collapsible content
+    const content = document.createElement('div');
+    content.className = 'thinking-content collapsed';
+    
+    // Add each thinking step
+    thinkingSteps.forEach((step, index) => {
+        const stepDiv = document.createElement('div');
+        stepDiv.className = 'thinking-step';
+        stepDiv.innerHTML = `
+            <div class="thinking-step-number">
+                <span>${index + 1}</span>
+            </div>
+            <div class="thinking-step-text">${escapeHtml(step.content)}</div>
+        `;
+        content.appendChild(stepDiv);
+    });
+    
+    // Toggle functionality
+    const toggleBtn = header.querySelector('.thinking-toggle');
+    const chevron = header.querySelector('.thinking-chevron');
+    
+    toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isCollapsed = content.classList.contains('collapsed');
+        
+        if (isCollapsed) {
+            content.classList.remove('collapsed');
+            chevron.style.transform = 'rotate(180deg)';
+        } else {
+            content.classList.add('collapsed');
+            chevron.style.transform = 'rotate(0deg)';
+        }
+        
+        // Scroll after animation
+        setTimeout(scrollChatToBottom, 200);
+    });
+    
+    container.appendChild(header);
+    container.appendChild(content);
+    
+    return container;
+}
+
+/**
+ * Helper to escape HTML for safe rendering
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
 
 /**
  * Append chat message to UI
@@ -15061,22 +15305,25 @@ function appendChatMessage(role, content, isStreaming = false) {
  */
 let scrollThrottle = null;
 function updateChatMessage(messageId, content) {
-  const messageDiv = document.getElementById(messageId);
-  if (messageDiv) {
-    const contentEl = messageDiv.querySelector('.message-content');
-    if (contentEl) {
-      contentEl.textContent = content;
-      
-      // Throttle scroll to every 100ms during streaming
-      if (!scrollThrottle) {
-        scrollChatToBottom();
-        scrollThrottle = setTimeout(() => {
-          scrollThrottle = null;
-        }, 100);
-      }
+    const messageDiv = document.getElementById(messageId);
+    if (messageDiv) {
+        const contentEl = messageDiv.querySelector('.message-content');
+        if (contentEl) {
+            // Store raw content for final processing
+            contentEl.setAttribute('data-raw-content', content);
+            contentEl.textContent = content;
+            
+            // Throttle scroll during streaming
+            if (!scrollThrottle) {
+                scrollChatToBottom();
+                scrollThrottle = setTimeout(() => {
+                    scrollThrottle = null;
+                }, 100);
+            }
+        }
     }
-  }
 }
+
 
 
 
@@ -15084,14 +15331,38 @@ function updateChatMessage(messageId, content) {
  * Mark message as complete (remove streaming indicator)
  */
 function markMessageComplete(messageId) {
-  const messageDiv = document.getElementById(messageId);
-  if (messageDiv) {
-    const indicator = messageDiv.querySelector('.streaming-indicator');
-    if (indicator) {
-      indicator.remove();
+    const messageDiv = document.getElementById(messageId);
+    if (messageDiv) {
+        const indicator = messageDiv.querySelector('.streaming-indicator');
+        if (indicator) {
+            indicator.remove();
+        }
+        
+        // Ensure final render with think tags
+        const contentEl = messageDiv.querySelector('.message-content');
+        if (contentEl && contentEl.textContent) {
+            // Re-parse one final time to ensure complete rendering
+            const fullContent = contentEl.getAttribute('data-raw-content') || contentEl.textContent;
+            if (fullContent.includes('<think>')) {
+                const { thinkingSteps, finalAnswer } = parseThinkTags(fullContent);
+                contentEl.innerHTML = '';
+                
+                if (thinkingSteps.length > 0) {
+                    const thinkingContainer = createThinkingUI(thinkingSteps);
+                    contentEl.appendChild(thinkingContainer);
+                }
+                
+                if (finalAnswer) {
+                    const answerDiv = document.createElement('div');
+                    answerDiv.className = 'final-answer-content';
+                    answerDiv.textContent = finalAnswer;
+                    contentEl.appendChild(answerDiv);
+                }
+            }
+        }
     }
-  }
 }
+
 
 /**
  * Get or create a tool-events card positioned above the assistant message.
