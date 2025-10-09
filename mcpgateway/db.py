@@ -1869,9 +1869,8 @@ class Resource(Base):
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
-    __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),)
+
     @property
     def content(self) -> "ResourceContent":
         """
@@ -2106,10 +2105,7 @@ class Prompt(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
-    __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
-    )
-
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),)
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -2410,9 +2406,7 @@ class Server(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
-    __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),)
 
 
 class Gateway(Base):
@@ -2591,9 +2585,7 @@ class A2AAgent(Base):
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
-    __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),)
 
     @property
     def execution_count(self) -> int:

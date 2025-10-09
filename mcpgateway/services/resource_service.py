@@ -311,6 +311,7 @@ class ResourceService:
 
         Raises:
             IntegrityError: If a database integrity error occurs.
+            ResourceURIConflictError: If a resource with the same URI already exists.
             ResourceError: For other resource registration errors
 
         Examples:
@@ -377,7 +378,7 @@ class ResourceService:
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(resource, "visibility", None) or visibility,
             )
-          
+
             # Add to DB
             db.add(db_resource)
             db.commit()
@@ -658,7 +659,10 @@ class ResourceService:
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> uri = 'http://example.com/resource.txt'
-            >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(content='test')
+            >>> import types
+            >>> mock_resource = types.SimpleNamespace(content='test', uri=uri)
+            >>> db.execute.return_value.scalar_one_or_none.return_value = mock_resource
+            >>> db.get.return_value = mock_resource  # Ensure uri is a string, not None
             >>> import asyncio
             >>> result = asyncio.run(service.read_resource(db, uri))
             >>> isinstance(result, ResourceContent)
@@ -680,7 +684,7 @@ class ResourceService:
         error_message = None
         resource = None
         resource_db = db.get(DbResource, resource_id)
-        uri=resource_db.uri if resource_db else None
+        uri = resource_db.uri if resource_db else None
         # Create trace span for resource reading
         with create_span(
             "resource.read",
@@ -965,7 +969,7 @@ class ResourceService:
 
         Args:
             db: Database session
-            uri: Resource URI
+            resource_id: Resource ID
             resource_update: Resource update object
             modified_by: Username of the person modifying the resource
             modified_from_ip: IP address where the modification request originated
@@ -977,11 +981,12 @@ class ResourceService:
 
         Raises:
             ResourceNotFoundError: If the resource is not found
+            ResourceURIConflictError: If a resource with the same URI already exists.
             ResourceError: For other update errors
             IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
 
-        Examples:
+        Example:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock, AsyncMock
             >>> from mcpgateway.schemas import ResourceRead
@@ -1007,8 +1012,6 @@ class ResourceService:
             # # Check for uri conflict if uri is being changed and visibility is public
             if resource_update.uri and resource_update.uri != resource.uri:
                 visibility = resource_update.visibility or resource.visibility
-                logger.info(f"Resource resource_update.team_id on update: {resource_update.team_id}")
-                logger.info(f"Resource resource.team_id on update: {resource.team_id}")
                 team_id = resource_update.team_id or resource.team_id
                 if visibility.lower() == "public":
                     # Check for existing public resources with the same uri
@@ -1018,7 +1021,6 @@ class ResourceService:
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
-                    logger.info(f"Existing resource check result: {existing_resource}")
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
@@ -1077,7 +1079,7 @@ class ResourceService:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
-        except ResourceURIConflictError as pe:    
+        except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
             raise pe
         except Exception as e:
@@ -1098,7 +1100,7 @@ class ResourceService:
             ResourceNotFoundError: If the resource is not found
             ResourceError: For other deletion errors
 
-        Examples:
+        Example:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock, AsyncMock
             >>> service = ResourceService()
@@ -1141,7 +1143,7 @@ class ResourceService:
 
         except ResourceNotFoundError:
             # ResourceNotFoundError is re-raised to be handled in the endpoint.
-            raise   
+            raise
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to delete resource: {str(e)}")
@@ -1156,12 +1158,12 @@ class ResourceService:
             include_inactive: Whether to include inactive resources
 
         Returns:
-            ResourceRead object
+            ResourceRead: The resource object
 
         Raises:
             ResourceNotFoundError: If the resource is not found
 
-        Examples:
+        Example:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock
             >>> service = ResourceService()

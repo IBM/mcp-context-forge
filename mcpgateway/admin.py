@@ -97,8 +97,8 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.plugin_service import get_plugin_service
-from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService,PromptNameConflictError
-from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService,ResourceURIConflictError
+from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
@@ -6302,10 +6302,11 @@ async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), us
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
         >>> resource_uri = "test://resource/get"
+        >>> resource_id = 1
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
-        ...     id=1, uri=resource_uri, name="Get Resource", description="Test",
+        ...     id=resource_id, uri=resource_uri, name="Get Resource", description="Test",
         ...     mime_type="text/plain", size=10, created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc), is_active=True, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
@@ -6343,11 +6344,11 @@ async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), us
         True
         >>>
         >>> # Test exception during content read (resource found but content fails)
-        >>> resource_service.get_resource_by_uri = AsyncMock(return_value=mock_resource) # Resource found
+        >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource) # Resource found
         >>> resource_service.read_resource = AsyncMock(side_effect=Exception("Content read error"))
         >>> async def test_admin_get_resource_content_error():
         ...     try:
-        ...         await admin_get_resource(resource_uri, mock_db, mock_user)
+        ...         await admin_get_resource(resource_id, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
         ...         return str(e) == "Content read error"
@@ -6356,7 +6357,7 @@ async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), us
         True
         >>>
         >>> # Restore original methods
-        >>> resource_service.get_resource_by_uri = original_get_resource_by_uri
+        >>> resource_service.get_resource_by_id = original_get_resource_by_id
         >>> resource_service.read_resource = original_read_resource
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
@@ -6477,7 +6478,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
         if isinstance(ex, ResourceURIConflictError):
-            LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")   
+            LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
             return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         LOGGER.error(f"Error in admin_add_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
@@ -6628,12 +6629,12 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     """
     Delete a resource via the admin UI.
 
-    This endpoint permanently removes a resource from the database using its URI.
+    This endpoint permanently removes a resource from the database using its resource ID.
     The operation is irreversible and should be used with caution. It requires
     user authentication and logs the deletion attempt.
 
     Args:
-        uri (str): The URI of the resource to delete.
+        resource_id (str): The ID of the resource to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -6895,8 +6896,8 @@ async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=D
     except PromptNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting prompt {prompt.name}: {e}")
-        raise e
+        LOGGER.error(f"Error getting prompt {prompt_id}: {e}")
+        raise
 
 
 @admin_router.post("/prompts")
@@ -6992,7 +6993,6 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
-
         )
         return JSONResponse(
             content={"message": "Prompt registered successfully!", "success": True},
@@ -7023,21 +7023,21 @@ async def admin_edit_prompt(
     """Edit a prompt via the admin UI.
 
     Expects form fields:
-      - name
-      - description (optional)
-      - template
-      - arguments (as a JSON string representing a list)
+        - name
+        - description (optional)
+        - template
+        - arguments (as a JSON string representing a list)
 
     Args:
-        name: Prompt name.
+        prompt_id: Prompt ID.
         request: FastAPI request containing form data.
         db: Database session.
         user: Authenticated user.
 
     Returns:
-         JSONResponse: A JSON response indicating success or failure of the server update operation.
+        JSONResponse: A JSON response indicating success or failure of the server update operation.
 
-        Examples:
+    Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
@@ -7097,7 +7097,7 @@ async def admin_edit_prompt(
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
     LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
-    
+
     args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
     # Parse tags from comma-separated string

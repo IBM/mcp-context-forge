@@ -65,6 +65,7 @@ class PromptNameConflictError(PromptError):
             name: The conflicting prompt name
             is_active: Whether the existing prompt is active
             prompt_id: ID of the existing prompt if available
+            visibility: Prompt visibility level (private, team, public).
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptNameConflictError
@@ -88,7 +89,7 @@ class PromptNameConflictError(PromptError):
         if not is_active:
             message += f" (currently inactive, ID: {prompt_id})"
         super().__init__(message)
-        
+
 
 class PromptValidationError(PromptError):
     """Raised when prompt validation fails."""
@@ -403,7 +404,7 @@ class PromptService:
             raise ie
         except PromptNameConflictError as se:
             db.rollback()
-            raise se    
+            raise se
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to register prompt: {str(e)}")
@@ -619,7 +620,7 @@ class PromptService:
 
         Args:
             db: Database session
-            name: Name of prompt to get
+            name: Name of the prompt to retrieve
             arguments: Optional arguments for rendering
             user: Optional user identifier for plugin context
             tenant_id: Optional tenant identifier for plugin context
@@ -756,7 +757,7 @@ class PromptService:
 
         Args:
             db: Database session
-            name: Name of prompt to update
+            prompt_id: ID of prompt to update
             prompt_update: Prompt update object
             modified_by: Username of the person modifying the prompt
             modified_from_ip: IP address where the modification originated
@@ -1007,6 +1008,7 @@ class PromptService:
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to delete prompt: {str(e)}")
+
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to prompt events.
 
