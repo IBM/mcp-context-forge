@@ -131,11 +131,16 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
 
 
 # ---------- ROUTES ----------
-
+from fastapi import Request
 @llmchat_router.post("/connect")
-async def connect(input_data: ConnectInput):
+async def connect(input_data: ConnectInput, request: Request):
     """Create or refresh a chat session for a user."""
     user_id = input_data.user_id
+
+    if input_data.server.auth_token is None or input_data.server.auth_token == "":
+        jwt_token = request.cookies.get("jwt_token")
+        print("JWT TOKEN RECEVED:",jwt_token)
+        input_data.server.auth_token = jwt_token
 
     # Close old session if it exists
     if user_id in active_sessions:
@@ -163,13 +168,9 @@ async def connect(input_data: ConnectInput):
         tool_names = []
         if hasattr(chat_service, '_tools') and chat_service._tools:
             for tool in chat_service._tools:
-                print("RAW TOOL:", tool)
                 tool_name = getattr(tool, 'name', None)
                 if tool_name:
                     tool_names.append(tool_name)
-
-        print("TOOLS COLELCTED", tool_names)
-        
 
         return {
             "status": "connected",

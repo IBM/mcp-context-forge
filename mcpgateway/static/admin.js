@@ -12150,6 +12150,7 @@ async function getAuthToken() {
     if (!token) {
         token = localStorage.getItem("auth_token");
     }
+    console.log("MY TOKEN GENERATED:",token)
 
     return token || "";
 }
@@ -14230,19 +14231,8 @@ async function connectLLMChat() {
   connectBtn.disabled = true;
 
   try {
-    // Prepare LLM config
-    const llmConfig = buildLLMConfig(provider);
 
-    // Get JWT token from cookie
-    // const jwtToken = getCookie('jwt_token');
-    // if (!jwtToken) {
-    //   throw new Error('Authentication token not found');
-    // }
-
-    const jwtToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbkBleGFtcGxlLmNvbSIsImlzcyI6Im1jcGdhdGV3YXkiLCJhdWQiOiJtY3BnYXRld2F5LWFwaSIsImlhdCI6MTc1OTg1NTkzMywianRpIjoiYTNkYWFjYjMtZmY5ZS00ZjllLTkyNzAtYmRlOTQxZmJiM2FjIiwidXNlciI6eyJlbWFpbCI6ImFkbWluQGV4YW1wbGUuY29tIiwiZnVsbF9uYW1lIjoiQVBJIFRva2VuIFVzZXIiLCJpc19hZG1pbiI6dHJ1ZSwiYXV0aF9wcm92aWRlciI6ImFwaV90b2tlbiJ9LCJ0ZWFtcyI6W10sIm5hbWVzcGFjZXMiOlsidXNlcjphZG1pbkBleGFtcGxlLmNvbSIsInB1YmxpYyJdLCJleHAiOjE3NjA0NjA3MzMsInNjb3BlcyI6eyJzZXJ2ZXJfaWQiOm51bGwsInBlcm1pc3Npb25zIjpbIioiXSwiaXBfcmVzdHJpY3Rpb25zIjpbXSwidGltZV9yZXN0cmljdGlvbnMiOnt9fX0.XMuTEqpaTSqOWhwmE8j3ZqM1bbwtUbll0v_7GK2qF0A"
-
-    // Prepare server config
-    
+    jwtToken=""; //needs to be updated
 
     const serverUrl = `${location.protocol}//${location.hostname}${location.port && !["80","443"].includes(location.port) ? `:${location.port}` : ""}/servers/${llmChatState.selectedServerId}/mcp`;
 
@@ -14266,10 +14256,11 @@ async function connectLLMChat() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${jwtToken}`
+        // 'Authorization': `Bearer ${jwtToken}`
       },
       body: JSON.stringify(payload),
-      credentials: 'same-origin'
+    //   credentials: 'same-origin'
+    credentials: 'include'
     }, 30000); // 30 second timeout
 
     if (!response.ok) {
