@@ -28,6 +28,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import tempfile
 import time
 from typing import Any, cast, Dict, List, Optional, Union
 import urllib.parse
@@ -9917,7 +9918,7 @@ async def admin_generate_support_bundle(
             include_env=include_env,
             include_system_info=include_system,
             log_tail_lines=log_lines,
-            output_dir=Path("/tmp"),
+            output_dir=Path(tempfile.gettempdir()),
         )
 
         # Generate bundle

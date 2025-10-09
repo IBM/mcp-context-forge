@@ -41,6 +41,7 @@ from pathlib import Path
 import platform
 import re
 import socket
+import tempfile
 from typing import Any, Dict, Optional
 import zipfile
 
@@ -289,6 +290,11 @@ class SupportBundleService:
             "basic_auth_password",
             "jwt_secret_key",
             "auth_encryption_secret",
+            "platform_admin_password",
+            "sso_github_client_secret",
+            "sso_google_client_secret",
+            "sso_ibm_verify_client_secret",
+            "sso_okta_client_secret",
         }
         config = settings.model_dump(exclude=exclude_fields)
 
@@ -403,7 +409,7 @@ class SupportBundleService:
             config = SupportBundleConfig()
 
         # Determine output directory
-        output_dir = config.output_dir or Path("/tmp")
+        output_dir = config.output_dir or Path(tempfile.gettempdir())
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # Create timestamped filename

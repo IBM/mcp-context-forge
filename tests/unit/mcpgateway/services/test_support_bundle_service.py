@@ -150,6 +150,11 @@ class TestSupportBundleService:
         assert "basic_auth_password" not in config
         assert "jwt_secret_key" not in config
         assert "auth_encryption_secret" not in config
+        assert "platform_admin_password" not in config
+        assert "sso_github_client_secret" not in config
+        assert "sso_google_client_secret" not in config
+        assert "sso_ibm_verify_client_secret" not in config
+        assert "sso_okta_client_secret" not in config
 
     def test_collect_logs_file_not_found(self):
         """Test log collection when file doesn't exist."""
@@ -263,6 +268,11 @@ class TestSupportBundleService:
                 settings_data = zf.read("settings.json").decode("utf-8")
                 assert "basic_auth_password" not in settings_data
                 assert "jwt_secret_key" not in settings_data
+                assert "platform_admin_password" not in settings_data
+                assert "sso_github_client_secret" not in settings_data
+                assert "sso_google_client_secret" not in settings_data
+                assert "sso_ibm_verify_client_secret" not in settings_data
+                assert "sso_okta_client_secret" not in settings_data
 
     def test_support_bundle_config_validation(self):
         """Test SupportBundleConfig validation."""
