@@ -1,413 +1,374 @@
 # MCP Gateway Performance Testing Suite
 
-Comprehensive performance testing framework for the MCP Gateway with fast-time-server integration.
-
-## Overview
-
-This suite provides structured performance testing for MCP Gateway operations including:
-
-- **Tool Invocation**: Testing MCP tool discovery and execution performance
-- **Resource Access**: Testing MCP resource listing and retrieval performance
-- **Prompt Execution**: Testing MCP prompt discovery and execution performance
-- **Mixed Workload**: Realistic concurrent workload patterns
+**Version 2.0** - Complete performance testing with server profiles, infrastructure testing, and baseline comparison.
 
 ## Quick Start
 
-### Prerequisites
-
-1. **Install `hey` HTTP load testing tool**:
-   ```bash
-   # macOS
-   brew install hey
-
-   # Linux/WSL
-   go install github.com/rakyll/hey@latest
-
-   # Or download prebuilt binary from:
-   # https://github.com/rakyll/hey/releases
-   ```
-
-2. **Start the MCP Gateway stack**:
-   ```bash
-   make compose-up
-   ```
-
-3. **Wait for services to be healthy** (usually 30-60 seconds)
-
-### Running Tests
-
 ```bash
-# Run all tests with default (medium) profile
-cd tests/performance
-./run-all.sh
+# 1. Install dependencies
+make install
 
-# Run with light profile for quick testing
-./run-all.sh -p light
+# 2. Run standard test
+make test
 
-# Run only tool benchmarks
-./run-all.sh --tools-only
-
-# Run with heavy load
-./run-all.sh -p heavy
-
-# Skip setup steps if services are already running
-SKIP_SETUP=true ./run-all.sh
+# 3. Run quick smoke test
+make quick
 ```
 
-## Directory Structure
+That's it! Results are saved in `results_*/` and reports in `reports/`.
+
+## What's Included
+
+This comprehensive performance testing suite provides:
+
+✅ **Load Testing** - Test with different request volumes (smoke → heavy)
+✅ **Server Profiling** - Compare different Gunicorn worker/thread configurations
+✅ **Infrastructure Testing** - Test complete environment setups (dev → production)
+✅ **Database Comparison** - Compare PostgreSQL versions (15, 16, 17)
+✅ **Horizontal Scaling** - Test with 1-8 gateway instances
+✅ **Baseline Tracking** - Save and compare performance over time
+✅ **Regression Detection** - Automatically detect performance degradation
+✅ **HTML Reports** - Beautiful reports with charts and recommendations
+
+## Common Commands
+
+### Basic Testing
+
+```bash
+make test          # Standard medium load test
+make quick         # Quick smoke test (100 requests)
+make heavy         # Heavy load test (50K requests)
+```
+
+### Server Profile Testing
+
+```bash
+make test-optimized    # Test with 8 workers (high throughput)
+make test-memory       # Test with 8 threads (many connections)
+make test-io           # Test with optimized DB pools
+```
+
+### Infrastructure Testing
+
+```bash
+make test-production   # Test production infrastructure (4 instances)
+make test-staging      # Test staging setup (2 instances)
+make test-ha           # Test high-availability (6 instances)
+```
+
+### Database Comparison
+
+```bash
+make compare-postgres  # Compare PostgreSQL 15 vs 17
+make test-pg17         # Test with PostgreSQL 17
+```
+
+### Baseline & Comparison
+
+```bash
+make baseline          # Save current results as baseline
+make compare           # Compare with production baseline
+make list-baselines    # List all saved baselines
+```
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** | Command cheat sheet and examples |
+| **[SERVER_PROFILES_GUIDE.md](SERVER_PROFILES_GUIDE.md)** | Detailed server profile guide |
+| **[PERFORMANCE_STRATEGY.md](PERFORMANCE_STRATEGY.md)** | Complete testing strategy |
+| **[README_AUTOMATION.md](README_AUTOMATION.md)** | Automation and CI/CD guide |
+| **[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)** | Implementation details |
+
+## Architecture
+
+### Test Runners
+
+```
+make test
+  └─> run-advanced.sh              (Main runner with all features)
+       ├─> config.yaml              (Configuration)
+       ├─> generate_docker_compose  (Infrastructure setup)
+       ├─> run-configurable.sh      (Test execution)
+       ├─> baseline_manager         (Baseline operations)
+       ├─> compare_results          (Comparison)
+       └─> report_generator         (HTML reports)
+```
+
+### Directory Structure
 
 ```
 tests/performance/
-├── README.md                    # This file
-├── run-all.sh                   # Main test runner
-├── payloads/                    # Test payloads for various scenarios
-│   ├── tools/
-│   │   ├── get_system_time.json
-│   │   ├── convert_time.json
-│   │   └── list_tools.json
-│   ├── resources/
-│   │   ├── list_resources.json
-│   │   ├── read_timezone_info.json
-│   │   └── read_world_times.json
-│   └── prompts/
-│       ├── list_prompts.json
-│       └── get_compare_timezones.json
-├── scenarios/                   # Individual test scenarios
-│   ├── tools-benchmark.sh       # Tool invocation tests
-│   ├── resources-benchmark.sh   # Resource access tests
-│   ├── prompts-benchmark.sh     # Prompt execution tests
-│   └── mixed-workload.sh        # Combined concurrent tests
-├── profiles/                    # Load profiles
-│   ├── light.env                # Light load (1K requests, 10 concurrent)
-│   ├── medium.env               # Medium load (10K requests, 50 concurrent)
-│   └── heavy.env                # Heavy load (50K requests, 200 concurrent)
-├── utils/                       # Helper scripts
-│   ├── setup-auth.sh            # JWT token generation
-│   └── check-services.sh        # Service health verification
-└── results/                     # Test results (auto-generated)
-    ├── tools_*.txt              # Tool benchmark results
-    ├── resources_*.txt          # Resource benchmark results
-    ├── prompts_*.txt            # Prompt benchmark results
-    └── summary_*.md             # Summary reports
+├── Makefile                       # 👈 START HERE - Main entrypoint
+├── README.md                      # 👈 This file
+├── config.yaml                    # Configuration
+│
+├── run-advanced.sh                # Advanced runner (infrastructure, profiles)
+├── run-configurable.sh            # Config-driven test execution
+│
+├── utils/
+│   ├── generate_docker_compose.py # Generate docker-compose from profiles
+│   ├── compare_results.py         # Compare baselines
+│   ├── baseline_manager.py        # Manage baselines
+│   ├── report_generator.py        # HTML reports
+│   ├── check-services.sh          # Health checks
+│   └── setup-auth.sh              # Authentication
+│
+├── scenarios/                     # Individual test scenarios
+├── payloads/                      # Test payloads (JSON)
+├── profiles/                      # Load profiles (light, medium, heavy)
+├── baselines/                     # Saved baselines
+└── reports/                       # Generated HTML reports
 ```
 
-## Load Profiles
+## Available Profiles
 
-### Light Profile (Quick Testing)
-```bash
-REQUESTS=1000
-CONCURRENCY=10
-DURATION=10s
-TIMEOUT=30
-```
+### Load Profiles
 
-Use for: Quick smoke tests, development verification
+| Profile | Requests | Concurrency | Use Case |
+|---------|----------|-------------|----------|
+| **smoke** | 100 | 5 | Quick validation |
+| **light** | 1,000 | 10 | Fast testing |
+| **medium** | 10,000 | 50 | Realistic load (default) |
+| **heavy** | 50,000 | 200 | Stress testing |
 
-### Medium Profile (Realistic Testing)
-```bash
-REQUESTS=10000
-CONCURRENCY=50
-DURATION=30s
-TIMEOUT=60
-```
+### Server Profiles
 
-Use for: Realistic load simulation, baseline measurements
+| Profile | Workers | Threads | DB Pool | Best For |
+|---------|---------|---------|---------|----------|
+| **minimal** | 1 | 2 | 5 | Small deployments |
+| **standard** | 4 | 4 | 20 | Balanced (default) |
+| **optimized** | 8 | 2 | 30 | CPU-bound, high throughput |
+| **memory_optimized** | 4 | 8 | 40 | Many concurrent connections |
+| **io_optimized** | 6 | 4 | 50 | Database-heavy workloads |
 
-### Heavy Profile (Stress Testing)
-```bash
-REQUESTS=50000
-CONCURRENCY=200
-DURATION=60s
-TIMEOUT=60
-```
+### Infrastructure Profiles
 
-Use for: Stress testing, capacity planning, finding bottlenecks
+| Profile | Instances | PostgreSQL | Resources | Use Case |
+|---------|-----------|------------|-----------|----------|
+| **development** | 1 | 17 | Minimal | Local development |
+| **staging** | 2 | 17 | Moderate | Pre-production |
+| **production** | 4 | 17 | Optimized | Production |
+| **production_ha** | 6 | 17 | High | High availability |
 
-## Test Scenarios
+## Examples
 
-### 1. Tool Invocation Benchmarks
-
-Tests MCP tool operations through the gateway:
+### Example 1: Find Optimal Configuration
 
 ```bash
-./scenarios/tools-benchmark.sh
+# Test different server profiles
+make test-minimal
+make test-standard
+make test-optimized
+
+# Compare results to find best cost/performance ratio
 ```
 
-**Tests:**
-- `list_tools` - Tool discovery performance
-- `get_system_time` - Simple tool invocation
-- `convert_time` - Complex tool with multiple parameters
-
-**Metrics:**
-- Request throughput (requests/sec)
-- Response time (p50, p95, p99)
-- Error rate
-- Latency distribution
-
-### 2. Resource Access Benchmarks
-
-Tests MCP resource operations:
+### Example 2: Plan Database Upgrade
 
 ```bash
-./scenarios/resources-benchmark.sh
+# Compare PostgreSQL versions
+make compare-postgres
+
+# Review comparison report
+cat results_*/comparison_*.json
 ```
 
-**Tests:**
-- `list_resources` - Resource discovery
-- `read_timezone_info` - Static resource access
-- `read_world_times` - Dynamic resource access
-
-### 3. Prompt Execution Benchmarks
-
-Tests MCP prompt operations:
+### Example 3: Capacity Planning
 
 ```bash
-./scenarios/prompts-benchmark.sh
+# Test with different instance counts
+make test-single              # 1 instance
+make test-scaling             # 4 instances
+
+# Determine how many instances needed for your load
 ```
 
-**Tests:**
-- `list_prompts` - Prompt discovery
-- `get_compare_timezones` - Prompt with arguments
-
-### 4. Mixed Workload Benchmark
-
-Simulates realistic concurrent usage:
+### Example 4: Regression Testing
 
 ```bash
-./scenarios/mixed-workload.sh
+# Save baseline before changes
+make baseline-production
+
+# After code changes, compare
+make compare
+
+# Fails if regressions detected
 ```
 
-Runs all test types concurrently to simulate real-world usage patterns.
+## Complete Workflows
 
-## Understanding Results
+### Optimization Workflow
 
-### Sample Output
-
-```
-Summary:
-  Total:        15.2340 secs
-  Slowest:      0.0856 secs
-  Fastest:      0.0012 secs
-  Average:      0.0152 secs
-  Requests/sec: 656.28
-
-Response time histogram:
-  0.001 [1]     |
-  0.010 [4523]  |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
-  0.018 [3247]  |■■■■■■■■■■■■■■■■■■■■■■■■■■■■
-  0.027 [1456]  |■■■■■■■■■■■■■
-  0.035 [542]   |■■■■■
-  0.044 [187]   |■■
-  0.052 [34]    |
-  0.061 [8]     |
-  0.069 [2]     |
-
-Status code distribution:
-  [200] 10000 responses
+```bash
+make workflow-optimize
 ```
 
-### Key Metrics
+This runs:
+1. Baseline with standard configuration
+2. Test with optimized configuration
+3. Compare and generate recommendation
 
-- **Requests/sec**: Throughput - higher is better
-- **Average**: Mean response time - lower is better
-- **p50/p95/p99**: Percentile response times - lower is better
-- **Status codes**: Should be 100% 200s for successful tests
+### Upgrade Workflow
 
-### Interpreting Results
+```bash
+make workflow-upgrade
+```
 
-**Good Performance:**
-- Tools: >500 req/s, <20ms average
-- Resources: >800 req/s, <15ms average
-- Prompts: >400 req/s, <25ms average
+This runs:
+1. Baseline with current PostgreSQL version
+2. Test with new version
+3. Compare and show upgrade impact
 
-**Warning Signs:**
-- Error rate >1%
-- p99 >200ms
-- Significant variance between p50 and p99
-- Status codes other than 200
+### Capacity Planning Workflow
+
+```bash
+make workflow-capacity
+```
+
+This runs:
+1. Test with 1, 2, 4 instances
+2. Save all baselines
+3. Compare to find optimal scaling
 
 ## Advanced Usage
 
-### Custom Profiles
-
-Create custom profile in `profiles/custom.env`:
+### Direct Runner Access
 
 ```bash
-REQUESTS=25000
-CONCURRENCY=100
-DURATION=45s
-TIMEOUT=60
+# Use run-advanced.sh directly for more control
+./run-advanced.sh -p medium --server-profile optimized --save-baseline my_test.json
+
+# Compare with custom baseline
+./run-advanced.sh -p medium --infrastructure production --compare-with my_test.json
+
+# Test specific PostgreSQL version
+./run-advanced.sh -p medium --postgres-version 16-alpine
 ```
 
-Run with:
+### Custom Configuration
+
+Edit `config.yaml` to:
+- Add custom server profiles
+- Define new infrastructure setups
+- Adjust SLO thresholds
+- Configure monitoring options
+
+### Generate Docker Compose Manually
+
 ```bash
-./run-all.sh -p custom
+./utils/generate_docker_compose.py \
+  --infrastructure production \
+  --server-profile optimized \
+  --instances 4 \
+  --output my-docker-compose.yml
 ```
 
-### Manual Test Execution
+## Output & Reports
 
-Run individual scenarios directly:
+### Test Results
 
-```bash
-# Set up environment
-export PROFILE=medium
-export GATEWAY_URL=http://localhost:4444
-
-# Generate auth token
-./utils/setup-auth.sh
-
-# Source the token
-source .auth_token
-
-# Run specific test
-./scenarios/tools-benchmark.sh
+```
+results_medium_optimized_20241009_123456/
+├── tools_list_tools_medium_*.txt          # Individual test results
+├── system_metrics.csv                      # CPU, memory over time
+├── docker_stats.csv                        # Container resource usage
+├── prometheus_metrics.txt                  # Application metrics
+└── gateway_logs.txt                        # Application logs
 ```
 
-### Testing Remote Gateways
+### HTML Reports
 
-```bash
-./run-all.sh -u https://gateway.example.com
+```
+reports/
+└── performance_report_medium_20241009_123456.html
 ```
 
-### Parallel Test Execution
+Reports include:
+- Executive summary
+- SLO compliance
+- Interactive charts
+- System metrics
+- Automated recommendations
 
-The `mixed-workload.sh` script demonstrates concurrent execution:
+### Baselines
 
-```bash
-# All tests run simultaneously
-./scenarios/mixed-workload.sh
+```
+baselines/
+├── production_baseline.json
+├── pg15_comparison.json
+└── current_baseline_20241009.json
 ```
 
 ## Troubleshooting
 
-### Services Not Healthy
+### Services Not Starting
 
 ```bash
-# Check docker compose status
-docker compose ps
-
-# Check logs
-docker compose logs gateway
-docker compose logs fast_time_server
-
-# Restart services
-make compose-down
-make compose-up
+make check                          # Check health
+docker-compose logs gateway         # View logs
+make clean && make test             # Clean and retry
 ```
 
-### Authentication Failures
+### Authentication Issues
 
 ```bash
-# Regenerate token
-./utils/setup-auth.sh
-
-# Verify token
-source .auth_token
-echo $MCPGATEWAY_BEARER_TOKEN
-
-# Test manually
-curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
-  http://localhost:4444/health
+./utils/setup-auth.sh               # Regenerate token
+source .auth_token                  # Load token
 ```
 
-### `hey` Not Found
+### hey Not Installed
 
 ```bash
-# Install hey
-brew install hey  # macOS
-go install github.com/rakyll/hey@latest  # Go
-
-# Verify installation
-which hey
-hey -version
+make install                        # Install dependencies
 ```
 
-### Port Conflicts
+### Results Not Generated
 
 ```bash
-# Check if ports are in use
-lsof -i :4444  # Gateway
-lsof -i :8888  # Fast-time-server
+# Check services are running
+make check
 
-# Modify docker-compose.yml if needed
+# Run with verbose output
+./run-advanced.sh -p smoke --skip-report
 ```
+
+## Tips & Best Practices
+
+1. **Start small** - Use `make quick` to validate setup
+2. **Save baselines** - Always use `--save-baseline` for future comparison
+3. **Compare fairly** - Use same load profile when comparing configurations
+4. **Monitor resources** - Check `system_metrics.csv` for bottlenecks
+5. **Test incrementally** - Don't jump from light → heavy without testing medium
+6. **Document decisions** - Save baselines with descriptive names
 
 ## Integration with CI/CD
 
-### Example GitHub Actions
+See [README_AUTOMATION.md](README_AUTOMATION.md) for:
+- GitHub Actions integration
+- Scheduled performance tests
+- Automated regression detection
+- Performance dashboards
 
-```yaml
-name: Performance Tests
+## Support & Resources
 
-on:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '0 0 * * 0'  # Weekly
+- **Quick Commands**: `make help`
+- **List Profiles**: `make list-profiles`
+- **Documentation**: `make docs`
+- **Clean Results**: `make clean`
 
-jobs:
-  performance:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
+## What's New in v2.0
 
-      - name: Install hey
-        run: go install github.com/rakyll/hey@latest
+✨ **Server Profile Testing** - Test different worker/thread configurations
+✨ **Infrastructure Profiles** - Complete environment testing (dev → production)
+✨ **Database Comparison** - Compare PostgreSQL versions
+✨ **Horizontal Scaling** - Test with multiple instances
+✨ **Baseline Management** - Advanced baseline tracking and comparison
+✨ **Makefile Entrypoint** - Simple `make test` commands
+✨ **Regression Detection** - Automatic performance regression alerts
+✨ **Cost-Benefit Analysis** - Recommendations based on resource usage
 
-      - name: Start services
-        run: make compose-up
+---
 
-      - name: Run performance tests
-        run: |
-          cd tests/performance
-          ./run-all.sh -p light
-
-      - name: Upload results
-        uses: actions/upload-artifact@v3
-        with:
-          name: performance-results
-          path: tests/performance/results/
-```
-
-## Performance Baselines
-
-Track performance over time by saving baseline results:
-
-```bash
-# Save current results as baseline
-cp results/summary_medium_*.md baselines/baseline_$(date +%Y%m%d).md
-
-# Compare with baseline
-diff baselines/baseline_20250101.md results/summary_medium_*.md
-```
-
-## Best Practices
-
-1. **Always run tests with services at idle** - Don't run during active development
-2. **Use consistent profiles** - Compare results from same profile
-3. **Run multiple iterations** - Single runs can be noisy
-4. **Monitor system resources** - Check CPU, memory, network during tests
-5. **Establish baselines** - Track performance over time
-6. **Test in production-like environment** - Results vary by hardware
-
-## Contributing
-
-To add new test scenarios:
-
-1. Create payload in `payloads/{category}/`
-2. Add test case to scenario script
-3. Update documentation
-4. Test with all profiles
-
-## Support
-
-For issues or questions:
-
-- Check existing test results in `results/`
-- Review service logs: `docker compose logs`
-- Verify service health: `./utils/check-services.sh`
-- Check authentication: `./utils/setup-auth.sh`
-
-## License
-
-Part of the MCP Context Forge project.
+**Ready to start?** Run `make test` or `make help` for all available commands.
