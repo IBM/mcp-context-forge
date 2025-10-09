@@ -1,4 +1,4 @@
-""""resize url and slug columns to 191"
+"""" resize url and slug columns to 191"
 
 Revision ID: 878e287d2366
 Revises: 2f67b12600b4
