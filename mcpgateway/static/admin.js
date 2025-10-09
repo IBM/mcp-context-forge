@@ -14682,15 +14682,24 @@ async function sendChatMessage(event) {
             break;
 
         case "final":
-            setToolUsedSummary(assistantMsgId, !!payload.tool_used, payload.tools || []);
+            if (payload.tool_used) {
+                setToolUsedSummary(assistantMsgId, true, payload.tools || []);
+            }
+            // Ensure scroll after all DOM updates complete
+            setTimeout(() => {
+                scrollChatToBottom();
+            }, 50);
             break;
+
 
         default:
             break;
         }
     }
-    }
-
+    setTimeout(() => {
+        scrollChatToBottom();
+        }, 100);
+    } 
 
     // Mark streaming as complete
     markMessageComplete(assistantMsgId);
@@ -14797,15 +14806,26 @@ function appendChatMessage(role, content, isStreaming = false) {
 /**
  * Update chat message content (for streaming)
  */
+let scrollThrottle = null;
 function updateChatMessage(messageId, content) {
   const messageDiv = document.getElementById(messageId);
   if (messageDiv) {
     const contentEl = messageDiv.querySelector('.message-content');
     if (contentEl) {
       contentEl.textContent = content;
+      
+      // Throttle scroll to every 100ms during streaming
+      if (!scrollThrottle) {
+        scrollChatToBottom();
+        scrollThrottle = setTimeout(() => {
+          scrollThrottle = null;
+        }, 100);
+      }
     }
   }
 }
+
+
 
 /**
  * Mark message as complete (remove streaming indicator)
@@ -14968,16 +14988,15 @@ function clearChatMessages() {
  * Scroll chat to bottom
  */
 function scrollChatToBottom() {
-    const container = document.getElementById('chat-messages-container');
-    if (container) {
-        requestAnimationFrame(() => {
-            container.scrollTo({
-                top: container.scrollHeight,
-                behavior: 'smooth'
-            });
-        });
-    }
+  const container = document.getElementById('chat-messages-container');
+  if (container) {
+    requestAnimationFrame(() => {
+      // Use instant scroll during streaming for better UX
+      container.scrollTop = container.scrollHeight;
+    });
+  }
 }
+
 
 
 /**
