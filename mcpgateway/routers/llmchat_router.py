@@ -5,6 +5,8 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 import os
+import json
+
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse
@@ -151,28 +153,62 @@ async def connect(input_data: ConnectInput):
 
         active_sessions[user_id] = chat_service
 
+        # return {
+        #     "status": "connected",
+        #     "user_id": user_id,
+        #     "provider": config.llm.provider
+        # }
+
+        # Extract tool names from the initialized chat service
+        tool_names = []
+        if hasattr(chat_service, '_tools') and chat_service._tools:
+            for tool in chat_service._tools:
+                print("RAW TOOL:", tool)
+                tool_name = getattr(tool, 'name', None)
+                if tool_name:
+                    tool_names.append(tool_name)
+
+        print("TOOLS COLELCTED", tool_names)
+        
+
         return {
             "status": "connected",
             "user_id": user_id,
-            "provider": config.llm.provider
+            "provider": config.llm.provider,
+            "tool_count": len(tool_names),
+            "tools": tool_names
         }
+
+
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to connect: {str(e)}")
 
 
 async def token_streamer(chat_service, message: str):
-    async for chunk in chat_service.chat_stream(message):
-        yield chunk
+    async def sse(event_type: str, data: Dict[str, Any]):
+        # Minimal SSE framing
+        yield f"event: {event_type}\n".encode("utf-8")
+        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
+
+    async for ev in chat_service.chat_events(message):
+        et = ev.get("type")
+        if et == "token":
+            async for part in sse("token", {"content": ev.get("content", "")}):
+                yield part
+        elif et in ("tool_start", "tool_end", "tool_error"):
+            async for part in sse(et, ev):
+                yield part
+        elif et == "final":
+            async for part in sse("final", ev):
+                yield part
+
 
 
 @llmchat_router.post("/chat")
 async def chat(input_data: ChatInput):
     """Send a message for a given user session."""
     user_id = input_data.user_id
-    print("USER IDDDDDD:", user_id)
-    print("ACTIVE SESSIONSS:",active_sessions)
-
     chat_service = active_sessions.get(user_id)
     
     if not chat_service:
@@ -182,11 +218,20 @@ async def chat(input_data: ChatInput):
         if input_data.streaming:
             return StreamingResponse(
                 token_streamer(chat_service, input_data.message),
-                media_type="text/plain"
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
             )
         else:
-            response = await chat_service.chat(input_data.message)
-            return {"user_id": user_id, "response": response}
+            result = await chat_service.chat_with_metadata(input_data.message)
+            return {
+                "user_id": user_id,
+                "response": result["text"],
+                "tool_used": result["tool_used"],
+                "tools": result["tools"],
+                "tool_invocations": result["tool_invocations"],
+                "elapsed_ms": result["elapsed_ms"],
+            }
+
     except Exception as e:
         return {"error": str(e)}
 

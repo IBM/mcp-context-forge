@@ -13990,9 +13990,12 @@ const llmChatState = {
   selectedServerId: null,
   selectedServerName: null,
   isConnected: false,
-  userId: null, // Will be set from JWT or session
-  messageHistory: []
+  userId: null,
+  messageHistory: [],
+  connectedTools: [],
+  toolCount: 0
 };
+
 
 /**
  * Initialize LLM Chat when tab is shown
@@ -14280,6 +14283,11 @@ async function connectLLMChat() {
     // Update state
     llmChatState.isConnected = true;
 
+    // Store tool information from connection response
+    llmChatState.connectedTools = result.tools || [];
+    llmChatState.toolCount = result.tool_count || 0;
+
+
     // Update UI
     showConnectionSuccess();
     
@@ -14342,6 +14350,44 @@ function buildLLMConfig(provider) {
 }
 
 /**
+ * Fetch active tools for a given server ID.
+ * Returns an array of tool objects or tool names.
+ */
+async function fetchActiveToolsForServer(serverId) {
+  if (!serverId) return [];
+  
+  try {
+    const response = await fetchWithTimeout(
+      `${window.ROOTPATH}admin/servers/${serverId}`,
+      {
+        method: "GET",
+        credentials: "same-origin"
+      }
+    );
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const server = await response.json();
+    
+    // Extract tool names from associatedTools array
+    // Each tool may be an object with a 'name' field or a string
+    const tools = (server.associatedTools || []).map(tool => {
+      if (typeof tool === "string") return tool;
+      if (tool && tool.name) return tool.name;
+      return "Unknown tool";
+    });
+    
+    return tools;
+  } catch (error) {
+    console.error(`Error fetching tools for server ${serverId}:`, error);
+    return [];
+  }
+}
+
+
+/**
  * Show connection success
  */
 function showConnectionSuccess() {
@@ -14350,6 +14396,87 @@ function showConnectionSuccess() {
   if (statusBadge) {
     statusBadge.classList.remove('hidden');
   }
+
+  // Show active tools badge with count and names
+    // const toolsBadge = document.getElementById("llm-active-tools-badge");
+    // const toolCountSpan = document.getElementById("llm-tool-count");
+    // const toolNamesSpan = document.getElementById("llm-tool-names");
+
+    // if (toolsBadge && toolCountSpan && toolNamesSpan) {
+    // Fetch tool info from the connection result stored in state or via a separate call
+    // For now, we'll fetch from the selected server's data
+    // fetchActiveToolsForServer(llmChatState.selectedServerId)
+    //     .then(tools => {
+    //     const count = tools.length;
+    //     toolCountSpan.textContent = `${count} tool${count !== 1 ? 's' : ''}`;
+        
+    //     if (count > 0) {
+    //         toolNamesSpan.textContent = tools.map(t => t.name || t).join(", ");
+    //     } else {
+    //         toolNamesSpan.textContent = "No tools available";
+    //     }
+        
+    //     toolsBadge.classList.remove("hidden");
+    //     })
+    //     .catch(err => {
+    //     console.error("Failed to fetch active tools:", err);
+    //     toolCountSpan.textContent = "? tools";
+    //     toolNamesSpan.textContent = "Could not load tools";
+    //     toolsBadge.classList.remove("hidden");
+    //     });
+    // }
+
+    // Show active tools badge using data from connection response
+// Show active tools badge with enhanced pill display
+const toolsBadge = document.getElementById("llm-active-tools-badge");
+const toolCountSpan = document.getElementById("llm-tool-count");
+const toolListDiv = document.getElementById("llm-tool-list");
+
+if (toolsBadge && toolCountSpan && toolListDiv) {
+  const tools = llmChatState.connectedTools || [];
+  const count = tools.length;
+  
+  toolCountSpan.textContent = `${count} tool${count !== 1 ? 's' : ''}`;
+  
+  // Clear and populate tool list with individual pills
+  toolListDiv.innerHTML = '';
+  
+  if (count > 0) {
+    tools.forEach((toolName, index) => {
+      const pill = document.createElement('span');
+      pill.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105';
+      
+      // Tool icon
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('class', 'w-3.5 h-3.5');
+      icon.setAttribute('fill', 'none');
+      icon.setAttribute('stroke', 'currentColor');
+      icon.setAttribute('viewBox', '0 0 24 24');
+      icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>';
+      
+      const text = document.createElement('span');
+      text.textContent = toolName;
+      
+      pill.appendChild(icon);
+      pill.appendChild(text);
+      toolListDiv.appendChild(pill);
+    });
+  } else {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'text-center py-4';
+    emptyMsg.innerHTML = `
+      <svg class="w-8 h-8 mx-auto text-gray-400 dark:text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
+      </svg>
+      <p class="text-xs text-gray-500 dark:text-gray-400">No tools available for this server</p>
+    `;
+    toolListDiv.appendChild(emptyMsg);
+  }
+  
+  toolsBadge.classList.remove("hidden");
+}
+
+
 
   // Hide connect button, show disconnect button
   const connectBtn = document.getElementById('llm-connect-btn');
@@ -14420,9 +14547,19 @@ async function disconnectLLMChat() {
     llmChatState.isConnected = false;
     llmChatState.messageHistory = [];
 
+    llmChatState.connectedTools = [];
+    llmChatState.toolCount = 0;
+
+
     // Update UI
     const statusBadge = document.getElementById('llm-connection-status');
     if (statusBadge) statusBadge.classList.add('hidden');
+
+    // Hide active tools badge on disconnect
+    const toolsBadge = document.getElementById("llm-active-tools-badge");
+    if (toolsBadge) {
+    toolsBadge.classList.add("hidden");
+    }
 
     const connectBtn = document.getElementById('llm-connect-btn');
     if (connectBtn) connectBtn.classList.remove('hidden');
@@ -14500,25 +14637,60 @@ async function sendChatMessage(event) {
       throw new Error(`Chat request failed: ${response.status}`);
     }
 
-    // Handle streaming response
+    // Handle streaming SSE response
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let accumulatedText = '';
+    let buffer = "";
+    let accumulatedText = "";
 
     while (true) {
-      const { done, value } = await reader.read();
-      
-      if (done) break;
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
 
-      const chunk = decoder.decode(value, { stream: true });
-      accumulatedText += chunk;
-      
-      // Update the assistant message
-      updateChatMessage(assistantMsgId, accumulatedText);
-      
-      // Auto-scroll to bottom
-      scrollChatToBottom();
+    // Process complete SSE events separated by blank line
+    let boundary;
+    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+        const rawEvent = buffer.slice(0, boundary).trim();
+        buffer = buffer.slice(boundary + 2);
+        if (!rawEvent) continue;
+
+        let eventType = "message";
+        const dataLines = [];
+        for (const line of rawEvent.split("\n")) {
+        if (line.startsWith("event:")) eventType = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        }
+
+        let payload = {};
+        const dataStr = dataLines.join("\n");
+        try { payload = dataStr ? JSON.parse(dataStr) : {}; } catch {}
+
+        switch (eventType) {
+        case "token": {
+            const text = payload.content || "";
+            if (text) {
+            accumulatedText += text;
+            updateChatMessage(assistantMsgId, accumulatedText);
+            }
+            break;
+        }
+        case "tool_start":
+        case "tool_end":
+        case "tool_error":
+            addToolEventToCard(assistantMsgId, eventType, payload);
+            break;
+
+        case "final":
+            setToolUsedSummary(assistantMsgId, !!payload.tool_used, payload.tools || []);
+            break;
+
+        default:
+            break;
+        }
     }
+    }
+
 
     // Mark streaming as complete
     markMessageComplete(assistantMsgId);
@@ -14649,6 +14821,130 @@ function markMessageComplete(messageId) {
 }
 
 /**
+ * Get or create a tool-events card positioned above the assistant message.
+ * The card is a sibling of the message div, not nested inside.
+ */
+function getOrCreateToolCard(messageId) {
+  const messageDiv = document.getElementById(messageId);
+  if (!messageDiv) return null;
+
+  // Check if card already exists as a sibling
+  let card = messageDiv.previousElementSibling;
+  if (card && card.classList.contains("tool-events-card")) {
+    return card;
+  }
+
+  // Create a new card
+  card = document.createElement("div");
+  card.className = "tool-events-card mb-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700";
+  
+  const header = document.createElement("div");
+  header.className = "flex items-center justify-between mb-2";
+  
+  const title = document.createElement("div");
+  title.className = "font-semibold text-sm text-blue-800 dark:text-blue-200 flex items-center gap-2";
+  title.innerHTML = `
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+    </svg>
+    <span>Tool Invocations</span>
+  `;
+  
+  const toggleBtn = document.createElement("button");
+  toggleBtn.className = "text-xs text-blue-600 dark:text-blue-300 hover:underline";
+  toggleBtn.textContent = "Hide";
+  toggleBtn.onclick = () => {
+    const body = card.querySelector(".tool-events-body");
+    if (body.classList.contains("hidden")) {
+      body.classList.remove("hidden");
+      toggleBtn.textContent = "Hide";
+    } else {
+      body.classList.add("hidden");
+      toggleBtn.textContent = "Show";
+    }
+  };
+  
+  header.appendChild(title);
+  header.appendChild(toggleBtn);
+  card.appendChild(header);
+  
+  const body = document.createElement("div");
+  body.className = "tool-events-body space-y-2";
+  card.appendChild(body);
+  
+  // Insert card before the message div
+  messageDiv.parentElement.insertBefore(card, messageDiv);
+  
+  return card;
+}
+
+/**
+ * Add a tool event row to the tool card.
+ */
+function addToolEventToCard(messageId, eventType, payload) {
+  const card = getOrCreateToolCard(messageId);
+  if (!card) return;
+  
+  const body = card.querySelector(".tool-events-body");
+  
+  const row = document.createElement("div");
+  row.className = "text-xs p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700";
+  
+  let icon = "";
+  let text = "";
+  let colorClass = "";
+  
+  if (eventType === "tool_start") {
+    icon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
+    colorClass = "text-green-700 dark:text-green-400";
+    text = `<strong>Started:</strong> ${escapeHtml(payload.name || payload.id || "unknown")}`;
+    if (payload.input) {
+      text += `<br><span class="text-gray-600 dark:text-gray-400">Input: ${escapeHtml(JSON.stringify(payload.input))}</span>`;
+    }
+  } else if (eventType === "tool_end") {
+    icon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
+    colorClass = "text-blue-700 dark:text-blue-400";
+    text = `<strong>Completed:</strong> ${escapeHtml(payload.name || payload.id || "unknown")}`;
+    if (payload.output) {
+      const out = typeof payload.output === "string" ? payload.output : JSON.stringify(payload.output);
+      text += `<br><span class="text-gray-600 dark:text-gray-400">Output: ${escapeHtml(out)}</span>`;
+    }
+  } else if (eventType === "tool_error") {
+    icon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
+    colorClass = "text-red-700 dark:text-red-400";
+    text = `<strong>Error:</strong> ${escapeHtml(payload.error || payload.name || payload.id || "unknown")}`;
+  }
+  
+  row.innerHTML = `<div class="flex items-start gap-2 ${colorClass}">${icon}<div>${text}</div></div>`;
+  body.appendChild(row);
+}
+
+/**
+ * Update or create a "tools used" summary badge on the tool card when final event arrives.
+ */
+function setToolUsedSummary(messageId, used, toolsList) {
+  const card = getOrCreateToolCard(messageId);
+  if (!card) return;
+  
+  let badge = card.querySelector(".tool-summary-badge");
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.className = "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium";
+    card.appendChild(badge);
+  }
+  
+  if (used && toolsList && toolsList.length > 0) {
+    badge.className = "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-green-700 dark:text-green-400";
+    badge.textContent = `✓ Tools used: ${toolsList.join(", ")}`;
+  } else {
+    badge.className = "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-gray-600 dark:text-gray-400";
+    badge.textContent = "No tools invoked";
+  }
+}
+
+
+/**
  * Clear all chat messages
  */
 function clearChatMessages() {
@@ -14732,5 +15028,4 @@ style.textContent = `
   }
 `;
 document.head.appendChild(style);
-
 

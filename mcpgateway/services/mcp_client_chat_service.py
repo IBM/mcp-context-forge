@@ -32,6 +32,13 @@ from langchain_ollama import ChatOllama
 from typing import Any, Dict, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+import json
+import time
+from uuid import uuid4
+from datetime import datetime, timezone
+from typing import Any
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for MCP server connection."""
     
@@ -606,6 +613,7 @@ class MCPChatService:
             
             # Load tools from MCP server
             tools = await self.mcp_client.get_tools()
+            self._tools = tools
             
             if not tools:
                 logger.warning("No tools loaded from MCP server")
@@ -678,6 +686,27 @@ class MCPChatService:
         except Exception as e:
             logger.error(f"Error processing chat message: {e}")
             raise
+
+    async def chat_with_metadata(self, message: str) -> dict[str, Any]:
+        text = ""
+        tool_invocations: list[dict[str, Any]] = []
+        final: dict[str, Any] = {}
+        async for ev in self.chat_events(message):
+            t = ev.get("type")
+            if t == "token":
+                text += ev.get("content", "")
+            elif t in ("tool_start", "tool_end", "tool_error"):
+                tool_invocations.append(ev)
+            elif t == "final":
+                final = ev
+        return {
+            "text": text,
+            "tool_used": final.get("tool_used", False),
+            "tools": final.get("tools", []),
+            "tool_invocations": tool_invocations,
+            "elapsed_ms": final.get("elapsed_ms"),
+        }
+
     
     async def chat_stream(self, message: str) -> AsyncGenerator[str, None]:
         """Send a message and stream the response.
@@ -736,6 +765,86 @@ class MCPChatService:
             logger.error(f"Error processing streaming chat message: {e}")
             raise
     
+    async def chat_events(self, message: str):
+        """
+        Stream structured events: token/tool_start/tool_end/tool_error/final.
+        Yields dicts with a 'type' field and relevant data.
+        """
+        if not self._initialized or not self._agent:
+            raise RuntimeError("Chat service not initialized. Call initialize() first.")
+
+        # Append user message
+        user_message = HumanMessage(content=message)
+        self._conversation_history.append(user_message)
+
+        full_response = ""
+        start_ts = time.time()
+        tool_runs: dict[str, dict[str, Any]] = {}
+
+        async for event in self._agent.astream_events({"messages": self._conversation_history}, version="v2"):
+            kind = event.get("event")
+            now_iso = datetime.now(timezone.utc).isoformat()
+
+            if kind == "on_tool_start":
+                run_id = str(event.get("run_id") or uuid4())
+                name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
+                input_data = event.get("data", {}).get("input")
+                # Serialize input safely
+                if hasattr(input_data, "dict"):
+                    input_data = input_data.dict()
+                elif hasattr(input_data, "__dict__"):
+                    input_data = str(input_data)
+                rec = {"id": run_id, "name": name, "input": input_data, "start": now_iso}
+                tool_runs[run_id] = rec
+                yield {"type": "tool_start", **rec}
+
+
+            elif kind == "on_tool_end":
+                run_id = str(event.get("run_id") or uuid4())
+                name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
+                output = event.get("data", {}).get("output")
+                # Serialize output safely
+                if hasattr(output, "content"):
+                    # It's a message object; extract content
+                    output = output.content
+                elif hasattr(output, "dict"):
+                    output = output.dict()
+                elif not isinstance(output, (str, int, float, bool, list, dict, type(None))):
+                    output = str(output)
+                rec = tool_runs.get(run_id, {"id": run_id, "name": name, "start": now_iso})
+                rec["end"] = now_iso
+                rec["output"] = output
+                tool_runs[run_id] = rec
+                yield {"type": "tool_end", **rec}
+
+
+            elif kind == "on_tool_error":
+                run_id = str(event.get("run_id") or uuid4())
+                err = event.get("data", {}).get("error")
+                yield {"type": "tool_error", "id": run_id, "error": str(err) if err else "Tool error", "time": now_iso}
+
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    content = chunk.content
+                    full_response += content
+                    yield {"type": "token", "content": content}
+
+        # Append AI message and trim
+        if full_response:
+            ai_message = AIMessage(content=full_response)
+            self._conversation_history.append(ai_message)
+            self._trim_history()
+
+        used_tools_list = list({rec.get("name") for rec in tool_runs.values() if rec.get("name")})
+        yield {
+            "type": "final",
+            "content": full_response,
+            "tool_used": len(used_tools_list) > 0,
+            "tools": used_tools_list,
+            "elapsed_ms": int((time.time() - start_ts) * 1000),
+        }
+
     def _trim_history(self) -> None:
         """Trim conversation history to max messages."""
         max_messages = self.config.chat_history_max_messages
@@ -777,6 +886,7 @@ class MCPChatService:
             self._agent = None
             self._conversation_history.clear()
             self._initialized = False
+            self._tools: List[BaseTool] = []
             
             logger.info("Chat service shutdown complete")
             
