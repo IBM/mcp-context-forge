@@ -383,7 +383,7 @@ class TokenScopingMiddleware:
         finally:
             db.close()
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:
+    def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
         """
         Check if the requested resource is accessible by the token.
 

@@ -29,7 +29,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -172,7 +172,15 @@ if backend == "sqlite":
 
 
 # Session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Use configurable autocommit and autoflush settings
+#
+# IMPORTANT: Keep DB_AUTOCOMMIT=false (default) for data integrity
+# - Ensures multi-step operations are atomic (all succeed or all fail)
+# - Read-only operations (like health checks) will log "ROLLBACK" in PostgreSQL - this is harmless
+# - Setting to true eliminates rollback noise but BREAKS atomicity and risks data corruption
+#
+# See issue #1108 for details on PostgreSQL rollback behavior
+SessionLocal = sessionmaker(autocommit=settings.db_autocommit, autoflush=settings.db_autoflush, bind=engine)
 
 
 def refresh_slugs_on_startup():
@@ -3261,6 +3269,34 @@ def get_db() -> Generator[Session, Any, None]:
         yield db
     finally:
         db.close()
+
+
+def check_db_health() -> bool:
+    """
+    Perform a lightweight database health check without generating transaction logs.
+
+    This function uses a raw connection with AUTOCOMMIT isolation level to avoid
+    generating unnecessary BEGIN/ROLLBACK transaction logs in PostgreSQL (issue #1108).
+
+    Unlike get_db() which uses autocommit=False for data integrity, this health check
+    uses autocommit=True to eliminate log noise while still verifying connectivity.
+
+    Returns:
+        bool: True if database is healthy, False otherwise.
+
+    Examples:
+        >>> check_db_health()  # doctest: +SKIP
+        True
+    """
+    try:
+        # Use raw connection with AUTOCOMMIT to avoid transaction log noise
+        # This is safe for read-only health checks and eliminates PostgreSQL ROLLBACK logs
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text("SELECT 1"))
+        return True
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return False
 
 
 # Create all tables

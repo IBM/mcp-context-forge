@@ -812,6 +812,8 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 3600
     db_max_retries: int = 3
     db_retry_interval_ms: int = 2000
+    db_autocommit: bool = False  # RECOMMENDED: False for atomicity. True breaks multi-step transactions.
+    db_autoflush: bool = False  # Auto-flush changes to database before queries
 
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database

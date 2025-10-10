@@ -1547,6 +1547,10 @@ mcpgateway
 | `DB_POOL_RECYCLE`.      | Recycle connections (secs)      | `3600`  | int > 0 |
 | `DB_MAX_RETRIES` .      | Max Retry Attempts              | `3`     | int > 0 |
 | `DB_RETRY_INTERVAL_MS`  | Retry Interval (ms)             | `2000`  | int > 0 |
+| `DB_AUTOCOMMIT`         | Auto-commit mode (⚠️ breaks atomicity) | `false` | `true`, `false` |
+| `DB_AUTOFLUSH`          | Auto-flush changes before queries | `false` | `true`, `false` |
+
+> ⚠️ **Important**: Keep `DB_AUTOCOMMIT=false` (default) for data integrity. Setting to `true` breaks transaction atomicity and risks data corruption in multi-step operations. Health check endpoints (`/health`, `/ready`) use a dedicated autocommit connection to eliminate PostgreSQL log noise while maintaining `autocommit=false` for all other operations. See [issue #1108](https://github.com/IBM/mcp-context-forge/issues/1108) for details.
 
 ### Cache Backend
 
