@@ -166,7 +166,7 @@ mcpContextForge:
 
     # ─ Security & CORS ─
     ENVIRONMENT: development         # deployment environment (development/production)
-    APP_DOMAIN: localhost            # domain for production CORS origins
+    APP_DOMAIN: http://localhost            # domain for production CORS origins
     CORS_ENABLED: "true"             # enable CORS processing in gateway
     CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
     ALLOWED_ORIGINS: '["http://localhost","http://localhost:4444"]' # JSON list of allowed origins
