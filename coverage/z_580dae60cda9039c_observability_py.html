@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_df2a1aa6810c2be4_base_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-09-27 19:22 +0100
+            created at 2025-10-10 19:53 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -255,7 +255,7 @@
     <p class="pln"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t">        <span class="com"># Create resource attributes</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t172" href="#t172">172</a></span><span class="t">        <span class="nam">resource_attributes</span><span class="op">:</span> <span class="nam">Dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">Any</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t">            <span class="str">"service.name"</span><span class="op">:</span> <span class="nam">os</span><span class="op">.</span><span class="nam">getenv</span><span class="op">(</span><span class="str">"OTEL_SERVICE_NAME"</span><span class="op">,</span> <span class="str">"mcp-gateway"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t">            <span class="str">"service.version"</span><span class="op">:</span> <span class="str">"0.7.0"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t">            <span class="str">"service.version"</span><span class="op">:</span> <span class="str">"0.8.0"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t">            <span class="str">"deployment.environment"</span><span class="op">:</span> <span class="nam">os</span><span class="op">.</span><span class="nam">getenv</span><span class="op">(</span><span class="str">"DEPLOYMENT_ENV"</span><span class="op">,</span> <span class="str">"development"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t">        <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t177" href="#t177">177</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -355,7 +355,7 @@
     <p class="pln"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">        <span class="com"># Get tracer</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">        <span class="com"># Obtain a tracer if trace API available; otherwise create a no-op tracer</span>&nbsp;</span><span class="r"></span></p>
     <p class="par run show_par"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t">        <span class="key">if</span> <span class="nam">trace</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">and</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">trace</span><span class="op">,</span> <span class="str">"get_tracer"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">273&#x202F;&#x219B;&#x202F;277</span><span class="annotate long">line 273 didn't jump to line 277 because the condition on line 273 was always true</span></span></p>
-    <p class="run"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">            <span class="nam">_TRACER</span> <span class="op">=</span> <span class="nam">cast</span><span class="op">(</span><span class="nam">Any</span><span class="op">,</span> <span class="nam">trace</span><span class="op">)</span><span class="op">.</span><span class="nam">get_tracer</span><span class="op">(</span><span class="str">"mcp-gateway"</span><span class="op">,</span> <span class="str">"0.7.0"</span><span class="op">,</span> <span class="nam">schema_url</span><span class="op">=</span><span class="str">"https://opentelemetry.io/schemas/1.11.0"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">            <span class="nam">_TRACER</span> <span class="op">=</span> <span class="nam">cast</span><span class="op">(</span><span class="nam">Any</span><span class="op">,</span> <span class="nam">trace</span><span class="op">)</span><span class="op">.</span><span class="nam">get_tracer</span><span class="op">(</span><span class="str">"mcp-gateway"</span><span class="op">,</span> <span class="str">"0.8.0"</span><span class="op">,</span> <span class="nam">schema_url</span><span class="op">=</span><span class="str">"https://opentelemetry.io/schemas/1.11.0"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">            <span class="key">class</span> <span class="nam">_NoopTracer</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -556,7 +556,7 @@
             <a class="nav" href="z_df2a1aa6810c2be4_base_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-09-27 19:22 +0100
+            created at 2025-10-10 19:53 +0100
         </p>
     </div>
 </footer>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/cache/session_registry.py: 84%</title>
+    <title>Coverage for mcpgateway/cache/session_registry.py: 85%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_58284776.png">
     <link rel="stylesheet" href="style_cb_6b508a39.css" type="text/css">
     <script src="coverage_html_cb_6fb7b396.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway/cache/session_registry.py</b>:
-            <span class="pc_cov">84%</span>
+            <span class="pc_cov">85%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -56,8 +56,8 @@
         </aside>
         <h2>
             <span class="text">439 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">371<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">68<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">378<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">61<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">10<span class="text"> partial</span></button>
         </h2>
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-10-07 17:25 +0100
+            created at 2025-10-10 19:53 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -1006,16 +1006,16 @@
     <p class="pln"><span class="n"><a id="t922" href="#t922">922</a></span><span class="t"><span class="str">                    >>> # Returns SessionMessageRecord with message data</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t923" href="#t923">923</a></span><span class="t"><span class="str">                    >>> # Returns None if no pending messages</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t924" href="#t924">924</a></span><span class="t"><span class="str">                """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t925" href="#t925">925</a></span><span class="t">                <span class="nam">db_session</span> <span class="op">=</span> <span class="nam">next</span><span class="op">(</span><span class="nam">get_db</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t926" href="#t926">926</a></span><span class="t">                <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t925" href="#t925">925</a></span><span class="t">                <span class="nam">db_session</span> <span class="op">=</span> <span class="nam">next</span><span class="op">(</span><span class="nam">get_db</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t926" href="#t926">926</a></span><span class="t">                <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t927" href="#t927">927</a></span><span class="t">                    <span class="com"># Delete sessions that haven't been accessed for TTL seconds</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t928" href="#t928">928</a></span><span class="t">                    <span class="nam">result</span> <span class="op">=</span> <span class="nam">db_session</span><span class="op">.</span><span class="nam">query</span><span class="op">(</span><span class="nam">SessionMessageRecord</span><span class="op">)</span><span class="op">.</span><span class="nam">filter_by</span><span class="op">(</span><span class="nam">session_id</span><span class="op">=</span><span class="nam">session_id</span><span class="op">)</span><span class="op">.</span><span class="nam">first</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t928" href="#t928">928</a></span><span class="t">                    <span class="nam">result</span> <span class="op">=</span> <span class="nam">db_session</span><span class="op">.</span><span class="nam">query</span><span class="op">(</span><span class="nam">SessionMessageRecord</span><span class="op">)</span><span class="op">.</span><span class="nam">filter_by</span><span class="op">(</span><span class="nam">session_id</span><span class="op">=</span><span class="nam">session_id</span><span class="op">)</span><span class="op">.</span><span class="nam">first</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t929" href="#t929">929</a></span><span class="t">                    <span class="key">return</span> <span class="nam">result</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t930" href="#t930">930</a></span><span class="t">                <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">ex</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t931" href="#t931">931</a></span><span class="t">                    <span class="nam">db_session</span><span class="op">.</span><span class="nam">rollback</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t932" href="#t932">932</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">ex</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t930" href="#t930">930</a></span><span class="t">                <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">ex</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t931" href="#t931">931</a></span><span class="t">                    <span class="nam">db_session</span><span class="op">.</span><span class="nam">rollback</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t932" href="#t932">932</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">ex</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t933" href="#t933">933</a></span><span class="t">                <span class="key">finally</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t934" href="#t934">934</a></span><span class="t">                    <span class="nam">db_session</span><span class="op">.</span><span class="nam">close</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t934" href="#t934">934</a></span><span class="t">                    <span class="nam">db_session</span><span class="op">.</span><span class="nam">close</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t935" href="#t935">935</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t936" href="#t936">936</a></span><span class="t">            <span class="key">def</span> <span class="nam">_db_remove</span><span class="op">(</span><span class="nam">session_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">message</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t937" href="#t937">937</a></span><span class="t">                <span class="str">"""Remove processed message from the database.</span>&nbsp;</span><span class="r"></span></p>
@@ -1484,7 +1484,7 @@
             <a class="nav" href="z_580dae60cda9039c_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-10-07 17:25 +0100
+            created at 2025-10-10 19:53 +0100
         </p>
     </div>
 </footer>

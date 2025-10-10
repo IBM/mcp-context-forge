@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_f3f84ded3a2f725a_websocket_transport_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-09-27 19:22 +0100
+            created at 2025-10-10 19:53 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -471,7 +471,7 @@
     <p class="run"><span class="n"><a id="t387" href="#t387">387</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">No content returned by tool: </span><span class="op">{</span><span class="nam">name</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t388" href="#t388">388</a></span><span class="t">                <span class="key">return</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t389" href="#t389">389</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t390" href="#t390">390</a></span><span class="t">            <span class="key">return</span> <span class="op">[</span><span class="nam">types</span><span class="op">.</span><span class="nam">TextContent</span><span class="op">(</span><span class="nam">type</span><span class="op">=</span><span class="nam">result</span><span class="op">.</span><span class="nam">content</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">.</span><span class="nam">type</span><span class="op">,</span> <span class="nam">text</span><span class="op">=</span><span class="nam">result</span><span class="op">.</span><span class="nam">content</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">.</span><span class="nam">text</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t390" href="#t390">390</a></span><span class="t">            <span class="key">return</span> <span class="op">[</span><span class="nam">types</span><span class="op">.</span><span class="nam">TextContent</span><span class="op">(</span><span class="nam">type</span><span class="op">=</span><span class="nam">content</span><span class="op">.</span><span class="nam">type</span><span class="op">,</span> <span class="nam">text</span><span class="op">=</span><span class="nam">content</span><span class="op">.</span><span class="nam">text</span><span class="op">)</span> <span class="key">for</span> <span class="nam">content</span> <span class="key">in</span> <span class="nam">result</span><span class="op">.</span><span class="nam">content</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t391" href="#t391">391</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t392" href="#t392">392</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">exception</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error calling tool '</span><span class="op">{</span><span class="nam">name</span><span class="op">}</span><span class="fst">': </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t393" href="#t393">393</a></span><span class="t">        <span class="key">return</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
@@ -894,7 +894,7 @@
             <a class="nav" href="z_f3f84ded3a2f725a_websocket_transport_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-09-27 19:22 +0100
+            created at 2025-10-10 19:53 +0100
         </p>
     </div>
 </footer>
