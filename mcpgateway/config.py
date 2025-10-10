@@ -225,6 +225,7 @@ class Settings(BaseSettings):
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
+    oauth_default_timeout: int = Field(default=3600, description="Default OAuth token timeout in seconds")
 
     # ===================================
     # Dynamic Client Registration (DCR) - Client Mode

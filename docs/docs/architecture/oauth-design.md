@@ -351,7 +351,9 @@ sequenceDiagram
 ```env
 # OAuth Configuration
 OAUTH_REQUEST_TIMEOUT=30        # OAuth request timeout in seconds
-OAUTH_MAX_RETRIES=3            # Max retries for token requests
+OAUTH_MAX_RETRIES=3             # Max retries for token requests
+OAUTH_DEFAULT_TIMEOUT=3600      # Default OAuth token timeout in seconds
+
 
 # Encryption
 AUTH_ENCRYPTION_SECRET=your-secret-key  # For encrypting client secrets
