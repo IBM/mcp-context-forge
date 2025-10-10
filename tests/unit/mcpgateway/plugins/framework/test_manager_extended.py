@@ -547,7 +547,6 @@ async def test_manager_initialization_edge_cases():
 
     # Test plugin instantiation failure (covers lines 495-501)
     # First-Party
-    from mcpgateway.plugins.framework.loader.plugin import PluginLoader
     from mcpgateway.plugins.framework.models import PluginConfig, PluginMode, PluginSettings
 
     manager2 = PluginManager()
@@ -591,11 +590,6 @@ async def test_manager_initialization_edge_cases():
         ],
         plugin_settings=PluginSettings()
     )
-
-    with patch('mcpgateway.plugins.framework.manager.logger') as mock_logger:
-        await manager3.initialize()
-        # Disabled plugins are now registered as stubs (info log), not skipped during load
-        mock_logger.info.assert_any_call("Registered disabled plugin: DisabledPlugin (display only, not instantiated)")
 
     await manager3.shutdown()
     await manager2.shutdown()

@@ -2,3 +2,4 @@ nav:
   - index.md
   - lifecycle.md
   - plugins.md
+  - mtls.md

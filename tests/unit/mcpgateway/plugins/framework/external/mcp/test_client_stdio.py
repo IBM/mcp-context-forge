@@ -135,10 +135,9 @@ async def test_client_get_plugin_configs():
     all_configs = []
     configs = await session.call_tool("get_plugin_configs", {})
     for content in configs.content:
-        confs = json.loads(content.text)
-        for c in confs:
-            plugconfig = PluginConfig.model_validate(c)
-            all_configs.append(plugconfig)
+        conf = json.loads(content.text)
+        plugconfig = PluginConfig.model_validate(conf)
+        all_configs.append(plugconfig)
     await exit_stack.aclose()
     assert all_configs[0].name == "SynonymsPlugin"
     assert all_configs[0].kind == "plugins.regex_filter.search_replace.SearchReplacePlugin"
