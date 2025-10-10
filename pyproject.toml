@@ -97,6 +97,14 @@ mysql = [
     "pymysql>=1.1.2",
 ]
 
+llmchat = [
+    "langchain-core>=0.3.0",
+    "langchain-mcp-adapters>=0.1.11",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "langchain-ollama>=0.1.0",
+]
+
 # Fuzzing and property-based testing
 fuzz = [
     "hypothesis>=6.138.16",
