@@ -356,7 +356,6 @@ class Settings(BaseSettings):
 
     llmchat_enabled: bool = Field(default=True, description="Enable LLM Chat feature")
 
-
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
     def validate_secrets(cls, v, info):
