@@ -28,6 +28,20 @@ header() {
     echo ""
 }
 
+# Graceful shutdown handler
+cleanup_on_interrupt() {
+    warn "Received interrupt signal, cleaning up..."
+
+    # Kill any child processes
+    jobs -p | xargs -r kill 2>/dev/null || true
+
+    # Exit with proper code for SIGINT (130)
+    exit 130
+}
+
+# Set up signal handling - MUST be before any long-running operations
+trap 'cleanup_on_interrupt' SIGTERM SIGINT
+
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." &>/dev/null && pwd)"

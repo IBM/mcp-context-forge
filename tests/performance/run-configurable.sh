@@ -53,15 +53,20 @@ cleanup_partial_results() {
         wait "$MONITOR_PID" 2>/dev/null || true
     fi
 
+    # Kill any background processes
+    jobs -p | xargs -r kill 2>/dev/null || true
+
     # Save summary
     if [ -d "${RESULTS_DIR:-}" ]; then
         echo "Test interrupted at $(date)" > "$RESULTS_DIR/PARTIAL_RESULTS.txt"
         log "Partial results saved to: $RESULTS_DIR"
     fi
 
-    exit 0
+    # Exit with proper code for SIGINT (130)
+    exit 130
 }
 
+# Enable immediate signal handling
 trap 'cleanup_partial_results' SIGTERM SIGINT
 
 # Get script directory
