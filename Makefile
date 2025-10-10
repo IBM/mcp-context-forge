@@ -2105,14 +2105,14 @@ container-build-multi:
 		fi; \
 		docker buildx use $(PROJECT_NAME)-builder; \
 		docker buildx build \
-			--platform=linux/amd64,linux/arm64 \
+			--platform=linux/amd64,linux/arm64,linux/s390x \
 			-f $(CONTAINER_FILE) \
 			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 			--push \
 			.; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
-		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64 \
+		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
