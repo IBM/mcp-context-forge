@@ -370,7 +370,10 @@ class TokenScopingMiddleware:
 
         db = next(get_db())
         try:
-            for team_id in teams:
+            for team in teams:
+                # Extract team ID from dict or use string directly (backward compatibility)
+                team_id = team["id"] if isinstance(team, dict) else team
+
                 membership = db.execute(
                     select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active))
                 ).scalar_one_or_none()
@@ -383,7 +386,7 @@ class TokenScopingMiddleware:
         finally:
             db.close()
 
-    def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:
+    def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
         """
         Check if the requested resource is accessible by the token.
 
@@ -412,9 +415,16 @@ class TokenScopingMiddleware:
         Returns:
             bool: True if resource access is allowed, False otherwise
         """
+        # Normalize token_teams: extract team IDs from dict objects (backward compatibility)
+        token_team_ids = []
+        for team in token_teams:
+            if isinstance(team, dict):
+                token_team_ids.append(team["id"])
+            else:
+                token_team_ids.append(team)
 
         # Determine token type
-        is_public_token = not token_teams or len(token_teams) == 0
+        is_public_token = not token_team_ids or len(token_team_ids) == 0
 
         if is_public_token:
             logger.debug("Processing request with PUBLIC-ONLY token")
@@ -442,7 +452,7 @@ class TokenScopingMiddleware:
 
         # If no resource ID in path, allow (general endpoints like /health, /tokens, /metrics)
         if not resource_id or not resource_type:
-            logger.info(f"No resource ID found in path {request_path}, allowing access")
+            logger.debug(f"No resource ID found in path {request_path}, allowing access")
             return True
 
         # Import database models
@@ -477,16 +487,16 @@ class TokenScopingMiddleware:
 
                 # TEAM-SCOPED SERVERS: Check if server belongs to token's teams
                 if server_visibility == "team":
-                    if server.team_id in token_teams:
+                    if server.team_id in token_team_ids:
                         logger.debug(f"Access granted: Team server {resource_id} belongs to token's team {server.team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', " f"token is scoped to teams {token_teams}")
+                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', " f"token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE SERVERS: Check if server belongs to token's teams
                 if server_visibility == "private":
-                    if server.team_id in token_teams:
+                    if server.team_id in token_team_ids:
                         logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
                         return True
 
@@ -521,17 +531,17 @@ class TokenScopingMiddleware:
                 # TEAM TOOLS: Check if tool's team matches token's teams
                 if tool_visibility == "team":
                     tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_teams:
+                    if tool_team_id and tool_team_id in token_team_ids:
                         logger.debug(f"Access granted: Team tool {resource_id} belongs to token's team {tool_team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', " f"token is scoped to teams {token_teams}")
+                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', " f"token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE TOOLS: Check if tool is in token's team context
                 if tool_visibility in ["private", "user"]:
                     tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_teams:
+                    if tool_team_id and tool_team_id in token_team_ids:
                         logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
                         return True
 
@@ -566,17 +576,17 @@ class TokenScopingMiddleware:
                 # TEAM RESOURCES: Check if resource's team matches token's teams
                 if resource_visibility == "team":
                     resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_teams:
+                    if resource_team_id and resource_team_id in token_team_ids:
                         logger.debug(f"Access granted: Team resource {resource_id} belongs to token's team {resource_team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', " f"token is scoped to teams {token_teams}")
+                    logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', " f"token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE RESOURCES: Check if resource is in token's team context
                 if resource_visibility in ["private", "user"]:
                     resource_team_id = getattr(resource, "team_id", None)
-                    if resource_team_id and resource_team_id in token_teams:
+                    if resource_team_id and resource_team_id in token_team_ids:
                         logger.debug(f"Access granted: Private resource {resource_id} in token's team {resource_team_id}")
                         return True
 
@@ -611,17 +621,17 @@ class TokenScopingMiddleware:
                 # TEAM PROMPTS: Check if prompt's team matches token's teams
                 if prompt_visibility == "team":
                     prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_teams:
+                    if prompt_team_id and prompt_team_id in token_team_ids:
                         logger.debug(f"Access granted: Team prompt {resource_id} belongs to token's team {prompt_team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', " f"token is scoped to teams {token_teams}")
+                    logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', " f"token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE PROMPTS: Check if prompt is in token's team context
                 if prompt_visibility in ["private", "user"]:
                     prompt_team_id = getattr(prompt, "team_id", None)
-                    if prompt_team_id and prompt_team_id in token_teams:
+                    if prompt_team_id and prompt_team_id in token_team_ids:
                         logger.debug(f"Access granted: Private prompt {resource_id} in token's team {prompt_team_id}")
                         return True
 

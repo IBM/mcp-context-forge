@@ -341,7 +341,19 @@ cmd=(
     --timeout              "${GUNICORN_TIMEOUT}"
     --max-requests         "${GUNICORN_MAX_REQUESTS}"
     --max-requests-jitter  "${GUNICORN_MAX_REQUESTS_JITTER}"
-    --access-logfile -
+)
+
+# Configure access logging based on DISABLE_ACCESS_LOG setting
+# For performance testing, disable access logs which cause significant I/O overhead
+DISABLE_ACCESS_LOG=${DISABLE_ACCESS_LOG:-false}
+if [[ "${DISABLE_ACCESS_LOG}" == "true" ]]; then
+    cmd+=( --access-logfile /dev/null )
+    echo "🚫  Access logging disabled for performance"
+else
+    cmd+=( --access-logfile - )
+fi
+
+cmd+=(
     --error-logfile -
     --forwarded-allow-ips="*"
     --pid "${LOCK_FILE}"  # Use lock file as PID file

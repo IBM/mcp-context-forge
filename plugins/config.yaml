@@ -230,7 +230,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["schema", "validation"]
-    mode: "enforce_ignore_error"
+    mode: "disabled"
     priority: 110
     conditions: []
     config:
@@ -246,7 +246,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["cache", "performance"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 130
     conditions: []
     config:
@@ -262,7 +262,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["resource_pre_fetch"]
     tags: ["security", "url", "reputation"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 60
     conditions: []
     config:
@@ -278,7 +278,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["resource_pre_fetch", "resource_post_fetch"]
     tags: ["security", "content", "mime"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 65
     conditions: []
     config:
@@ -293,7 +293,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["tool_post_invoke", "resource_post_fetch"]
     tags: ["reliability", "retry"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 170
     conditions: []
     config:
@@ -310,7 +310,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_post_fetch", "resource_post_fetch"]
     tags: ["markdown", "format"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 140
     conditions: []
     config: {}
@@ -323,7 +323,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["tool_post_invoke"]
     tags: ["json", "repair"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 145
     conditions: []
     config: {}
@@ -336,7 +336,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["resource_pre_fetch", "resource_post_fetch", "prompt_post_fetch", "tool_post_invoke"]
     tags: ["security", "threat"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 61
     conditions: []
     config:
@@ -383,7 +383,7 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_post_invoke"]
     tags: ["security", "code"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 155
     conditions: []
     config:
@@ -402,7 +402,7 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_post_invoke"]
     tags: ["guard", "length", "outputs", "truncate", "block"]
-    mode: "permissive"  # use "enforce" with strategy: block for strict behavior
+    mode: "disabled"  # use "enforce" with strategy: block for strict behavior
     priority: 160  # run after other transformers
     conditions: []
     config:
@@ -419,7 +419,7 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["resource_post_fetch", "tool_post_invoke"]
     tags: ["summarize", "llm", "content"]
-    mode: "permissive"
+    mode: "disabled"
     priority: 170
     conditions: []
     config:
@@ -478,7 +478,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["reliability", "sre"]
-    mode: "enforce_ignore_error"
+    #mode: "enforce_ignore_error"
+    mode: "disabled"
     priority: 70
     conditions: []
     config:
@@ -497,7 +498,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["latency", "slo"]
-    mode: "enforce_ignore_error"
+    #mode: "enforce_ignore_error"
+    mode: "disabled"
     priority: 85
     conditions: []
     config:
@@ -513,7 +515,7 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["resource_pre_fetch", "resource_post_fetch"]
     tags: ["compliance", "robots", "license"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 63
     conditions: []
     config:
@@ -531,7 +533,7 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["prompt_pre_fetch", "tool_post_invoke"]
     tags: ["safety", "moderation"]
-    mode: "enforce"
+    mode: "disabled"
     priority: 96
     conditions: []
     config:
@@ -549,7 +551,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["localization", "timezone"]
-    mode: "permissive"
+    #mode: "permissive"
+    mode: "disabled"
     priority: 175
     conditions: []
     config:
@@ -585,7 +588,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["security", "sql", "validation"]
-    mode: "enforce"
+    # mode: "enforce"
+    mode: "disabled"
     priority: 45
     conditions: []
     config:
@@ -605,7 +609,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
-    mode: "enforce"
+    # mode: "enforce"
+    mode: "disabled"
     priority: 51
     conditions: []
     config:
@@ -631,7 +636,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["resource_pre_fetch"]
     tags: ["headers", "network", "enhancement"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 58
     conditions: []
     config:
@@ -647,7 +653,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["prompt_post_fetch"]
     tags: ["compliance", "notice", "prompt"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 90
     conditions: []
     config:
@@ -663,7 +670,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["performance", "cache", "similarity"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 128
     conditions: []
     config:
@@ -681,7 +689,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_post_invoke", "resource_post_fetch"]
     tags: ["format", "enhancement", "postprocess"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 180
     conditions: []
     config:
@@ -702,7 +711,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["tool_post_invoke", "resource_post_fetch"]
     tags: ["compliance", "license", "format"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 185
     conditions: []
     config:
@@ -720,7 +730,8 @@ plugins:
     author: "MCP Context Forge Team"
     hooks: ["resource_post_fetch", "tool_post_invoke"]
     tags: ["citation", "links", "validation"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 122
     conditions: []
     config:
@@ -739,7 +750,8 @@ plugins:
     author: "Adrian Popa"
     hooks: ["tool_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 10
     conditions:
       - prompts: []
@@ -759,7 +771,8 @@ plugins:
     author: "Manav Gupta"
     hooks: ["tool_pre_invoke", "tool_post_invoke", "prompt_post_fetch", "resource_post_fetch"]
     tags: ["notification", "webhook", "monitoring", "observability"]
-    mode: "permissive"
+    # mode: "permissive"
+    mode: "disabled"
     priority: 900  # Run after other plugins to capture their violations
     conditions: []
     config:
@@ -798,7 +811,8 @@ plugins:
     author: "Manav Gupta"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["safety", "moderation", "content", "ai", "ibm", "watson", "granite"]
-    mode: "permissive"  # Use permissive mode for testing
+    # mode: "permissive"  # Use permissive mode for testing
+    mode: "disabled"
     priority: 30  # Run early in the pipeline
     conditions: []
     config:
