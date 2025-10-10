@@ -2579,13 +2579,13 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     if isinstance(content, bytes):
         return {"type": "resource", "id": resource_id, "uri": content.uri, "blob": content.decode("utf-8", errors="ignore")}
     if isinstance(content, str):
-        return {"type": "resource", "id": resource_id, "uri": content.uri,"text": content}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "text": content}
 
     # Objects with a 'text' attribute (e.g., mocks) – best-effort mapping
     if hasattr(content, "text"):
         return {"type": "resource", "id": resource_id, "uri": content.uri, "text": getattr(content, "text")}
 
-    return {"type": "resource", "id": resource_id, "uri": content.uri,"text": str(content)}
+    return {"type": "resource", "id": resource_id, "uri": content.uri, "text": str(content)}
 
 
 @resource_router.put("/{resource_id}", response_model=ResourceRead)
@@ -3009,7 +3009,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, PromptError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        logger.error(f"Unexpected error while deleting prompt {name}: {e}")
+        logger.error(f"Unexpected error while deleting prompt {prompt_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while deleting the prompt")
 
     # except PromptNotFoundError as e:

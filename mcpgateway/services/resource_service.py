@@ -754,7 +754,7 @@ class ResourceService:
                         raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
                     content = resource.content
-            
+
                 # Call post-fetch hooks if plugin manager is available
                 if plugin_eligible:
                     # Create post-fetch payload
@@ -788,12 +788,12 @@ class ResourceService:
 
                 # Normalize primitive types to ResourceContent
                 if isinstance(content, bytes):
-                    return ResourceContent(type="resource", id=resource_id,uri=original_uri, blob=content)
+                    return ResourceContent(type="resource", id=resource_id, uri=original_uri, blob=content)
                 if isinstance(content, str):
-                    return ResourceContent(type="resource",id=resource_id, uri=original_uri, text=content)
+                    return ResourceContent(type="resource", id=resource_id, uri=original_uri, text=content)
 
                 # Fallback to stringified content
-                return ResourceContent(type="resource", id=resource_id,uri=original_uri, text=str(content))
+                return ResourceContent(type="resource", id=resource_id, uri=original_uri, text=str(content))
 
             except Exception as e:
                 success = False

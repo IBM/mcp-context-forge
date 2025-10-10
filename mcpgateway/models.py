@@ -145,6 +145,7 @@ class ResourceContent(BaseModel):
         text (Optional[str]): A textual representation of the resource, if applicable.
         blob (Optional[bytes]): Binary data of the resource, if applicable.
     """
+
     type: Literal["resource"]
     id: str
     uri: str
