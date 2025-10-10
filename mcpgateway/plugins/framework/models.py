@@ -839,7 +839,7 @@ class ResourcePostFetchPayload(BaseModel):
 
     Examples:
         >>> from mcpgateway.models import ResourceContent
-        >>> content = ResourceContent(type="resource", uri="file:///data.txt",
+        >>> content = ResourceContent(type="resource", id="res-1", uri="file:///data.txt",
         ...     text="Hello World")
         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
         >>> payload.uri
@@ -847,7 +847,7 @@ class ResourcePostFetchPayload(BaseModel):
         >>> payload.content.text
         'Hello World'
         >>> from mcpgateway.models import ResourceContent
-        >>> resource_content = ResourceContent(type="resource", uri="test://resource", text="Test data")
+    >>> resource_content = ResourceContent(type="resource", id="res-2", uri="test://resource", text="Test data")
         >>> p = ResourcePostFetchPayload(uri="test://resource", content=resource_content)
         >>> p.uri
         'test://resource'

@@ -6315,7 +6315,7 @@ async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), us
         ...     ),
         ...     tags=[]
         ... )
-        >>> mock_content = ResourceContent(type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
+        >>> mock_content = ResourceContent(id=str(resource_id), type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
         >>>
         >>> # Mock service methods
         >>> original_get_resource_by_id = resource_service.get_resource_by_id
