@@ -76,7 +76,7 @@ func TestHealthChecker_CheckCommandService(t *testing.T) {
     checker := NewHealthChecker()
     ctx := context.Background()
 
-    // Test command health check
+    // SECURITY: Test that command execution is disabled
     service := types.ServiceCheck{
         Name:   "test-command",
         Type:   "command",
@@ -101,8 +101,9 @@ func TestHealthChecker_CheckCommandService(t *testing.T) {
     }
 
     result := results[0]
-    if result.Status != "healthy" {
-        t.Errorf("Expected healthy status, got %s", result.Status)
+    // SECURITY: Command type should be disabled
+    if result.Status != "unsupported" {
+        t.Errorf("Expected unsupported status (security disabled), got %s", result.Status)
     }
 }
 
@@ -239,6 +240,7 @@ func TestHealthChecker_CheckServiceHealthZeroTimeout(t *testing.T) {
     ctx := context.Background()
 
     // Test with zero timeout (should use default)
+    // SECURITY: Using command type to verify it's disabled
     req := &types.HealthCheckRequest{
         Services: []types.ServiceCheck{
             {
@@ -260,8 +262,9 @@ func TestHealthChecker_CheckServiceHealthZeroTimeout(t *testing.T) {
     }
 
     result := results[0]
-    if result.Status != "healthy" {
-        t.Errorf("Expected healthy status, got %s", result.Status)
+    // SECURITY: Command type should be disabled
+    if result.Status != "unsupported" {
+        t.Errorf("Expected unsupported status (security disabled), got %s", result.Status)
     }
 }
 
@@ -304,7 +307,7 @@ func TestHealthChecker_CheckCommandServiceEmpty(t *testing.T) {
     checker := NewHealthChecker()
     ctx := context.Background()
 
-    // Test command service with empty command
+    // SECURITY: Test that command type is disabled even with empty command
     service := types.ServiceCheck{
         Name:   "test-empty-command",
         Type:   "command",
@@ -326,8 +329,9 @@ func TestHealthChecker_CheckCommandServiceEmpty(t *testing.T) {
     }
 
     result := results[0]
-    if result.Status != "unhealthy" {
-        t.Errorf("Expected unhealthy status for empty command, got %s", result.Status)
+    // SECURITY: Command type should be disabled
+    if result.Status != "unsupported" {
+        t.Errorf("Expected unsupported status (security disabled), got %s", result.Status)
     }
 }
 
@@ -335,7 +339,7 @@ func TestHealthChecker_CheckCommandServiceWithOutput(t *testing.T) {
     checker := NewHealthChecker()
     ctx := context.Background()
 
-    // Test command service with expected output
+    // SECURITY: Test that command type is disabled
     service := types.ServiceCheck{
         Name:   "test-command-output",
         Type:   "command",
@@ -360,8 +364,9 @@ func TestHealthChecker_CheckCommandServiceWithOutput(t *testing.T) {
     }
 
     result := results[0]
-    if result.Status != "healthy" {
-        t.Errorf("Expected healthy status, got %s", result.Status)
+    // SECURITY: Command type should be disabled
+    if result.Status != "unsupported" {
+        t.Errorf("Expected unsupported status (security disabled), got %s", result.Status)
     }
 }
 
@@ -369,7 +374,7 @@ func TestHealthChecker_CheckCommandServiceWithWrongOutput(t *testing.T) {
     checker := NewHealthChecker()
     ctx := context.Background()
 
-    // Test command service with wrong expected output
+    // SECURITY: Test that command type is disabled
     service := types.ServiceCheck{
         Name:   "test-command-wrong-output",
         Type:   "command",
@@ -394,8 +399,9 @@ func TestHealthChecker_CheckCommandServiceWithWrongOutput(t *testing.T) {
     }
 
     result := results[0]
-    if result.Status != "unhealthy" {
-        t.Errorf("Expected unhealthy status for wrong output, got %s", result.Status)
+    // SECURITY: Command type should be disabled
+    if result.Status != "unsupported" {
+        t.Errorf("Expected unsupported status (security disabled), got %s", result.Status)
     }
 }
 

@@ -32,7 +32,7 @@ type AlertsConfig struct {
 // HealthCheckConfig represents a single health check configuration
 type HealthCheckConfig struct {
     Name     string            `yaml:"name"`
-    Type     string            `yaml:"type"` // port, http, command, file
+    Type     string            `yaml:"type"` // port, http, file (command disabled for security)
     Target   string            `yaml:"target"`
     Interval time.Duration     `yaml:"interval"`
     Timeout  time.Duration     `yaml:"timeout"`

@@ -129,7 +129,7 @@ type HealthCheckRequest struct {
 // ServiceCheck represents a single service to check
 type ServiceCheck struct {
     Name     string            `json:"name"`
-    Type     string            `json:"type"` // port, http, command, file
+    Type     string            `json:"type"` // port, http, file (command disabled for security)
     Target   string            `json:"target"`
     Expected map[string]string `json:"expected,omitempty"`
 }

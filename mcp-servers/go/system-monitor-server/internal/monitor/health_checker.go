@@ -6,7 +6,6 @@ import (
     "net"
     "net/http"
     "os"
-    "os/exec"
     "path/filepath"
     "strings"
     "time"
@@ -63,7 +62,10 @@ func (hc *HealthChecker) checkSingleService(ctx context.Context, service types.S
     case "port", "tcp":
         result = hc.checkPortService(ctx, service, result)
     case "command":
-        result = hc.checkCommandService(ctx, service, result)
+        // SECURITY: Command execution removed due to command injection risk
+        // Users should check process status via list_processes tool instead
+        result.Status = "unsupported"
+        result.Message = "command type disabled for security - use list_processes tool to check process status"
     case "file":
         result = hc.checkFileService(ctx, service, result)
     default:
@@ -131,36 +133,15 @@ func (hc *HealthChecker) checkPortService(ctx context.Context, service types.Ser
     return result
 }
 
-// checkCommandService checks service health by running a command
+// checkCommandService is DISABLED for security - command injection vulnerability
+// SECURITY: This function previously allowed arbitrary command execution which
+// created a critical command injection vulnerability. An attacker could execute
+// any system command via the MCP tool API.
+//
+// Users should use the list_processes tool instead to check if processes are running.
 func (hc *HealthChecker) checkCommandService(ctx context.Context, service types.ServiceCheck, result types.HealthCheckResult) types.HealthCheckResult {
-    // Split command and arguments
-    parts := strings.Fields(service.Target)
-    if len(parts) == 0 {
-        result.Status = "unhealthy"
-        result.Message = "no command specified"
-        return result
-    }
-
-    cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-    output, err := cmd.Output()
-    if err != nil {
-        result.Status = "unhealthy"
-        result.Message = fmt.Sprintf("command failed: %v", err)
-        return result
-    }
-
-    // Check expected output if specified
-    if service.Expected != nil {
-        expectedOutput, exists := service.Expected["output"]
-        if exists && !strings.Contains(string(output), expectedOutput) {
-            result.Status = "unhealthy"
-            result.Message = fmt.Sprintf("output mismatch: expected to contain %s", expectedOutput)
-            return result
-        }
-    }
-
-    result.Status = "healthy"
-    result.Message = fmt.Sprintf("command executed successfully: %s", strings.TrimSpace(string(output)))
+    result.Status = "unsupported"
+    result.Message = "command type disabled for security (command injection risk) - use list_processes tool instead"
     return result
 }
 
