@@ -4746,9 +4746,9 @@ function showTab(tabName) {
                         loadAggregatedMetrics();
                     }
                 }
-                if (tabName === 'llm-chat') {
+                if (tabName === "llm-chat") {
                     initializeLLMChat();
-                    }
+                }
 
                 if (tabName === "teams") {
                     // Load Teams list if not already loaded
@@ -12150,7 +12150,7 @@ async function getAuthToken() {
     if (!token) {
         token = localStorage.getItem("auth_token");
     }
-    console.log("MY TOKEN GENERATED:",token)
+    console.log("MY TOKEN GENERATED:", token);
 
     return token || "";
 }
@@ -13983,7 +13983,6 @@ if (typeof window.getCookie === "undefined") {
     };
 }
 
-
 // ==================== LLM CHAT FUNCTIONALITY ====================
 
 // State management for LLM chat
@@ -13995,26 +13994,24 @@ const llmChatState = {
     messageHistory: [],
     connectedTools: [],
     toolCount: 0,
-    serverToken: ''  
+    serverToken: "",
 };
-
-
 
 /**
  * Initialize LLM Chat when tab is shown
  */
 function initializeLLMChat() {
-    console.log('Initializing LLM Chat...');
-    
+    console.log("Initializing LLM Chat...");
+
     // Generate or retrieve user ID
     llmChatState.userId = generateUserId();
-    
+
     // Load servers if not already loaded
-    const serversList = document.getElementById('llm-chat-servers-list');
+    const serversList = document.getElementById("llm-chat-servers-list");
     if (serversList && serversList.children.length <= 1) {
         loadVirtualServersForChat();
     }
-    
+
     // Initialize chat input resize behavior
     initializeChatInputResize();
 }
@@ -14023,63 +14020,76 @@ function initializeLLMChat() {
  * Generate a unique user ID for the session
  */
 function generateUserId() {
-  // Check if user ID exists in session storage
-  let userId = sessionStorage.getItem('llm_chat_user_id');
-  if (!userId) {
-    // Generate a unique ID
-    userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    sessionStorage.setItem('llm_chat_user_id', userId);
-  }
-  return userId;
+    // Check if user ID exists in session storage
+    let userId = sessionStorage.getItem("llm_chat_user_id");
+    if (!userId) {
+        // Generate a unique ID
+        userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        sessionStorage.setItem("llm_chat_user_id", userId);
+    }
+    return userId;
 }
 
 /**
  * Load virtual servers for chat
  */
 async function loadVirtualServersForChat() {
-    const serversList = document.getElementById('llm-chat-servers-list');
-    if (!serversList) return;
-    
-    serversList.innerHTML = '<div class="flex items-center justify-center py-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div></div>';
-    
+    const serversList = document.getElementById("llm-chat-servers-list");
+    if (!serversList) {
+        return;
+    }
+
+    serversList.innerHTML =
+        '<div class="flex items-center justify-center py-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div></div>';
+
     try {
-        const response = await fetchWithTimeout(`${window.ROOT_PATH}/admin/servers`, {
-            method: 'GET',
-            credentials: 'same-origin'
-        });
-        
-        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/servers`,
+            {
+                method: "GET",
+                credentials: "same-origin",
+            },
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const data = await response.json();
         const servers = Array.isArray(data) ? data : data.servers || [];
-        
+
         if (servers.length === 0) {
-            serversList.innerHTML = '<div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">No virtual servers available</div>';
+            serversList.innerHTML =
+                '<div class="text-center text-gray-500 dark:text-gray-400 text-sm py-4">No virtual servers available</div>';
             return;
         }
-        
+
         // Render server list with "Requires Token" pill and tooltip
-        serversList.innerHTML = servers.map(server => {
-            const toolCount = (server.associatedTools || []).length;
-            const isActive = server.isActive;
-            const visibility = server.visibility || 'public';
-            const requiresToken = (visibility === 'team' || visibility === 'private');
-            
-            // Generate appropriate tooltip message
-            const tooltipMessage = requiresToken 
-                ? (server.visibility === 'team' 
-                    ? 'This is a team-level server. An access token will be required to connect.' 
-                    : 'This is a private server. An access token will be required to connect.')
-                : '';
-            
-            return `
+        serversList.innerHTML = servers
+            .map((server) => {
+                const toolCount = (server.associatedTools || []).length;
+                const isActive = server.isActive;
+                const visibility = server.visibility || "public";
+                const requiresToken =
+                    visibility === "team" || visibility === "private";
+
+                // Generate appropriate tooltip message
+                const tooltipMessage = requiresToken
+                    ? server.visibility === "team"
+                        ? "This is a team-level server. An access token will be required to connect."
+                        : "This is a private server. An access token will be required to connect."
+                    : "";
+
+                return `
                 <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors 
-                    ${llmChatState.selectedServerId === server.id ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900' : 'border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600'} 
-                    ${!isActive ? 'opacity-50' : ''}" 
+                    ${llmChatState.selectedServerId === server.id ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900" : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600"} 
+                    ${!isActive ? "opacity-50" : ""}" 
                     onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
                     style="position: relative;">
                     
-                    ${requiresToken ? `
+                    ${
+                        requiresToken
+                            ? `
                         <div class="tooltip" 
                         style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px; 
                                 background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px; 
@@ -14090,235 +14100,270 @@ async function loadVirtualServersForChat() {
                         <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); 
                                     width: 0; height: 0; border-left: 5px solid transparent; 
                                     border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
-                        </div>` : ''}
+                        </div>`
+                            : ""
+                    }
                     
                     <div class="flex justify-between items-start">
                         <div class="flex-1 min-w-0">
                             <h4 class="text-sm font-medium text-gray-900 dark:text-white truncate">${escapeHtml(server.name)}</h4>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${toolCount} tool${toolCount !== 1 ? 's' : ''}</p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${toolCount} tool${toolCount !== 1 ? "s" : ""}</p>
                         </div>
                         <div class="flex flex-col items-end gap-1">
-                            ${!isActive ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Inactive</span>' : ''}
-                            ${requiresToken ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-100 text-yellow-800">Requires Token</span>' : ''}
+                            ${!isActive ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Inactive</span>' : ""}
+                            ${requiresToken ? '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-100 text-yellow-800">Requires Token</span>' : ""}
                         </div>
                     </div>
-                    ${server.description ? `<p class="text-xs text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">${escapeHtml(server.description)}</p>` : ''}
+                    ${server.description ? `<p class="text-xs text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">${escapeHtml(server.description)}</p>` : ""}
                 </div>
             `;
-        }).join('');
+            })
+            .join("");
 
         // Add hover event to show tooltip immediately on hover
-        const serverItems = document.querySelectorAll('.server-item');
-        serverItems.forEach(item => {
-            const tooltip = item.querySelector('.tooltip');
-            item.addEventListener('mouseenter', () => {
+        const serverItems = document.querySelectorAll(".server-item");
+        serverItems.forEach((item) => {
+            const tooltip = item.querySelector(".tooltip");
+            item.addEventListener("mouseenter", () => {
                 if (tooltip) {
-                    tooltip.style.opacity = '1'; // Make tooltip visible
-                    tooltip.style.visibility = 'visible'; // Show tooltip immediately
+                    tooltip.style.opacity = "1"; // Make tooltip visible
+                    tooltip.style.visibility = "visible"; // Show tooltip immediately
                 }
             });
-            item.addEventListener('mouseleave', () => {
+            item.addEventListener("mouseleave", () => {
                 if (tooltip) {
-                    tooltip.style.opacity = '0'; // Hide tooltip
-                    tooltip.style.visibility = 'hidden'; // Keep tooltip hidden when not hovering
+                    tooltip.style.opacity = "0"; // Hide tooltip
+                    tooltip.style.visibility = "hidden"; // Keep tooltip hidden when not hovering
                 }
             });
         });
-
     } catch (error) {
-        console.error('Error loading servers for chat:', error);
-        serversList.innerHTML = '<div class="text-center text-red-600 dark:text-red-400 text-sm py-4">Failed to load servers: ' + escapeHtml(error.message) + '</div>';
+        console.error("Error loading servers for chat:", error);
+        serversList.innerHTML =
+            '<div class="text-center text-red-600 dark:text-red-400 text-sm py-4">Failed to load servers: ' +
+            escapeHtml(error.message) +
+            "</div>";
     }
 }
-
-
 
 /**
  * Select a server for chat
  */
-async function selectServerForChat(serverId, serverName, isActive, requiresToken, serverVisibility) {
+// eslint-disable-next-line no-unused-vars
+async function selectServerForChat(
+    serverId,
+    serverName,
+    isActive,
+    requiresToken,
+    serverVisibility,
+) {
     if (!isActive) {
-        showErrorMessage('This server is inactive. Please select an active server.');
+        showErrorMessage(
+            "This server is inactive. Please select an active server.",
+        );
         return;
     }
-    
+
     // If server requires token (team or private), prompt for it
     if (requiresToken) {
         // Create context-aware message based on visibility level
-        const visibilityMessage = serverVisibility === 'team' 
-            ? 'This is a team-level server that requires authentication for access.'
-            : 'This is a private server that requires authentication for access.';
-        
+        const visibilityMessage =
+            serverVisibility === "team"
+                ? "This is a team-level server that requires authentication for access."
+                : "This is a private server that requires authentication for access.";
+
         const token = prompt(
-            `Authentication Required\n\n${visibilityMessage}\n\nPlease enter the access token for "${serverName}":`
+            `Authentication Required\n\n${visibilityMessage}\n\nPlease enter the access token for "${serverName}":`,
         );
-        
+
         if (token === null) {
             // User cancelled
             return;
         }
-        
+
         // Store the token temporarily for this server
-        llmChatState.serverToken = token || '';
+        llmChatState.serverToken = token || "";
     } else {
         // Public server - no token needed
-        llmChatState.serverToken = '';
+        llmChatState.serverToken = "";
     }
-    
+
     // Update state
     llmChatState.selectedServerId = serverId;
     llmChatState.selectedServerName = serverName;
-    
+
     // Update UI to show selected server
-    const serverItems = document.querySelectorAll('.server-item');
-    serverItems.forEach(item => {
+    const serverItems = document.querySelectorAll(".server-item");
+    serverItems.forEach((item) => {
         if (item.onclick.toString().includes(serverId)) {
-            item.classList.add('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
-            item.classList.remove('border-gray-200', 'dark:border-gray-600');
+            item.classList.add(
+                "border-indigo-500",
+                "bg-indigo-50",
+                "dark:bg-indigo-900",
+            );
+            item.classList.remove("border-gray-200", "dark:border-gray-600");
         } else {
-            item.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900');
-            item.classList.add('border-gray-200', 'dark:border-gray-600');
+            item.classList.remove(
+                "border-indigo-500",
+                "bg-indigo-50",
+                "dark:bg-indigo-900",
+            );
+            item.classList.add("border-gray-200", "dark:border-gray-600");
         }
     });
-    
+
     // Show and expand LLM configuration
-    const configForm = document.getElementById('llm-config-form');
-    if (configForm && configForm.classList.contains('hidden')) {
+    const configForm = document.getElementById("llm-config-form");
+    if (configForm && configForm.classList.contains("hidden")) {
         toggleLLMConfig();
     }
-    
+
     // Enable connect button if provider is selected
     updateConnectButtonState();
-    
-    console.log(`Selected server: ${serverName} (${serverId}), Visibility: ${serverVisibility}, Token: ${requiresToken ? 'Required' : 'Not required'}`);
+
+    console.log(
+        `Selected server: ${serverName} (${serverId}), Visibility: ${serverVisibility}, Token: ${requiresToken ? "Required" : "Not required"}`,
+    );
 }
-
-
 
 /**
  * Toggle LLM configuration visibility
  */
 function toggleLLMConfig() {
-  const configForm = document.getElementById('llm-config-form');
-  const chevron = document.getElementById('llm-config-chevron');
-  
-  if (configForm && chevron) {
-    configForm.classList.toggle('hidden');
-    chevron.classList.toggle('rotate-180');
-  }
+    const configForm = document.getElementById("llm-config-form");
+    const chevron = document.getElementById("llm-config-chevron");
+
+    if (configForm && chevron) {
+        configForm.classList.toggle("hidden");
+        chevron.classList.toggle("rotate-180");
+    }
 }
 
 /**
  * Handle LLM provider selection change
  */
+// eslint-disable-next-line no-unused-vars
 function handleLLMProviderChange() {
-  const provider = document.getElementById('llm-provider').value;
-  const azureFields = document.getElementById('azure-openai-fields');
-  const ollamaFields = document.getElementById('ollama-fields');
+    const provider = document.getElementById("llm-provider").value;
+    const azureFields = document.getElementById("azure-openai-fields");
+    const ollamaFields = document.getElementById("ollama-fields");
 
-  // Hide all fields first
-  azureFields.classList.add('hidden');
-  ollamaFields.classList.add('hidden');
+    // Hide all fields first
+    azureFields.classList.add("hidden");
+    ollamaFields.classList.add("hidden");
 
-  // Show relevant fields
-  if (provider === 'azure_openai') {
-    azureFields.classList.remove('hidden');
-  } else if (provider === 'ollama') {
-    ollamaFields.classList.remove('hidden');
-  }
+    // Show relevant fields
+    if (provider === "azure_openai") {
+        azureFields.classList.remove("hidden");
+    } else if (provider === "ollama") {
+        ollamaFields.classList.remove("hidden");
+    }
 
-  // Update connect button state
-  updateConnectButtonState();
+    // Update connect button state
+    updateConnectButtonState();
 }
 
 /**
  * Update connect button state
  */
 function updateConnectButtonState() {
-  const connectBtn = document.getElementById('llm-connect-btn');
-  const provider = document.getElementById('llm-provider').value;
-  const hasServer = llmChatState.selectedServerId !== null;
+    const connectBtn = document.getElementById("llm-connect-btn");
+    const provider = document.getElementById("llm-provider").value;
+    const hasServer = llmChatState.selectedServerId !== null;
 
-  if (connectBtn) {
-    connectBtn.disabled = !hasServer || !provider;
-  }
+    if (connectBtn) {
+        connectBtn.disabled = !hasServer || !provider;
+    }
 }
 
 /**
  * Connect to LLM chat
  */
+// eslint-disable-next-line no-unused-vars
 async function connectLLMChat() {
     if (!llmChatState.selectedServerId) {
         showErrorMessage("Please select a virtual server first");
         return;
     }
-    
+
     const provider = document.getElementById("llm-provider").value;
     if (!provider) {
         showErrorMessage("Please select an LLM provider");
         return;
     }
-    
+
     // Show loading state
     const connectBtn = document.getElementById("llm-connect-btn");
     const originalText = connectBtn.textContent;
     connectBtn.textContent = "Connecting...";
     connectBtn.disabled = true;
-    
+
     // Clear any previous error messages
     const statusDiv = document.getElementById("llm-config-status");
     if (statusDiv) {
         statusDiv.classList.add("hidden");
     }
-    
+
     try {
         // Build LLM config
         const llmConfig = buildLLMConfig(provider);
-        
+
         // Build server URL
-        const serverUrl = `${location.protocol}//${location.hostname}${![80,443].includes(location.port) ? `:${location.port}` : ""}/servers/${llmChatState.selectedServerId}/mcp`;
+        const serverUrl = `${location.protocol}//${location.hostname}${![80, 443].includes(location.port) ? `:${location.port}` : ""}/servers/${llmChatState.selectedServerId}/mcp`;
         console.log("Selected server URL:", serverUrl);
-        
+
         // Use the stored server token (empty string for public servers)
         const jwtToken = llmChatState.serverToken || "";
-        
+
         const payload = {
             user_id: llmChatState.userId,
             server: {
                 url: serverUrl,
                 transport: "streamable_http",
-                auth_token: jwtToken
+                auth_token: jwtToken,
             },
             llm: llmConfig,
-            streaming: true
+            streaming: true,
         };
-        
-        console.log("Connecting with payload:", {...payload, server: {...payload.server, auth_token: "REDACTED"}});
-        
+
+        console.log("Connecting with payload:", {
+            ...payload,
+            server: { ...payload.server, auth_token: "REDACTED" },
+        });
+
         // Make connection request with timeout handling
         let response;
         try {
-            response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/connect`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${jwtToken}`
+            response = await fetchWithTimeout(
+                `${window.ROOT_PATH}/llmchat/connect`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${jwtToken}`,
+                    },
+                    body: JSON.stringify(payload),
+                    credentials: "same-origin",
                 },
-                body: JSON.stringify(payload),
-                credentials: "same-origin"
-            }, 30000);
+                30000,
+            );
         } catch (fetchError) {
             // Handle network/timeout errors
-            if (fetchError.name === 'AbortError' || fetchError.message.includes('timeout')) {
-                throw new Error("Connection timed out. Please check if the server is responsive and try again.");
+            if (
+                fetchError.name === "AbortError" ||
+                fetchError.message.includes("timeout")
+            ) {
+                throw new Error(
+                    "Connection timed out. Please check if the server is responsive and try again.",
+                );
             }
             throw new Error(`Network error: ${fetchError.message}`);
         }
-        
+
         // Handle HTTP errors - extract backend error message
         if (!response.ok) {
             let errorMessage = `Connection failed (HTTP ${response.status})`;
-            
+
             try {
                 const errorData = await response.json();
                 if (errorData.detail) {
@@ -14329,34 +14374,36 @@ async function connectLLMChat() {
                 console.warn("Could not parse error response:", parseError);
                 // Keep generic error message
             }
-            
+
             throw new Error(errorMessage);
         }
-        
+
         // Parse successful response
         let result;
         try {
             result = await response.json();
         } catch (parseError) {
-            throw new Error("Failed to parse server response. Please try again.");
+            throw new Error(
+                "Failed to parse server response. Please try again.",
+            );
         }
-        
+
         console.log("Connection successful:", result);
-        
+
         // Update state
         llmChatState.isConnected = true;
         llmChatState.connectedTools = result.tools || [];
         llmChatState.toolCount = result.tool_count || 0;
-        
+
         // Update UI
         showConnectionSuccess();
-        
+
         // Clear welcome message and show chat input
         const welcomeMsg = document.getElementById("chat-welcome-message");
         if (welcomeMsg) {
             welcomeMsg.remove();
         }
-        
+
         const chatInput = document.getElementById("chat-input-container");
         if (chatInput) {
             chatInput.classList.remove("hidden");
@@ -14364,12 +14411,16 @@ async function connectLLMChat() {
             document.getElementById("chat-send-btn").disabled = false;
             document.getElementById("chat-input").focus();
         }
-        
+
         // Hide connect button, show disconnect button
         const disconnectBtn = document.getElementById("llm-disconnect-btn");
-        if (connectBtn) connectBtn.classList.add("hidden");
-        if (disconnectBtn) disconnectBtn.classList.remove("hidden");
-        
+        if (connectBtn) {
+            connectBtn.classList.add("hidden");
+        }
+        if (disconnectBtn) {
+            disconnectBtn.classList.remove("hidden");
+        }
+
         // Auto-collapse configuration
         const configForm = document.getElementById("llm-config-form");
         const chevron = document.getElementById("llm-config-chevron");
@@ -14377,10 +14428,12 @@ async function connectLLMChat() {
             configForm.classList.add("hidden");
             chevron.classList.remove("rotate-180");
         }
-        
+
         // Show success message
-        showNotification(`Connected to ${llmChatState.selectedServerName}`, "success");
-        
+        showNotification(
+            `Connected to ${llmChatState.selectedServerName}`,
+            "success",
+        );
     } catch (error) {
         console.error("Connection error:", error);
         // Display the backend error message to the user
@@ -14391,85 +14444,70 @@ async function connectLLMChat() {
     }
 }
 
-
-
 /**
  * Build LLM config object from form inputs
  */
 function buildLLMConfig(provider) {
-  const config = {
-    provider: provider,
-    config: {}
-  };
+    const config = {
+        provider,
+        config: {},
+    };
 
-  if (provider === 'azure_openai') {
-    const apiKey = document.getElementById('azure-api-key').value.trim();
-    const endpoint = document.getElementById('azure-endpoint').value.trim();
-    const deployment = document.getElementById('azure-deployment').value.trim();
-    const apiVersion = document.getElementById('azure-api-version').value.trim();
-    const temperature = document.getElementById('azure-temperature').value.trim();
+    if (provider === "azure_openai") {
+        const apiKey = document.getElementById("azure-api-key").value.trim();
+        const endpoint = document.getElementById("azure-endpoint").value.trim();
+        const deployment = document
+            .getElementById("azure-deployment")
+            .value.trim();
+        const apiVersion = document
+            .getElementById("azure-api-version")
+            .value.trim();
+        const temperature = document
+            .getElementById("azure-temperature")
+            .value.trim();
 
-    // Only include non-empty values
-    if (apiKey) config.config.api_key = apiKey;
-    if (endpoint) config.config.azure_endpoint = endpoint;
-    if (deployment) config.config.azure_deployment = deployment;
-    if (apiVersion) config.config.api_version = apiVersion;
-    if (temperature) config.config.temperature = parseFloat(temperature);
-    
-  } else if (provider === 'ollama') {
-    const model = document.getElementById('ollama-model').value.trim();
-    const baseUrl = document.getElementById('ollama-base-url').value.trim();
-    const temperature = document.getElementById('ollama-temperature').value.trim();
+        // Only include non-empty values
+        if (apiKey) {
+            config.config.api_key = apiKey;
+        }
+        if (endpoint) {
+            config.config.azure_endpoint = endpoint;
+        }
+        if (deployment) {
+            config.config.azure_deployment = deployment;
+        }
+        if (apiVersion) {
+            config.config.api_version = apiVersion;
+        }
+        if (temperature) {
+            config.config.temperature = parseFloat(temperature);
+        }
+    } else if (provider === "ollama") {
+        const model = document.getElementById("ollama-model").value.trim();
+        const baseUrl = document.getElementById("ollama-base-url").value.trim();
+        const temperature = document
+            .getElementById("ollama-temperature")
+            .value.trim();
 
-    // Only include non-empty values
-    if (model) config.config.model = model;
-    if (baseUrl) config.config.base_url = baseUrl;
-    if (temperature) config.config.temperature = parseFloat(temperature);
-  }
-
-  return config;
-}
-
-/**
- * Fetch active tools for a given server ID.
- * Returns an array of tool objects or tool names.
- */
-async function fetchActiveToolsForServer(serverId) {
-  if (!serverId) return [];
-  
-  try {
-    const response = await fetchWithTimeout(
-      `${window.ROOT_PATH}/admin/servers/${serverId}`,
-      {
-        method: "GET",
-        credentials: "same-origin"
-      }
-    );
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+        // Only include non-empty values
+        if (model) {
+            config.config.model = model;
+        }
+        if (baseUrl) {
+            config.config.base_url = baseUrl;
+        }
+        if (temperature) {
+            config.config.temperature = parseFloat(temperature);
+        }
     }
-    
-    const server = await response.json();
-    
-    // Extract tool names from associatedTools array
-    // Each tool may be an object with a 'name' field or a string
-    const tools = (server.associatedTools || []).map(tool => {
-      if (typeof tool === "string") return tool;
-      if (tool && tool.name) return tool.name;
-      return "Unknown tool";
-    });
-    
-    return tools;
-  } catch (error) {
-    console.error(`Error fetching tools for server ${serverId}:`, error);
-    return [];
-  }
+
+    return config;
 }
 
 /**
  * Copy environment variables to clipboard for the specified provider
  */
+// eslint-disable-next-line no-unused-vars
 async function copyEnvVariables(provider) {
     const envVariables = {
         azure: `AZURE_OPENAI_API_KEY=<api_key>
@@ -14477,21 +14515,21 @@ AZURE_OPENAI_ENDPOINT=https://test-url.openai.azure.com
 AZURE_OPENAI_API_VERSION=2024-02-15-preview
 AZURE_OPENAI_DEPLOYMENT=gpt4o
 AZURE_OPENAI_MODEL=gpt4o`,
-        
-        ollama: `OLLAMA_MODEL=qwen3:1.7b`,
-        
+
+        ollama: "OLLAMA_MODEL=qwen3:1.7b",
+
         openai: `OPENAI_API_KEY=<api_key>
-OPENAI_MODEL=gpt-4o-mini`
+OPENAI_MODEL=gpt-4o-mini`,
     };
-    
+
     const variables = envVariables[provider];
-    
+
     if (!variables) {
-        console.error('Unknown provider:', provider);
-        showErrorMessage('Unknown provider');
+        console.error("Unknown provider:", provider);
+        showErrorMessage("Unknown provider");
         return;
     }
-    
+
     try {
         // Try modern clipboard API first
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -14499,32 +14537,32 @@ OPENAI_MODEL=gpt-4o-mini`
             showCopySuccessNotification(provider);
         } else {
             // Fallback for older browsers
-            const textArea = document.createElement('textarea');
+            const textArea = document.createElement("textarea");
             textArea.value = variables;
-            textArea.style.position = 'fixed';
-            textArea.style.left = '-999999px';
-            textArea.style.top = '-999999px';
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
+            textArea.style.top = "-999999px";
             document.body.appendChild(textArea);
             textArea.focus();
             textArea.select();
-            
+
             try {
-                const successful = document.execCommand('copy');
+                const successful = document.execCommand("copy");
                 if (successful) {
                     showCopySuccessNotification(provider);
                 } else {
-                    throw new Error('Copy command failed');
+                    throw new Error("Copy command failed");
                 }
             } catch (err) {
-                console.error('Fallback copy failed:', err);
-                showErrorMessage('Failed to copy to clipboard');
+                console.error("Fallback copy failed:", err);
+                showErrorMessage("Failed to copy to clipboard");
             } finally {
                 document.body.removeChild(textArea);
             }
         }
     } catch (err) {
-        console.error('Failed to copy environment variables:', err);
-        showErrorMessage('Failed to copy to clipboard. Please copy manually.');
+        console.error("Failed to copy environment variables:", err);
+        showErrorMessage("Failed to copy to clipboard. Please copy manually.");
     }
 }
 
@@ -14533,16 +14571,16 @@ OPENAI_MODEL=gpt-4o-mini`
  */
 function showCopySuccessNotification(provider) {
     const providerNames = {
-        azure: 'Azure OpenAI',
-        ollama: 'Ollama',
-        openai: 'OpenAI'
+        azure: "Azure OpenAI",
+        ollama: "Ollama",
+        openai: "OpenAI",
     };
-    
+
     const displayName = providerNames[provider] || provider;
-    
+
     // Create notification element
-    const notification = document.createElement('div');
-    notification.className = 'fixed top-4 right-4 z-50 animate-fade-in';
+    const notification = document.createElement("div");
+    notification.className = "fixed top-4 right-4 z-50 animate-fade-in";
     notification.innerHTML = `
         <div class="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center space-x-2">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -14551,13 +14589,13 @@ function showCopySuccessNotification(provider) {
             <span class="font-medium">${displayName} variables copied!</span>
         </div>
     `;
-    
+
     document.body.appendChild(notification);
-    
+
     // Remove notification after 3 seconds
     setTimeout(() => {
-        notification.style.opacity = '0';
-        notification.style.transition = 'opacity 0.3s ease-out';
+        notification.style.opacity = "0";
+        notification.style.transition = "opacity 0.3s ease-out";
         setTimeout(() => {
             if (notification.parentNode) {
                 document.body.removeChild(notification);
@@ -14566,114 +14604,93 @@ function showCopySuccessNotification(provider) {
     }, 3000);
 }
 
-
 /**
  * Show connection success
  */
 function showConnectionSuccess() {
-  // Update connection status badge
-  const statusBadge = document.getElementById('llm-connection-status');
-  if (statusBadge) {
-    statusBadge.classList.remove('hidden');
-  }
-
-  // Show active tools badge with count and names
-    // const toolsBadge = document.getElementById("llm-active-tools-badge");
-    // const toolCountSpan = document.getElementById("llm-tool-count");
-    // const toolNamesSpan = document.getElementById("llm-tool-names");
-
-    // if (toolsBadge && toolCountSpan && toolNamesSpan) {
-    // Fetch tool info from the connection result stored in state or via a separate call
-    // For now, we'll fetch from the selected server's data
-    // fetchActiveToolsForServer(llmChatState.selectedServerId)
-    //     .then(tools => {
-    //     const count = tools.length;
-    //     toolCountSpan.textContent = `${count} tool${count !== 1 ? 's' : ''}`;
-        
-    //     if (count > 0) {
-    //         toolNamesSpan.textContent = tools.map(t => t.name || t).join(", ");
-    //     } else {
-    //         toolNamesSpan.textContent = "No tools available";
-    //     }
-        
-    //     toolsBadge.classList.remove("hidden");
-    //     })
-    //     .catch(err => {
-    //     console.error("Failed to fetch active tools:", err);
-    //     toolCountSpan.textContent = "? tools";
-    //     toolNamesSpan.textContent = "Could not load tools";
-    //     toolsBadge.classList.remove("hidden");
-    //     });
-    // }
+    // Update connection status badge
+    const statusBadge = document.getElementById("llm-connection-status");
+    if (statusBadge) {
+        statusBadge.classList.remove("hidden");
+    }
 
     // Show active tools badge using data from connection response
-// Show active tools badge with enhanced pill display
-const toolsBadge = document.getElementById("llm-active-tools-badge");
-const toolCountSpan = document.getElementById("llm-tool-count");
-const toolListDiv = document.getElementById("llm-tool-list");
+    const toolsBadge = document.getElementById("llm-active-tools-badge");
+    const toolCountSpan = document.getElementById("llm-tool-count");
+    const toolListDiv = document.getElementById("llm-tool-list");
 
-if (toolsBadge && toolCountSpan && toolListDiv) {
-  const tools = llmChatState.connectedTools || [];
-  const count = tools.length;
-  
-  toolCountSpan.textContent = `${count} tool${count !== 1 ? 's' : ''}`;
-  
-  // Clear and populate tool list with individual pills
-  toolListDiv.innerHTML = '';
-  
-  if (count > 0) {
-    tools.forEach((toolName, index) => {
-      const pill = document.createElement('span');
-      pill.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105';
-      
-      // Tool icon
-      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      icon.setAttribute('class', 'w-3.5 h-3.5');
-      icon.setAttribute('fill', 'none');
-      icon.setAttribute('stroke', 'currentColor');
-      icon.setAttribute('viewBox', '0 0 24 24');
-      icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>';
-      
-      const text = document.createElement('span');
-      text.textContent = toolName;
-      
-      pill.appendChild(icon);
-      pill.appendChild(text);
-      toolListDiv.appendChild(pill);
-    });
-  } else {
-    const emptyMsg = document.createElement('div');
-    emptyMsg.className = 'text-center py-4';
-    emptyMsg.innerHTML = `
+    if (toolsBadge && toolCountSpan && toolListDiv) {
+        const tools = llmChatState.connectedTools || [];
+        const count = tools.length;
+
+        toolCountSpan.textContent = `${count} tool${count !== 1 ? "s" : ""}`;
+
+        // Clear and populate tool list with individual pills
+        toolListDiv.innerHTML = "";
+
+        if (count > 0) {
+            tools.forEach((toolName, index) => {
+                const pill = document.createElement("span");
+                pill.className =
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/40 dark:to-indigo-900/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700 shadow-sm hover:shadow-md transition-all hover:scale-105";
+
+                // Tool icon
+                const icon = document.createElementNS(
+                    "http://www.w3.org/2000/svg",
+                    "svg",
+                );
+                icon.setAttribute("class", "w-3.5 h-3.5");
+                icon.setAttribute("fill", "none");
+                icon.setAttribute("stroke", "currentColor");
+                icon.setAttribute("viewBox", "0 0 24 24");
+                icon.innerHTML =
+                    '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>';
+
+                const text = document.createElement("span");
+                text.textContent = toolName;
+
+                pill.appendChild(icon);
+                pill.appendChild(text);
+                toolListDiv.appendChild(pill);
+            });
+        } else {
+            const emptyMsg = document.createElement("div");
+            emptyMsg.className = "text-center py-4";
+            emptyMsg.innerHTML = `
       <svg class="w-8 h-8 mx-auto text-gray-400 dark:text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
       </svg>
       <p class="text-xs text-gray-500 dark:text-gray-400">No tools available for this server</p>
     `;
-    toolListDiv.appendChild(emptyMsg);
-  }
-  
-  toolsBadge.classList.remove("hidden");
-}
+            toolListDiv.appendChild(emptyMsg);
+        }
 
+        toolsBadge.classList.remove("hidden");
+    }
 
+    // Hide connect button, show disconnect button
+    const connectBtn = document.getElementById("llm-connect-btn");
+    const disconnectBtn = document.getElementById("llm-disconnect-btn");
+    if (connectBtn) {
+        connectBtn.classList.add("hidden");
+    }
+    if (disconnectBtn) {
+        disconnectBtn.classList.remove("hidden");
+    }
 
-  // Hide connect button, show disconnect button
-  const connectBtn = document.getElementById('llm-connect-btn');
-  const disconnectBtn = document.getElementById('llm-disconnect-btn');
-  if (connectBtn) connectBtn.classList.add('hidden');
-  if (disconnectBtn) disconnectBtn.classList.remove('hidden');
+    // Auto-collapse configuration
+    const configForm = document.getElementById("llm-config-form");
+    const chevron = document.getElementById("llm-config-chevron");
+    if (configForm && !configForm.classList.contains("hidden")) {
+        configForm.classList.add("hidden");
+        chevron.classList.remove("rotate-180");
+    }
 
-  // Auto-collapse configuration
-  const configForm = document.getElementById('llm-config-form');
-  const chevron = document.getElementById('llm-config-chevron');
-  if (configForm && !configForm.classList.contains('hidden')) {
-    configForm.classList.add('hidden');
-    chevron.classList.remove('rotate-180');
-  }
-
-  // Show success message
-  showNotification(`Connected to ${llmChatState.selectedServerName}`, 'success');
+    // Show success message
+    showNotification(
+        `Connected to ${llmChatState.selectedServerName}`,
+        "success",
+    );
 }
 
 /**
@@ -14685,7 +14702,8 @@ if (toolsBadge && toolCountSpan && toolListDiv) {
 function showConnectionError(message) {
     const statusDiv = document.getElementById("llm-config-status");
     if (statusDiv) {
-        statusDiv.className = "text-sm text-red-600 dark:text-red-400 p-3 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-700";
+        statusDiv.className =
+            "text-sm text-red-600 dark:text-red-400 p-3 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-700";
         statusDiv.innerHTML = `
             <div class="flex items-start gap-2">
                 <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
@@ -14701,46 +14719,53 @@ function showConnectionError(message) {
     }
 }
 
-
 /**
  * Disconnect from LLM chat
  */
+// eslint-disable-next-line no-unused-vars
 async function disconnectLLMChat() {
     if (!llmChatState.isConnected) {
         console.warn("No active connection to disconnect");
         return;
     }
-    
+
     const disconnectBtn = document.getElementById("llm-disconnect-btn");
     const originalText = disconnectBtn.textContent;
     disconnectBtn.textContent = "Disconnecting...";
     disconnectBtn.disabled = true;
-    
+
     try {
         const jwtToken = getCookie("jwt_token");
-        
+
         // Attempt graceful disconnection
         let response;
         let backendError = null;
-        
+
         try {
-            response = await fetchWithTimeout(`${window.ROOT_PATH}/llmchat/disconnect`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "Authorization": `Bearer ${jwtToken}`
+            response = await fetchWithTimeout(
+                `${window.ROOT_PATH}/llmchat/disconnect`,
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        Authorization: `Bearer ${jwtToken}`,
+                    },
+                    body: JSON.stringify({
+                        user_id: llmChatState.userId,
+                    }),
+                    credentials: "same-origin",
                 },
-                body: JSON.stringify({
-                    user_id: llmChatState.userId
-                }),
-                credentials: "same-origin"
-            }, 10000); // Shorter timeout for disconnect
+                10000,
+            ); // Shorter timeout for disconnect
         } catch (fetchError) {
-            console.warn("Disconnect request failed, cleaning up locally:", fetchError);
+            console.warn(
+                "Disconnect request failed, cleaning up locally:",
+                fetchError,
+            );
             backendError = fetchError.message;
             // Continue with local cleanup even if server request fails
         }
-        
+
         // Parse response if available
         let disconnectStatus = "unknown";
         if (response) {
@@ -14748,7 +14773,7 @@ async function disconnectLLMChat() {
                 try {
                     const result = await response.json();
                     disconnectStatus = result.status || "disconnected";
-                    
+
                     if (result.warning) {
                         console.warn("Disconnect warning:", result.warning);
                     }
@@ -14765,28 +14790,30 @@ async function disconnectLLMChat() {
                 } catch (parseError) {
                     backendError = `HTTP ${response.status}`;
                 }
-                console.warn(`Disconnect returned error: ${backendError}, cleaning up locally`);
+                console.warn(
+                    `Disconnect returned error: ${backendError}, cleaning up locally`,
+                );
             }
         }
-        
+
         // Always update local state regardless of server response
         llmChatState.isConnected = false;
         llmChatState.messageHistory = [];
         llmChatState.connectedTools = [];
         llmChatState.toolCount = 0;
         llmChatState.serverToken = "";
-        
+
         // Update UI
         const statusBadge = document.getElementById("llm-connection-status");
         if (statusBadge) {
             statusBadge.classList.add("hidden");
         }
-        
+
         const toolsBadge = document.getElementById("llm-active-tools-badge");
         if (toolsBadge) {
             toolsBadge.classList.add("hidden");
         }
-        
+
         const connectBtn = document.getElementById("llm-connect-btn");
         if (connectBtn) {
             connectBtn.classList.remove("hidden");
@@ -14794,7 +14821,7 @@ async function disconnectLLMChat() {
         if (disconnectBtn) {
             disconnectBtn.classList.add("hidden");
         }
-        
+
         // Hide chat input
         const chatInput = document.getElementById("chat-input-container");
         if (chatInput) {
@@ -14802,13 +14829,16 @@ async function disconnectLLMChat() {
             document.getElementById("chat-input").disabled = true;
             document.getElementById("chat-send-btn").disabled = true;
         }
-        
+
         // Clear messages
         clearChatMessages();
-        
+
         // Show appropriate notification
         if (backendError) {
-            showNotification(`Disconnected (server error: ${backendError})`, "warning");
+            showNotification(
+                `Disconnected (server error: ${backendError})`,
+                "warning",
+            );
         } else if (disconnectStatus === "no_active_session") {
             showNotification("Already disconnected", "info");
         } else if (disconnectStatus === "disconnected_with_errors") {
@@ -14816,94 +14846,98 @@ async function disconnectLLMChat() {
         } else {
             showNotification("Disconnected successfully", "info");
         }
-        
     } catch (error) {
         console.error("Unexpected disconnection error:", error);
-        
+
         // Force cleanup even on error
         llmChatState.isConnected = false;
         llmChatState.messageHistory = [];
         llmChatState.connectedTools = [];
         llmChatState.toolCount = 0;
-        
+
         // Display backend error if available
-        showErrorMessage(`Disconnection error: ${error.message}. Local session cleared.`);
+        showErrorMessage(
+            `Disconnection error: ${error.message}. Local session cleared.`,
+        );
     } finally {
         disconnectBtn.textContent = originalText;
         disconnectBtn.disabled = false;
     }
 }
 
-
 /**
  * Send chat message
  */
 async function sendChatMessage(event) {
     event.preventDefault();
-    
+
     const input = document.getElementById("chat-input");
     const message = input.value.trim();
-    
-    if (!message) return;
-    
+
+    if (!message) {
+        return;
+    }
+
     if (!llmChatState.isConnected) {
         showErrorMessage("Please connect to a server first");
         return;
     }
-    
+
     // Add user message to chat
     appendChatMessage("user", message);
-    
+
     // Clear input
     input.value = "";
     input.style.height = "auto";
-    
+
     // Disable input while processing
     input.disabled = true;
     document.getElementById("chat-send-btn").disabled = true;
-    
+
     let assistantMsgId = null;
     let reader = null;
-    
+
     try {
         const jwtToken = getCookie("jwt_token");
-        
+
         // Create assistant message placeholder for streaming
         assistantMsgId = appendChatMessage("assistant", "", true);
-        
+
         // Make request with timeout handling
         let response;
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 120000); // 2 minute timeout
-            
+
             response = await fetch(`${window.ROOT_PATH}/llmchat/chat`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${jwtToken}`
+                    Authorization: `Bearer ${jwtToken}`,
                 },
                 body: JSON.stringify({
                     user_id: llmChatState.userId,
-                    message: message,
-                    streaming: true
+                    message,
+                    streaming: true,
                 }),
                 credentials: "same-origin",
-                signal: controller.signal
+                signal: controller.signal,
             });
-            
+
             clearTimeout(timeoutId);
         } catch (fetchError) {
-            if (fetchError.name === 'AbortError') {
-                throw new Error("Request timed out. The response took too long.");
+            if (fetchError.name === "AbortError") {
+                throw new Error(
+                    "Request timed out. The response took too long.",
+                );
             }
             throw new Error(`Network error: ${fetchError.message}`);
         }
-        
+
         // Handle HTTP errors - extract backend error message
         if (!response.ok) {
             let errorMessage = `Chat request failed (HTTP ${response.status})`;
-            
+
             try {
                 const errorData = await response.json();
                 if (errorData.detail) {
@@ -14913,41 +14947,45 @@ async function sendChatMessage(event) {
             } catch (parseError) {
                 console.warn("Could not parse error response");
             }
-            
+
             throw new Error(errorMessage);
         }
-        
+
         // Validate response has body stream
         if (!response.body) {
             throw new Error("No response stream received from server");
         }
-        
+
         // Handle streaming SSE response
         reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
         let accumulatedText = "";
         let hasReceivedData = false;
-        
+
         try {
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
-                
+                if (done) {
+                    break;
+                }
+
                 hasReceivedData = true;
                 buffer += decoder.decode(value, { stream: true });
-                
+
                 // Process complete SSE events (separated by blank line)
                 let boundary;
                 while ((boundary = buffer.indexOf("\n\n")) !== -1) {
                     const rawEvent = buffer.slice(0, boundary).trim();
                     buffer = buffer.slice(boundary + 2);
-                    
-                    if (!rawEvent) continue;
-                    
+
+                    if (!rawEvent) {
+                        continue;
+                    }
+
                     let eventType = "message";
                     const dataLines = [];
-                    
+
                     for (const line of rawEvent.split("\n")) {
                         if (line.startsWith("event:")) {
                             eventType = line.slice(6).trim();
@@ -14955,100 +14993,135 @@ async function sendChatMessage(event) {
                             dataLines.push(line.slice(5).trim());
                         }
                     }
-                    
+
                     let payload = {};
                     const dataStr = dataLines.join("");
-                    
+
                     try {
                         payload = dataStr ? JSON.parse(dataStr) : {};
                     } catch (parseError) {
-                        console.warn("Failed to parse SSE data:", dataStr, parseError);
+                        console.warn(
+                            "Failed to parse SSE data:",
+                            dataStr,
+                            parseError,
+                        );
                         continue;
                     }
-                    
+
                     // Handle different event types
                     try {
                         switch (eventType) {
-                            case "token":
+                            case "token": {
                                 const text = payload.content;
                                 if (text) {
                                     accumulatedText += text;
                                     // Process and render with think tags
-                                    updateChatMessageWithThinkTags(assistantMsgId, accumulatedText);
+                                    updateChatMessageWithThinkTags(
+                                        assistantMsgId,
+                                        accumulatedText,
+                                    );
                                 }
                                 break;
-
+                            }
                             case "tool_start":
                             case "tool_end":
                             case "tool_error":
-                                addToolEventToCard(assistantMsgId, eventType, payload);
+                                addToolEventToCard(
+                                    assistantMsgId,
+                                    eventType,
+                                    payload,
+                                );
                                 break;
-                                
+
                             case "final":
                                 if (payload.tool_used) {
-                                    setToolUsedSummary(assistantMsgId, true, payload.tools);
+                                    setToolUsedSummary(
+                                        assistantMsgId,
+                                        true,
+                                        payload.tools,
+                                    );
                                 }
                                 setTimeout(scrollChatToBottom, 50);
                                 break;
-                                
-                            case "error":
+
+                            case "error": {
                                 // Handle server-sent error events from backend
-                                const errorMsg = payload.error || "An error occurred during processing";
-                                const isRecoverable = payload.recoverable !== false;
-                                
+                                const errorMsg =
+                                    payload.error ||
+                                    "An error occurred during processing";
+                                const isRecoverable =
+                                    payload.recoverable !== false;
+
                                 // Display error in the assistant message
-                                updateChatMessage(assistantMsgId, `❌ Error: ${errorMsg}`);
-                                
+                                updateChatMessage(
+                                    assistantMsgId,
+                                    `❌ Error: ${errorMsg}`,
+                                );
+
                                 if (!isRecoverable) {
                                     // For non-recoverable errors, suggest reconnection
-                                    appendChatMessage("system", "⚠️ Connection lost. Please reconnect to continue.");
+                                    appendChatMessage(
+                                        "system",
+                                        "⚠️ Connection lost. Please reconnect to continue.",
+                                    );
                                     llmChatState.isConnected = false;
-                                    
+
                                     // Update UI to show disconnected state
-                                    const connectBtn = document.getElementById("llm-connect-btn");
-                                    const disconnectBtn = document.getElementById("llm-disconnect-btn");
-                                    if (connectBtn) connectBtn.classList.remove("hidden");
-                                    if (disconnectBtn) disconnectBtn.classList.add("hidden");
+                                    const connectBtn =
+                                        document.getElementById(
+                                            "llm-connect-btn",
+                                        );
+                                    const disconnectBtn =
+                                        document.getElementById(
+                                            "llm-disconnect-btn",
+                                        );
+                                    if (connectBtn) {
+                                        connectBtn.classList.remove("hidden");
+                                    }
+                                    if (disconnectBtn) {
+                                        disconnectBtn.classList.add("hidden");
+                                    }
                                 }
                                 break;
-                                
+                            }
                             default:
                                 console.warn("Unknown event type:", eventType);
                                 break;
                         }
                     } catch (eventError) {
-                        console.error(`Error handling event ${eventType}:`, eventError);
+                        console.error(
+                            `Error handling event ${eventType}:`,
+                            eventError,
+                        );
                         // Continue processing other events
                     }
                 }
-                
+
                 setTimeout(scrollChatToBottom, 100);
             }
         } catch (streamError) {
             console.error("Stream reading error:", streamError);
             throw new Error(`Stream error: ${streamError.message}`);
         }
-        
+
         // Validate we received some data
         if (!hasReceivedData) {
             throw new Error("No data received from server");
         }
-        
+
         // Mark streaming as complete
         markMessageComplete(assistantMsgId);
-        
     } catch (error) {
         console.error("Chat error:", error);
-        
+
         // Display backend error message to user
         const errorMsg = error.message || "An unexpected error occurred";
         appendChatMessage("system", `❌ ${errorMsg}`);
-        
+
         // If we have a partial assistant message, mark it as complete
         if (assistantMsgId) {
             markMessageComplete(assistantMsgId);
         }
-        
     } finally {
         // Clean up reader if it exists
         if (reader) {
@@ -15058,7 +15131,7 @@ async function sendChatMessage(event) {
                 console.warn("Error canceling reader:", cancelError);
             }
         }
-        
+
         // Re-enable input
         input.disabled = false;
         document.getElementById("chat-send-btn").disabled = false;
@@ -15072,25 +15145,25 @@ async function sendChatMessage(event) {
  */
 function parseThinkTags(content) {
     const thinkingSteps = [];
-    let finalAnswer = '';
-    let rawContent = content;
-    
+    let finalAnswer = "";
+    const rawContent = content;
+
     // Extract all <think>...</think> blocks
     const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
     let match;
-    let lastIndex = 0;
-    
+    // let lastIndex = 0;
+
     while ((match = thinkRegex.exec(content)) !== null) {
         const thinkContent = match[1].trim();
         if (thinkContent) {
             thinkingSteps.push({ content: thinkContent });
         }
-        lastIndex = match.index + match[0].length;
+        // lastIndex = match.index + match[0].length;
     }
-    
+
     // Remove all <think> tags to get final answer
-    finalAnswer = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    
+    finalAnswer = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
     return { thinkingSteps, finalAnswer, rawContent };
 }
 
@@ -15100,31 +15173,35 @@ function parseThinkTags(content) {
  */
 function updateChatMessageWithThinkTags(messageId, content) {
     const messageDiv = document.getElementById(messageId);
-    if (!messageDiv) return;
-    
-    const contentEl = messageDiv.querySelector('.message-content');
-    if (!contentEl) return;
-    
+    if (!messageDiv) {
+        return;
+    }
+
+    const contentEl = messageDiv.querySelector(".message-content");
+    if (!contentEl) {
+        return;
+    }
+
     // Parse content for think tags
     const { thinkingSteps, finalAnswer } = parseThinkTags(content);
-    
+
     // Clear existing content
-    contentEl.innerHTML = '';
-    
+    contentEl.innerHTML = "";
+
     // Render thinking steps if present
     if (thinkingSteps.length > 0) {
         const thinkingContainer = createThinkingUI(thinkingSteps);
         contentEl.appendChild(thinkingContainer);
     }
-    
+
     // Render final answer
     if (finalAnswer) {
-        const answerDiv = document.createElement('div');
-        answerDiv.className = 'final-answer-content';
+        const answerDiv = document.createElement("div");
+        answerDiv.className = "final-answer-content";
         answerDiv.textContent = finalAnswer;
         contentEl.appendChild(answerDiv);
     }
-    
+
     // Throttle scroll during streaming
     if (!scrollThrottle) {
         scrollChatToBottom();
@@ -15138,19 +15215,19 @@ function updateChatMessageWithThinkTags(messageId, content) {
  * Create the thinking UI component with collapsible steps
  */
 function createThinkingUI(thinkingSteps) {
-    const container = document.createElement('div');
-    container.className = 'thinking-container';
-    
+    const container = document.createElement("div");
+    container.className = "thinking-container";
+
     // Create header with icon and label
-    const header = document.createElement('div');
-    header.className = 'thinking-header';
+    const header = document.createElement("div");
+    header.className = "thinking-header";
     header.innerHTML = `
         <div class="thinking-header-content">
             <svg class="thinking-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
             </svg>
             <span class="thinking-label">Thinking</span>
-            <span class="thinking-count">${thinkingSteps.length} step${thinkingSteps.length !== 1 ? 's' : ''}</span>
+            <span class="thinking-count">${thinkingSteps.length} step${thinkingSteps.length !== 1 ? "s" : ""}</span>
         </div>
         <button class="thinking-toggle" aria-label="Toggle thinking steps">
             <svg class="thinking-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -15158,15 +15235,15 @@ function createThinkingUI(thinkingSteps) {
             </svg>
         </button>
     `;
-    
+
     // Create collapsible content
-    const content = document.createElement('div');
-    content.className = 'thinking-content collapsed';
-    
+    const content = document.createElement("div");
+    content.className = "thinking-content collapsed";
+
     // Add each thinking step
     thinkingSteps.forEach((step, index) => {
-        const stepDiv = document.createElement('div');
-        stepDiv.className = 'thinking-step';
+        const stepDiv = document.createElement("div");
+        stepDiv.className = "thinking-step";
         stepDiv.innerHTML = `
             <div class="thinking-step-number">
                 <span>${index + 1}</span>
@@ -15175,42 +15252,41 @@ function createThinkingUI(thinkingSteps) {
         `;
         content.appendChild(stepDiv);
     });
-    
+
     // Toggle functionality
-    const toggleBtn = header.querySelector('.thinking-toggle');
-    const chevron = header.querySelector('.thinking-chevron');
-    
-    toggleBtn.addEventListener('click', (e) => {
+    const toggleBtn = header.querySelector(".thinking-toggle");
+    const chevron = header.querySelector(".thinking-chevron");
+
+    toggleBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        const isCollapsed = content.classList.contains('collapsed');
-        
+        const isCollapsed = content.classList.contains("collapsed");
+
         if (isCollapsed) {
-            content.classList.remove('collapsed');
-            chevron.style.transform = 'rotate(180deg)';
+            content.classList.remove("collapsed");
+            chevron.style.transform = "rotate(180deg)";
         } else {
-            content.classList.add('collapsed');
-            chevron.style.transform = 'rotate(0deg)';
+            content.classList.add("collapsed");
+            chevron.style.transform = "rotate(0deg)";
         }
-        
+
         // Scroll after animation
         setTimeout(scrollChatToBottom, 200);
     });
-    
+
     container.appendChild(header);
     container.appendChild(content);
-    
+
     return container;
 }
 
 /**
  * Helper to escape HTML for safe rendering
  */
-function escapeHtml(text) {
-    const div = document.createElement('div');
+function escapeHtmlChat(text) {
+    const div = document.createElement("div");
     div.textContent = text;
     return div.innerHTML;
 }
-
 
 /**
  * Append chat message to UI
@@ -15221,11 +15297,11 @@ function escapeHtml(text) {
 // function appendChatMessage(role, content, isStreaming = false) {
 //     const container = document.getElementById('chat-messages-container');
 //     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
+
 //     const messageDiv = document.createElement('div');
 //     messageDiv.id = messageId;
 //     messageDiv.className = `chat-message ${role}-message`;
-    
+
 //     if (role === 'user') {
 //         messageDiv.innerHTML = `
 //             <div class="flex justify-end" style="margin: 0;">
@@ -15252,43 +15328,43 @@ function escapeHtml(text) {
 //             </div>
 //         `;
 //     }
-    
+
 //     container.appendChild(messageDiv);
 //     scrollChatToBottom();
 //     return messageId;
 // }
 
 function appendChatMessage(role, content, isStreaming = false) {
-    const container = document.getElementById('chat-messages-container');
+    const container = document.getElementById("chat-messages-container");
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    const messageDiv = document.createElement('div');
+    const messageDiv = document.createElement("div");
     messageDiv.id = messageId;
     messageDiv.className = `chat-message ${role}-message`;
-    messageDiv.style.marginBottom = '6px'; // compact spacing between messages
+    messageDiv.style.marginBottom = "6px"; // compact spacing between messages
 
-    if (role === 'user') {
+    if (role === "user") {
         messageDiv.innerHTML = `
             <div class="flex justify-end px-2">
                 <div class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-2xl px-4 py-2 max-w-xs shadow-sm text-sm whitespace-pre-wrap flex items-end gap-1">
-                    <div class="message-content">${escapeHtml(content)}</div>
+                    <div class="message-content">${escapeHtmlChat(content)}</div>
                 </div>
             </div>
         `;
-    } else if (role === 'assistant') {
+    } else if (role === "assistant") {
         messageDiv.innerHTML = `
             <div class="flex justify-start px-2">
                 <div class="bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl px-4 py-2 max-w-xs shadow-sm text-sm whitespace-pre-wrap flex items-end gap-1">
-                    <div class="message-content">${escapeHtml(content)}</div>
-                    ${isStreaming ? '<span class="streaming-indicator w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>' : ''}
+                    <div class="message-content">${escapeHtmlChat(content)}</div>
+                    ${isStreaming ? '<span class="streaming-indicator w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>' : ""}
                 </div>
             </div>
         `;
-    } else if (role === 'system') {
+    } else if (role === "system") {
         messageDiv.innerHTML = `
             <div class="flex justify-center px-2">
                 <div class="bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-100 text-xs px-3 py-1 rounded-md shadow-sm">
-                    ${escapeHtml(content)}
+                    ${escapeHtmlChat(content)}
                 </div>
             </div>
         `;
@@ -15299,7 +15375,6 @@ function appendChatMessage(role, content, isStreaming = false) {
     return messageId;
 }
 
-
 /**
  * Update chat message content (for streaming)
  */
@@ -15307,12 +15382,12 @@ let scrollThrottle = null;
 function updateChatMessage(messageId, content) {
     const messageDiv = document.getElementById(messageId);
     if (messageDiv) {
-        const contentEl = messageDiv.querySelector('.message-content');
+        const contentEl = messageDiv.querySelector(".message-content");
         if (contentEl) {
             // Store raw content for final processing
-            contentEl.setAttribute('data-raw-content', content);
+            contentEl.setAttribute("data-raw-content", content);
             contentEl.textContent = content;
-            
+
             // Throttle scroll during streaming
             if (!scrollThrottle) {
                 scrollChatToBottom();
@@ -15324,37 +15399,37 @@ function updateChatMessage(messageId, content) {
     }
 }
 
-
-
-
 /**
  * Mark message as complete (remove streaming indicator)
  */
 function markMessageComplete(messageId) {
     const messageDiv = document.getElementById(messageId);
     if (messageDiv) {
-        const indicator = messageDiv.querySelector('.streaming-indicator');
+        const indicator = messageDiv.querySelector(".streaming-indicator");
         if (indicator) {
             indicator.remove();
         }
-        
+
         // Ensure final render with think tags
-        const contentEl = messageDiv.querySelector('.message-content');
+        const contentEl = messageDiv.querySelector(".message-content");
         if (contentEl && contentEl.textContent) {
             // Re-parse one final time to ensure complete rendering
-            const fullContent = contentEl.getAttribute('data-raw-content') || contentEl.textContent;
-            if (fullContent.includes('<think>')) {
-                const { thinkingSteps, finalAnswer } = parseThinkTags(fullContent);
-                contentEl.innerHTML = '';
-                
+            const fullContent =
+                contentEl.getAttribute("data-raw-content") ||
+                contentEl.textContent;
+            if (fullContent.includes("<think>")) {
+                const { thinkingSteps, finalAnswer } =
+                    parseThinkTags(fullContent);
+                contentEl.innerHTML = "";
+
                 if (thinkingSteps.length > 0) {
                     const thinkingContainer = createThinkingUI(thinkingSteps);
                     contentEl.appendChild(thinkingContainer);
                 }
-                
+
                 if (finalAnswer) {
-                    const answerDiv = document.createElement('div');
-                    answerDiv.className = 'final-answer-content';
+                    const answerDiv = document.createElement("div");
+                    answerDiv.className = "final-answer-content";
                     answerDiv.textContent = finalAnswer;
                     contentEl.appendChild(answerDiv);
                 }
@@ -15363,138 +15438,155 @@ function markMessageComplete(messageId) {
     }
 }
 
-
 /**
  * Get or create a tool-events card positioned above the assistant message.
  * The card is a sibling of the message div, not nested inside.
  */
 function getOrCreateToolCard(messageId) {
-  const messageDiv = document.getElementById(messageId);
-  if (!messageDiv) return null;
+    const messageDiv = document.getElementById(messageId);
+    if (!messageDiv) {
+        return null;
+    }
 
-  // Check if card already exists as a sibling
-  let card = messageDiv.previousElementSibling;
-  if (card && card.classList.contains("tool-events-card")) {
-    return card;
-  }
+    // Check if card already exists as a sibling
+    let card = messageDiv.previousElementSibling;
+    if (card && card.classList.contains("tool-events-card")) {
+        return card;
+    }
 
-  // Create a new card
-  card = document.createElement("div");
-  card.className = "tool-events-card mb-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700";
-  
-  const header = document.createElement("div");
-  header.className = "flex items-center justify-between mb-2";
-  
-  const title = document.createElement("div");
-  title.className = "font-semibold text-sm text-blue-800 dark:text-blue-200 flex items-center gap-2";
-  title.innerHTML = `
+    // Create a new card
+    card = document.createElement("div");
+    card.className =
+        "tool-events-card mb-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700";
+
+    const header = document.createElement("div");
+    header.className = "flex items-center justify-between mb-2";
+
+    const title = document.createElement("div");
+    title.className =
+        "font-semibold text-sm text-blue-800 dark:text-blue-200 flex items-center gap-2";
+    title.innerHTML = `
     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
     </svg>
     <span>Tool Invocations</span>
   `;
-  
-  const toggleBtn = document.createElement("button");
-  toggleBtn.className = "text-xs text-blue-600 dark:text-blue-300 hover:underline";
-  toggleBtn.textContent = "Hide";
-  toggleBtn.onclick = () => {
-    const body = card.querySelector(".tool-events-body");
-    if (body.classList.contains("hidden")) {
-      body.classList.remove("hidden");
-      toggleBtn.textContent = "Hide";
-    } else {
-      body.classList.add("hidden");
-      toggleBtn.textContent = "Show";
-    }
-  };
-  
-  header.appendChild(title);
-  header.appendChild(toggleBtn);
-  card.appendChild(header);
-  
-  const body = document.createElement("div");
-  body.className = "tool-events-body space-y-2";
-  card.appendChild(body);
-  
-  // Insert card before the message div
-  messageDiv.parentElement.insertBefore(card, messageDiv);
-  
-  return card;
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.className =
+        "text-xs text-blue-600 dark:text-blue-300 hover:underline";
+    toggleBtn.textContent = "Hide";
+    toggleBtn.onclick = () => {
+        const body = card.querySelector(".tool-events-body");
+        if (body.classList.contains("hidden")) {
+            body.classList.remove("hidden");
+            toggleBtn.textContent = "Hide";
+        } else {
+            body.classList.add("hidden");
+            toggleBtn.textContent = "Show";
+        }
+    };
+
+    header.appendChild(title);
+    header.appendChild(toggleBtn);
+    card.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "tool-events-body space-y-2";
+    card.appendChild(body);
+
+    // Insert card before the message div
+    messageDiv.parentElement.insertBefore(card, messageDiv);
+
+    return card;
 }
 
 /**
  * Add a tool event row to the tool card.
  */
 function addToolEventToCard(messageId, eventType, payload) {
-  const card = getOrCreateToolCard(messageId);
-  if (!card) return;
-  
-  const body = card.querySelector(".tool-events-body");
-  
-  const row = document.createElement("div");
-  row.className = "text-xs p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700";
-  
-  let icon = "";
-  let text = "";
-  let colorClass = "";
-  
-  if (eventType === "tool_start") {
-    icon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
-    colorClass = "text-green-700 dark:text-green-400";
-    text = `<strong>Started:</strong> ${escapeHtml(payload.name || payload.id || "unknown")}`;
-    if (payload.input) {
-      text += `<br><span class="text-gray-600 dark:text-gray-400">Input: ${escapeHtml(JSON.stringify(payload.input))}</span>`;
+    const card = getOrCreateToolCard(messageId);
+    if (!card) {
+        return;
     }
-  } else if (eventType === "tool_end") {
-    icon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
-    colorClass = "text-blue-700 dark:text-blue-400";
-    text = `<strong>Completed:</strong> ${escapeHtml(payload.name || payload.id || "unknown")}`;
-    if (payload.output) {
-      const out = typeof payload.output === "string" ? payload.output : JSON.stringify(payload.output);
-      text += `<br><span class="text-gray-600 dark:text-gray-400">Output: ${escapeHtml(out)}</span>`;
+
+    const body = card.querySelector(".tool-events-body");
+
+    const row = document.createElement("div");
+    row.className =
+        "text-xs p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700";
+
+    let icon = "";
+    let text = "";
+    let colorClass = "";
+
+    if (eventType === "tool_start") {
+        icon =
+            '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>';
+        colorClass = "text-green-700 dark:text-green-400";
+        text = `<strong>Started:</strong> ${escapeHtmlChat(payload.name || payload.id || "unknown")}`;
+        if (payload.input) {
+            text += `<br><span class="text-gray-600 dark:text-gray-400">Input: ${escapeHtmlChat(JSON.stringify(payload.input))}</span>`;
+        }
+    } else if (eventType === "tool_end") {
+        icon =
+            '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>';
+        colorClass = "text-blue-700 dark:text-blue-400";
+        text = `<strong>Completed:</strong> ${escapeHtmlChat(payload.name || payload.id || "unknown")}`;
+        if (payload.output) {
+            const out =
+                typeof payload.output === "string"
+                    ? payload.output
+                    : JSON.stringify(payload.output);
+            text += `<br><span class="text-gray-600 dark:text-gray-400">Output: ${escapeHtmlChat(out)}</span>`;
+        }
+    } else if (eventType === "tool_error") {
+        icon =
+            '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>';
+        colorClass = "text-red-700 dark:text-red-400";
+        text = `<strong>Error:</strong> ${escapeHtmlChat(payload.error || payload.name || payload.id || "unknown")}`;
     }
-  } else if (eventType === "tool_error") {
-    icon = `<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
-    colorClass = "text-red-700 dark:text-red-400";
-    text = `<strong>Error:</strong> ${escapeHtml(payload.error || payload.name || payload.id || "unknown")}`;
-  }
-  
-  row.innerHTML = `<div class="flex items-start gap-2 ${colorClass}">${icon}<div>${text}</div></div>`;
-  body.appendChild(row);
+
+    row.innerHTML = `<div class="flex items-start gap-2 ${colorClass}">${icon}<div>${text}</div></div>`;
+    body.appendChild(row);
 }
 
 /**
  * Update or create a "tools used" summary badge on the tool card when final event arrives.
  */
 function setToolUsedSummary(messageId, used, toolsList) {
-  const card = getOrCreateToolCard(messageId);
-  if (!card) return;
-  
-  let badge = card.querySelector(".tool-summary-badge");
-  if (!badge) {
-    badge = document.createElement("div");
-    badge.className = "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium";
-    card.appendChild(badge);
-  }
-  
-  if (used && toolsList && toolsList.length > 0) {
-    badge.className = "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-green-700 dark:text-green-400";
-    badge.textContent = `✓ Tools used: ${toolsList.join(", ")}`;
-  } else {
-    badge.className = "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-gray-600 dark:text-gray-400";
-    badge.textContent = "No tools invoked";
-  }
-}
+    const card = getOrCreateToolCard(messageId);
+    if (!card) {
+        return;
+    }
 
+    let badge = card.querySelector(".tool-summary-badge");
+    if (!badge) {
+        badge = document.createElement("div");
+        badge.className =
+            "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium";
+        card.appendChild(badge);
+    }
+
+    if (used && toolsList && toolsList.length > 0) {
+        badge.className =
+            "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-green-700 dark:text-green-400";
+        badge.textContent = `✓ Tools used: ${toolsList.join(", ")}`;
+    } else {
+        badge.className =
+            "tool-summary-badge mt-2 pt-2 border-t border-blue-200 dark:border-blue-700 text-xs font-medium text-gray-600 dark:text-gray-400";
+        badge.textContent = "No tools invoked";
+    }
+}
 
 /**
  * Clear all chat messages
  */
 function clearChatMessages() {
-  const container = document.getElementById('chat-messages-container');
-  if (container) {
-    container.innerHTML = `
+    const container = document.getElementById("chat-messages-container");
+    if (container) {
+        container.innerHTML = `
       <div id="chat-welcome-message" class="flex items-center justify-center h-full">
         <div class="text-center text-gray-500 dark:text-gray-400">
           <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -15505,48 +15597,47 @@ function clearChatMessages() {
         </div>
       </div>
     `;
-  }
+    }
 }
 
 /**
  * Scroll chat to bottom
  */
 function scrollChatToBottom() {
-  const container = document.getElementById('chat-messages-container');
-  if (container) {
-    requestAnimationFrame(() => {
-      // Use instant scroll during streaming for better UX
-      container.scrollTop = container.scrollHeight;
-    });
-  }
+    const container = document.getElementById("chat-messages-container");
+    if (container) {
+        requestAnimationFrame(() => {
+            // Use instant scroll during streaming for better UX
+            container.scrollTop = container.scrollHeight;
+        });
+    }
 }
-
-
 
 /**
  * Handle Enter key in chat input (send on Enter, new line on Shift+Enter)
  */
+// eslint-disable-next-line no-unused-vars
 function handleChatInputKeydown(event) {
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    sendChatMessage(event);
-  }
+    if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendChatMessage(event);
+    }
 }
 
 function initializeChatInputResize() {
-    const chatInput = document.getElementById('chat-input');
+    const chatInput = document.getElementById("chat-input");
     if (chatInput) {
-        chatInput.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        chatInput.addEventListener("input", function () {
+            this.style.height = "auto";
+            this.style.height = Math.min(this.scrollHeight, 120) + "px";
         });
-        
+
         // Reset height when message is sent
-        const form = document.getElementById('chat-input-form');
+        const form = document.getElementById("chat-input-form");
         if (form) {
-            form.addEventListener('submit', () => {
+            form.addEventListener("submit", () => {
                 setTimeout(() => {
-                    chatInput.style.height = 'auto';
+                    chatInput.style.height = "auto";
                 }, 0);
             });
         }
@@ -15554,7 +15645,7 @@ function initializeChatInputResize() {
 }
 
 // Add CSS for streaming indicator animation
-const style = document.createElement('style');
+const style = document.createElement("style");
 style.textContent = `
   .streaming-indicator {
     animation: blink 1s infinite;
@@ -15571,4 +15662,3 @@ style.textContent = `
   }
 `;
 document.head.appendChild(style);
-
