@@ -3410,11 +3410,19 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             request_id = params.get("requestId", None)
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
-            result = await resource_service.read_resource(db, uri, request_id=request_id, user=get_user_email(user))
-            if hasattr(result, "model_dump"):
-                result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-            else:
-                result = {"contents": [result]}
+            # Get user email for OAuth token selection
+            user_email = get_user_email(user)
+            try:
+                result = await resource_service.read_resource(db, uri, request_id=request_id, user=user_email)
+                if hasattr(result, "model_dump"):
+                    result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
+                else:
+                    result = {"contents": [result]}
+            except ValueError:
+                # Resource has no local content, forward to upstream MCP server
+                result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "prompts/list":
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)

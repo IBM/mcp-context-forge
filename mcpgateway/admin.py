@@ -9910,7 +9910,7 @@ async def admin_generate_support_bundle(
         LOGGER.info(f"Support bundle generation requested by user: {user}")
 
         # First-Party
-        from mcpgateway.services.support_bundle_service import SupportBundleConfig, SupportBundleService
+        from mcpgateway.services.support_bundle_service import SupportBundleConfig, SupportBundleService  # pylint: disable=import-outside-toplevel
 
         # Create configuration
         config = SupportBundleConfig(
