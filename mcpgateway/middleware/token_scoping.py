@@ -372,7 +372,7 @@ class TokenScopingMiddleware:
         try:
             for team in teams:
                 # Extract team ID from dict or use string directly (backward compatibility)
-                team_id = team['id'] if isinstance(team, dict) else team
+                team_id = team["id"] if isinstance(team, dict) else team
 
                 membership = db.execute(
                     select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active))
@@ -419,7 +419,7 @@ class TokenScopingMiddleware:
         token_team_ids = []
         for team in token_teams:
             if isinstance(team, dict):
-                token_team_ids.append(team['id'])
+                token_team_ids.append(team["id"])
             else:
                 token_team_ids.append(team)
 
