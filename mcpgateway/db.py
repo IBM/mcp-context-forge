@@ -1916,6 +1916,7 @@ class Resource(Base):
         if self.text_content is not None:
             return ResourceContent(
                 type="resource",
+                id=str(self.id),
                 uri=self.uri,
                 mime_type=self.mime_type,
                 text=self.text_content,
@@ -1923,6 +1924,7 @@ class Resource(Base):
         if self.binary_content is not None:
             return ResourceContent(
                 type="resource",
+                id=str(self.id),
                 uri=self.uri,
                 mime_type=self.mime_type or "application/octet-stream",
                 blob=self.binary_content,

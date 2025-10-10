@@ -2572,20 +2572,20 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
-            return {"type": "resource", "resource_id": resource_id, "text": content.text}
+            return {"type": "resource", "id": resource_id, "uri": content.uri, "text": content.text}
     except Exception:
         pass  # nosec B110 - Intentionally continue with fallback resource content handling
 
     if isinstance(content, bytes):
-        return {"type": "resource", "resource_id": resource_id, "blob": content.decode("utf-8", errors="ignore")}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "blob": content.decode("utf-8", errors="ignore")}
     if isinstance(content, str):
-        return {"type": "resource", "resource_id": resource_id, "text": content}
+        return {"type": "resource", "id": resource_id, "uri": content.uri,"text": content}
 
     # Objects with a 'text' attribute (e.g., mocks) – best-effort mapping
     if hasattr(content, "text"):
-        return {"type": "resource", "resource_id": resource_id, "text": getattr(content, "text")}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "text": getattr(content, "text")}
 
-    return {"type": "resource", "resource_id": resource_id, "text": str(content)}
+    return {"type": "resource", "id": resource_id, "uri": content.uri,"text": str(content)}
 
 
 @resource_router.put("/{resource_id}", response_model=ResourceRead)

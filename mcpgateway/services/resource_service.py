@@ -46,7 +46,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
-from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent,ResourceResponse
+from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
@@ -788,12 +788,12 @@ class ResourceService:
 
                 # Normalize primitive types to ResourceContent
                 if isinstance(content, bytes):
-                    return ResourceContent(type="resource", uri=original_uri, blob=content)
+                    return ResourceContent(type="resource", id=resource_id,uri=original_uri, blob=content)
                 if isinstance(content, str):
-                    return ResourceContent(type="resource", uri=original_uri, text=content)
+                    return ResourceContent(type="resource",id=resource_id, uri=original_uri, text=content)
 
                 # Fallback to stringified content
-                return ResourceContent(type="resource", uri=original_uri, text=str(content))
+                return ResourceContent(type="resource", id=resource_id,uri=original_uri, text=str(content))
 
             except Exception as e:
                 success = False
