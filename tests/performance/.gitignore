@@ -1,6 +1,5 @@
 # Ignore test results
 results/
-results_*/
 *.txt
 *.csv
 *.log

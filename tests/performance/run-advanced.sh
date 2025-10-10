@@ -136,7 +136,8 @@ echo ""
 
 # Create results directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_DIR="$SCRIPT_DIR/results_${PROFILE}_${SERVER_PROFILE}_${TIMESTAMP}"
+RESULTS_BASE="${RESULTS_BASE:-$SCRIPT_DIR/results}"
+RESULTS_DIR="$RESULTS_BASE/${PROFILE}_${SERVER_PROFILE}_${TIMESTAMP}"
 mkdir -p "$RESULTS_DIR"
 
 log "Results directory: $RESULTS_DIR"

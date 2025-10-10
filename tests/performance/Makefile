@@ -20,6 +20,11 @@ help:
 	@echo "  make test-scaling          - Test with 4 instances"
 	@echo "  make compare-postgres      - Compare PostgreSQL 15 vs 17"
 	@echo ""
+	@echo "Comprehensive Tests:"
+	@echo "  make test-database         - Database connection pool tests"
+	@echo "  make test-gateway-core     - Gateway core functionality tests"
+	@echo "  make test-all-scenarios    - Run all test scenarios"
+	@echo ""
 	@echo "Baseline Management:"
 	@echo "  make baseline              - Save current as baseline"
 	@echo "  make save-baseline         - Save existing results as baseline"
@@ -29,7 +34,9 @@ help:
 	@echo "Utilities:"
 	@echo "  make list-profiles         - List all available profiles"
 	@echo "  make check                 - Check service health"
-	@echo "  make clean                 - Clean test results"
+	@echo "  make clean                 - Clean test result files"
+	@echo "  make clean-results         - Remove all result directories"
+	@echo "  make clean-all             - Deep clean (results + baselines + reports)"
 	@echo ""
 	@echo "Documentation:"
 	@echo "  make docs                  - Open main documentation"
@@ -50,7 +57,7 @@ check:
 # Basic Tests
 test:
 	@echo "Running standard performance tests (medium profile)..."
-	@./run-advanced.sh -p medium
+	@timeout 600 ./run-advanced.sh -p medium
 
 quick:
 	@echo "Running quick smoke test..."
@@ -58,7 +65,7 @@ quick:
 
 heavy:
 	@echo "Running heavy load test..."
-	@./run-advanced.sh -p heavy
+	@timeout 1200 ./run-advanced.sh -p heavy
 
 # Server Profile Tests
 test-minimal:
@@ -81,7 +88,24 @@ test-staging:
 	@./run-advanced.sh -p heavy --infrastructure staging
 
 test-production:
-	@./run-advanced.sh -p heavy --infrastructure production
+	@timeout 1200 ./run-advanced.sh -p heavy --infrastructure production
+
+# New comprehensive tests
+test-database:
+	@echo "Running database connection pool tests..."
+	@./scenarios/database-benchmark.sh
+
+test-gateway-core:
+	@echo "Running gateway core functionality tests..."
+	@./scenarios/gateway-core-benchmark.sh
+
+test-all-scenarios:
+	@echo "Running all test scenarios..."
+	@./scenarios/tools-benchmark.sh
+	@./scenarios/resources-benchmark.sh
+	@./scenarios/prompts-benchmark.sh
+	@./scenarios/gateway-core-benchmark.sh
+	@./scenarios/database-benchmark.sh
 
 test-ha:
 	@./run-advanced.sh -p heavy --infrastructure production_ha
@@ -172,11 +196,16 @@ list-infrastructure:
 # Utilities
 clean:
 	@echo "Cleaning test results..."
-	@rm -rf results_* results/*.txt results/*.csv results/*.log 2>/dev/null || true
+	@find results/ -name "*.txt" -o -name "*.csv" -o -name "*.log" 2>/dev/null | xargs rm -f || true
 	@rm -f docker-compose.perf.yml docker-compose.backup_*.yml nginx.conf 2>/dev/null || true
 	@echo "✅ Clean complete"
 
-clean-all: clean
+clean-results:
+	@echo "Removing all test result directories..."
+	@find results/ -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
+	@echo "✅ All results cleaned"
+
+clean-all: clean-results
 	@echo "Cleaning baselines and reports..."
 	@rm -rf baselines/*.json reports/*.html 2>/dev/null || true
 	@echo "✅ Deep clean complete"
@@ -197,7 +226,7 @@ docs:
 # Generate report from existing results
 report:
 ifndef RESULTS_DIR
-	@echo "Usage: make report RESULTS_DIR=results_medium_20241009_123456"
+	@echo "Usage: make report RESULTS_DIR=results/medium_20241009_123456"
 	@exit 1
 endif
 	@python3 utils/report_generator.py --results-dir $(RESULTS_DIR) --config config.yaml

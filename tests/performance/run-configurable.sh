@@ -43,6 +43,27 @@ header() {
     echo ""
 }
 
+# Graceful shutdown handler
+cleanup_partial_results() {
+    log "Received shutdown signal, saving partial results..."
+
+    # Stop monitoring if running
+    if [ -n "${MONITOR_PID:-}" ]; then
+        kill "$MONITOR_PID" 2>/dev/null || true
+        wait "$MONITOR_PID" 2>/dev/null || true
+    fi
+
+    # Save summary
+    if [ -d "${RESULTS_DIR:-}" ]; then
+        echo "Test interrupted at $(date)" > "$RESULTS_DIR/PARTIAL_RESULTS.txt"
+        log "Partial results saved to: $RESULTS_DIR"
+    fi
+
+    exit 0
+}
+
+trap 'cleanup_partial_results' SIGTERM SIGINT
+
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." &>/dev/null && pwd)"
@@ -146,7 +167,8 @@ echo ""
 
 # Create results directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-RESULTS_DIR="$SCRIPT_DIR/results_${PROFILE}_${TIMESTAMP}"
+RESULTS_BASE="${RESULTS_BASE:-$SCRIPT_DIR/results}"
+RESULTS_DIR="$RESULTS_BASE/${PROFILE}_${TIMESTAMP}"
 mkdir -p "$RESULTS_DIR"
 
 log "Results directory: $RESULTS_DIR"
