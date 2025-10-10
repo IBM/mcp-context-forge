@@ -2524,14 +2524,14 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
-@resource_router.get("/{uri:path}")
+@resource_router.get("/{resource_id}")
 @require_permission("resources.read")
-async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
+async def read_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
     """
-    Read a resource by its URI with plugin support.
+    Read a resource by its ID with plugin support.
 
     Args:
-        uri (str): URI of the resource.
+        resource_id (str): ID of the resource.
         request (Request): FastAPI request object for context.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -2546,20 +2546,20 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     server_id = request.headers.get("X-Server-ID")
 
-    logger.debug(f"User {user} requested resource with URI {uri} (request_id: {request_id})")
+    logger.debug(f"User {user} requested resource with ID {resource_id} (request_id: {request_id})")
 
     # Check cache
-    if cached := resource_cache.get(uri):
+    if cached := resource_cache.get(resource_id):
         return cached
 
     try:
         # Call service with context for plugin support
-        content = await resource_service.read_resource(db, uri, request_id=request_id, user=user, server_id=server_id)
+        content = await resource_service.read_resource(db, resource_id, request_id=request_id, user=user, server_id=server_id)
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    resource_cache.set(uri, content)
+    resource_cache.set(resource_id, content)
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
@@ -2572,36 +2572,36 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
-            return {"type": "resource", "uri": uri, "text": content.text}
+            return {"type": "resource", "resource_id": resource_id, "text": content.text}
     except Exception:
         pass  # nosec B110 - Intentionally continue with fallback resource content handling
 
     if isinstance(content, bytes):
-        return {"type": "resource", "uri": uri, "blob": content.decode("utf-8", errors="ignore")}
+        return {"type": "resource", "resource_id": resource_id, "blob": content.decode("utf-8", errors="ignore")}
     if isinstance(content, str):
-        return {"type": "resource", "uri": uri, "text": content}
+        return {"type": "resource", "resource_id": resource_id, "text": content}
 
     # Objects with a 'text' attribute (e.g., mocks) – best-effort mapping
     if hasattr(content, "text"):
-        return {"type": "resource", "uri": uri, "text": getattr(content, "text")}
+        return {"type": "resource", "resource_id": resource_id, "text": getattr(content, "text")}
 
-    return {"type": "resource", "uri": uri, "text": str(content)}
+    return {"type": "resource", "resource_id": resource_id, "text": str(content)}
 
 
-@resource_router.put("/{uri:path}", response_model=ResourceRead)
+@resource_router.put("/{resource_id}", response_model=ResourceRead)
 @require_permission("resources.update")
 async def update_resource(
-    uri: str,
+    resource_id: str,
     resource: ResourceUpdate,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
     """
-    Update a resource identified by its URI.
+    Update a resource identified by its ID.
 
     Args:
-        uri (str): URI of the resource.
+        resource_id (str): ID of the resource.
         resource (ResourceUpdate): New resource data.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Database session.
@@ -2614,13 +2614,13 @@ async def update_resource(
         HTTPException: If the resource is not found or update fails.
     """
     try:
-        logger.debug(f"User {user} is updating resource with URI {uri}")
+        logger.debug(f"User {user} is updating resource with ID {resource_id}")
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         result = await resource_service.update_resource(
             db,
-            uri,
+            resource_id,
             resource,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -2630,25 +2630,25 @@ async def update_resource(
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:
-        logger.error(f"Validation error while updating resource {uri}: {e}")
+        logger.error(f"Validation error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
-        logger.error(f"Integrity error while updating resource {uri}: {e}")
+        logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    await invalidate_resource_cache(uri)
+    await invalidate_resource_cache(resource_id)
     return result
 
 
-@resource_router.delete("/{uri:path}")
+@resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
-    Delete a resource by its URI.
+    Delete a resource by its ID.
 
     Args:
-        uri (str): URI of the resource to delete.
+        resource_id (str): ID of the resource to delete.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -2659,31 +2659,31 @@ async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(
         HTTPException: If the resource is not found or deletion fails.
     """
     try:
-        logger.debug(f"User {user} is deleting resource with URI {uri}")
-        await resource_service.delete_resource(db, uri)
-        await invalidate_resource_cache(uri)
-        return {"status": "success", "message": f"Resource {uri} deleted"}
+        logger.debug(f"User {user} is deleting resource with ID {resource_id}")
+        await resource_service.delete_resource(db, resource_id)
+        await invalidate_resource_cache(resource_id)
+        return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@resource_router.post("/subscribe/{uri:path}")
+@resource_router.post("/subscribe/{resource_id}")
 @require_permission("resources.read")
-async def subscribe_resource(uri: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(resource_id: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
-        uri (str): URI of the resource to subscribe to.
+        resource_id (str): ID of the resource to subscribe to.
         user (str): Authenticated user.
 
     Returns:
         StreamingResponse: A streaming response with event updates.
     """
-    logger.debug(f"User {user} is subscribing to resource with URI {uri}")
-    return StreamingResponse(resource_service.subscribe_events(uri), media_type="text/event-stream")
+    logger.debug(f"User {user} is subscribing to resource with resource_id {resource_id}")
+    return StreamingResponse(resource_service.subscribe_events(resource_id), media_type="text/event-stream")
 
 
 ###############

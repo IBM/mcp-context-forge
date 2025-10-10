@@ -46,7 +46,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
-from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent,ResourceResponse
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
@@ -745,18 +745,16 @@ class ResourceService:
                 else:
                     # Find resource
                     resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(DbResource.is_active)).scalar_one_or_none()
-
                     if not resource:
                         # Check if inactive resource exists
                         inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.is_active))).scalar_one_or_none()
-
                         if inactive_resource:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
                         raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
                     content = resource.content
-
+            
                 # Call post-fetch hooks if plugin manager is available
                 if plugin_eligible:
                     # Create post-fetch payload
@@ -768,8 +766,6 @@ class ResourceService:
                     # Use modified content if plugin changed it
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
-                        logger.debug(f"Resource content modified by plugin for URI: {original_uri}")
-
                 # Set success attributes on span
                 if span:
                     span.set_attribute("success", True)
@@ -786,7 +782,6 @@ class ResourceService:
                 # If content is already a Pydantic content model, return as-is
                 if isinstance(content, (ResourceContent, TextContent)):
                     return content
-
                 # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
                 if hasattr(content, "text") or hasattr(content, "blob"):
                     return content
