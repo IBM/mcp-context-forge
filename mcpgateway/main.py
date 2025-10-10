@@ -2852,22 +2852,22 @@ async def create_prompt(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
 
 
-@prompt_router.post("/{name}")
+@prompt_router.post("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt(
-    name: str,
+    prompt_id: str,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
-    """Get a prompt by name with arguments.
+    """Get a prompt by prompt_id with arguments.
 
     This implements the prompts/get functionality from the MCP spec,
     which requires a POST request with arguments in the body.
 
 
     Args:
-        name: Name of the prompt.
+        prompt_id: ID of the prompt.
         args: Template arguments.
         db: Database session.
         user: Authenticated user.
@@ -2878,14 +2878,14 @@ async def get_prompt(
     Raises:
         Exception: Re-raised if not a handled exception type.
     """
-    logger.debug(f"User: {user} requested prompt: {name} with args={args}")
+    logger.debug(f"User: {user} requested prompt: {prompt_id} with args={args}")
 
     try:
         PromptExecuteArgs(args=args)
-        result = await prompt_service.get_prompt(db, name, args)
-        logger.debug(f"Prompt execution successful for '{name}'")
+        result = await prompt_service.get_prompt(db, prompt_id, args)
+        logger.debug(f"Prompt execution successful for '{prompt_id}'")
     except Exception as ex:
-        logger.error(f"Could not retrieve prompt {name}: {ex}")
+        logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
             return JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
@@ -2897,19 +2897,19 @@ async def get_prompt(
     return result
 
 
-@prompt_router.get("/{name}")
+@prompt_router.get("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt_no_args(
-    name: str,
+    prompt_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
-    """Get a prompt by name without arguments.
+    """Get a prompt by ID without arguments.
 
     This endpoint is for convenience when no arguments are needed.
 
     Args:
-        name: The name of the prompt to retrieve
+        prompt_id: The ID of the prompt to retrieve
         db: Database session
         user: Authenticated user
 
@@ -2919,14 +2919,14 @@ async def get_prompt_no_args(
     Raises:
         Exception: Re-raised from prompt service.
     """
-    logger.debug(f"User: {user} requested prompt: {name} with no arguments")
-    return await prompt_service.get_prompt(db, name, {})
+    logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
+    return await prompt_service.get_prompt(db, prompt_id, {})
 
 
-@prompt_router.put("/{name}", response_model=PromptRead)
+@prompt_router.put("/{prompt_id}", response_model=PromptRead)
 @require_permission("prompts.update")
 async def update_prompt(
-    name: str,
+    prompt_id: str,
     prompt: PromptUpdate,
     request: Request,
     db: Session = Depends(get_db),
@@ -2936,7 +2936,7 @@ async def update_prompt(
     Update (overwrite) an existing prompt definition.
 
     Args:
-        name (str): Identifier of the prompt to update.
+        prompt_id (str): Identifier of the prompt to update.
         prompt (PromptUpdate): New prompt content and metadata.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Active SQLAlchemy session.
@@ -2949,15 +2949,14 @@ async def update_prompt(
         HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
             * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
-    logger.info(f"User: {user} requested to update prompt: {name} with data={prompt}")
-    logger.debug(f"User: {user} requested to update prompt: {name} with data={prompt}")
+    logger.debug(f"User: {user} requested to update prompt: {prompt_id} with data={prompt}")
     try:
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         return await prompt_service.update_prompt(
             db,
-            name,
+            prompt_id,
             prompt,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -2984,14 +2983,14 @@ async def update_prompt(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")
 
 
-@prompt_router.delete("/{name}")
+@prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
-    Delete a prompt by name.
+    Delete a prompt by ID.
 
     Args:
-        name: Name of the prompt.
+        prompt_id: ID of the prompt.
         db: Database session.
         user: Authenticated user.
 
@@ -3001,10 +3000,10 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(g
     Raises:
         HTTPException: If the prompt is not found, a prompt error occurs, or an unexpected error occurs during deletion.
     """
-    logger.debug(f"User: {user} requested deletion of prompt {name}")
+    logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
-        await prompt_service.delete_prompt(db, name)
-        return {"status": "success", "message": f"Prompt {name} deleted"}
+        await prompt_service.delete_prompt(db, prompt_id)
+        return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PromptNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

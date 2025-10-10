@@ -609,7 +609,7 @@ class PromptService:
     async def get_prompt(
         self,
         db: Session,
-        name: str,
+        prompt_id: str,
         arguments: Optional[Dict[str, str]] = None,
         user: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -620,7 +620,7 @@ class PromptService:
 
         Args:
             db: Database session
-            name: Name of the prompt to retrieve
+            prompt_id: ID of the prompt to retrieve
             arguments: Optional arguments for rendering
             user: Optional user identifier for plugin context
             tenant_id: Optional tenant identifier for plugin context
@@ -644,7 +644,7 @@ class PromptService:
             >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.get_prompt(db, 'prompt_name'))
+            ...     asyncio.run(service.get_prompt(db, 'prompt_id'))
             ... except Exception:
             ...     pass
         """
@@ -658,7 +658,7 @@ class PromptService:
         with create_span(
             "prompt.render",
             {
-                "prompt.name": name,
+                "prompt.id": prompt_id,
                 "arguments_count": len(arguments) if arguments else 0,
                 "user": user or "anonymous",
                 "server_id": server_id,
@@ -672,24 +672,24 @@ class PromptService:
                         request_id = uuid.uuid4().hex
                     global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
                     pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(
-                        payload=PromptPrehookPayload(name=name, args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
+                        payload=PromptPrehookPayload(prompt_id=prompt_id, args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
                     )
 
                     # Use modified payload if provided
                     if pre_result.modified_payload:
                         payload = pre_result.modified_payload
-                        name = payload.name
+                        prompt_id = payload.prompt_id
                         arguments = payload.args
 
                 # Find prompt
-                prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
+                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.is_active)).scalar_one_or_none()
 
                 if not prompt:
-                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.is_active))).scalar_one_or_none()
                     if inactive_prompt:
-                        raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
+                        raise PromptNotFoundError(f"Prompt '{prompt_id}' exists but is inactive")
 
-                    raise PromptNotFoundError(f"Prompt not found: {name}")
+                    raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
                 if not arguments:
                     result = PromptResult(
@@ -715,7 +715,7 @@ class PromptService:
 
                 if self._plugin_manager:
                     post_result, _ = await self._plugin_manager.prompt_post_fetch(
-                        payload=PromptPosthookPayload(name=name, result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
+                        payload=PromptPosthookPayload(prompt_id=prompt_id, result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
                     )
                     # Use modified payload if provided
                     result = post_result.modified_payload.result if post_result.modified_payload else result
