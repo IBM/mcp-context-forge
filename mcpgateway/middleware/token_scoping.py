@@ -442,7 +442,7 @@ class TokenScopingMiddleware:
 
         # If no resource ID in path, allow (general endpoints like /health, /tokens, /metrics)
         if not resource_id or not resource_type:
-            logger.info(f"No resource ID found in path {request_path}, allowing access")
+            logger.debug(f"No resource ID found in path {request_path}, allowing access")
             return True
 
         # Import database models
