@@ -50,6 +50,7 @@ See the flow details and security model in the architecture docs.
 # OAuth HTTP behavior
 OAUTH_REQUEST_TIMEOUT=30      # Seconds
 OAUTH_MAX_RETRIES=3           # Retries for transient failures
+OAUTH_DEFAULT_TIMEOUT=3600    # Default OAuth token timeout in seconds
 
 # Secret encryption for stored OAuth client secrets (and tokens if enabled)
 AUTH_ENCRYPTION_SECRET=<strong-random-key>
