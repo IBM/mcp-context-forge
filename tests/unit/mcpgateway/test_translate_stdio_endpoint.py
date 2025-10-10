@@ -8,7 +8,7 @@ Authors: Manav Gupta
 
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.
 """
-
+import sys
 import asyncio
 import json
 import logging
@@ -271,13 +271,14 @@ sys.stdout.flush()
 
         pubsub = _PubSub()
 
-        env_vars = {
+        env_vars = os.environ.copy()
+        env_vars.update({
             "GITHUB_TOKEN": "github-token-123",
             "TENANT_ID": "acme-corp",
             "API_KEY": "api-key-456",
             "ENVIRONMENT": "production",
             "DEBUG": "false",
-        }
+        })
 
         endpoint = StdIOEndpoint( "jq -cMn env", pubsub, env_vars)
 
