@@ -998,56 +998,75 @@
 }
 
 
+/* ============================================
+   RESPONSIVE TABS 
+   ============================================ */
 
-/* ================================
- */
- .chat-message {
-    font-family: sans-serif;
+/* Tab navigation container - prevent horizontal overflow */
+nav[class*="-mb-px"] {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+    -webkit-overflow-scrolling: touch;
+    /* Ensure tabs don't wrap */
+    flex-wrap: nowrap;
 }
 
-.bg-blue-600 {
-    background-color: #2563eb;
+/* Hide scrollbar on webkit browsers for cleaner look */
+nav[class*="-mb-px"]::-webkit-scrollbar {
+    height: 4px;
 }
 
-.text-white {
-    color: white;
+nav[class*="-mb-px"]::-webkit-scrollbar-track {
+    background: transparent;
 }
 
-.bg-gray-100 {
-    background-color: #f3f4f6;
+nav[class*="-mb-px"]::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.5);
+    border-radius: 2px;
 }
 
-.dark .bg-gray-800 {
-    background-color: #1f2937;
+nav[class*="-mb-px"]::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.7);
 }
 
-.rounded-2xl {
-    border-radius: 1rem;
+/* Ensure tab links don't shrink below readable size */
+.tab-link {
+    flex-shrink: 0;
+    min-width: max-content;
 }
 
-.px-4 {
-    padding-left: 1rem;
-    padding-right: 1rem;
+/* Responsive: stack tabs on very small screens */
+@media (max-width: 640px) {
+    nav[class*="-mb-px"] {
+        flex-direction: column;
+        align-items: flex-start;
+        overflow-x: visible;
+    }
+    
+    .tab-link {
+        width: 100%;
+        border-bottom: 1px solid rgba(229, 231, 235, 0.5);
+        border-left: 3px solid transparent;
+        padding-left: 0.75rem;
+    }
+    
+    .tab-link[class*="border-indigo"] {
+        border-left-color: rgb(99, 102, 241);
+        border-bottom-color: transparent;
+    }
 }
 
-.py-2 {
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
-}
-
-.max-w-xs {
-    max-width: 20rem;
-}
-
-.shadow-sm {
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-
-.animate-pulse {
-    animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+/* Medium screens: keep horizontal but with better spacing */
+@media (min-width: 641px) and (max-width: 1024px) {
+    .tab-link {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+        font-size: 0.813rem;
+    }
+    
+    nav[class*="-mb-px"] {
+        gap: 0.5rem;
+    }
 }
