@@ -764,7 +764,8 @@ class SimpleTemplate:
         for key, value in context.items():
             pattern = r'\{\{\s*' + re.escape(key) + r'\s*\|\s*safe\s*\}\}'
             if isinstance(value, (dict, list)):
-                result = re.sub(pattern, json.dumps(value), result)
+                # Use lambda to avoid regex backslash interpretation issues with JSON
+                result = re.sub(pattern, lambda m: json.dumps(value), result)
 
         # Handle conditionals {% if var %}
         result = self._render_conditionals(result, context)
