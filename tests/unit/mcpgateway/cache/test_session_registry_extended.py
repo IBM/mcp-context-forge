@@ -975,3 +975,134 @@ class TestInitializationAndShutdown:
 
         # Shutdown should not raise error
         await registry.shutdown()
+
+
+######################################################
+
+
+# -*- coding: utf-8 -*-
+"""Session Pooling Tests for SessionRegistry (SSE/WS).
+"""
+import asyncio
+import pytest
+
+# Patch sys.modules to mock unrelated imports before importing SessionRegistry
+import sys
+import types
+resource_cache_mod = types.ModuleType("resource_cache")
+setattr(resource_cache_mod, "ResourceCache", object)  # Dummy symbol
+sys.modules["mcpgateway.cache.resource_cache"] = resource_cache_mod
+logging_service_mod = types.ModuleType("logging_service")
+class DummyLogger:
+    def debug(self, *a, **k): pass
+    def info(self, *a, **k): pass
+    def warning(self, *a, **k): pass
+    def error(self, *a, **k): pass
+    def critical(self, *a, **k): pass
+    def exception(self, *a, **k): pass
+class LoggingService:
+    def get_logger(self, name):
+        return DummyLogger()
+def get_logger(name):
+    return DummyLogger()
+setattr(logging_service_mod, "LoggingService", LoggingService)
+setattr(logging_service_mod, "get_logger", get_logger)
+sys.modules["mcpgateway.services.logging_service"] = logging_service_mod
+services_mod = types.ModuleType("services")
+setattr(services_mod, "PromptService", object)
+setattr(services_mod, "ResourceService", object)
+setattr(services_mod, "ToolService", object)
+sys.modules["mcpgateway.services"] = services_mod
+sys.modules["mcpgateway.services.gateway_service"] = types.ModuleType("gateway_service")
+sys.modules["mcpgateway.services.prompt_service"] = types.ModuleType("prompt_service")
+sys.modules["mcpgateway.services.resource_service"] = types.ModuleType("resource_service")
+sys.modules["mcpgateway.services.tool_service"] = types.ModuleType("tool_service")
+create_jwt_token_mod = types.ModuleType("create_jwt_token")
+setattr(create_jwt_token_mod, "create_jwt_token", lambda *args, **kwargs: "dummy-token")
+sys.modules["mcpgateway.utils.create_jwt_token"] = create_jwt_token_mod
+retry_manager_mod = types.ModuleType("retry_manager")
+setattr(retry_manager_mod, "ResilientHttpClient", object)
+sys.modules["mcpgateway.utils.retry_manager"] = retry_manager_mod
+jsonrpc_mod = types.ModuleType("jsonrpc")
+setattr(jsonrpc_mod, "JSONRPCError", Exception)
+sys.modules["mcpgateway.validation.jsonrpc"] = jsonrpc_mod
+models_mod = types.ModuleType("models")
+setattr(models_mod, "Implementation", object)
+setattr(models_mod, "InitializeResult", object)
+setattr(models_mod, "ServerCapabilities", object)
+sys.modules["mcpgateway.models"] = models_mod
+db_mod = types.ModuleType("db")
+setattr(db_mod, "get_db", lambda: None)
+setattr(db_mod, "SessionMessageRecord", object)
+setattr(db_mod, "SessionRecord", object)
+sys.modules["mcpgateway.db"] = db_mod
+transports_mod = types.ModuleType("transports")
+setattr(transports_mod, "SSETransport", object)
+sys.modules["mcpgateway.transports"] = transports_mod
+
+from mcpgateway.cache.session_registry import SessionRegistry
+
+from typing import Any
+
+class DummyTransport:
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self._connected = True
+        self.disconnect_called = False
+    async def disconnect(self) -> None:
+        self._connected = False
+        self.disconnect_called = True
+    async def is_connected(self) -> bool:
+        return self._connected
+
+@pytest.mark.asyncio
+async def test_session_pool_basic_reuse():
+    reg = SessionRegistry(backend="memory")
+    await reg.initialize()
+    t1 = DummyTransport("sid1")
+    await reg.add_session("sid1", t1)
+    await reg.pool_session("userA", "serverX", "sid1")
+    # Should return the same session id
+    sid = await reg.get_pooled_session("userA", "serverX")
+    assert sid == "sid1"
+    # Touch should update last_used
+    await reg.touch_pooled_session("userA", "serverX")
+    # Remove from pool
+    await reg.evict_pooled_session("userA", "serverX")
+    assert await reg.get_pooled_session("userA", "serverX") is None
+    await reg.shutdown()
+
+@pytest.mark.asyncio
+async def test_session_pool_idle_eviction():
+    reg = SessionRegistry(backend="memory")
+    await reg.initialize()
+    t1 = DummyTransport("sid2")
+    await reg.add_session("sid2", t1)
+    await reg.pool_session("userB", "serverY", "sid2")
+    # Simulate idle
+    reg._pooled_sessions[("userB", "serverY")]["last_used"] -= 9999  # type: ignore
+    await reg.cleanup_idle_sessions()
+    assert await reg.get_pooled_session("userB", "serverY") is None
+    await reg.shutdown()
+
+@pytest.mark.asyncio
+async def test_session_pool_metrics():
+    reg = SessionRegistry(backend="memory")
+    await reg.initialize()
+    t1 = DummyTransport("sid3")
+    await reg.add_session("sid3", t1)
+    await reg.pool_session("userC", "serverZ", "sid3")
+    # Hit
+    sid = await reg.get_pooled_session("userC", "serverZ")
+    assert sid == "sid3"
+    # Miss
+    sid2 = await reg.get_pooled_session("userC", "nope")
+    assert sid2 is None
+    # Evict
+    reg._pooled_sessions[("userC", "serverZ")]["last_used"] -= 9999  # type: ignore
+    await reg.cleanup_idle_sessions()
+    metrics = reg.get_pool_metrics()
+    assert metrics["hit"] >= 1
+    assert metrics["miss"] >= 1
+    assert metrics["evict"] >= 1
+    await reg.shutdown()

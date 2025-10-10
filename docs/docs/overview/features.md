@@ -27,6 +27,20 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 
 ---
 
+## ♻️ Session Pooling & Stateful Sessions
+
+MCP Gateway supports **session pooling** for SSE and WebSocket transports. When enabled, a single session is reused for each (user, server) pair, improving performance and enabling stateful workflows.
+
+**Key benefits:**
+- Faster response times (fewer round-trips)
+- Lower memory and connection usage
+- Maintains conversational or tool state across calls
+- Fully compatible with multi-worker deployments (with Redis backend)
+
+See [Session Pooling](session_pooling.md) for configuration and details.
+
+---
+
 ## 🌍 Federation & Discovery
 
 ??? summary "Features"
