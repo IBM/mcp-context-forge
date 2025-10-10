@@ -122,5 +122,13 @@ run_test "get_compare_timezones" \
     "$PROJECT_ROOT/tests/performance/payloads/prompts/get_compare_timezones.json" \
     "$GATEWAY_URL/rpc"
 
+# Test 3: Get customer greeting prompt (template with required and optional arguments)
+log "════════════════════════════════════════════════════════"
+log "Test 3: Get Customer Greeting Prompt (Template Arguments)"
+log "════════════════════════════════════════════════════════"
+run_test "get_customer_greeting" \
+    "$PROJECT_ROOT/tests/performance/payloads/prompts/get_customer_greeting.json" \
+    "$GATEWAY_URL/rpc"
+
 log "✅ Prompt benchmark completed successfully"
 log "Results directory: $RESULTS_DIR"
