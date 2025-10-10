@@ -3,6 +3,6 @@
   "id": 1,
   "method": "resources/read",
   "params": {
-    "uri": "timezone://info"
+    "uri": "sample://welcome-message"
   }
 }

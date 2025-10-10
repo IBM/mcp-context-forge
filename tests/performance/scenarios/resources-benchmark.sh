@@ -114,17 +114,17 @@ run_test "list_resources" \
     "$PROJECT_ROOT/tests/performance/payloads/resources/list_resources.json" \
     "$GATEWAY_URL/rpc"
 
-# Test 2: Read timezone info (static resource)
+# Test 2: Read welcome message (text resource)
 log "════════════════════════════════════════════════════════"
-log "Test 2: Read Timezone Info (Static Resource)"
+log "Test 2: Read Welcome Message (Text Resource)"
 log "════════════════════════════════════════════════════════"
 run_test "read_timezone_info" \
     "$PROJECT_ROOT/tests/performance/payloads/resources/read_timezone_info.json" \
     "$GATEWAY_URL/rpc"
 
-# Test 3: Read world times (dynamic resource)
+# Test 3: Read API documentation (markdown resource)
 log "════════════════════════════════════════════════════════"
-log "Test 3: Read World Times (Dynamic Resource)"
+log "Test 3: Read API Documentation (Markdown Resource)"
 log "════════════════════════════════════════════════════════"
 run_test "read_world_times" \
     "$PROJECT_ROOT/tests/performance/payloads/resources/read_world_times.json" \

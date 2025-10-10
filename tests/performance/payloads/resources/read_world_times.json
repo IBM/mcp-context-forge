@@ -3,6 +3,6 @@
   "id": 1,
   "method": "resources/read",
   "params": {
-    "uri": "time://current/world"
+    "uri": "sample://api-documentation"
   }
 }
