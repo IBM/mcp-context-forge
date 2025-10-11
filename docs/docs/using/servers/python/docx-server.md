@@ -51,6 +51,7 @@ make serve-http
 Create a new DOCX document.
 
 **Parameters:**
+
 - `file_path` (required): Path where the document will be saved
 - `title`: Document title for metadata
 - `author`: Document author
@@ -61,6 +62,7 @@ Create a new DOCX document.
 Add text content to a document.
 
 **Parameters:**
+
 - `file_path` (required): Path to the DOCX document
 - `text` (required): Text content to add
 - `font_name`: Font family (e.g., "Arial", "Times New Roman")
@@ -73,6 +75,7 @@ Add text content to a document.
 Add formatted headings (levels 1-9).
 
 **Parameters:**
+
 - `file_path` (required): Path to the DOCX document
 - `text` (required): Heading text
 - `level`: Heading level from 1-9 (default: 1)
@@ -81,6 +84,7 @@ Add formatted headings (levels 1-9).
 Apply formatting to text (bold, italic, fonts, etc.).
 
 **Parameters:**
+
 - `file_path` (required): Path to the DOCX document
 - `paragraph_index` (required): Index of paragraph to format
 - `font_name`: Font family
@@ -95,6 +99,7 @@ Apply formatting to text (bold, italic, fonts, etc.).
 Create tables with optional headers and data.
 
 **Parameters:**
+
 - `file_path` (required): Path to the DOCX document
 - `rows` (required): Number of rows
 - `cols` (required): Number of columns
@@ -106,9 +111,11 @@ Create tables with optional headers and data.
 Analyze document structure and content.
 
 **Parameters:**
+
 - `file_path` (required): Path to the DOCX document
 
 **Returns:**
+
 - Document metadata (title, author, creation date)
 - Structure information (paragraphs, tables, headings)
 - Text statistics (word count, character count)
@@ -118,6 +125,7 @@ Analyze document structure and content.
 Extract all text content from a document.
 
 **Parameters:**
+
 - `file_path` (required): Path to the DOCX document
 - `include_tables`: Include table content (default: true)
 - `preserve_formatting`: Preserve basic formatting markers (default: false)

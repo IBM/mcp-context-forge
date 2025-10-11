@@ -39,6 +39,7 @@ ENABLE_OVERWRITE_BASE_HEADERS=false
 ```
 
 **Warning**: Only enable this feature if you:
+
 - Understand the security implications
 - Have reviewed which headers should be passed through
 - Trust the backing MCP servers with the forwarded headers
@@ -60,6 +61,7 @@ DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id"]
 ```
 
 **Security Notes**:
+
 - `Authorization` header is **not included in defaults** for security
 - Only add `Authorization` if you fully understand the token leakage risks
 - Header names are validated against pattern: `^[A-Za-z0-9-]+$`
@@ -75,22 +77,26 @@ ENABLE_OVERWRITE_BASE_HEADERS=true
 ```
 
 **⚠️ Warning**: Only enable this if you:
+
 - Understand the implications of overriding gateway headers
 - Need specific headers from client requests to take precedence
 - Have thoroughly tested the impact on gateway functionality
 
 **Use Cases**:
+
 - Custom authentication schemes that require client-provided `Authorization` headers
 - Specialized content negotiation requiring client `Content-Type` override
 - Advanced proxy scenarios with specific header requirements
 
 **Conflicts Still Prevented**:
+
 - Gateway authentication conflicts are still detected and logged
 - Invalid headers are still rejected and sanitized
 
 ### Admin UI Configuration
 
 **Prerequisites**:
+
 1. Set `ENABLE_HEADER_PASSTHROUGH=true` in your environment
 2. Restart the MCP Gateway service
 
@@ -98,6 +104,7 @@ ENABLE_OVERWRITE_BASE_HEADERS=true
 Access the admin interface to set global passthrough headers that apply to all gateways by default.
 
 🛡️ **Client-side validation** automatically checks:
+
 - Header names match pattern `^[A-Za-z0-9-]+$`
 - Header values don't contain newlines or excessive length
 - Invalid headers are rejected with clear error messages
@@ -112,6 +119,7 @@ When creating or editing gateways:
    X-Tenant-Id, X-Trace-Id, X-Request-Id
    ```
    **⚠️ Avoid including `Authorization` unless absolutely necessary**
+
 4. Gateway-specific headers override global defaults
 5. The UI validates headers in real-time and shows security warnings
 
@@ -144,6 +152,7 @@ Authorization: Bearer <your-jwt-token>
 ```
 
 **Security Validation**: The API automatically:
+
 - Validates header names against `^[A-Za-z0-9-]+$` pattern
 - Rejects invalid characters and formats
 - Sanitizes header values when used
@@ -185,17 +194,20 @@ graph LR
 ### 🛡️ Security-by-Default Features
 
 **Feature Flag Protection**:
+
 - Header passthrough is **disabled by default** (`ENABLE_HEADER_PASSTHROUGH=false`)
 - Must be explicitly enabled with full awareness of security implications
 - Can be disabled instantly by setting the flag to `false`
 
 **Header Sanitization**:
+
 - **Injection Prevention**: Removes newlines (`\r\n`) that could enable header injection attacks
 - **Length Limiting**: Restricts header values to 4KB maximum to prevent DoS
 - **Control Character Filtering**: Removes dangerous control characters (except tab)
 - **Validation**: Header names must match `^[A-Za-z0-9-]+$` pattern
 
 **Rate Limiting**:
+
 - Configuration endpoints limited to 20-30 requests/minute
 - Prevents automated attacks on configuration
 - Configurable via existing rate limiting settings
@@ -281,11 +293,13 @@ DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id", "X-Request-Id"]
 #### Headers Not Being Forwarded
 
 **Most Common Cause - Feature Disabled**:
+
 - ✅ **Check**: Is `ENABLE_HEADER_PASSTHROUGH=true` set in your environment?
 - ✅ **Check**: Did you restart the gateway after setting the flag?
 - ✅ **Check**: Are you seeing "Header passthrough is disabled" in debug logs?
 
 **Other Causes**:
+
 - Verify header names in configuration match exactly (case-insensitive matching)
 - Check for authentication conflicts in logs
 - Ensure gateway configuration overrides aren't blocking headers
@@ -298,6 +312,7 @@ Skipping passthrough header 'Authorization' - conflicts with existing basic auth
 ```
 
 **Solution**: Either:
+
 1. Remove `Authorization` from passthrough headers for that gateway
 2. Change the gateway to not use basic/bearer authentication
 3. Use a different header name for custom auth tokens
@@ -312,10 +327,12 @@ Skipping passthrough header 'Authorization' - conflicts with existing basic auth
 If you see validation errors in the Admin UI or API:
 
 **Header Name Validation**:
+
 - Only letters, numbers, and hyphens allowed: `A-Za-z0-9-`
 - Examples: ✅ `X-Tenant-Id`, `Authorization` ❌ `X_Tenant_ID`, `My Header`
 
 **Header Value Issues**:
+
 - No newlines (`\r` or `\n`) allowed in values
 - Maximum length: 4KB per header value
 - Control characters are automatically removed
@@ -328,6 +345,7 @@ LOG_LEVEL=DEBUG
 ```
 
 Look for log entries containing:
+
 - `Header passthrough is disabled` - Feature flag is off
 - `Passthrough headers configured` - Headers are being processed
 - `Skipping passthrough header` - Header blocked due to conflict

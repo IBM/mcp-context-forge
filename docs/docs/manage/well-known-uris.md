@@ -25,6 +25,7 @@ WELL_KNOWN_ENABLED=true
 ```
 
 Access your well-known files:
+
 - `GET /.well-known/robots.txt` - Always available
 - `GET /.well-known/security.txt` - Available when configured
 - `GET /admin/well-known` - Configuration status (requires auth)
@@ -67,6 +68,7 @@ WELL_KNOWN_SECURITY_TXT="Contact: mailto:security@example.com\nContact: https://
 ```
 
 **Note**: The system automatically:
+
 - Adds `Expires` field if missing (6 months from generation)
 - Adds header comments with generation timestamp
 - Validates RFC 9116 format requirements
@@ -134,6 +136,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 ### Private API Deployment (Default)
 
 For private API gateways, the default configuration:
+
 - **Blocks all crawlers** via robots.txt
 - **Minimizes information disclosure**
 - **No security.txt** (unless explicitly configured)
@@ -142,6 +145,7 @@ For private API gateways, the default configuration:
 ### Public API Deployment
 
 For public-facing APIs, consider:
+
 - **Selective crawler access** - allow health checks, block admin endpoints
 - **Security contact information** - enable security.txt for responsible disclosure
 - **Custom policies** - AI usage policy, privacy policy links
@@ -150,6 +154,7 @@ For public-facing APIs, consider:
 ### Information Disclosure
 
 Well-known URIs intentionally disclose information:
+
 - **Service type/purpose** through robots.txt comments
 - **Security contact** through security.txt
 - **Organizational policies** through custom files

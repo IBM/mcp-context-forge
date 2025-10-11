@@ -138,12 +138,14 @@ sqlalchemy.exc.NoSuchModuleError: Can't load plugin: sqlalchemy.dialects:postgre
 ```
 
 **Solutions:**
+
 1. Ensure `psycopg2-binary` is explicitly installed in Containerfile
 2. Use `postgresql://` not `postgres://` in DATABASE_URL
 3. Rebuild with `fly deploy --no-cache`
 
 ### Common Issue 2: Database connection refused
 **Solutions:**
+
 1. Verify DATABASE_URL format: `postgresql://postgres:PASSWORD@your-db.flycast:5432/postgres`
 2. Check postgres app is running: `fly status -a your-app-db`
 3. Verify password matches postgres creation output
@@ -232,6 +234,7 @@ echo "🏗️  Ready to deploy. Run: fly deploy"
 - [Fly Secrets Management](https://fly.io/docs/reference/secrets/)
 
 **Success indicators:**
+
 - ✅ `fly status` shows machines as "started"
 - ✅ `/health` endpoint returns `{"status":"healthy"}`
 - ✅ Protected endpoints require authentication

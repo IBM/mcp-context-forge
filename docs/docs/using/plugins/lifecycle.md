@@ -171,6 +171,7 @@ Let's assume you have boostrapped the following plugin (`resources/plugins/confi
 
 ```yaml
 plugins:
+
   - name: "MyFilter"
     kind: "myfilter.plugin.MyFilter"
     description: "A filter plugin"
@@ -189,6 +190,7 @@ plugins:
 
 # Plugin directories to scan
 plugin_dirs:
+
   - "myfilter"
 
 # Global plugin settings
@@ -217,6 +219,7 @@ To use STDIO instead of HTTP:
 
 ```yaml
 plugins:
+
   - name: "MyFilter"
     kind: "external"
     priority: 10

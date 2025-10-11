@@ -22,9 +22,11 @@ This tutorial walks you through setting up GitHub Single Sign-On (SSO) authentic
 Fill out the OAuth application form:
 
 **Application name**: `MCP Gateway - [Your Organization]`
+
 - Example: `MCP Gateway - Acme Corp`
 
 **Homepage URL**: Your gateway's public URL
+
 - Production: `https://gateway.yourcompany.com`
 - Development (port 8000): `http://localhost:8000`
 - Development (make serve, port 4444): `http://localhost:4444`
@@ -151,6 +153,7 @@ curl -X GET http://localhost:4444/auth/sso/providers
 ```
 
 **Troubleshooting**:
+
 - **404 error**: Check that `SSO_ENABLED=true` in your environment and restart gateway
 - **Empty array `[]`**: SSO is enabled but GitHub provider not created - restart gateway to auto-bootstrap
 - **Connection refused**: Gateway not running or wrong port

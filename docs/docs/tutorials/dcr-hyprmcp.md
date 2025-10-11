@@ -93,6 +93,7 @@ services:
         image: ghcr.io/dexidp/dex:v2.43.1-alpine
         command: ["dex", "serve", "/config.yaml"]
         ports:
+
             - 5556:5556
             - 5557:5557
         healthcheck:
@@ -101,10 +102,12 @@ services:
             start_period: 10s
             start_interval: 1s
         volumes:
+
             - type: bind
               source: config/hyprmcp-dex.yaml
               target: /config.yaml
               read_only: true
+
             - type: bind
               source: ./data
               target: /data
@@ -131,6 +134,7 @@ enablePasswordDB: true
 expiry:
     signingKeys: 8760h # 1 year
 staticPasswords:
+
     - email: "admin@example.com"
       # bcrypt hash of the string "password" for user admin: $(echo password | htpasswd -BinC 10 admin | cut -d: -f2)
       hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
@@ -183,14 +187,18 @@ Add the ContextForge service to your compose file (put it in the `services` sect
 context-forge:
     image: ghcr.io/ibm/mcp-context-forge:0.8.0
     ports:
+
         - 4444:4444
     volumes:
+
         - type: bind
           source: ./data
           target: /data
+
         - ./config/public.pem:/opt/public.pem:ro
         - ./config/private.pem:/opt/private.pem:ro
     env_file:
+
         - config/context-forge.env
     environment:
         JWT_ALGORITHM: RS256
@@ -237,8 +245,10 @@ hyprmcp-gateway:
     image: ghcr.io/hyprmcp/mcp-gateway:0.2.6
     command: ["serve", "--config", "/opt/config.yaml"]
     ports:
+
         - 9000:9000
     volumes:
+
         - type: bind
           source: config/hyprmcp-gateway.yaml
           target: /opt/config.yaml
@@ -264,6 +274,7 @@ authorization:
 dexGRPCClient:
     addr: localhost:5557
 proxy:
+
     - path: /context-forge/mcp
       http:
           # replace "SERVER_UUID" with your virtual MCP server UUID from the previous step
@@ -296,6 +307,7 @@ services:
         image: ghcr.io/dexidp/dex:v2.43.1-alpine
         command: ["dex", "serve", "/config.yaml"]
         ports:
+
             - 5556:5556
             - 5557:5557
         healthcheck:
@@ -304,10 +316,12 @@ services:
             start_period: 10s
             start_interval: 1s
         volumes:
+
             - type: bind
               source: config/hyprmcp-dex.yaml
               target: /config.yaml
               read_only: true
+
             - type: bind
               source: ./data
               target: /data
@@ -318,8 +332,10 @@ services:
         image: ghcr.io/hyprmcp/mcp-gateway:0.2.6
         command: ["serve", "--config", "/opt/config.yaml"]
         ports:
+
             - 9000:9000
         volumes:
+
             - type: bind
               source: config/hyprmcp-gateway.yaml
               target: /opt/config.yaml
@@ -333,14 +349,18 @@ services:
     context-forge:
         image: ghcr.io/ibm/mcp-context-forge:0.8.0
         ports:
+
             - 4444:4444
         volumes:
+
             - type: bind
               source: ./data
               target: /data
+
             - ./config/public.pem:/opt/public.pem:ro
             - ./config/private.pem:/opt/private.pem:ro
         env_file:
+
             - config/context-forge.env
         environment:
             JWT_ALGORITHM: RS256

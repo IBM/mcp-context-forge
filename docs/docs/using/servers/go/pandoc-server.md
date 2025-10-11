@@ -76,6 +76,7 @@ python3 -m mcpgateway.translate --stdio "./dist/pandoc-server" --port 9000
 Convert text from one format to another using pandoc.
 
 **Parameters:**
+
 - `from` (required): Input format (e.g., markdown, html, latex, rst, docx, epub)
 - `to` (required): Output format (e.g., html, markdown, latex, pdf, docx, plain)
 - `input` (required): The text content to convert
@@ -88,12 +89,14 @@ Convert text from one format to another using pandoc.
 List available pandoc input and output formats.
 
 **Parameters:**
+
 - `type`: Format type to list - 'input', 'output', or 'all' (default: 'all')
 
 ### health
 Check if pandoc is installed and return version information.
 
 **Returns:**
+
 - Pandoc installation status
 - Version information
 - Available features and extensions

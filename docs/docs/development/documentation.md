@@ -85,6 +85,7 @@ Example - *docs for the **development** section:*
 # title: Development Guide
 
 nav:
+
   - index.md        # ➟ /development/ (landing page)
   - github.md       # contribution workflow
   - building.md     # local build guide

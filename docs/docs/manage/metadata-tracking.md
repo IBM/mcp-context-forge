@@ -7,6 +7,7 @@ MCP Gateway provides comprehensive metadata tracking for all entities (Tools, Re
 ## 🎯 **Overview**
 
 Every entity in MCP Gateway now includes detailed metadata about:
+
 - **Who** created or modified the entity
 - **When** the operation occurred
 - **From where** (IP address, user agent)
@@ -165,6 +166,7 @@ PUT /tools/123 -> version: 3
 ```
 
 Version tracking helps identify:
+
 - **Configuration drift** between environments
 - **Change frequency** for troubleshooting
 - **Rollback points** for recovery scenarios

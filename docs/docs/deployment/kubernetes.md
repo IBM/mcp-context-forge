@@ -24,18 +24,23 @@ spec:
         app: mcpgateway
     spec:
       containers:
+
         - name: gateway
           image: ghcr.io/YOUR_ORG/mcpgateway:latest
           ports:
+
             - containerPort: 4444
           envFrom:
+
             - configMapRef:
                 name: mcpgateway-env
           volumeMounts:
+
             - mountPath: /app/.env
               name: env-volume
               subPath: .env
       volumes:
+
         - name: env-volume
           configMap:
             name: mcpgateway-env
@@ -48,6 +53,7 @@ spec:
   selector:
     app: mcpgateway
   ports:
+
     - port: 80
       targetPort: 4444
 ```
@@ -74,9 +80,11 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   rules:
+
     - host: gateway.example.com
       http:
         paths:
+
           - path: /
             pathType: Prefix
             backend:
@@ -85,6 +93,7 @@ spec:
                 port:
                   number: 80
   tls:
+
     - hosts:
         - gateway.example.com
       secretName: mcpgateway-tls
@@ -204,23 +213,31 @@ spec:
         app: mysql
     spec:
       containers:
+
         - name: mysql
           image: mysql:8
           env:
+
             - name: MYSQL_ROOT_PASSWORD
               value: mysecretpassword
+
             - name: MYSQL_DATABASE
               value: mcp
+
             - name: MYSQL_USER
               value: mysql
+
             - name: MYSQL_PASSWORD
               value: changeme
           ports:
+
             - containerPort: 3306
           volumeMounts:
+
             - name: mysql-storage
               mountPath: /var/lib/mysql
       volumes:
+
         - name: mysql-storage
           persistentVolumeClaim:
             claimName: mysql-pvc
@@ -233,6 +250,7 @@ spec:
   selector:
     app: mysql
   ports:
+
     - port: 3306
       targetPort: 3306
 ---
@@ -242,6 +260,7 @@ metadata:
   name: mysql-pvc
 spec:
   accessModes:
+
     - ReadWriteOnce
   resources:
     requests:
@@ -323,11 +342,14 @@ spec:
         app: mcpgateway-prod
     spec:
       containers:
+
         - name: mcpgateway
           image: ghcr.io/ibm/mcp-context-forge:latest
           ports:
+
             - containerPort: 4444
           envFrom:
+
             - configMapRef:
                 name: mcpgateway-config-prod
           volumeMounts:
@@ -348,6 +370,7 @@ spec:
               memory: "512Mi"
               cpu: "500m"
       volumes:
+
         - name: jwt-keys
           secret:
             secretName: jwt-keys
@@ -361,6 +384,7 @@ spec:
   selector:
     app: mcpgateway-prod
   ports:
+
     - name: http
       port: 80
       targetPort: 4444
@@ -400,6 +424,7 @@ kind: Role
 metadata:
   name: jwt-key-reader
 rules:
+
   - apiGroups: [""]
     resources: ["secrets"]
     resourceNames: ["jwt-keys"]
@@ -410,6 +435,7 @@ kind: RoleBinding
 metadata:
   name: mcpgateway-jwt-access
 subjects:
+
   - kind: ServiceAccount
     name: mcpgateway-sa
 roleRef:

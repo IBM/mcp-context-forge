@@ -76,13 +76,16 @@ services:
   phoenix:
     image: arizephoenix/phoenix:latest
     ports:
+
       - "6006:6006"  # Phoenix UI
       - "4317:4317"  # OTLP gRPC endpoint
     environment:
+
       - PHOENIX_GRPC_PORT=4317
       - PHOENIX_PORT=6006
       - PHOENIX_HOST=0.0.0.0
     volumes:
+
       - phoenix-data:/phoenix/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:6006/health"]
@@ -92,6 +95,7 @@ services:
 
   mcpgateway:
     environment:
+
       - OTEL_ENABLE_OBSERVABILITY=true
       - OTEL_TRACES_EXPORTER=otlp
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:4317
@@ -164,15 +168,18 @@ services:
       POSTGRES_USER: phoenix
       POSTGRES_PASSWORD: phoenix_secret
     volumes:
+
       - postgres-data:/var/lib/postgresql/data
 
   phoenix:
     image: arizephoenix/phoenix:latest
     environment:
+
       - DATABASE_URL=postgresql://phoenix:phoenix_secret@postgres:5432/phoenix
       - PHOENIX_GRPC_PORT=4317
       - PHOENIX_PORT=6006
     depends_on:
+
       - postgres
 ```
 
@@ -196,22 +203,29 @@ spec:
         app: phoenix
     spec:
       containers:
+
       - name: phoenix
         image: arizephoenix/phoenix:latest
         ports:
+
         - containerPort: 6006
           name: ui
+
         - containerPort: 4317
           name: otlp
         env:
+
         - name: PHOENIX_GRPC_PORT
           value: "4317"
+
         - name: PHOENIX_PORT
           value: "6006"
         volumeMounts:
+
         - name: data
           mountPath: /phoenix/data
       volumes:
+
       - name: data
         persistentVolumeClaim:
           claimName: phoenix-data
@@ -224,8 +238,10 @@ spec:
   selector:
     app: phoenix
   ports:
+
   - port: 6006
     name: ui
+
   - port: 4317
     name: otlp
 ```
