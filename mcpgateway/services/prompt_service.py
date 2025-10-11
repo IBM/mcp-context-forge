@@ -735,6 +735,7 @@ class PromptService:
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        user_email: Optional[str] = None,
     ) -> PromptRead:
         """
         Update a prompt template.
@@ -747,12 +748,14 @@ class PromptService:
             modified_from_ip: IP address where the modification originated
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
+            user_email: Email of user performing update (for ownership check)
 
         Returns:
             The updated PromptRead object
 
         Raises:
             PromptNotFoundError: If the prompt is not found
+            PermissionError: If user doesn't own the prompt
             IntegrityError: If a database integrity error occurs.
             PromptError: For other update errors
 
@@ -781,6 +784,15 @@ class PromptService:
                     raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
 
                 raise PromptNotFoundError(f"Prompt not found: {name}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, prompt):
+                    raise PermissionError("Only the owner can update this prompt")
 
             if prompt_update.name is not None:
                 prompt.name = prompt_update.name
@@ -832,6 +844,9 @@ class PromptService:
             prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
+        except PermissionError:
+            db.rollback()
+            raise
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -941,16 +956,18 @@ class PromptService:
         prompt.team = self._get_team_name(db, prompt.team_id)
         return self._convert_db_prompt(prompt)
 
-    async def delete_prompt(self, db: Session, name: str) -> None:
+    async def delete_prompt(self, db: Session, name: str, user_email: Optional[str] = None) -> None:
         """
         Delete a prompt template.
 
         Args:
             db: Database session
             name: Name of prompt to delete
+            user_email: Email of user performing delete (for ownership check)
 
         Raises:
             PromptNotFoundError: If the prompt is not found
+            PermissionError: If user doesn't own the prompt
             PromptError: For other deletion errors
             Exception: For unexpected errors
 
@@ -974,11 +991,24 @@ class PromptService:
             prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {name}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, prompt):
+                    raise PermissionError("Only the owner can delete this prompt")
+
             prompt_info = {"id": prompt.id, "name": prompt.name}
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
             logger.info(f"Permanently deleted prompt: {name}")
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             if isinstance(e, PromptNotFoundError):

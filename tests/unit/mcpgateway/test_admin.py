@@ -1048,7 +1048,7 @@ class TestAdminPromptRoutes:
 class TestAdminGatewayRoutes:
     """Test admin routes for gateway management with enhanced coverage."""
 
-    @patch.object(GatewayService, "list_gateways")
+    @patch.object(GatewayService, "list_gateways_for_user")
     async def test_admin_list_gateways_with_auth_info(self, mock_list_gateways, mock_db):
         """Test listing gateways with authentication information."""
         mock_gateway = MagicMock()
@@ -1921,7 +1921,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_delete_agent.assert_called_with(mock_db, "agent-1")
+        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user")
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
