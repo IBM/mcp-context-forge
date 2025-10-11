@@ -379,6 +379,233 @@ class TestIBMVerifyNormalization:
         assert normalized["provider"] == "ibm_verify"
 
 
+class TestKeycloakNormalization:
+    """Test Keycloak user info normalization with role mapping."""
+
+    def test_keycloak_complete_userinfo_with_realm_roles(self, sso_service):
+        """Test Keycloak normalization with complete data including realm roles."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            metadata={
+                "realm": "master",
+                "map_realm_roles": True,
+                "map_client_roles": False,
+                "username_claim": "preferred_username",
+                "email_claim": "email",
+                "groups_claim": "groups",
+            },
+        )
+
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "keycloak-user-id",
+            "preferred_username": "testuser",
+            "picture": "https://keycloak.company.com/avatar.jpg",
+            "realm_access": {"roles": ["admin", "developer", "user"]},
+            "groups": ["engineering", "platform-team"],
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert normalized["email"] == "user@company.com"
+        assert normalized["full_name"] == "Test User"
+        assert normalized["avatar_url"] == "https://keycloak.company.com/avatar.jpg"
+        assert normalized["provider_id"] == "keycloak-user-id"
+        assert normalized["username"] == "testuser"
+        assert normalized["provider"] == "keycloak"
+        # Check groups as set since order may vary
+        assert set(normalized["groups"]) == {"admin", "developer", "user", "engineering", "platform-team"}
+
+    def test_keycloak_with_client_roles(self, sso_service):
+        """Test Keycloak normalization with client roles enabled."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            metadata={
+                "realm": "master",
+                "map_realm_roles": False,
+                "map_client_roles": True,
+                "username_claim": "preferred_username",
+                "email_claim": "email",
+                "groups_claim": "groups",
+            },
+        )
+
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "keycloak-user-id",
+            "preferred_username": "testuser",
+            "resource_access": {"mcp-gateway": {"roles": ["gateway-admin", "gateway-user"]}, "another-client": {"roles": ["viewer"]}},
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert normalized["email"] == "user@company.com"
+        assert normalized["provider"] == "keycloak"
+        assert "mcp-gateway:gateway-admin" in normalized["groups"]
+        assert "mcp-gateway:gateway-user" in normalized["groups"]
+        assert "another-client:viewer" in normalized["groups"]
+
+    def test_keycloak_with_both_realm_and_client_roles(self, sso_service):
+        """Test Keycloak with both realm and client roles enabled."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            metadata={
+                "realm": "master",
+                "map_realm_roles": True,
+                "map_client_roles": True,
+                "username_claim": "preferred_username",
+                "email_claim": "email",
+                "groups_claim": "groups",
+            },
+        )
+
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "keycloak-user-id",
+            "preferred_username": "testuser",
+            "realm_access": {"roles": ["admin"]},
+            "resource_access": {"mcp-gateway": {"roles": ["gateway-admin"]}},
+            "groups": ["engineering"],
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert normalized["provider"] == "keycloak"
+        # Should have realm roles, client roles, and custom groups all combined
+        assert "admin" in normalized["groups"]  # Realm role
+        assert "mcp-gateway:gateway-admin" in normalized["groups"]  # Client role
+        assert "engineering" in normalized["groups"]  # Custom group
+        assert len(normalized["groups"]) == 3
+
+    def test_keycloak_missing_realm_roles(self, sso_service):
+        """Test Keycloak when realm_access is missing."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+        )
+
+        user_data = {
+            "email": "user@company.com",
+            "name": "Test User",
+            "sub": "keycloak-user-id",
+            # No realm_access key
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert normalized["email"] == "user@company.com"
+        assert normalized["provider"] == "keycloak"
+        assert normalized["groups"] == []  # Empty groups when no roles
+
+    def test_keycloak_custom_claims(self, sso_service):
+        """Test Keycloak with custom JWT claim mappings."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            metadata={
+                "realm": "custom-realm",
+                "map_realm_roles": True,
+                "map_client_roles": False,
+                "username_claim": "username",  # Custom claim
+                "email_claim": "email_address",  # Custom claim
+                "groups_claim": "user_groups",  # Custom claim
+            },
+        )
+
+        user_data = {
+            "email_address": "user@company.com",  # Custom email claim
+            "name": "Test User",
+            "sub": "keycloak-user-id",
+            "username": "custom_username",  # Custom username claim
+            "realm_access": {"roles": ["admin"]},
+            "user_groups": ["team-a", "team-b"],  # Custom groups claim
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert normalized["email"] == "user@company.com"
+        assert normalized["username"] == "custom_username"
+        assert normalized["provider"] == "keycloak"
+        assert "admin" in normalized["groups"]
+        assert "team-a" in normalized["groups"]
+        assert "team-b" in normalized["groups"]
+
+    def test_keycloak_minimal_valid_data(self, sso_service):
+        """Test Keycloak with minimal required data."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            metadata={"realm": "master", "map_realm_roles": True, "map_client_roles": False, "username_claim": "preferred_username", "email_claim": "email", "groups_claim": "groups"},
+        )
+
+        user_data = {
+            "email": "user@company.com",
+            "sub": "keycloak-user-id",
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        assert normalized["email"] == "user@company.com"
+        assert normalized["provider_id"] == "keycloak-user-id"
+        assert normalized["username"] == "user"  # Extracted from email
+        assert normalized["provider"] == "keycloak"
+        assert normalized["groups"] == []
+
+    def test_keycloak_groups_deduplication(self, sso_service):
+        """Test that Keycloak deduplicates groups from multiple sources."""
+        keycloak_provider = SSOProvider(
+            id="keycloak",
+            name="keycloak",
+            display_name="Keycloak",
+            provider_type="oidc",
+            metadata={
+                "realm": "master",
+                "map_realm_roles": True,
+                "map_client_roles": True,
+                "username_claim": "preferred_username",
+                "email_claim": "email",
+                "groups_claim": "groups",
+            },
+        )
+
+        user_data = {
+            "email": "user@company.com",
+            "sub": "keycloak-user-id",
+            "realm_access": {"roles": ["admin", "user"]},
+            "resource_access": {"mcp-gateway": {"roles": ["admin"]}},  # "admin" duplicates realm role
+            "groups": ["user", "developer"],  # "user" duplicates realm role
+        }
+
+        normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
+
+        # Check deduplication - should only have unique values
+        groups = normalized["groups"]
+        assert len(groups) == len(set(groups))  # No duplicates
+        assert "admin" in groups
+        assert "user" in groups
+        assert "mcp-gateway:admin" in groups  # Client role is namespaced, so not a duplicate
+        assert "developer" in groups
+
+
 class TestGenericOIDCNormalization:
     """Test generic OIDC provider normalization."""
 

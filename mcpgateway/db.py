@@ -3055,7 +3055,7 @@ class SSOProvider(Base):
     __tablename__ = "sso_providers"
 
     # Provider identification
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta, entra, or any custom ID
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta, keycloak, entra, or any custom ID
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(20), nullable=False)  # oauth2, oidc

@@ -423,6 +423,18 @@ mcpContextForge:
     SSO_OKTA_CLIENT_SECRET: ""             # Okta client secret
     SSO_OKTA_ISSUER: ""                    # Okta issuer URL
 
+    # ─ Keycloak OIDC ─
+    SSO_KEYCLOAK_ENABLED: "false"          # enable Keycloak OIDC authentication
+    SSO_KEYCLOAK_BASE_URL: ""              # Keycloak base URL (e.g., https://keycloak.example.com)
+    SSO_KEYCLOAK_REALM: "master"           # Keycloak realm name
+    SSO_KEYCLOAK_CLIENT_ID: ""             # Keycloak client ID
+    SSO_KEYCLOAK_CLIENT_SECRET: ""         # Keycloak client secret
+    SSO_KEYCLOAK_MAP_REALM_ROLES: "true"   # map Keycloak realm roles to gateway teams
+    SSO_KEYCLOAK_MAP_CLIENT_ROLES: "false" # map Keycloak client roles to gateway RBAC
+    SSO_KEYCLOAK_USERNAME_CLAIM: "preferred_username" # JWT claim for username
+    SSO_KEYCLOAK_EMAIL_CLAIM: "email"      # JWT claim for email
+    SSO_KEYCLOAK_GROUPS_CLAIM: "groups"    # JWT claim for groups/roles
+
     # ─ Microsoft Entra ID OIDC ─
     SSO_ENTRA_ENABLED: "false"             # enable Microsoft Entra ID (Azure AD) OIDC authentication
     SSO_ENTRA_CLIENT_ID: ""                # Microsoft Entra ID client ID

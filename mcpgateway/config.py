@@ -200,6 +200,17 @@ class Settings(BaseSettings):
     sso_okta_client_secret: Optional[str] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
 
+    sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
+    sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
+    sso_keycloak_realm: str = Field(default="master", description="Keycloak realm name")
+    sso_keycloak_client_id: Optional[str] = Field(default=None, description="Keycloak client ID")
+    sso_keycloak_client_secret: Optional[str] = Field(default=None, description="Keycloak client secret")
+    sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
+    sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
+    sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
+    sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
+    sso_keycloak_groups_claim: str = Field(default="groups", description="JWT claim for groups/roles")
+
     sso_entra_enabled: bool = Field(default=False, description="Enable Microsoft Entra ID OIDC authentication")
     sso_entra_client_id: Optional[str] = Field(default=None, description="Microsoft Entra ID client ID")
     sso_entra_client_secret: Optional[str] = Field(default=None, description="Microsoft Entra ID client secret")

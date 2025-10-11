@@ -295,6 +295,7 @@ class SupportBundleService:
             "sso_google_client_secret",
             "sso_ibm_verify_client_secret",
             "sso_okta_client_secret",
+            "sso_keycloak_client_secret",
             "sso_entra_client_secret",
             "sso_generic_client_secret",
         }
