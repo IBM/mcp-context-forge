@@ -433,7 +433,7 @@ async def connect(input_data: ConnectInput, request: Request):
             raise HTTPException(status_code=400, detail="Invalid user ID provided")
 
         # Handle authentication token
-        if input_data.server.auth_token is None or input_data.server.auth_token == "":
+        if input_data.server.auth_token is None or input_data.server.auth_token == "":  # nosec B105 - Checking for empty string, not hardcoded password
             jwt_token = request.cookies.get("jwt_token")
             if not jwt_token:
                 raise HTTPException(status_code=401, detail="Authentication required. Please ensure you are logged in.")
