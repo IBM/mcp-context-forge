@@ -86,6 +86,7 @@ Doctests are automatically run in the GitHub Actions pipeline:
       --cov-report=json:doctest-coverage.json \
       --cov-fail-under=40 \
       --tb=short
+
 - name: "📊  Doctest coverage validation"
   run: |
     python -m pytest --doctest-modules mcpgateway/ --tb=no -q
@@ -167,6 +168,7 @@ The default `.pre-commit-config.yaml` ships with a doctest hook commented out. E
 ```yaml
 - repo: local
   hooks:
+
     - id: doctest
       name: Doctest
       entry: pytest --doctest-modules mcpgateway/ --tb=short

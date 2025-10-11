@@ -115,6 +115,7 @@ Once VS Code restarts:
 
 * **SSE vs stdio** - SSE is simpler in prod, stdio is great for offline or
   header-free environments.
+
 * **Multiple servers** - add more blocks under `"servers"` if you run staging vs prod.
 * **Custom instructions** - Continue's *Custom Instructions* pane lets you steer tool use.
 

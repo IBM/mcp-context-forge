@@ -74,6 +74,7 @@ Load data from various sources and formats.
 ```
 
 Supported formats:
+
 - CSV, TSV
 - JSON, JSONL
 - Parquet
@@ -107,6 +108,7 @@ Perform comprehensive dataset analysis.
 ```
 
 Analysis types:
+
 - `exploratory` - Full EDA with summary statistics
 - `descriptive` - Basic statistics only
 - `correlation` - Correlation analysis
@@ -129,6 +131,7 @@ Perform various statistical tests.
 ```
 
 Supported tests:
+
 - **Parametric**: t-test, ANOVA, linear regression
 - **Non-parametric**: Mann-Whitney U, Wilcoxon, Kruskal-Wallis
 - **Correlation**: Pearson, Spearman, Chi-square
@@ -154,6 +157,7 @@ Generate various types of plots.
 ```
 
 Plot types:
+
 - **Distribution**: histogram, kde, box, violin
 - **Relationship**: scatter, line, regression
 - **Categorical**: bar, count, swarm, strip
@@ -199,6 +203,7 @@ Perform time series decomposition and analysis.
 ```
 
 Features:
+
 - Trend detection
 - Seasonality analysis
 - Stationarity testing
@@ -226,6 +231,7 @@ Apply various transformations to datasets.
 ```
 
 Transformations:
+
 - **Scaling**: standard, minmax, robust, normalizer
 - **Encoding**: label, onehot, ordinal, target
 - **Imputation**: mean, median, mode, forward fill
@@ -265,6 +271,7 @@ Execute SQL-like queries on datasets using pandas.
 ```
 
 Supported SQL features:
+
 - SELECT with column aliases
 - WHERE clauses with complex conditions
 - GROUP BY with aggregations

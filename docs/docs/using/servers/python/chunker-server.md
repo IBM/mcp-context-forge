@@ -51,6 +51,7 @@ make serve-http          # Original version
 Universal text chunking with multiple strategies.
 
 **Parameters:**
+
 - `text` (required): Text to chunk
 - `chunk_size`: Maximum chunk size (default: 1000, range: 100-100000)
 - `chunk_overlap`: Overlap between chunks (default: 200)
@@ -62,6 +63,7 @@ Universal text chunking with multiple strategies.
 Markdown-aware chunking that respects header structure.
 
 **Parameters:**
+
 - `text` (required): Markdown text to chunk
 - `headers_to_split_on`: Headers to use as boundaries (default: ["#", "##", "###"])
 - `chunk_size`: Maximum chunk size (default: 1000)
@@ -71,6 +73,7 @@ Markdown-aware chunking that respects header structure.
 Content-aware chunking based on semantic boundaries.
 
 **Parameters:**
+
 - `text` (required): Text to chunk
 - `min_chunk_size`: Minimum chunk size (default: 200)
 - `max_chunk_size`: Maximum chunk size (default: 2000)
@@ -80,6 +83,7 @@ Content-aware chunking based on semantic boundaries.
 Sentence-based chunking with configurable grouping.
 
 **Parameters:**
+
 - `text` (required): Text to chunk
 - `sentences_per_chunk`: Sentences per chunk (default: 5, range: 1-50)
 - `overlap_sentences`: Overlapping sentences (default: 1, range: 0-10)
@@ -88,6 +92,7 @@ Sentence-based chunking with configurable grouping.
 Fixed-size chunking with word boundary preservation.
 
 **Parameters:**
+
 - `text` (required): Text to chunk
 - `chunk_size`: Fixed chunk size (default: 1000)
 - `overlap`: Overlap between chunks (default: 0)
@@ -97,9 +102,11 @@ Fixed-size chunking with word boundary preservation.
 Analyze text characteristics and get chunking recommendations.
 
 **Parameters:**
+
 - `text` (required): Text to analyze
 
 **Returns:**
+
 - Text statistics (length, word count, paragraph count)
 - Structure detection (markdown headers, lists, etc.)
 - Recommended chunking strategies with parameters
@@ -108,6 +115,7 @@ Analyze text characteristics and get chunking recommendations.
 Get information about available chunking strategies and libraries.
 
 **Returns:**
+
 - Available strategies and their descriptions
 - Best use cases for each strategy
 - Library availability status
@@ -238,6 +246,7 @@ asyncio.run(chunk_text())
 ### Response Format
 
 All tools return a JSON response with:
+
 - `success`: Boolean indicating success/failure
 - `strategy`: The chunking strategy used
 - `chunks`: Array of text chunks

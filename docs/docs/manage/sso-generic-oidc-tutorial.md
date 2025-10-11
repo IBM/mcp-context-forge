@@ -7,6 +7,7 @@ This tutorial walks you through setting up generic OpenID Connect (OIDC) Single 
 The Generic OIDC provider support allows you to integrate MCP Gateway with any standards-compliant OpenID Connect provider. This flexibility enables you to use your existing identity infrastructure regardless of the vendor.
 
 **Supported Providers** (non-exhaustive):
+
 - Keycloak
 - Auth0
 - Authentik
@@ -43,6 +44,7 @@ curl https://your-provider.com/.well-known/openid-configuration | jq .
 ```
 
 Look for these key fields:
+
 - `authorization_endpoint` → `SSO_GENERIC_AUTHORIZATION_URL`
 - `token_endpoint` → `SSO_GENERIC_TOKEN_URL`
 - `userinfo_endpoint` → `SSO_GENERIC_USERINFO_URL`
@@ -53,6 +55,7 @@ Look for these key fields:
 Select a unique identifier for your provider. This will be used in URLs and configuration.
 
 **Guidelines**:
+
 - Use lowercase alphanumeric characters and hyphens
 - Common choices: `keycloak`, `auth0`, `authentik`, `gitlab`, `custom-sso`
 - Avoid: `github`, `google`, `okta`, `entra`, `ibm_verify` (reserved for built-in providers)
@@ -77,6 +80,7 @@ Choose your provider below for specific setup instructions:
 3. Go to **Clients** → **Create client**
 
 **Settings**:
+
 - **Client type**: `OpenID Connect`
 - **Client ID**: `mcp-gateway` (or your choice)
 - **Client authentication**: `ON` (confidential client)
@@ -85,6 +89,7 @@ Choose your provider below for specific setup instructions:
 #### 2A.2 Configure Client Settings
 
 **Access Settings**:
+
 - **Root URL**: `https://gateway.yourcompany.com`
 - **Home URL**: `https://gateway.yourcompany.com/admin`
 - **Valid redirect URIs**: `https://gateway.yourcompany.com/auth/sso/callback/keycloak`
@@ -92,6 +97,7 @@ Choose your provider below for specific setup instructions:
 - **Web origins**: `https://gateway.yourcompany.com`
 
 **Advanced Settings**:
+
 - **Access Token Lifespan**: 5 minutes (default is fine)
 - **Client authentication**: ON
 - **Standard flow**: Enabled (Authorization Code Flow)
@@ -141,6 +147,7 @@ To ensure proper user info:
 3. Click **+ Create Application**
 
 **Settings**:
+
 - **Name**: `MCP Gateway`
 - **Application type**: `Regular Web Applications`
 - Click **Create**
@@ -150,11 +157,13 @@ To ensure proper user info:
 In the application settings:
 
 **Application URIs**:
+
 - **Allowed Callback URLs**: `https://gateway.yourcompany.com/auth/sso/callback/auth0`
 - **Allowed Logout URLs**: `https://gateway.yourcompany.com/admin/login`
 - **Allowed Web Origins**: `https://gateway.yourcompany.com`
 
 **Advanced Settings** → **Grant Types**:
+
 - ✅ Authorization Code
 - ✅ Refresh Token (optional)
 - ❌ Implicit (not needed)
@@ -164,6 +173,7 @@ Click **Save Changes**
 #### 2B.3 Get Client Credentials
 
 In the **Settings** tab:
+
 - Copy **Domain**: `your-tenant.auth0.com`
 - Copy **Client ID**
 - Copy **Client Secret**
@@ -191,6 +201,7 @@ Issuer:        https://your-tenant.auth0.com/
 3. Click **Create**
 
 **Provider Settings**:
+
 - **Name**: `MCP Gateway Provider`
 - **Type**: `OAuth2/OpenID Provider`
 - **Client type**: `Confidential`
@@ -199,6 +210,7 @@ Issuer:        https://your-tenant.auth0.com/
 - **Redirect URIs**: `https://gateway.yourcompany.com/auth/sso/callback/authentik`
 
 **Advanced Settings**:
+
 - **Scopes**: `openid profile email`
 - **Subject mode**: `Based on the User's hashed ID`
 - **Include claims in id_token**: Yes
@@ -211,6 +223,7 @@ Click **Create**
 2. Click **Create**
 
 **Application Settings**:
+
 - **Name**: `MCP Gateway`
 - **Slug**: `mcp-gateway`
 - **Provider**: Select the provider you just created
@@ -648,6 +661,7 @@ For production, fix the certificate issue at the provider level.
 ### Secret Management
 
 **DO**:
+
 - ✅ Store secrets in environment variables or secret management systems
 - ✅ Use strong, randomly generated client secrets
 - ✅ Rotate secrets regularly (every 90-180 days)
@@ -655,6 +669,7 @@ For production, fix the certificate issue at the provider level.
 - ✅ Enable HTTPS for all redirect URIs
 
 **DON'T**:
+
 - ❌ Store secrets in source control
 - ❌ Share secrets via email or chat
 - ❌ Use the same credentials across environments

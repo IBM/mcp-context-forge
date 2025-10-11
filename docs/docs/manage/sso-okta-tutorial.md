@@ -35,15 +35,18 @@ This tutorial walks you through setting up Okta Single Sign-On (SSO) authenticat
 ### 1.4 Configure Sign-in Settings
 
 **Sign-in redirect URIs**: **Critical - must be exact**
+
 - Production: `https://gateway.yourcompany.com/auth/sso/callback/okta`
 - Development: `http://localhost:8000/auth/sso/callback/okta`
 - Click **Add URI** if you need both
 
 **Sign-out redirect URIs** (optional):
+
 - Production: `https://gateway.yourcompany.com/admin/login`
 - Development: `http://localhost:8000/admin/login`
 
 **Controlled access**: Choose appropriate option:
+
 - **Allow everyone in your organization to access** (most common)
 - **Limit access to selected groups** (recommended for production)
 - **Skip group assignment for now** (development only)
@@ -77,6 +80,7 @@ This tutorial walks you through setting up Okta Single Sign-On (SSO) authenticat
    - `title` - User's job title
 
 Example custom claim configuration:
+
 - **Name**: `groups`
 - **Include in token type**: ID Token, Always
 - **Value type**: Groups

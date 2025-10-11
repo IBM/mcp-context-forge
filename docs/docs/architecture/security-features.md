@@ -284,6 +284,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 ### 🚀 Security Release History & Roadmap
 
 **Release 0.7.0 - Completed September 2025**
+
 - ✅ Enterprise multi-tenancy architecture
 - ✅ Full RBAC implementation (Platform Admin, Team Owner, Team Member)
 - ✅ Email-based authentication with Argon2id password hashing
@@ -298,6 +299,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 - ✅ Enhanced testing (mutation, fuzz testing)
 
 **Release 0.8.0 - Completed October 2025**
+
 - ✅ Advanced OAuth 2.0 (Password Grant Flow, DCR, PKCE)
 - ✅ Plugin Management API & UI
 - ✅ 15+ Security Plugins (Content Moderation, SQL Sanitizer, Safe HTML Sanitizer, Circuit Breaker, etc.)
@@ -308,6 +310,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 - ✅ Pydantic v2 configuration validation
 
 **Release 0.9.0 - Planned Q1 2026**
+
 - Advanced rate limiting and DDoS protection
 - Marketplace security validation
 - Enhanced plugin guardrails
@@ -315,6 +318,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
 - Advanced audit logging
 
 **Release 1.0.0 - Planned Q2 2026**
+
 - Security audit completion
 - Production hardening certification
 - GA security compliance certification
@@ -364,6 +368,7 @@ MCP Gateway should be integrated as **one component** in a comprehensive securit
 ### Integration Requirements
 
 MCP Gateway is **not a standalone product**. Integrate with:
+
 - API gateways/reverse proxies (auth, rate-limiting, routing)
 - Secrets management systems (Vault, SOPS)
 - Identity and access management (IAM) platforms
@@ -395,6 +400,7 @@ MCP Gateway is **not a standalone product**. Integrate with:
 ## Multi-Tenancy Considerations
 
 **MCP Gateway is not yet multi-tenant ready**. For multi-user platforms, implement:
+
 - User isolation and data segregation
 - Role-Based Access Control (RBAC)
 - Resource cleanup and lifecycle management

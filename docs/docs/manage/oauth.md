@@ -3,6 +3,7 @@
 This guide explains how to configure and operate OAuth 2.0 authentication for MCP Gateway when connecting to MCP servers or downstream APIs on behalf of users or services.
 
 Related design docs:
+
 - Architecture: [oauth-design.md](../architecture/oauth-design.md)
 - UI Flow: [oauth-authorization-code-ui-design.md](../architecture/oauth-authorization-code-ui-design.md)
 

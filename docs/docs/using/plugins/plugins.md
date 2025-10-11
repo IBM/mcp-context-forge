@@ -119,6 +119,7 @@ Native plugins run in-process within the gateway for maximum performance:
 Example configuration:
 ```yaml
 plugins:
+
   - name: "PIIFilterPlugin"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
@@ -139,6 +140,7 @@ External plugins run as separate MCP servers for independent scaling and isolati
 Example configuration:
 ```yaml
 plugins:
+
   - name: "OPAPluginFilter"
     kind: "external"
     priority: 10

@@ -19,6 +19,7 @@
     ✅ **Important:** The gateway must be able to reach the MCP server's network address.
 
     If you're running services inside Docker (or other containerized environments), ensure networking is configured properly:
+
     - Use `host` networking when needed.
     - Expose ports to the host machine.
     - Make sure internal container IPs are reachable from the gateway.
@@ -29,6 +30,7 @@
 > A virtual server is a logical wrapper that combines selected tools, resources, and prompts under one context-specific endpoint.
 
 ???+ info "🔗 What are Virtual Servers?"
+
     - A Virtual Server defines a project-specific toolset.
     - Each one is backed by a real SSE or STDIO interface.
     - You can activate/deactivate, view metrics, and invoke tools from this server.
@@ -42,6 +44,7 @@
 > Tools are remote functions that an LLM can invoke, either via MCP or REST. Think of them like typed APIs with schemas and optional auth.
 
 ???+ example "⚙️ What do Tools represent?"
+
     - Integration Types: `MCP`, `REST`
     - Request Types: `STDIO`, `SSE`, `GET`, `POST`, etc.
     - Input Schema: JSON Schema defines valid input.
@@ -56,6 +59,7 @@
 > Resources expose read-only data like files, database rows, logs, or screenshots. LLMs can read this content through a URI.
 
 ???+ example "📖 How do Resources work?"
+
     - Text and Binary data supported.
     - Exposed via unique URI (`file:///`, `db://`, etc.).
     - Resources can be listed, templated, or subscribed to.
@@ -69,6 +73,7 @@
 > Prompts are reusable message templates with arguments. They define system prompts, user instructions, or chainable inputs.
 
 ???+ info "🗒 What's in a Prompt?"
+
     - Each prompt has a name, template, and arguments.
     - Arguments are defined with name, description, and required status.
     - Used to enforce consistency across tool use or system messaging.
@@ -82,6 +87,7 @@
 > Gateways are other MCP-compatible servers. When registered, their tools/resources/prompts become usable locally.
 
 ???+ example "🌉 What is a federated Gateway?"
+
     - Syncs public tools from a remote MCP server.
     - Peer tools show up in your catalog with `gateway_id`.
     - Can be toggled active/inactive.
@@ -95,6 +101,7 @@
 > Roots define base folders for file-based resources. They control what files MCP clients can access from your local system.
 
 ???+ tip "📁 What are Roots used for?"
+
     - Restrict access to specific folders (`file:///workspace`)
     - Prevent tools from referencing outside their sandbox.
     - Deleting a root invalidates its associated resources.
@@ -108,6 +115,7 @@
 > Track tool calls, resource reads, prompt renders, and overall usage in one place.
 
 ???+ info "📊 What does the Metrics tab show?"
+
     - Overall executions by server/tool/prompt.
     - Latency, failure rate, and hot paths.
     - Top tools, resources, prompts, and servers.
@@ -121,6 +129,7 @@
 > The `/version` endpoint returns structured JSON diagnostics including system info, DB/Redis health, and Git SHA.
 
 ???+ example "🩺 What does the Version panel include?"
+
     - MCP protocol version and server metadata.
     - Live system metrics (CPU, memory).
     - Environment checks and service readiness.

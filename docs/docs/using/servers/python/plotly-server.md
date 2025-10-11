@@ -56,6 +56,7 @@ make serve-http
 Create charts with flexible configuration.
 
 **Parameters:**
+
 - `chart_type` (required): Chart type ("scatter", "line", "bar", "histogram", "box", "violin", "pie", "heatmap")
 - `data` (required): Chart data (dictionary with x, y, etc.)
 - `title`: Chart title
@@ -71,6 +72,7 @@ Create charts with flexible configuration.
 Specialized scatter plot creation.
 
 **Parameters:**
+
 - `x_data` (required): X-axis data points
 - `y_data` (required): Y-axis data points
 - `labels`: Point labels
@@ -86,6 +88,7 @@ Specialized scatter plot creation.
 Bar chart for categorical data.
 
 **Parameters:**
+
 - `categories` (required): Category names
 - `values` (required): Values for each category
 - `orientation`: Bar orientation ("vertical" or "horizontal") - default: "vertical"
@@ -97,6 +100,7 @@ Bar chart for categorical data.
 Line chart for time series data.
 
 **Parameters:**
+
 - `x_data` (required): X-axis data (typically dates/times)
 - `y_data` (required): Y-axis data points
 - `line_name`: Name for the line series
@@ -110,6 +114,7 @@ Line chart for time series data.
 List supported chart types and features.
 
 **Returns:**
+
 - Available chart types
 - Supported output formats
 - Theme options

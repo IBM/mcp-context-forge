@@ -162,6 +162,7 @@ async def http_post_forwarding_call(self, payload: HttpHeaderPayload, context: P
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`PromptPrehookResult`)**:
+
 - Extends `PluginResult[PromptPrehookPayload]`
 - Can modify `payload.args` before template processing
 - Can block request with violation
@@ -241,10 +242,12 @@ async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginC
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **PromptResult Structure**:
+
 - `messages`: `list[Message]` - Rendered prompt messages
 - Each `Message` has `role`, `content`, and optional metadata
 
 **Return Type (`PromptPosthookResult`)**:
+
 - Extends `PluginResult[PromptPosthookPayload]`
 - Can modify `payload.result.messages` content
 - Can block response with violation
@@ -322,6 +325,7 @@ async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: Plugi
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`ToolPreInvokeResult`)**:
+
 - Extends `PluginResult[ToolPreInvokePayload]`
 - Can modify `payload.args` and `payload.headers`
 - Can block tool execution with violation
@@ -429,6 +433,7 @@ async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginCo
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`ToolPostInvokeResult`)**:
+
 - Extends `PluginResult[ToolPostInvokePayload]`
 - Can modify `payload.result` content
 - Can block result with violation
@@ -527,6 +532,7 @@ async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: Plugin
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Return Type (`ResourcePreFetchResult`)**:
+
 - Extends `PluginResult[ResourcePreFetchPayload]`
 - Can modify `payload.uri` and `payload.metadata`
 - Can block resource access with violation
@@ -641,6 +647,7 @@ async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: Pl
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **ResourceContent Structure**:
+
 - `type`: Content type identifier
 - `uri`: Resource URI
 - `text`: Text content (for text resources)
@@ -648,6 +655,7 @@ async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: Pl
 - Optional metadata fields
 
 **Return Type (`ResourcePostFetchResult`)**:
+
 - Extends `PluginResult[ResourcePostFetchPayload]`
 - Can modify `payload.content` data
 - Can block content with violation
@@ -758,6 +766,7 @@ async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: 
 | `resource_post_fetch` | After resource content loading | Content validation, filtering, enhancement |
 
 **Performance Notes**:
+
 - Native plugins have the lowest execution latency
 - External plugins typically add 10-100ms depending on network and service
 - Resource post-fetch may take longer due to content processing

@@ -5,6 +5,7 @@ The MCP Gateway supports A2A (Agent-to-Agent) integration, allowing you to regis
 ## Overview
 
 A2A integration enables you to:
+
 - **Register external AI agents** (OpenAI, Anthropic, custom agents)
 - **Expose agents as MCP tools** for universal discovery and access
 - **Support multiple protocols** (JSONRPC, custom formats)
@@ -25,6 +26,7 @@ MCPGATEWAY_A2A_METRICS_ENABLED=true
 ### 2. Register an A2A Agent
 
 **Via Admin UI:**
+
 1. Go to `http://localhost:4444/admin`
 2. Click the "A2A Agents" tab
 3. Fill out the "Add New A2A Agent" form
@@ -49,6 +51,7 @@ curl -X POST "http://localhost:4444/a2a" \
 ### 3. Test the Agent
 
 **Via Admin UI:**
+
 - Click the blue "Test" button next to your agent
 - See real-time test results
 
@@ -169,6 +172,7 @@ The gateway automatically detects agent protocols:
 ## Monitoring and Metrics
 
 A2A agents provide comprehensive metrics:
+
 - **Execution Count**: Total number of invocations
 - **Success Rate**: Percentage of successful calls
 - **Response Times**: Min/max/average response times
@@ -178,6 +182,7 @@ A2A agents provide comprehensive metrics:
 ## Virtual Server Integration
 
 Associate A2A agents with virtual servers to:
+
 - **Organize agents** by purpose or team
 - **Control access** via server-specific endpoints
 - **Group capabilities** for specific use cases

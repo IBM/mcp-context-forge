@@ -5,10 +5,12 @@ Dynamic Client Registration (DCR) is an OAuth 2.0 extension that enables automat
 ## Overview
 
 DCR solves a common authentication challenge in distributed MCP deployments:
+
 - **Traditional OAuth2** requires pre-configured client credentials for each MCP server
 - **With DCR**, MCP clients can automatically register themselves as OAuth2 clients
 
 **Key Benefits:**
+
 - ✅ Zero-touch OAuth configuration - no manual credential management
 - ✅ Automatic discovery via RFC 8414 (Authorization Server Metadata)
 - ✅ Support for public clients (PKCE-only, no client secret)
@@ -68,6 +70,7 @@ GET https://auth.example.com/.well-known/openid-configuration
 ```
 
 The metadata response includes:
+
 - `registration_endpoint` - Where to register clients
 - `authorization_endpoint` - OAuth authorization URL
 - `token_endpoint` - Token exchange URL
@@ -141,6 +144,7 @@ graph LR
 Configure a gateway with just the issuer URL - credentials auto-register:
 
 **Admin UI:**
+
 1. Create/Edit Gateway → Authentication Type: OAuth
 2. Set Grant Type: `authorization_code`
 3. Set Issuer: `https://auth.example.com`
@@ -268,6 +272,7 @@ If set, gateway will reject DCR for any issuer not in the list.
 ### 2. Encrypted Credentials
 
 All sensitive data is encrypted at rest using `AUTH_ENCRYPTION_SECRET`:
+
 - Client secrets
 - Registration access tokens
 - Refresh tokens
@@ -275,6 +280,7 @@ All sensitive data is encrypted at rest using `AUTH_ENCRYPTION_SECRET`:
 ### 3. PKCE Integration
 
 All Authorization Code flows automatically use PKCE (RFC 7636) for enhanced security:
+
 - Prevents authorization code interception attacks
 - Supports public clients without client secrets
 - No configuration needed - always enabled
@@ -282,6 +288,7 @@ All Authorization Code flows automatically use PKCE (RFC 7636) for enhanced secu
 ### 4. Metadata Validation
 
 Gateway validates AS metadata responses:
+
 - Issuer URL must match discovery URL
 - Registration endpoint must be present
 - Proper HTTP status codes (200/201 for registration)
@@ -293,31 +300,37 @@ Gateway validates AS metadata responses:
 ### DCR Registration Fails
 
 **Error: "AS does not support Dynamic Client Registration"**
+
 - The Authorization Server doesn't expose a `registration_endpoint` in its metadata
 - Solution: Use manual client credentials instead
 
 **Error: "Issuer not in allowed issuers list"**
+
 - The issuer URL is not in `MCPGATEWAY_DCR_ALLOWED_ISSUERS`
 - Solution: Add the issuer to the allowlist or clear the allowlist to allow any
 
 **Error: "Failed to discover AS metadata"**
+
 - The issuer URL is incorrect or unreachable
 - Solution: Verify the issuer URL and network connectivity
 
 ### Client Registration Rejected
 
 **HTTP 400/401 from AS**
+
 - Check AS logs for specific error messages
 - Verify redirect URI matches AS requirements
 - Ensure scopes are supported by the AS
 
 **HTTP 200 instead of 201**
+
 - Some ASs return 200 instead of RFC 7591's 201 - this is accepted
 - If registration still fails, check response body for errors
 
 ### Token Exchange Issues
 
 **Invalid client_id after DCR**
+
 - Verify registration was successful in `registered_oauth_clients` table
 - Check that `client_secret_encrypted` was properly stored
 - Try re-registering by deleting the record and recreating the gateway

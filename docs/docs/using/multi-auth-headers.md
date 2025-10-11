@@ -7,6 +7,7 @@ MCP Gateway now supports multiple custom authentication headers for gateway conn
 ## Use Cases
 
 Multiple authentication headers are useful when:
+
 - Your MCP server requires multiple API keys or tokens
 - You need to send client identification along with authentication
 - Your service uses region-specific or version-specific headers
@@ -139,6 +140,7 @@ HTTP headers are case-insensitive by specification. Some HTTP clients or servers
 
 ### Validation Errors
 If you receive validation errors when saving:
+
 - Ensure at least one header is provided when using "Custom Headers" authentication
 - Check that your JSON is properly formatted if using the API
 - Verify that header keys don't contain invalid characters

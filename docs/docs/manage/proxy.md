@@ -108,6 +108,7 @@ services:
   oauth2-proxy:
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.5.0
     command:
+
       - --http-address=0.0.0.0:4180
       - --upstream=http://mcp-gateway:4444
       - --email-domain=*
@@ -120,8 +121,10 @@ services:
       OAUTH2_PROXY_COOKIE_SECRET: ${COOKIE_SECRET}
       OAUTH2_PROXY_PROVIDER: google
     ports:
+
       - "4180:4180"
     networks:
+
       - mcp-network
 
   mcp-gateway:
@@ -135,8 +138,10 @@ services:
       BASIC_AUTH_PASSWORD: ${ADMIN_PASSWORD}
       DATABASE_URL: postgresql://postgres:password@db:5432/mcp
     depends_on:
+
       - db
     networks:
+
       - mcp-network
 
   db:
@@ -146,8 +151,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
     volumes:
+
       - postgres_data:/var/lib/postgresql/data
     networks:
+
       - mcp-network
 
 networks:
@@ -201,21 +208,27 @@ spec:
         version: v1
     spec:
       containers:
+
       - name: mcp-gateway
         image: ghcr.io/contingentai/mcp-gateway:latest
         env:
+
         - name: MCP_CLIENT_AUTH_ENABLED
           value: "false"
+
         - name: TRUST_PROXY_AUTH
           value: "true"
+
         - name: PROXY_USER_HEADER
           value: "X-User-Id"
+
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
               name: mcp-gateway-secrets
               key: database-url
         ports:
+
         - containerPort: 4444
           name: http
         livenessProbe:
@@ -243,6 +256,7 @@ spec:
     matchLabels:
       app: mcp-gateway
   jwtRules:
+
   - issuer: "https://accounts.google.com"
     jwksUri: "https://www.googleapis.com/oauth2/v3/certs"
     outputPayloadToHeader: "X-User-Id"
@@ -258,6 +272,7 @@ spec:
       app: mcp-gateway
   action: ALLOW
   rules:
+
   - from:
     - source:
         requestPrincipals: ["*"]
@@ -286,13 +301,17 @@ graph LR
 
 ```yaml title="kong-config.yaml"
 services:
+
   - name: mcp-gateway
     url: http://mcp-gateway:4444
     routes:
+
       - name: mcp-route
         paths:
+
           - /mcp
     plugins:
+
       - name: oidc
         config:
           client_id: mcp-client
@@ -302,6 +321,7 @@ services:
           bearer_only: "yes"
           realm: mcp-gateway
           header_names:
+
             - X-Consumer-Username:preferred_username
             - X-Consumer-Id:sub
 ```
@@ -319,9 +339,11 @@ authentication_backend:
 access_control:
   default_policy: deny
   rules:
+
     - domain: mcp.example.com
       policy: two_factor
       subject:
+
         - group:mcp-users
 
 # Headers forwarded to backend
@@ -429,6 +451,7 @@ JWT_SECRET_KEY=your-secret
 ```
 
 The gateway will always process `X-Upstream-Authorization` headers when:
+
 1. The gateway itself uses authentication (`auth_type` in ["basic", "bearer", "oauth"])
 2. The header value passes security validation
 
@@ -465,6 +488,7 @@ graph TB
 ```
 
 !!! danger "Critical Security Requirements"
+
     1. **Never expose MCP Gateway directly** to the internet when proxy auth is enabled
     2. **Use TLS** for all communication between proxy and gateway
     3. **Implement network policies** to ensure only the proxy can reach the gateway
@@ -713,6 +737,7 @@ SESSION_TTL=3600  # 1 hour
 ## Best Practices
 
 !!! tip "Production Checklist"
+
     - [ ] Network isolation between proxy and gateway
     - [ ] TLS encryption for all connections
     - [ ] Rate limiting at proxy level

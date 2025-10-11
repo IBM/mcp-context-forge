@@ -11,6 +11,7 @@
 The MCP Gateway needed to support standardized well-known URIs as defined by RFC 8615 to enable proper web service discovery, security contact information, and crawler management. Well-known URIs are standardized endpoints that web services expose for automated discovery and security contact purposes.
 
 The implementation needed to address:
+
 - **robots.txt** for search engine crawler management (typically private API = disable crawling)
 - **security.txt** for security contact information per RFC 9116
 - **Custom well-known files** for additional service policies (AI usage, DNT policy, etc.)
@@ -43,6 +44,7 @@ async def get_well_known_file(filename: str, response: Response, request: Reques
 ```
 
 **Design decisions:**
+
 - **Router isolation**: Separate router for clean organization and testing
 - **Dynamic routing**: Single endpoint handles all well-known URIs
 - **Security-first**: Disabled by default, explicit enable required
@@ -68,6 +70,7 @@ well_known_cache_max_age: int = 3600  # 1 hour
 ```
 
 **Design decisions:**
+
 - **Private API defaults**: robots.txt blocks all crawlers by default
 - **Explicit security.txt**: Only enabled when content is provided
 - **JSON custom files**: Flexible format for additional well-known files
@@ -86,6 +89,7 @@ def validate_security_txt(content: str) -> Optional[str]:
 ```
 
 **Design decisions:**
+
 - **Auto-expires**: Adds Expires header if missing (RFC requirement)
 - **Header comments**: Adds generation timestamp and description
 - **Validation**: Ensures RFC 9116 compliance
@@ -112,6 +116,7 @@ WELL_KNOWN_REGISTRY = {
 ```
 
 **Design decisions:**
+
 - **Helpful errors**: Provides descriptive 404 messages for known but unconfigured files
 - **Content-Type mapping**: Ensures correct MIME types
 - **Documentation**: Links to relevant RFCs and standards
@@ -128,6 +133,7 @@ async def get_well_known_status(user: str = Depends(require_auth)):
 ```
 
 **Design decisions:**
+
 - **Authentication required**: Admin endpoint requires JWT authentication
 - **Configuration visibility**: Shows enabled files and cache settings
 - **Supported files list**: Displays all known well-known URI types
@@ -225,6 +231,7 @@ WELL_KNOWN_CUSTOM_FILES={"ai.txt": "AI Usage: Tool orchestration only", "dnt-pol
 ## Testing Strategy
 
 Implemented comprehensive test coverage:
+
 - **Default robots.txt**: Validates security-first defaults
 - **security.txt validation**: Tests RFC 9116 compliance and auto-enhancement
 - **Custom files**: Verifies JSON configuration parsing and serving
@@ -235,6 +242,7 @@ Implemented comprehensive test coverage:
 ## Future Enhancements
 
 Potential improvements for future iterations:
+
 - **Dynamic content**: Template variables (e.g., `{{DOMAIN}}`, `{{CONTACT_EMAIL}}`)
 - **File upload API**: Admin interface for uploading well-known files
 - **GPG signing**: Digital signature support for security.txt

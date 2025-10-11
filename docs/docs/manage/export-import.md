@@ -312,6 +312,7 @@ mcpgateway import backup.json --dry-run
 ### Schema Validation
 
 Import data is validated for:
+
 - **Required Fields**: Each entity type has mandatory fields
 - **Data Types**: Field types match expected schemas
 - **Dependencies**: Referenced entities exist or will be created
@@ -381,12 +382,14 @@ curl -H "Authorization: Bearer $TOKEN" \
 name: Config Backup
 on:
   schedule:
+
     - cron: '0 2 * * *'  # Daily at 2 AM
 
 jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
+
       - name: Export Configuration
         run: |
           mcpgateway export --out backup-$(date +%F).json
@@ -518,6 +521,7 @@ mcpgateway import backup.json --types servers
 ### Query Parameters
 
 **Export (`GET /export`)**:
+
 - `types` - Comma-separated entity types
 - `exclude_types` - Entity types to exclude
 - `tags` - Tag-based filtering

@@ -307,6 +307,7 @@ Add various shapes to slides.
 ```
 
 Supported shapes:
+
 - Rectangle, Rounded Rectangle
 - Oval, Circle
 - Triangle, Diamond
@@ -369,6 +370,7 @@ Create various types of charts.
 ```
 
 Chart types:
+
 - COLUMN (vertical bars)
 - BAR (horizontal bars)
 - LINE (line graph)
@@ -661,6 +663,7 @@ for slide_index in [3, 5, 7]:
 ### Template System
 
 Templates support placeholder replacement:
+
 - Text placeholders: `{{VARIABLE_NAME}}`
 - Image placeholders: `{{IMAGE:logo}}`
 - Chart placeholders: `{{CHART:sales_data}}`

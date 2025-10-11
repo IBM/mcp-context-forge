@@ -55,6 +55,7 @@ make serve-http
 Create a new LaTeX document with specified class and packages.
 
 **Parameters:**
+
 - `file_path` (required): Path where the document will be saved
 - `document_class`: LaTeX document class (default: "article")
 - `packages`: List of LaTeX packages to include
@@ -66,6 +67,7 @@ Create a new LaTeX document with specified class and packages.
 Compile LaTeX document to PDF or other formats.
 
 **Parameters:**
+
 - `file_path` (required): Path to LaTeX file
 - `output_format`: Output format - "pdf", "dvi", or "ps" (default: "pdf")
 - `compiler`: LaTeX compiler - "pdflatex", "xelatex", or "lualatex" (default: "pdflatex")
@@ -76,6 +78,7 @@ Compile LaTeX document to PDF or other formats.
 Add arbitrary LaTeX content to a document.
 
 **Parameters:**
+
 - `file_path` (required): Path to LaTeX document
 - `content` (required): LaTeX content to add
 - `position`: Where to add content - "end" or "before_end" (default: "before_end")
@@ -84,6 +87,7 @@ Add arbitrary LaTeX content to a document.
 Add structured sections, subsections, or subsubsections.
 
 **Parameters:**
+
 - `file_path` (required): Path to LaTeX document
 - `title` (required): Section title
 - `level`: Section level - "section", "subsection", or "subsubsection" (default: "section")
@@ -94,6 +98,7 @@ Add structured sections, subsections, or subsubsections.
 Add formatted tables with optional headers and captions.
 
 **Parameters:**
+
 - `file_path` (required): Path to LaTeX document
 - `data` (required): 2D array of table data
 - `headers`: List of column headers
@@ -105,6 +110,7 @@ Add formatted tables with optional headers and captions.
 Add figures with images, captions, and labels.
 
 **Parameters:**
+
 - `file_path` (required): Path to LaTeX document
 - `image_path` (required): Path to image file
 - `caption`: Figure caption
@@ -116,12 +122,14 @@ Add figures with images, captions, and labels.
 Analyze document structure, packages, and statistics.
 
 **Parameters:**
+
 - `file_path` (required): Path to LaTeX document
 
 ### create_from_template
 Create documents from built-in templates.
 
 **Parameters:**
+
 - `template_type` (required): Template type - "article", "letter", "beamer", "report", or "book"
 - `file_path` (required): Path where document will be saved
 - `variables`: Dictionary of template variables
@@ -297,6 +305,7 @@ asyncio.run(create_latex_doc())
 ### Template Variables
 
 Templates support variable substitution:
+
 - `{title}` - Document title
 - `{author}` - Author name
 - `{abstract}` - Abstract content
@@ -335,6 +344,7 @@ Templates support variable substitution:
 ### Common Packages
 
 Automatically included packages:
+
 - `inputenc` - UTF-8 input encoding
 - `fontenc` - Font encoding
 - `geometry` - Page layout
@@ -477,6 +487,7 @@ Generate formal letters and business correspondence.
 ## Error Handling
 
 The server provides detailed error messages including:
+
 - LaTeX compilation errors with line numbers
 - Missing file errors
 - Syntax errors in LaTeX code

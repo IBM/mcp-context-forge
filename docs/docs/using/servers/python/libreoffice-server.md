@@ -65,6 +65,7 @@ make serve-http
 Convert a single document to another format.
 
 **Parameters:**
+
 - `input_file` (required): Path to input document
 - `output_format` (required): Target format (pdf, docx, odt, html, txt, etc.)
 - `output_dir`: Output directory (default: same as input file)
@@ -74,6 +75,7 @@ Convert a single document to another format.
 Convert multiple documents to the same format.
 
 **Parameters:**
+
 - `input_files` (required): List of input file paths
 - `output_format` (required): Target format for all files
 - `output_dir`: Output directory (default: "./converted")
@@ -82,6 +84,7 @@ Convert multiple documents to the same format.
 Merge multiple documents (PDF merging requires pdftk).
 
 **Parameters:**
+
 - `input_files` (required): List of document paths to merge
 - `output_file` (required): Path for merged document
 - `format`: Output format (default: "pdf")
@@ -90,6 +93,7 @@ Merge multiple documents (PDF merging requires pdftk).
 Extract text content from documents.
 
 **Parameters:**
+
 - `input_file` (required): Path to input document
 - `output_file`: Path for extracted text file
 - `preserve_formatting`: Keep basic formatting (default: false)
@@ -98,12 +102,14 @@ Extract text content from documents.
 Get document metadata and statistics.
 
 **Parameters:**
+
 - `input_file` (required): Path to document
 
 ### list_supported_formats
 List all supported input/output formats.
 
 **Returns:**
+
 - Available input formats
 - Available output formats
 - Format descriptions and capabilities

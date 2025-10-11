@@ -254,8 +254,10 @@ flowchart TD
             className: nginx
 
           envFrom:
+
             - secretRef:
                 name: mcp-gateway-secret
+
             - configMapRef:
                 name: mcp-gateway-config
 

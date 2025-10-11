@@ -54,6 +54,7 @@ make serve-http
 Execute Python code in secure sandbox.
 
 **Parameters:**
+
 - `code` (required): Python code to execute
 - `timeout`: Execution timeout in seconds (default: 30, max: 300)
 - `capture_output`: Capture stdout/stderr (default: true)
@@ -65,12 +66,14 @@ Execute Python code in secure sandbox.
 Validate code without execution.
 
 **Parameters:**
+
 - `code` (required): Python code to validate
 
 ### get_sandbox_info
 Get sandbox capabilities and configuration.
 
 **Returns:**
+
 - Available capabilities and security profiles
 - Resource limits and configurations
 - Supported modules and libraries
@@ -298,6 +301,7 @@ asyncio.run(execute_safe_code())
 
 ### Basic Profile (Default)
 Safe standard library modules only:
+
 - **Math & Random**: math, random, statistics, decimal, fractions
 - **Data Structures**: collections, itertools, functools, heapq, bisect
 - **Text Processing**: string, textwrap, re, difflib, unicodedata
@@ -307,18 +311,21 @@ Safe standard library modules only:
 
 ### Data Science Profile
 Enable with `SANDBOX_ENABLE_DATA_SCIENCE=true`:
+
 - numpy, pandas, scipy, matplotlib
 - seaborn, sklearn, statsmodels
 - plotly, sympy
 
 ### Network Profile
 Enable with `SANDBOX_ENABLE_NETWORK=true`:
+
 - httpx, requests, urllib.request
 - aiohttp, websocket
 - email, smtplib, ftplib
 
 ### Filesystem Profile
 Enable with `SANDBOX_ENABLE_FILESYSTEM=true`:
+
 - pathlib, os.path, tempfile
 - shutil, glob
 - zipfile, tarfile

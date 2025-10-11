@@ -332,6 +332,7 @@ If **any** of the above steps fail after the PR is merged or cannot deploy, leav
 
 ## 9. Cleaning Up Locally
 After the PR is merged:
+
 * Switch back to the main branch
 * Delete the local feature branch
 * Prune deleted remote branches

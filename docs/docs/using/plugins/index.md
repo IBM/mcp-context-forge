@@ -113,6 +113,7 @@ Register it in `plugins/config.yaml`:
 
 ```yaml
 plugins:
+
   - name: "MyPlugin"
     kind: "plugins.my_plugin.plugin.MyPlugin"
     hooks: ["prompt_pre_fetch"]
@@ -127,6 +128,7 @@ plugins:
 
 ```yaml
 plugins:
+
   - name: "MyExternal"
     kind: "external"
     priority: 10
@@ -146,22 +148,26 @@ is below. It contains two main sections: `plugins` and `plugin_settings`.
 ```yaml
 # plugins/config.yaml
 plugins:
+
   - name: "PIIFilterPlugin"                    # Unique plugin identifier
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"  # Plugin class path
     description: "Detects and masks PII"       # Human-readable description
     version: "1.0.0"                          # Plugin version
     author: "Security Team"                   # Plugin author
     hooks:                                    # Hook registration
+
       - "prompt_pre_fetch"
       - "tool_pre_invoke"
       - "tool_post_invoke"
     tags:                                     # Searchable tags
+
       - "security"
       - "pii"
       - "compliance"
     mode: "enforce"                           # enforce|enforce_ignore_error|permissive|disabled
     priority: 50                              # Execution priority (lower = higher)
     conditions:                               # Conditional execution
+
       - server_ids: ["prod-server"]
         tenant_ids: ["enterprise"]
         tools: ["sensitive-tool"]
@@ -188,6 +194,7 @@ Use the native plugins out of the box:
 ```yaml
 # plugins/config.yaml
 plugins:
+
   - name: "PIIFilterPlugin"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
@@ -206,6 +213,7 @@ plugins:
     priority: 150
     config:
       words:
+
         - { search: "crap", replace: "crud" }
         - { search: "crud", replace: "yikes" }
 
@@ -227,6 +235,7 @@ plugins:
       allowed_protocols: ["http", "https"]
       blocked_domains: ["malicious.example.com"]
       content_filters:
+
         - { pattern: "password\\s*[:=]\\s*\\S+", replacement: "password: [REDACTED]" }
 
 plugin_settings:
@@ -333,6 +342,7 @@ Plugins execute in priority order (ascending):
 ```yaml
 # Execution order example
 plugins:
+
   - name: "Authentication"
     priority: 10      # Runs first
 
@@ -384,6 +394,7 @@ The prompt hooks allow plugins to intercept and modify prompt retrieval and rend
 - **`prompt_post_fetch`**: Receives the completed prompt after rendering.  Can modify the prompt text or block it from being returned.
 
 Example Use Cases:
+
 - Detect prompt injection attacks
 - Sanitize or anonymize prompts
 - Search and replace
@@ -422,6 +433,7 @@ The tool hooks enable plugins to intercept and modify tool invocations:
 - **`tool_post_invoke`**: Receives the tool result after execution. Can modify the result or block it from being returned.
 
 Example use cases:
+
 - PII detection and masking in tool inputs/outputs
 - Rate limiting specific tools
 - Audit logging of tool usage
@@ -472,6 +484,7 @@ The resource hooks enable plugins to intercept and modify resource fetching:
 - **`resource_post_fetch`**: Receives the resource content after fetching. Can modify the content, redact sensitive information, or block it from being returned.
 
 Example use cases:
+
 - Protocol validation (block non-HTTPS resources)
 - Domain blocklisting/allowlisting
 - Content size limiting
@@ -874,6 +887,7 @@ author: "Your Name"
 version: "1.0.0"
 tags: ["custom", "filter"]
 available_hooks:
+
   - "prompt_pre_fetch"
   - "prompt_post_fetch"
 default_config:
@@ -897,6 +911,7 @@ class MyPlugin(Plugin):
 ```yaml
 # plugins/config.yaml
 plugins:
+
   - name: "MyCustomPlugin"
     kind: "plugins.my_plugin.plugin.MyPlugin"
     hooks: ["prompt_pre_fetch"]
@@ -975,6 +990,7 @@ Use conditions to limit plugin scope:
 
 ```yaml
 conditions:
+
   - prompts: ["sensitive_prompt"]
     server_ids: ["prod-server-1", "prod-server-2"]
     tenant_ids: ["enterprise-tenant"]
@@ -1049,6 +1065,7 @@ plugins:
       proto: STREAMABLEHTTP
       url: "https://ai-safety.internal.corp/llamaguard/v1"
     conditions:
+
       - server_ids: ["production-chat", "customer-support"]
 
   # Step 3: OpenAI Moderation for Final Check
@@ -1084,6 +1101,7 @@ plugins:
     mode: "enforce"
     priority: 50
     conditions:
+
       - tenant_ids: ["enterprise-corp", "banking-client"]
         tools: ["database-query", "file-access", "system-command"]
     config:
@@ -1098,6 +1116,7 @@ plugins:
     mode: "permissive"
     priority: 75
     conditions:
+
       - tenant_ids: ["free-tier"]
     config:
       profanity_filter: true
@@ -1110,6 +1129,7 @@ plugins:
 ```yaml
 # Development Environment
 plugins:
+
   - name: "DevPIIFilter"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
@@ -1120,12 +1140,14 @@ plugins:
       log_detections: true
       mask_strategy: "partial"
       whitelist_patterns:
+
         - "test@example.com"
         - "555-555-5555"
         - "123-45-6789"  # Test SSN
 
 # Production Environment
 plugins:
+
   - name: "ProdPIIFilter"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
@@ -1161,6 +1183,7 @@ plugin_settings:
   fail_on_plugin_error: false  # Continue processing on plugin failures
 
 plugins:
+
   - name: "CachedAIService"
     kind: "external"
     priority: 50
@@ -1174,6 +1197,7 @@ plugins:
 ## Monitoring and Observability
 
 General observability guidance:
+
 - Emit structured logs at appropriate levels (debug/info/warn/error)
 - Track plugin execution time in logs where useful
 - Use external APM/logging stacks for end‑to‑end tracing if needed

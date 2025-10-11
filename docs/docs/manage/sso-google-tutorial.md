@@ -37,9 +37,11 @@ Before creating credentials, enable the necessary APIs:
 **User support email**: Your support email
 
 **Application home page**: Your gateway URL
+
 - Example: `https://gateway.yourcompany.com`
 
 **Authorized domains**: Add your domain
+
 - Example: `yourcompany.com`
 
 **Developer contact information**: Your email
@@ -60,10 +62,12 @@ Before creating credentials, enable the necessary APIs:
 **Name**: `MCP Gateway OAuth Client`
 
 **Authorized JavaScript origins**: Your gateway domain
+
 - Production: `https://gateway.yourcompany.com`
 - Development: `http://localhost:8000`
 
 **Authorized redirect URIs**: **Critical - must be exact**
+
 - Production: `https://gateway.yourcompany.com/auth/sso/callback/google`
 - Development: `http://localhost:8000/auth/sso/callback/google`
 
@@ -178,6 +182,7 @@ curl -X GET http://localhost:4444/auth/sso/providers
 ```
 
 **Troubleshooting**:
+
 - **404 error**: Check that `SSO_ENABLED=true` in your environment and restart gateway
 - **Empty array `[]`**: SSO is enabled but Google provider not created - restart gateway to auto-bootstrap
 
@@ -244,6 +249,7 @@ SSO_GOOGLE_SCOPE="openid profile email https://www.googleapis.com/auth/admin.dir
 ```
 
 Common useful scopes:
+
 - `openid profile email` - Basic user info (default)
 - `https://www.googleapis.com/auth/admin.directory.user.readonly` - Read user directory
 - `https://www.googleapis.com/auth/admin.directory.group.readonly` - Read group memberships
@@ -323,6 +329,7 @@ SSO_TRUSTED_DOMAINS=[]
 **Solution**: For internal use, users can click "Advanced" → "Go to [App Name] (unsafe)"
 
 For production apps with external users:
+
 1. Go through Google's app verification process
 2. Or limit to internal users only (Google Workspace)
 

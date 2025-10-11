@@ -947,6 +947,7 @@ curl -u admin:changeme "http://localhost:4444/admin/export/configuration" \
 
 ### If Migration Fails
 If the database migration fails or you encounter issues:
+
 1. **Restore database backup**: `cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db`
 2. **Restore .env backup**: `cp .env.bak .env`
 3. **Delete corrupted database**: `rm mcp.db` (if migration partially completed)
@@ -954,6 +955,7 @@ If the database migration fails or you encounter issues:
 
 ### Complete Migration Guide
 For detailed upgrade instructions, troubleshooting, and rollback procedures, see:
+
 - **📖 [MIGRATION-0.8.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.8.0.md)** - Complete step-by-step upgrade guide
 - **🏗️ [Multi-tenancy Architecture](https://ibm.github.io/mcp-context-forge/architecture/multitenancy/)** - Understanding the new system
 
@@ -1057,6 +1059,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 > 🎛️ **Admin UI**: Dedicated tab for agent management with test functionality
 
 **A2A Configuration Effects:**
+
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
@@ -1199,6 +1202,7 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 | `LOG_BUFFER_SIZE_MB`    | Size of in-memory log buffer (MB)  | `1.0`             | float > 0                  |
 
 **Logging Behavior:**
+
 - **Default**: Logs only to **stdout/stderr** with human-readable text format
 - **File Logging**: When `LOG_TO_FILE=true`, logs to **both** file (JSON format) and console (text format)
 - **Log Rotation**: When `LOG_ROTATION_ENABLED=true`, files rotate at `LOG_MAX_SIZE_MB` with `LOG_BACKUP_COUNT` backup files (e.g., `.log.1`, `.log.2`)
@@ -1228,6 +1232,7 @@ LOG_FILE=gateway.log
 ```
 
 **Default Behavior:**
+
 - Logs are written **only to stdout/stderr** in human-readable text format
 - File logging is **disabled by default** (no files created)
 - Set `LOG_TO_FILE=true` to enable optional file logging with JSON format
@@ -2041,6 +2046,7 @@ make doctest-check   # Check coverage percentage
 ```
 
 **Coverage Status:**
+
 - ✅ **Transport Modules**: 100% (base, stdio, SSE, WebSocket, streamable HTTP)
 - ✅ **Utility Functions**: 100% (slug generation, JWT tokens, validation)
 - ✅ **Configuration**: 100% (settings, environment variables)
@@ -2048,6 +2054,7 @@ make doctest-check   # Check coverage percentage
 - 🔄 **Complex Classes**: ~40% (in progress)
 
 **Benefits:**
+
 - All documented examples are automatically tested
 - Documentation stays accurate and up-to-date
 - Developers can run examples directly from docstrings
@@ -2443,6 +2450,7 @@ devpi-web            - Open devpi web interface
 If the gateway fails on macOS with `sqlite3.OperationalError: disk I/O error` (works on Linux/Docker), it's usually a filesystem/locking quirk rather than a schema bug.
 
 Quick placement guidance (macOS):
+
 - Avoid cloning/running the repo under `~/Documents` or `~/Desktop` if iCloud "Desktop & Documents" sync is enabled.
 - A simple, safe choice is a project folder directly under your home directory:
   - `mkdir -p "$HOME/mcp-context-forge" && cd "$HOME/mcp-context-forge"`
@@ -2469,6 +2477,7 @@ Quick placement guidance (macOS):
   - `export CACHE_TYPE=none`
 
 If the error persists, update SQLite and ensure Python links against it:
+
 - `brew install sqlite3 && brew link --force sqlite3`
 - `brew install python3 && /opt/homebrew/bin/python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`
 

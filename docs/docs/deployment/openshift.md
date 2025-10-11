@@ -97,11 +97,14 @@ spec:
       securityContext:            # Must satisfy restricted-v2 SCC
         runAsNonRoot: true
       containers:
+
       - name: gateway
         image: quay.io/YOUR_NS/mcpgateway:latest
         ports:
+
         - containerPort: 4444
         envFrom:
+
         - configMapRef:
             name: mcpgateway-env
         readinessProbe:
@@ -128,6 +131,7 @@ spec:
   selector:
     app: mcpgateway
   ports:
+
   - port: 80
     targetPort: 4444
 ```

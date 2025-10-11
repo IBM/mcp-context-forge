@@ -512,5 +512,6 @@ Apache License 2.0
 ## Author
 
 **Avinash Sangle**
+
 - GitHub: [avisangle](https://github.com/avisangle)
 - Website: [avisangle.github.io](https://avisangle.github.io/)

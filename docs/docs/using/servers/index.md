@@ -182,6 +182,7 @@ We welcome contributions of new sample servers!
 ### **Language Priorities**
 
 We're particularly interested in:
+
 - **Python** - Most popular for AI/ML tooling
 - **TypeScript** - Web-native integration
 - **Rust** - Maximum performance critical applications

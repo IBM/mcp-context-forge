@@ -27,11 +27,13 @@ This tutorial walks you through setting up Microsoft Entra ID (formerly Azure AD
 **Name**: `MCP Gateway`
 
 **Supported account types**: Choose the appropriate option:
+
 - **Accounts in this organizational directory only (Single tenant)** - Most common for enterprise
 - **Accounts in any organizational directory (Multi-tenant)** - For multi-organization access
 - **Accounts in any organizational directory and personal Microsoft accounts** - Public access (not recommended)
 
 **Redirect URI**:
+
 - Platform: **Web**
 - URI: `https://gateway.yourcompany.com/auth/sso/callback/entra`
 - For development, you can add: `http://localhost:8000/auth/sso/callback/entra`
@@ -62,6 +64,7 @@ After registration, you'll see the **Overview** page:
 ### 2.2 Copy Secret Value
 
 **CRITICAL**: Copy the secret value immediately:
+
 - The **Value** column shows the secret (not the Secret ID)
 - This value is only shown once - you cannot retrieve it later
 - This is your `SSO_ENTRA_CLIENT_SECRET`
@@ -460,6 +463,7 @@ https://your-domain.com/auth/sso/callback/azure  # Wrong provider ID
 ```
 
 To fix:
+
 1. Go to Azure Portal → App registrations → Your app
 2. Click **Authentication**
 3. Add/correct the redirect URI under **Web**
@@ -552,12 +556,14 @@ SSO_ENTRA_TENANT_ID=correct-tenant-id-here
 ### Secret Management
 
 **DO**:
+
 - ✅ Store client secrets in Azure Key Vault
 - ✅ Rotate secrets regularly (every 90-180 days)
 - ✅ Use separate app registrations for dev/staging/prod
 - ✅ Set secret expiration reminders
 
 **DON'T**:
+
 - ❌ Store secrets in source control
 - ❌ Share secrets via email or chat
 - ❌ Use the same secret across environments
