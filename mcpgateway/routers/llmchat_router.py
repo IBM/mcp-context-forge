@@ -8,13 +8,16 @@ LLM Chat Router Module
 
 This module provides FastAPI endpoints for managing LLM-based chat sessions
 with MCP (Model Context Protocol) server integration. It supports multiple
-LLM providers including Azure OpenAI, OpenAI, and Ollama.
+LLM providers including Azure OpenAI, OpenAI, Anthropic, AWS Bedrock, and Ollama.
 
 The module handles user session management, configuration, and real-time
-streaming responses for conversational AI applications.
+streaming responses for conversational AI applications with unified chat
+history management via ChatHistoryManager from mcp_client_chat_service.
+
 """
 
 # Standard
+import asyncio
 import json
 import os
 from typing import Any, Dict, Optional
@@ -38,6 +41,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     AnthropicConfig,
     AWSBedrockConfig,
     AzureOpenAIConfig,
+    ChatHistoryManager,
     LLMConfig,
     MCPChatService,
     MCPClientConfig,
@@ -52,22 +56,19 @@ load_dotenv()
 # Initialize router
 llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
 
-
-# Redis / In-memory hybrid session storage
+# Redis client initialization
 redis_client = None
 if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
     if aioredis is None:
         raise RuntimeError("Redis support requires 'redis' package. Install with: pip install redis[async]")
     redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
-    print("USINGREDISINLLMCHAT")
 
-# Fallback in-memory stores
-
+# Fallback in-memory stores (used when Redis unavailable)
 # Store active chat sessions per user
 active_sessions: Dict[str, MCPChatService] = {}
+
 # Store configuration per user
 user_configs: Dict[str, MCPClientConfig] = {}
-
 
 # Logging
 logging_service = LoggingService()
@@ -261,6 +262,8 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
     Supported Providers:
         - azure_openai: Requires api_key and azure_endpoint
         - openai: Requires api_key
+        - anthropic: Requires api_key
+        - aws_bedrock: Requires model_id
         - ollama: Requires model name
 
     Examples:
@@ -310,8 +313,10 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
                 temperature=fallback(cfg.get("temperature"), "AZURE_OPENAI_TEMPERATURE", 0.7),
             ),
         )
+
     elif provider == "openai":
         api_key = fallback(cfg.get("api_key"), "OPENAI_API_KEY")
+
         if not api_key:
             raise ValueError("OpenAI API key is required but not provided")
 
@@ -327,8 +332,10 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
                 max_retries=fallback(cfg.get("max_retries"), "OPENAI_MAX_RETRIES", 2),
             ),
         )
+
     elif provider == "anthropic":
         api_key = fallback(cfg.get("api_key"), "ANTHROPIC_API_KEY")
+
         if not api_key:
             raise ValueError("Anthropic API key is required but not provided")
 
@@ -343,8 +350,10 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
                 max_retries=fallback(cfg.get("max_retries"), "ANTHROPIC_MAX_RETRIES", 2),
             ),
         )
+
     elif provider == "aws_bedrock":
         model_id = fallback(cfg.get("model_id"), "AWS_BEDROCK_MODEL_ID")
+
         if not model_id:
             raise ValueError("AWS Bedrock model_id is required but not provided")
 
@@ -360,8 +369,10 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
                 max_tokens=fallback(cfg.get("max_tokens"), "AWS_BEDROCK_MAX_TOKENS", 4096),
             ),
         )
+
     elif provider == "ollama":
         model = fallback(cfg.get("model"), "OLLAMA_MODEL", "llama3")
+
         if not model:
             raise ValueError("Ollama model name is required but not provided")
 
@@ -425,7 +436,6 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
 # Identify this worker uniquely (used for sticky session ownership)
 WORKER_ID = os.getenv("WORKER_ID") or os.getenv("HOSTNAME") or str(os.getpid())
 
-
 # Tunables (can set via environment)
 SESSION_TTL = int(os.getenv("SESSION_TTL", "300"))  # seconds for active_session key TTL
 LOCK_TTL = int(os.getenv("SESSION_LOCK_TTL", "30"))  # seconds for lock expiry
@@ -435,21 +445,51 @@ LOCK_WAIT = float(os.getenv("SESSION_LOCK_WAIT", "0.2"))  # seconds between poll
 
 # Redis key helpers
 def _cfg_key(user_id: str) -> str:
+    """Generate Redis key for user configuration storage.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        str: Redis key for storing user configuration.
+    """
     return f"user_config:{user_id}"
 
 
 def _active_key(user_id: str) -> str:
+    """Generate Redis key for active session tracking.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        str: Redis key for tracking active sessions.
+    """
     return f"active_session:{user_id}"
 
 
 def _lock_key(user_id: str) -> str:
+    """Generate Redis key for session initialization lock.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        str: Redis key for session locks.
+    """
     return f"session_lock:{user_id}"
 
 
-# ---------- CONFIG HELPERS (unchanged logic, but async) ----------
+# ---------- CONFIG HELPERS ----------
 
 
 async def set_user_config(user_id: str, config: MCPClientConfig):
+    """Store user configuration in Redis or memory.
+
+    Args:
+        user_id: User identifier.
+        config: Complete MCP client configuration.
+    """
     if redis_client:
         await redis_client.set(_cfg_key(user_id), json.dumps(config.model_dump()))
     else:
@@ -457,6 +497,14 @@ async def set_user_config(user_id: str, config: MCPClientConfig):
 
 
 async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
+    """Retrieve user configuration from Redis or memory.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Optional[MCPClientConfig]: User configuration if found, None otherwise.
+    """
     if redis_client:
         data = await redis_client.get(_cfg_key(user_id))
         if not data:
@@ -466,9 +514,13 @@ async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
 
 
 async def delete_user_config(user_id: str):
+    """Delete user configuration from Redis or memory.
+
+    Args:
+        user_id: User identifier.
+    """
     if redis_client:
         await redis_client.delete(_cfg_key(user_id))
-        await redis_client.delete(f"chat_history:{user_id}")
     else:
         user_configs.pop(user_id, None)
 
@@ -477,7 +529,12 @@ async def delete_user_config(user_id: str):
 
 
 async def set_active_session(user_id: str, session: MCPChatService):
-    """Register an active session locally and mark ownership in Redis with TTL."""
+    """Register an active session locally and mark ownership in Redis with TTL.
+
+    Args:
+        user_id: User identifier.
+        session: Initialized MCPChatService instance.
+    """
     active_sessions[user_id] = session
     if redis_client:
         # set owner with TTL so dead workers eventually lose ownership
@@ -485,21 +542,36 @@ async def set_active_session(user_id: str, session: MCPChatService):
 
 
 async def delete_active_session(user_id: str):
-    """Remove active session locally and from Redis."""
+    """Remove active session locally and from Redis.
+
+    Args:
+        user_id: User identifier.
+    """
     active_sessions.pop(user_id, None)
     if redis_client:
         await redis_client.delete(_active_key(user_id))
 
 
 async def _try_acquire_lock(user_id: str) -> bool:
-    """Attempt to acquire the initialization lock for a user session."""
+    """Attempt to acquire the initialization lock for a user session.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        bool: True if lock acquired, False otherwise.
+    """
     if not redis_client:
         return True  # no redis -> local only, no lock required
     return await redis_client.set(_lock_key(user_id), WORKER_ID, nx=True, ex=LOCK_TTL)
 
 
 async def _release_lock_safe(user_id: str):
-    """Release the lock only if we own it (best-effort)."""
+    """Release the lock only if we own it (best-effort).
+
+    Args:
+        user_id: User identifier.
+    """
     if not redis_client:
         return
     val = await redis_client.get(_lock_key(user_id))
@@ -508,18 +580,23 @@ async def _release_lock_safe(user_id: str):
 
 
 async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatService]:
-    """Create MCPChatService locally from stored config. Returns the session or None."""
+    """Create MCPChatService locally from stored config.
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Optional[MCPChatService]: Initialized service or None if creation fails.
+    """
     config = await get_user_config(user_id)
     if not config:
         return None
 
-    # create and initialize
+    # create and initialize with unified history manager
     try:
-        chat_service = MCPChatService(config)
+        chat_service = MCPChatService(config, user_id=user_id, redis_client=redis_client)
         await chat_service.initialize()
         await set_active_session(user_id, chat_service)
-        await save_chat_history(user_id, [])
-
         return chat_service
     except Exception as e:
         # If initialization fails, ensure nothing partial remains
@@ -531,15 +608,21 @@ async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatSer
 
 async def get_active_session(user_id: str) -> Optional[MCPChatService]:
     """
-    Retrieve or (if possible) create the active session for `user_id`.
+    Retrieve or (if possible) create the active session for user_id.
 
     Behavior:
-      - If Redis is disabled: return local session or None.
-      - If Redis enabled:
-          * If owner == WORKER_ID and local session exists -> return it (and refresh TTL)
-          * If owner == WORKER_ID but local missing -> try to acquire lock and recreate
-          * If no owner -> try to acquire lock and create session here
-          * If owner != WORKER_ID -> wait a short time for owner to appear or return None
+    - If Redis is disabled: return local session or None.
+    - If Redis enabled:
+      * If owner == WORKER_ID and local session exists -> return it (and refresh TTL)
+      * If owner == WORKER_ID but local missing -> try to acquire lock and recreate
+      * If no owner -> try to acquire lock and create session here
+      * If owner != WORKER_ID -> wait a short time for owner to appear or return None
+
+    Args:
+        user_id: User identifier.
+
+    Returns:
+        Optional[MCPChatService]: Active session if available, None otherwise.
     """
     # Fast path: no redis => purely local
     if not redis_client:
@@ -547,7 +630,6 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
 
     active_key = _active_key(user_id)
     lock_key = _lock_key(user_id)
-
     owner = await redis_client.get(active_key)
 
     # 1) Owned by this worker
@@ -561,6 +643,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
                 # non-fatal if expire fails
                 pass
             return local
+
         # Owner in Redis points to this worker but local session missing (process restart or lost).
         # Try to recreate it (acquire lock).
         acquired = await _try_acquire_lock(user_id)
@@ -588,6 +671,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
                 return session
             finally:
                 await _release_lock_safe(user_id)
+
         # if we couldn't acquire lock, someone else is creating; wait a short time
         for _ in range(LOCK_RETRIES):
             await asyncio.sleep(LOCK_WAIT)
@@ -597,6 +681,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
             if owner2 is not None and owner2 != WORKER_ID:
                 # some other worker now owns it
                 return None
+
         # final attempt to acquire lock (last resort)
         acquired = await _try_acquire_lock(user_id)
         if acquired:
@@ -610,33 +695,6 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
     # 3) Owned by another worker -> we don't have it locally
     # Optionally we could attempt to "steal" if owner is stale, but TTL expiry handles that.
     return None
-
-
-# ---------- CHAT HISTORY (persistent conversation context) ----------
-
-CHAT_HISTORY_TTL = int(os.getenv("CHAT_HISTORY_TTL", "3600"))  # 1 hour default
-
-
-async def get_chat_history(user_id: str) -> list:
-    """Fetch chat history (list of dicts) for a user."""
-    if redis_client:
-        data = await redis_client.get(f"chat_history:{user_id}")
-        if not data:
-            return []
-        try:
-            return json.loads(data)
-        except Exception:
-            return []
-    return getattr(active_sessions.get(user_id), "_chat_history", [])
-
-
-async def save_chat_history(user_id: str, history: list):
-    """Save chat history to Redis or memory."""
-    if redis_client:
-        await redis_client.set(f"chat_history:{user_id}", json.dumps(history), ex=CHAT_HISTORY_TTL)
-    else:
-        if user_id in active_sessions:
-            setattr(active_sessions[user_id], "_chat_history", history)
 
 
 # ---------- ROUTES ----------
@@ -671,7 +729,6 @@ async def connect(input_data: ConnectInput, request: Request):
             401: Missing authentication token.
             503: Failed to connect to MCP server.
             500: Service initialization failure or unexpected error.
-
 
     Examples:
         This endpoint is called via HTTP POST and cannot be directly tested with doctest.
@@ -712,7 +769,7 @@ async def connect(input_data: ConnectInput, request: Request):
             raise HTTPException(status_code=400, detail="Invalid user ID provided")
 
         # Handle authentication token
-        if input_data.server.auth_token is None or input_data.server.auth_token == "":
+        if input_data.server and (input_data.server.auth_token is None or input_data.server.auth_token == ""):
             jwt_token = request.cookies.get("jwt_token")
             if not jwt_token:
                 raise HTTPException(status_code=401, detail="Authentication required. Please ensure you are logged in.")
@@ -740,8 +797,11 @@ async def connect(input_data: ConnectInput, request: Request):
 
         # Initialize chat service
         try:
-            chat_service = MCPChatService(config)
+            chat_service = MCPChatService(config, user_id=user_id, redis_client=redis_client)
             await chat_service.initialize()
+
+            # Clear chat history on new connection
+            await chat_service.clear_history()
         except ConnectionError as ce:
             # Clean up partial state
             await delete_user_config(user_id)
@@ -779,16 +839,17 @@ async def connect(input_data: ConnectInput, request: Request):
         raise HTTPException(status_code=500, detail=f"Unexpected connection error: {str(e)}")
 
 
-async def token_streamer(chat_service, message: str):
+async def token_streamer(chat_service: MCPChatService, message: str, user_id: str):
     """Stream chat response tokens as Server-Sent Events (SSE).
 
     Asynchronous generator that yields SSE-formatted chunks containing tokens,
     tool invocation updates, and final response data from the chat service.
-    Implements comprehensive error handling for connection, timeout, and runtime issues.
+    Uses the unified ChatHistoryManager for history persistence.
 
     Args:
         chat_service: MCPChatService instance configured for the user session.
         message: User's chat message to process.
+        user_id: User identifier for logging.
 
     Yields:
         bytes: SSE-formatted event data containing:
@@ -799,7 +860,7 @@ async def token_streamer(chat_service, message: str):
             - final: Complete response with metadata
             - error: Error information with recovery status
 
-    Event Types:
+        Event Types:
         - token: {"content": "text chunk"}
         - tool_start: {"type": "tool_start", "tool": "name", ...}
         - tool_end: {"type": "tool_end", "tool": "name", ...}
@@ -837,7 +898,6 @@ async def token_streamer(chat_service, message: str):
         Yields:
             bytes: UTF-8 encoded SSE formatted lines.
         """
-        # Minimal SSE framing
         yield f"event: {event_type}\n".encode("utf-8")
         yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
 
@@ -845,7 +905,8 @@ async def token_streamer(chat_service, message: str):
         async for ev in chat_service.chat_events(message):
             et = ev.get("type")
             if et == "token":
-                async for part in sse("token", {"content": ev.get("content", "")}):
+                content = ev.get("content", "")
+                async for part in sse("token", {"content": content}):
                     yield part
             elif et in ("tool_start", "tool_end", "tool_error"):
                 async for part in sse(et, ev):
@@ -853,6 +914,7 @@ async def token_streamer(chat_service, message: str):
             elif et == "final":
                 async for part in sse("final", ev):
                     yield part
+
     except ConnectionError as ce:
         error_event = {"type": "error", "error": f"Connection lost: {str(ce)}", "recoverable": False}
         async for part in sse("error", error_event):
@@ -861,6 +923,9 @@ async def token_streamer(chat_service, message: str):
         error_event = {"type": "error", "error": "Request timed out waiting for LLM response", "recoverable": True}
         async for part in sse("error", error_event):
             yield part
+    except asyncio.CancelledError:
+        logger.info(f"Stream cancelled by client for user {user_id}")
+        raise
     except RuntimeError as re:
         error_event = {"type": "error", "error": f"Service error: {str(re)}", "recoverable": False}
         async for part in sse("error", error_event):
@@ -877,7 +942,8 @@ async def chat(input_data: ChatInput):
     """Send a message to the user's active chat session and receive a response.
 
     Processes user messages through the configured LLM with MCP tool integration.
-    Supports both streaming (SSE) and non-streaming response modes.
+    Supports both streaming (SSE) and non-streaming response modes. Chat history
+    is managed automatically via the unified ChatHistoryManager.
 
     Args:
         input_data: ChatInput containing user_id, message, and streaming preference.
@@ -891,9 +957,8 @@ async def chat(input_data: ChatInput):
                 - tools: List of tool names used
                 - tool_invocations: Detailed tool call information
                 - elapsed_ms: Processing time in milliseconds
-
         For streaming=True:
-            StreamingResponse: SSE stream of token and event data
+            StreamingResponse: SSE stream of token and event data.
 
     Raises:
         HTTPException: Raised when an HTTP-related error occurs.
@@ -902,7 +967,7 @@ async def chat(input_data: ChatInput):
             504: Request timeout.
             500: Unexpected error.
 
-    Examples:
+        Examples:
         This endpoint is called via HTTP POST and cannot be directly tested with doctest.
 
         Example non-streaming request:
@@ -957,35 +1022,13 @@ async def chat(input_data: ChatInput):
     try:
         if input_data.streaming:
             return StreamingResponse(
-                token_streamer(chat_service, input_data.message),
+                token_streamer(chat_service, input_data.message, user_id),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},  # Disable proxy buffering
             )
         else:
             try:
-                # Load prior chat history
-                history = await get_chat_history(user_id)
-
-                # Optionally: include it in the chat message
-                history = await get_chat_history(user_id)
-
-                # Combine prior history and new message into a single prompt
-                context_text = "\n".join([f"{h['role'].capitalize()}: {h['content']}" for h in history])
-                prompt = f"{context_text}\nUser: {input_data.message}\nAssistant:"
-
-                result = await chat_service.chat_with_metadata(prompt)
-
-                # Append & persist
-                history.append({"role": "user", "content": input_data.message})
-                history.append({"role": "assistant", "content": result["text"]})
-                await save_chat_history(user_id, history)
-
-                # Append new exchanges to history
-                history.append({"role": "user", "content": input_data.message})
-                history.append({"role": "assistant", "content": result["text"]})
-
-                # Save updated history
-                await save_chat_history(user_id, history)
+                result = await chat_service.chat_with_metadata(input_data.message)
 
                 return {
                     "user_id": user_id,
@@ -997,11 +1040,11 @@ async def chat(input_data: ChatInput):
                 }
             except RuntimeError as re:
                 raise HTTPException(status_code=503, detail=f"Chat service error: {str(re)}")
-            except ConnectionError as ce:
-                raise HTTPException(status_code=503, detail=f"Lost connection to MCP server: {str(ce)}. Please reconnect.")
-            except TimeoutError:
-                raise HTTPException(status_code=504, detail="Request timed out. The LLM took too long to respond.")
 
+    except ConnectionError as ce:
+        raise HTTPException(status_code=503, detail=f"Lost connection to MCP server: {str(ce)}. Please reconnect.")
+    except TimeoutError:
+        raise HTTPException(status_code=504, detail="Request timed out. The LLM took too long to respond.")
     except HTTPException:
         raise
     except Exception as e:
@@ -1030,7 +1073,6 @@ async def disconnect(input_data: DisconnectInput):
     Raises:
         HTTPException: Raised when an HTTP-related error occurs.
             400: Missing user_id.
-
 
     Examples:
         This endpoint is called via HTTP POST and cannot be directly tested with doctest.
@@ -1069,6 +1111,7 @@ async def disconnect(input_data: DisconnectInput):
     # Remove and shut down chat service
     chat_service = await get_active_session(user_id)
     await delete_active_session(user_id)
+
     # Remove user config
     await delete_user_config(user_id)
 
@@ -1076,6 +1119,10 @@ async def disconnect(input_data: DisconnectInput):
         return {"status": "no_active_session", "user_id": user_id, "message": "No active session to disconnect"}
 
     try:
+        # Clear chat history on disconnect
+        await chat_service.clear_history()
+        logger.info(f"Chat session disconnected for {user_id}")
+
         await chat_service.shutdown()
         return {"status": "disconnected", "user_id": user_id, "message": "Successfully disconnected"}
     except Exception as e:
@@ -1177,6 +1224,7 @@ async def get_config(user_id: str):
         Never log or expose these values in responses.
     """
     config = await get_user_config(user_id)
+
     if not config:
         raise HTTPException(status_code=404, detail="No config found for this user.")
 
