@@ -14498,7 +14498,9 @@ function buildLLMConfig(provider) {
         const apiKey = document.getElementById("openai-api-key").value.trim();
         const model = document.getElementById("openai-model").value.trim();
         const baseUrl = document.getElementById("openai-base-url").value.trim();
-        const temperature = document.getElementById("openai-temperature").value.trim();
+        const temperature = document
+            .getElementById("openai-temperature")
+            .value.trim();
 
         // Only include non-empty values
         if (apiKey) {
@@ -14514,10 +14516,16 @@ function buildLLMConfig(provider) {
             config.config.temperature = parseFloat(temperature);
         }
     } else if (provider === "anthropic") {
-        const apiKey = document.getElementById("anthropic-api-key").value.trim();
+        const apiKey = document
+            .getElementById("anthropic-api-key")
+            .value.trim();
         const model = document.getElementById("anthropic-model").value.trim();
-        const temperature = document.getElementById("anthropic-temperature").value.trim();
-        const maxTokens = document.getElementById("anthropic-max-tokens").value.trim();
+        const temperature = document
+            .getElementById("anthropic-temperature")
+            .value.trim();
+        const maxTokens = document
+            .getElementById("anthropic-max-tokens")
+            .value.trim();
 
         // Only include non-empty values
         if (apiKey) {
@@ -14533,12 +14541,24 @@ function buildLLMConfig(provider) {
             config.config.max_tokens = parseInt(maxTokens, 10);
         }
     } else if (provider === "aws_bedrock") {
-        const modelId = document.getElementById("aws-bedrock-model-id").value.trim();
-        const region = document.getElementById("aws-bedrock-region").value.trim();
-        const accessKeyId = document.getElementById("aws-access-key-id").value.trim();
-        const secretAccessKey = document.getElementById("aws-secret-access-key").value.trim();
-        const temperature = document.getElementById("aws-bedrock-temperature").value.trim();
-        const maxTokens = document.getElementById("aws-bedrock-max-tokens").value.trim();
+        const modelId = document
+            .getElementById("aws-bedrock-model-id")
+            .value.trim();
+        const region = document
+            .getElementById("aws-bedrock-region")
+            .value.trim();
+        const accessKeyId = document
+            .getElementById("aws-access-key-id")
+            .value.trim();
+        const secretAccessKey = document
+            .getElementById("aws-secret-access-key")
+            .value.trim();
+        const temperature = document
+            .getElementById("aws-bedrock-temperature")
+            .value.trim();
+        const maxTokens = document
+            .getElementById("aws-bedrock-max-tokens")
+            .value.trim();
 
         // Only include non-empty values
         if (modelId) {
