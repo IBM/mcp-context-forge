@@ -8738,9 +8738,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         const isPlatformAdmin = window.IS_ADMIN;
 
         // Check if user is team owner for team-scoped resources
+        // Note: Check both team_id (snake_case) and teamId (camelCase from model_dump(by_alias=True))
         let isTeamOwner = false;
-        if (item.visibility === 'team' && item.team_id && window.USER_TEAMS) {
-          const userTeam = window.USER_TEAMS.find(t => t.id === item.team_id);
+        const itemTeamId = item.team_id || item.teamId;
+        if (item.visibility === 'team' && itemTeamId && window.USER_TEAMS) {
+          const userTeam = window.USER_TEAMS.find(t => t.id === itemTeamId);
           isTeamOwner = userTeam && userTeam.role === 'owner';
         }
 
