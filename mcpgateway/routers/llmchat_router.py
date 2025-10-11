@@ -41,7 +41,6 @@ from mcpgateway.services.mcp_client_chat_service import (
     AnthropicConfig,
     AWSBedrockConfig,
     AzureOpenAIConfig,
-    ChatHistoryManager,
     LLMConfig,
     MCPChatService,
     MCPClientConfig,
@@ -629,7 +628,7 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
         return active_sessions.get(user_id)
 
     active_key = _active_key(user_id)
-    lock_key = _lock_key(user_id)
+    # _lock_key = _lock_key(user_id)
     owner = await redis_client.get(active_key)
 
     # 1) Owned by this worker
@@ -923,9 +922,6 @@ async def token_streamer(chat_service: MCPChatService, message: str, user_id: st
         error_event = {"type": "error", "error": "Request timed out waiting for LLM response", "recoverable": True}
         async for part in sse("error", error_event):
             yield part
-    except asyncio.CancelledError:
-        logger.info(f"Stream cancelled by client for user {user_id}")
-        raise
     except RuntimeError as re:
         error_event = {"type": "error", "error": f"Service error: {str(re)}", "recoverable": False}
         async for part in sse("error", error_event):

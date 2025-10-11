@@ -19,7 +19,6 @@ The module consists of several key components:
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 import json
 import os
@@ -357,12 +356,12 @@ class OpenAIConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "api_key": "sk-...", 
-                "model": "gpt-4o-mini", 
+                "api_key": "sk-...",
+                "model": "gpt-4o-mini",
                 "temperature": 0.7,
-                }
             }
         }
+    }
 
 
 class AnthropicConfig(BaseModel):
@@ -1822,6 +1821,7 @@ class MCPChatService:
         Raises:
             RuntimeError: If service not initialized.
             ValueError: If message is empty.
+            Exception: If processing fails.
 
         Examples:
             >>> import asyncio
@@ -2086,7 +2086,7 @@ class MCPChatService:
                         if tool_runs[run_id]["output"] == "":
                             error = "Tool execution failed: Please check if the tool is accessible"
                             yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
-                        
+
                         yield {"type": "tool_end", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "output": tool_runs[run_id]["output"], "end": now_iso}
 
                     elif kind == "on_tool_error":
@@ -2114,12 +2114,7 @@ class MCPChatService:
             tools_used = list({tr["name"] for tr in tool_runs.values() if tr.get("name")})
 
             # Yield final event
-            yield {
-                "type": "final", 
-                "content": full_response, 
-                "tool_used": len(tools_used) > 0, 
-                "tools": tools_used, 
-                "elapsed_ms": elapsed_ms}
+            yield {"type": "final", "content": full_response, "tool_used": len(tools_used) > 0, "tools": tools_used, "elapsed_ms": elapsed_ms}
 
             # Save history
             if self.user_id and full_response:
