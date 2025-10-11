@@ -242,6 +242,11 @@ sys.stdout.flush()
         assert endpoint._proc is None  # Process object should be cleaned up
         # Pump task might still exist but should be finished/cancelled
         if endpoint._pump_task is not None:
+            # Wait a bit for the task to complete if it's still running
+            for _ in range(10):  # Try up to 10 times (1 second total)
+                if endpoint._pump_task.done():
+                    break
+                await asyncio.sleep(0.1)
             assert endpoint._pump_task.done()  # Task should be finished
 
     @pytest.mark.asyncio
