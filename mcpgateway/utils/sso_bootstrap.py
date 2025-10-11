@@ -42,6 +42,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_google_enabled=False,
         ...     sso_ibm_verify_enabled=False,
         ...     sso_okta_enabled=False,
+        ...     sso_entra_enabled=False,
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
         ...     result = get_predefined_sso_providers()
@@ -53,7 +54,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
         ...     sso_google_enabled=True, sso_google_client_id='gid', sso_google_client_secret='gsec',
-        ...     sso_ibm_verify_enabled=False, sso_okta_enabled=False
+        ...     sso_ibm_verify_enabled=False, sso_okta_enabled=False, sso_entra_enabled=False
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
         ...     result = get_predefined_sso_providers()
@@ -65,7 +66,38 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
         ...     sso_google_enabled=False, sso_okta_enabled=True, sso_okta_client_id='ok', sso_okta_client_secret='os', sso_okta_issuer='https://company.okta.com',
-        ...     sso_ibm_verify_enabled=False
+        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Microsoft Entra ID provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=False, sso_okta_enabled=False,
+        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=True, sso_entra_client_id='entra_client', sso_entra_client_secret='entra_secret', sso_entra_tenant_id='tenant-id-123',
+        ...     sso_generic_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Generic OIDC provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=False, sso_okta_enabled=False, sso_ibm_verify_enabled=False, sso_entra_enabled=False,
+        ...     sso_generic_enabled=True, sso_generic_provider_id='keycloak', sso_generic_display_name='Keycloak',
+        ...     sso_generic_client_id='kc_client', sso_generic_client_secret='kc_secret',
+        ...     sso_generic_authorization_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/auth',
+        ...     sso_generic_token_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token',
+        ...     sso_generic_userinfo_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo',
+        ...     sso_generic_issuer='https://keycloak.company.com/auth/realms/master',
+        ...     sso_generic_scope='openid profile email'
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
         ...     result = get_predefined_sso_providers()
@@ -153,6 +185,53 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "userinfo_url": f"{base_url}/oauth2/default/v1/userinfo",
                 "issuer": f"{base_url}/oauth2/default",
                 "scope": "openid profile email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
+    # Microsoft Entra ID Provider
+    if settings.sso_entra_enabled and settings.sso_entra_client_id and settings.sso_entra_tenant_id:
+        tenant_id = settings.sso_entra_tenant_id
+        base_url = f"https://login.microsoftonline.com/{tenant_id}"
+        providers.append(
+            {
+                "id": "entra",
+                "name": "entra",
+                "display_name": "Microsoft Entra ID",
+                "provider_type": "oidc",
+                "client_id": settings.sso_entra_client_id,
+                "client_secret": settings.sso_entra_client_secret or "",
+                "authorization_url": f"{base_url}/oauth2/v2.0/authorize",
+                "token_url": f"{base_url}/oauth2/v2.0/token",
+                "userinfo_url": "https://graph.microsoft.com/oidc/userinfo",
+                "issuer": f"{base_url}/v2.0",
+                "scope": "openid profile email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
+    # Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.)
+    if settings.sso_generic_enabled and settings.sso_generic_client_id and settings.sso_generic_provider_id:
+        provider_id = settings.sso_generic_provider_id
+        display_name = settings.sso_generic_display_name or provider_id.title()
+
+        providers.append(
+            {
+                "id": provider_id,
+                "name": provider_id,
+                "display_name": display_name,
+                "provider_type": "oidc",
+                "client_id": settings.sso_generic_client_id,
+                "client_secret": settings.sso_generic_client_secret or "",
+                "authorization_url": settings.sso_generic_authorization_url,
+                "token_url": settings.sso_generic_token_url,
+                "userinfo_url": settings.sso_generic_userinfo_url,
+                "issuer": settings.sso_generic_issuer,
+                "scope": settings.sso_generic_scope,
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
                 "team_mapping": {},

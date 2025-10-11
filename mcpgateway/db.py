@@ -3016,7 +3016,8 @@ class SSOProvider(Base):
     """SSO identity provider configuration for OAuth2/OIDC authentication.
 
     Stores configuration and credentials for external identity providers
-    like GitHub, Google, IBM Security Verify, and Okta.
+    like GitHub, Google, IBM Security Verify, Okta, Microsoft Entra ID,
+    and any generic OIDC-compliant provider (Keycloak, Auth0, Authentik, etc.).
 
     Attributes:
         id (str): Unique provider ID (e.g., 'github', 'google', 'ibm_verify')
@@ -3054,7 +3055,7 @@ class SSOProvider(Base):
     __tablename__ = "sso_providers"
 
     # Provider identification
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta, entra, or any custom ID
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(20), nullable=False)  # oauth2, oidc

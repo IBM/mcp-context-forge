@@ -12,7 +12,7 @@ MCP Gateway supports enterprise Single Sign-On authentication through OAuth2 and
 
 The SSO system provides:
 
-- **Multi-Provider Support**: GitHub, Google, IBM Security Verify, and Okta
+- **Multi-Provider Support**: GitHub, Google, IBM Security Verify, Microsoft Entra ID, and Okta
 - **Hybrid Authentication**: SSO alongside preserved local admin authentication
 - **Automatic User Provisioning**: Creates users on first SSO login
 - **Security Best Practices**: PKCE, CSRF protection, encrypted secrets
@@ -82,6 +82,15 @@ Enterprise-grade identity provider with advanced security features.
 - Advanced user attributes
 - Corporate directory integration
 
+### Microsoft Entra ID
+
+Microsoft's cloud-based identity and access management service (formerly Azure AD).
+
+**Features**:
+- Azure Active Directory integration
+- Enterprise application authentication
+- Conditional access policies support
+
 ### Okta
 
 Popular enterprise identity provider with extensive integrations.
@@ -90,6 +99,16 @@ Popular enterprise identity provider with extensive integrations.
 - Enterprise directory synchronization
 - Multi-factor authentication support
 - Custom user attributes
+
+### Generic OIDC Provider
+
+Support for any OpenID Connect compatible identity provider including Keycloak, Auth0, Authentik, and others.
+
+**Features**:
+- Standards-based OIDC integration
+- Flexible endpoint configuration
+- Custom provider branding
+- Works with any OIDC-compliant provider
 
 ## Quick Start
 
@@ -270,6 +289,106 @@ SSO_OKTA_CLIENT_SECRET=1234567890abcdef1234567890abcdef12345678
 SSO_OKTA_ISSUER=https://your-company.okta.com
 ```
 
+### Microsoft Entra ID Setup
+
+#### 1. Azure Portal Configuration
+
+1. **Azure Portal** → **Microsoft Entra ID** → **App registrations**
+2. **New registration**:
+   - **Name**: `MCP Gateway - YourOrg`
+   - **Supported account types**: Accounts in this organizational directory only
+   - **Redirect URI**: `https://your-gateway.com/auth/sso/callback/entra`
+3. After creation, note the **Application (client) ID** and **Directory (tenant) ID**
+4. **Certificates & secrets** → **New client secret** → Note the secret value
+
+#### 2. Environment Variables
+
+```bash
+# Microsoft Entra ID OIDC Configuration
+SSO_ENTRA_ENABLED=true
+SSO_ENTRA_CLIENT_ID=12345678-1234-1234-1234-123456789012
+SSO_ENTRA_CLIENT_SECRET=your-client-secret-value
+SSO_ENTRA_TENANT_ID=87654321-4321-4321-4321-210987654321
+```
+
+#### 3. API Permissions (Optional)
+
+Add Microsoft Graph API permissions for enhanced user profile access:
+- `User.Read` - Basic profile information
+- `profile` - OpenID Connect profile scope
+- `email` - Email address access
+
+### Generic OIDC Provider Setup
+
+Configure any OIDC-compliant provider (Keycloak, Auth0, Authentik, etc.).
+
+#### 1. Obtain Provider Information
+
+From your OIDC provider's configuration (usually at `https://provider.com/.well-known/openid-configuration`):
+
+- **Authorization endpoint**: `https://provider.com/auth`
+- **Token endpoint**: `https://provider.com/token`
+- **Userinfo endpoint**: `https://provider.com/userinfo`
+- **Issuer**: `https://provider.com`
+- **Client ID and Secret**: From provider's application registration
+
+#### 2. Environment Variables
+
+```bash
+# Generic OIDC Provider Configuration
+SSO_GENERIC_ENABLED=true
+SSO_GENERIC_PROVIDER_ID=keycloak  # or auth0, authentik, etc.
+SSO_GENERIC_DISPLAY_NAME=Keycloak
+SSO_GENERIC_CLIENT_ID=your-oidc-client-id
+SSO_GENERIC_CLIENT_SECRET=your-oidc-client-secret
+SSO_GENERIC_AUTHORIZATION_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/auth
+SSO_GENERIC_TOKEN_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token
+SSO_GENERIC_USERINFO_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo
+SSO_GENERIC_ISSUER=https://keycloak.company.com/auth/realms/master
+SSO_GENERIC_SCOPE=openid profile email  # Optional, defaults to this
+```
+
+#### 3. Callback URL Configuration
+
+Configure your provider's redirect URI to:
+```
+https://your-gateway.com/auth/sso/callback/{provider_id}
+```
+
+Replace `{provider_id}` with your configured `SSO_GENERIC_PROVIDER_ID` (e.g., `keycloak`, `auth0`).
+
+#### 4. Provider-Specific Examples
+
+**Keycloak**:
+```bash
+SSO_GENERIC_PROVIDER_ID=keycloak
+SSO_GENERIC_DISPLAY_NAME=Company SSO
+SSO_GENERIC_AUTHORIZATION_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/auth
+SSO_GENERIC_TOKEN_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token
+SSO_GENERIC_USERINFO_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo
+SSO_GENERIC_ISSUER=https://keycloak.company.com/auth/realms/master
+```
+
+**Auth0**:
+```bash
+SSO_GENERIC_PROVIDER_ID=auth0
+SSO_GENERIC_DISPLAY_NAME=Auth0
+SSO_GENERIC_AUTHORIZATION_URL=https://your-tenant.auth0.com/authorize
+SSO_GENERIC_TOKEN_URL=https://your-tenant.auth0.com/oauth/token
+SSO_GENERIC_USERINFO_URL=https://your-tenant.auth0.com/userinfo
+SSO_GENERIC_ISSUER=https://your-tenant.auth0.com/
+```
+
+**Authentik**:
+```bash
+SSO_GENERIC_PROVIDER_ID=authentik
+SSO_GENERIC_DISPLAY_NAME=Authentik
+SSO_GENERIC_AUTHORIZATION_URL=https://authentik.company.com/application/o/authorize/
+SSO_GENERIC_TOKEN_URL=https://authentik.company.com/application/o/token/
+SSO_GENERIC_USERINFO_URL=https://authentik.company.com/application/o/userinfo/
+SSO_GENERIC_ISSUER=https://authentik.company.com/application/o/mcp-gateway/
+```
+
 ## Advanced Configuration
 
 ### Trusted Domains
@@ -348,7 +467,7 @@ GET /auth/sso/login/{provider_id}?redirect_uri={callback_url}&scopes={oauth_scop
 ```
 
 Parameters:
-- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `okta`)
+- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `entra`, `okta`, or configured generic provider ID)
 - `redirect_uri`: Callback URL after authentication
 - `scopes`: Optional space-separated OAuth scopes
 

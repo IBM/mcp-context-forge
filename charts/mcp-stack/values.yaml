@@ -363,6 +363,24 @@ mcpContextForge:
     SSO_OKTA_CLIENT_SECRET: ""             # Okta client secret
     SSO_OKTA_ISSUER: ""                    # Okta issuer URL
 
+    # ─ Microsoft Entra ID OIDC ─
+    SSO_ENTRA_ENABLED: "false"             # enable Microsoft Entra ID (Azure AD) OIDC authentication
+    SSO_ENTRA_CLIENT_ID: ""                # Microsoft Entra ID client ID
+    SSO_ENTRA_CLIENT_SECRET: ""            # Microsoft Entra ID client secret
+    SSO_ENTRA_TENANT_ID: ""                # Microsoft Entra ID tenant ID
+
+    # ─ Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.) ─
+    SSO_GENERIC_ENABLED: "false"           # enable generic OIDC provider authentication
+    SSO_GENERIC_PROVIDER_ID: ""            # provider ID (e.g., keycloak, auth0, authentik)
+    SSO_GENERIC_DISPLAY_NAME: ""           # display name shown on login page
+    SSO_GENERIC_CLIENT_ID: ""              # generic OIDC client ID
+    SSO_GENERIC_CLIENT_SECRET: ""          # generic OIDC client secret
+    SSO_GENERIC_AUTHORIZATION_URL: ""      # authorization endpoint URL
+    SSO_GENERIC_TOKEN_URL: ""              # token endpoint URL
+    SSO_GENERIC_USERINFO_URL: ""           # userinfo endpoint URL
+    SSO_GENERIC_ISSUER: ""                 # OIDC issuer URL
+    SSO_GENERIC_SCOPE: "openid profile email" # OAuth scopes (space-separated)
+
     # ─ Personal Teams Configuration ─
     AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
     PERSONAL_TEAM_PREFIX: personal         # personal team naming prefix
