@@ -1438,10 +1438,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 
     # Build redirect URL with error message if present
     if error_message:
-        # Standard
-        from urllib.parse import quote
-
-        error_param = f"?error={quote(error_message)}"
+        error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
             return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
         return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
@@ -5457,10 +5454,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 
     # Build redirect URL with error message if present
     if error_message:
-        # Standard
-        from urllib.parse import quote
-
-        error_param = f"?error={quote(error_message)}"
+        error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
             return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
         return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
@@ -6321,10 +6315,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
     # Build redirect URL with error message if present
     if error_message:
-        # Standard
-        from urllib.parse import quote
-
-        error_param = f"?error={quote(error_message)}"
+        error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
             return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
         return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
@@ -6745,10 +6736,7 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
 
     # Build redirect URL with error message if present
     if error_message:
-        # Standard
-        from urllib.parse import quote
-
-        error_param = f"?error={quote(error_message)}"
+        error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
             return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
         return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
@@ -7273,10 +7261,7 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
 
     # Build redirect URL with error message if present
     if error_message:
-        # Standard
-        from urllib.parse import quote
-
-        error_param = f"?error={quote(error_message)}"
+        error_param = f"?error={urllib.parse.quote(error_message)}"
         if is_inactive_checked.lower() == "true":
             return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
         return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
@@ -9223,10 +9208,7 @@ async def admin_delete_a2a_agent(
 
     # Build redirect URL with error message if present
     if error_message:
-        # Standard
-        from urllib.parse import quote
-
-        error_param = f"?error={quote(error_message)}"
+        error_param = f"?error={urllib.parse.quote(error_message)}"
         return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
 
     return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
