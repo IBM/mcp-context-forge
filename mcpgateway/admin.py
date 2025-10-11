@@ -7595,8 +7595,8 @@ async def get_aggregated_metrics(
             - 'resources': Metrics for resources.
             - 'prompts': Metrics for prompts.
             - 'servers': Metrics for servers.
-            - 'topPerformers': A nested dictionary with top 5 tools, resources, prompts,
-              and servers.
+            - 'topPerformers': A nested dictionary with all tools, resources, prompts,
+              and servers with their metrics.
     """
     metrics = {
         "tools": await tool_service.aggregate_metrics(db),
@@ -7604,10 +7604,10 @@ async def get_aggregated_metrics(
         "prompts": await prompt_service.aggregate_metrics(db),
         "servers": await server_service.aggregate_metrics(db),
         "topPerformers": {
-            "tools": await tool_service.get_top_tools(db, limit=5),
-            "resources": await resource_service.get_top_resources(db, limit=5),
-            "prompts": await prompt_service.get_top_prompts(db, limit=5),
-            "servers": await server_service.get_top_servers(db, limit=5),
+            "tools": await tool_service.get_top_tools(db, limit=None),
+            "resources": await resource_service.get_top_resources(db, limit=None),
+            "prompts": await prompt_service.get_top_prompts(db, limit=None),
+            "servers": await server_service.get_top_servers(db, limit=None),
         },
     }
     return metrics
