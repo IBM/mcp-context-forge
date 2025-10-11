@@ -1325,6 +1325,20 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `SSO_IBM_VERIFY_CLIENT_SECRET` | IBM Security Verify client secret               | (none)                | string  |
 | `SSO_IBM_VERIFY_ISSUER`       | IBM Security Verify OIDC issuer URL             | (none)                | string  |
 
+**Keycloak OIDC:**
+| Setting                              | Description                                      | Default                    | Options |
+| ------------------------------------ | ------------------------------------------------ | -------------------------- | ------- |
+| `SSO_KEYCLOAK_ENABLED`              | Enable Keycloak OIDC authentication              | `false`                    | bool    |
+| `SSO_KEYCLOAK_BASE_URL`             | Keycloak base URL                                | (none)                     | string  |
+| `SSO_KEYCLOAK_REALM`                | Keycloak realm name                              | `master`                   | string  |
+| `SSO_KEYCLOAK_CLIENT_ID`            | Keycloak client ID                               | (none)                     | string  |
+| `SSO_KEYCLOAK_CLIENT_SECRET`        | Keycloak client secret                           | (none)                     | string  |
+| `SSO_KEYCLOAK_MAP_REALM_ROLES`      | Map Keycloak realm roles to gateway teams        | `true`                     | bool    |
+| `SSO_KEYCLOAK_MAP_CLIENT_ROLES`     | Map Keycloak client roles to gateway RBAC        | `false`                    | bool    |
+| `SSO_KEYCLOAK_USERNAME_CLAIM`       | JWT claim for username                           | `preferred_username`       | string  |
+| `SSO_KEYCLOAK_EMAIL_CLAIM`          | JWT claim for email                              | `email`                    | string  |
+| `SSO_KEYCLOAK_GROUPS_CLAIM`         | JWT claim for groups/roles                       | `groups`                   | string  |
+
 **Microsoft Entra ID OIDC:**
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
@@ -1333,7 +1347,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `SSO_ENTRA_CLIENT_SECRET`     | Microsoft Entra ID client secret                 | (none)                | string  |
 | `SSO_ENTRA_TENANT_ID`         | Microsoft Entra ID tenant ID                     | (none)                | string  |
 
-**Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.):**
+**Generic OIDC Provider (Auth0, Authentik, etc.):**
 | Setting                              | Description                                      | Default                    | Options |
 | ------------------------------------ | ------------------------------------------------ | -------------------------- | ------- |
 | `SSO_GENERIC_ENABLED`               | Enable generic OIDC provider authentication      | `false`                    | bool    |
