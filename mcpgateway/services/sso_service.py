@@ -592,12 +592,23 @@ class SSOService:
 
         # Handle Microsoft Entra ID provider
         if provider.id == "entra":
+            # Microsoft's userinfo endpoint often omits the email claim
+            # Fallback: preferred_username (UPN) or upn claim
+            email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn")
+
+            # Extract username from email/UPN
+            username = None
+            if user_data.get("preferred_username"):
+                username = user_data.get("preferred_username")
+            elif email:
+                username = email.split("@")[0]
+
             return {
-                "email": user_data.get("email"),
-                "full_name": user_data.get("name"),
+                "email": email,
+                "full_name": user_data.get("name") or email,  # Fallback to email if name missing
                 "avatar_url": user_data.get("picture"),
                 "provider_id": user_data.get("sub") or user_data.get("oid"),
-                "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
+                "username": username,
                 "provider": "entra",
             }
 
