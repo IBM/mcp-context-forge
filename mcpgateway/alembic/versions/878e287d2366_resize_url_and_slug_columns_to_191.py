@@ -19,13 +19,43 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Truncate existing values longer than 191 chars
-    op.execute("""
-        UPDATE gateways
-        SET slug = LEFT(slug, 191),
-            url = LEFT(url, 191)
-        WHERE LENGTH(slug) > 191 OR LENGTH(url) > 191;
-    """)
+    # Get database dialect for dialect-specific operations
+    bind = op.get_bind()
+    dialect_name = bind.dialect.name
+
+    # Truncate existing values longer than 191 chars using dialect-appropriate functions
+    if dialect_name == 'sqlite':
+        # SQLite uses SUBSTR and LENGTH
+        op.execute("""
+            UPDATE gateways
+            SET slug = SUBSTR(slug, 1, 191),
+                url = SUBSTR(url, 1, 191)
+            WHERE LENGTH(slug) > 191 OR LENGTH(url) > 191;
+        """)
+    elif dialect_name == 'postgresql':
+        # PostgreSQL supports LEFT and CHAR_LENGTH
+        op.execute("""
+            UPDATE gateways
+            SET slug = LEFT(slug, 191),
+                url = LEFT(url, 191)
+            WHERE CHAR_LENGTH(slug) > 191 OR CHAR_LENGTH(url) > 191;
+        """)
+    elif dialect_name == 'mysql':
+        # MySQL supports LEFT and CHAR_LENGTH (character-based, not byte-based)
+        op.execute("""
+            UPDATE gateways
+            SET slug = LEFT(slug, 191),
+                url = LEFT(url, 191)
+            WHERE CHAR_LENGTH(slug) > 191 OR CHAR_LENGTH(url) > 191;
+        """)
+    else:
+        # Fallback for other databases
+        op.execute("""
+            UPDATE gateways
+            SET slug = SUBSTR(slug, 1, 191),
+                url = SUBSTR(url, 1, 191)
+            WHERE LENGTH(slug) > 191 OR LENGTH(url) > 191;
+        """)
 
     # Resize columns to String(191)
     op.alter_column(
