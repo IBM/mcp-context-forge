@@ -614,13 +614,7 @@ class PluginManager:
         for plugin_config in plugins:
             try:
                 # For disabled plugins, create a stub plugin without full instantiation
-                if plugin_config.mode == PluginMode.DISABLED:
-                    # Create a minimal stub plugin for display purposes only
-                    stub_plugin = Plugin(plugin_config)
-                    self._registry.register(stub_plugin)
-                    loaded_count += 1
-                    logger.info(f"Registered disabled plugin: {plugin_config.name} (display only, not instantiated)")
-                else:
+                if plugin_config.mode != PluginMode.DISABLED:
                     # Fully instantiate enabled plugins
                     plugin = await self._loader.load_and_instantiate_plugin(plugin_config)
                     if plugin:
@@ -629,6 +623,9 @@ class PluginManager:
                         logger.info(f"Loaded plugin: {plugin_config.name} (mode: {plugin_config.mode})")
                     else:
                         raise ValueError(f"Unable to instantiate plugin: {plugin_config.name}")
+                else:
+                    logger.info(f"Plugin: {plugin_config.name} is disabled. Ignoring.")
+
             except Exception as e:
                 # Clean error message without stack trace spam
                 logger.error(f"Failed to load plugin '{plugin_config.name}': {str(e)}")

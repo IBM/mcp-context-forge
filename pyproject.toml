@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.8.0"
+version = "0.7.0"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -147,14 +147,6 @@ asyncpg = [
     "asyncpg>=0.30.0",
 ]
 
-# Chuck/Chuk MCP Runtime (optional) - External plugin server runtime
-# Provides MCP tool decorators, plugin hooks, and multi-transport server support
-# Used by: mcpgateway/plugins/framework/external/mcp/server/runtime.py
-# Required only if you plan to create external MCP plugin servers
-chuck = [
-    "chuk-mcp-runtime>=0.6.5",
-]
-
 # Optional dependency groups (development)
 dev = [
     "aiohttp>=3.12.15",
@@ -164,7 +156,6 @@ dev = [
     "black>=25.1.0",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
-    "chuk-mcp-runtime>=0.6.5",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.6",
@@ -259,6 +250,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
 mcpplugins = "mcpgateway.plugins.tools.cli:main"
+cforge = "mcpgateway.tools.cli:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration
@@ -277,6 +269,9 @@ exclude = ["tests*"]
 #  - templates -> Jinja2 templates shipped at runtime
 [tool.setuptools.package-data]
 mcpgateway = [
+  "tools/builder/templates/*.yaml.j2",
+  "tools/builder/templates/compose/*.yaml.j2",
+  "tools/builder/templates/kubernetes/*.yaml.j2",
   "py.typed",
   "static/*.css",
   "static/*.js",
