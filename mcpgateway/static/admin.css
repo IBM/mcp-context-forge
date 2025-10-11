@@ -216,3 +216,850 @@
 .fixed.z-10 {
     z-index: 9999 !important;
 }
+
+/* ===== LLM Chat — equal heights + fixed, scrollable servers card ===== */
+
+/* ========================================
+   LLM CHAT PANEL - IMPROVED UI
+   ======================================== */
+
+/* Main Container */
+#llm-chat-panel {
+    width: 100%;
+}
+
+#llm-chat-panel .max-w-7xl {
+    max-width: none !important;
+    padding-inline: clamp(12px, 1.6vw, 24px);
+}
+
+/* Layout: Left Sidebar + Right Chat */
+#llm-chat-panel .flex.gap-6 {
+    min-height: 0;
+}
+
+/* Left Sidebar - Virtual Servers */
+#llm-chat-panel .w-80 {
+    flex: 0 0 clamp(280px, 22%, 340px);
+    min-height: 0;
+}
+
+/* Server List Scrollable Container */
+#llm-chat-servers-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding-bottom: 0.5rem;
+    overflow-y: auto;
+    min-height: 0;
+    max-height: 100%;
+}
+
+/* Server Item Card */
+.server-item {
+    padding: 0.75rem;
+    border-width: 2px;
+    border-radius: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    background: linear-gradient(to bottom, rgb(255 255 255 / 80%), rgb(249 250 251 / 80%));
+}
+
+.server-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 10%);
+    border-color: rgb(99 102 241);
+}
+
+.server-item.border-indigo-500 {
+    background: linear-gradient(to bottom, rgb(238 242 255 / 100%), rgb(224 231 255 / 100%));
+    border-color: rgb(99 102 241);
+    box-shadow: 0 4px 12px rgb(99 102 241 / 25%);
+}
+
+.dark .server-item {
+    background: linear-gradient(to bottom, rgb(31 41 55 / 80%), rgb(17 24 39 / 80%));
+}
+
+.dark .server-item:hover {
+    box-shadow: 0 4px 12px rgb(99 102 241 / 30%);
+}
+
+.dark .server-item.border-indigo-500 {
+    background: linear-gradient(to bottom, rgb(49 46 129 / 40%), rgb(67 56 202 / 30%));
+}
+
+/* Right Chat Area */
+#llm-chat-panel .flex-1 {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Configuration Toggle Button */
+#llm-config-toggle {
+    transition: all 0.2s ease;
+}
+
+#llm-config-toggle:hover {
+    background-color: rgb(243 244 246 / 100%);
+}
+
+.dark #llm-config-toggle:hover {
+    background-color: rgb(55 65 81 / 100%);
+}
+
+#llm-config-chevron {
+    transition: transform 0.2s ease;
+}
+
+#llm-config-container:has(#llm-config-form:not(.hidden)) #llm-config-chevron {
+    transform: rotate(180deg);
+}
+
+/* Chat Messages Container */
+#chat-messages-container {
+    flex: 1;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+    min-height: 0;
+    scrollbar-width: thin;
+    scrollbar-color: rgb(156 163 175 / 50%) transparent;
+}
+
+#chat-messages-container::-webkit-scrollbar {
+    width: 6px;
+}
+
+#chat-messages-container::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#chat-messages-container::-webkit-scrollbar-thumb {
+    background-color: rgb(156 163 175 / 50%);
+    border-radius: 3px;
+}
+
+#chat-messages-container::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175 / 70%);
+}
+
+/* Chat Message Bubbles */
+.chat-message {
+    display: flex;
+    align-items: flex-start;
+    width: 100%;
+    margin: 0.375rem 0;
+    animation: message-slide-in 0.3s ease-out;
+}
+
+
+@keyframes message-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* User Message (Right-aligned) */
+.user-message {
+    justify-content: flex-end;
+}
+
+.user-message .rounded-lg {
+    max-width: 75%;
+    background: linear-gradient(135deg, rgb(99 102 241), rgb(139 92 246));
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 1rem 1rem 0.25rem;
+    line-height: 1.3;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    box-shadow: 0 2px 8px rgb(99 102 241 / 30%);
+}
+
+/* Assistant Message (Left-aligned) */
+.assistant-message {
+    justify-content: flex-start;
+}
+
+.assistant-message .rounded-lg {
+    max-width: 75%;
+    background: white;
+    color: rgb(17 24 39);
+    padding: 0.375rem 0.75rem;
+    border-radius: 1rem 1rem 1rem 0.25rem;
+    line-height: 1.3;
+    overflow-wrap: break-word;
+    white-space: pre-wrap;
+    border: 1px solid rgb(229 231 235);
+    box-shadow: 0 2px 6px rgb(0 0 0 / 8%);
+}
+
+
+
+.dark .assistant-message .rounded-lg {
+    background: rgb(31 41 55);
+    color: rgb(243 244 246);
+    border-color: rgb(55 65 81);
+    box-shadow: 0 2px 6px rgb(0 0 0 / 30%);
+}
+
+/* System Message (Centered) */
+.system-message {
+    justify-content: center;
+}
+
+.system-message .rounded-lg {
+    max-width: 80%;
+    background: rgb(254 243 199 / 90%);
+    color: rgb(146 64 14);
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.813rem;
+    text-align: center;
+}
+
+.dark .system-message .rounded-lg {
+    background: rgb(120 53 15 / 30%);
+    color: rgb(253 224 71);
+}
+
+/* Streaming Indicator (Typing dots) */
+.streaming-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 0.5rem;
+}
+
+.streaming-indicator::before,
+.streaming-indicator::after {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentcolor;
+    opacity: 0.4;
+    animation: typing-dots 1.4s infinite ease-in-out;
+}
+
+.streaming-indicator::before {
+    animation-delay: 0s;
+}
+
+.streaming-indicator::after {
+    animation-delay: 0.2s;
+}
+
+@keyframes typing-dots {
+    0%, 60%, 100% {
+        opacity: 0.4;
+        transform: scale(0.8);
+    }
+
+    30% {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Chat Input Area */
+#chat-input-container {
+    background: rgb(255 255 255 / 98%);
+    backdrop-filter: blur(8px);
+}
+
+.dark #chat-input-container {
+    background: rgb(17 24 39 / 98%);
+}
+
+#chat-input {
+    line-height: 1.5;
+    max-height: 120px;
+    min-height: 48px;
+    overflow-y: auto;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#chat-input:focus {
+    outline: none;
+    border-color: rgb(99 102 241);
+    box-shadow: 0 0 0 3px rgb(99 102 241 / 10%);
+}
+
+#chat-send-btn {
+    transition: all 0.2s ease;
+}
+
+#chat-send-btn:not(:disabled):hover {
+    transform: translateY(-1px);
+}
+
+#chat-send-btn:not(:disabled):active {
+    transform: translateY(0);
+}
+
+/* Welcome Message Animations */
+#chat-welcome-message {
+    animation: fade-in 0.5s ease-in;
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+/* Responsive Design */
+@media (width <= 1024px) {
+    #llm-chat-panel .flex.gap-6 {
+        flex-direction: column;
+        height: auto;
+    }
+
+    #llm-chat-panel .w-80 {
+        width: 100%;
+        flex: none;
+        max-height: 300px;
+    }
+
+    #llm-chat-panel .flex-1 {
+        min-height: 500px;
+    }
+}
+
+/* Scrollbar Styling for Server List */
+#llm-chat-servers-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+#llm-chat-servers-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#llm-chat-servers-list::-webkit-scrollbar-thumb {
+    background-color: rgb(156 163 175 / 40%);
+    border-radius: 3px;
+}
+
+#llm-chat-servers-list::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175 / 60%);
+}
+
+/* Configuration Form Scrollbar */
+#llm-config-form {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(156 163 175 / 50%) transparent;
+}
+
+#llm-config-form::-webkit-scrollbar {
+    width: 6px;
+}
+
+#llm-config-form::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#llm-config-form::-webkit-scrollbar-thumb {
+    background-color: rgb(156 163 175 / 50%);
+    border-radius: 3px;
+}
+
+#llm-config-form::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175 / 70%);
+}
+
+/* Remove default paragraph margins in messages */
+.chat-message .message-content {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1.4;
+}
+
+.chat-message p {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+/* Chat Bubble Padding - Override Tailwind */
+.user-bubble {
+    padding: 6px 12px !important;
+}
+
+
+.assistant-bubble {
+    padding: 6px 12px !important;
+}
+
+.system-bubble {
+    padding: 4px 10px !important;
+}
+
+/* Ensure text has no extra spacing */
+.user-bubble p,
+.assistant-bubble p,
+.system-bubble p {
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 1.3 !important;
+}
+
+.tool-events {
+    border-left: 2px solid rgb(99 102 241 / 25%);
+    padding-left: 8px;
+}
+
+.tool-used-badge {
+    line-height: 1;
+}
+
+/* Active tools tooltip enhancements */
+#llm-active-tools-badge {
+  position: relative;
+}
+
+#llm-active-tools-badge:hover {
+  transform: translateY(-1px);
+}
+
+/* Smooth fade-in animation for tooltip */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Custom scrollbar for tool list */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgb(0 0 0 / 5%);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgb(59 130 246 / 50%);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(59 130 246 / 70%);
+}
+
+/* Dark mode scrollbar */
+.dark .custom-scrollbar::-webkit-scrollbar-track {
+  background: rgb(255 255 255 / 5%);
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgb(96 165 250 / 50%);
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(96 165 250 / 70%);
+}
+
+/* Token requirement badge */
+.bg-yellow-100 {
+    background-color: #fef3c7;
+}
+
+.text-yellow-800 {
+    color: #92400e;
+}
+
+.dark .bg-yellow-100 {
+    background-color: rgb(217 119 6 / 20%);
+}
+
+.dark .text-yellow-800 {
+    color: #fbbf24;
+}
+
+/* ============================================
+   THINKING TAGS UI STYLING
+   ============================================ */
+
+/* Thinking Container - Main wrapper */
+.thinking-container {
+    margin-bottom: 0.75rem;
+    border-radius: 0.5rem;
+    overflow: hidden;
+    background: linear-gradient(135deg, rgb(99 102 241 / 5%), rgb(139 92 246 / 5%));
+    border: 1px solid rgb(99 102 241 / 20%);
+    transition: all 0.2s ease;
+}
+
+.dark .thinking-container {
+    background: linear-gradient(135deg, rgb(99 102 241 / 8%), rgb(139 92 246 / 8%));
+    border-color: rgb(99 102 241 / 30%);
+}
+
+/* Thinking Header - Clickable area */
+.thinking-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+    user-select: none;
+    background: rgb(255 255 255 / 50%);
+    transition: background-color 0.2s ease;
+}
+
+.thinking-header:hover {
+    background: rgb(255 255 255 / 80%);
+}
+
+.dark .thinking-header {
+    background: rgb(31 41 55 / 30%);
+}
+
+.dark .thinking-header:hover {
+    background: rgb(31 41 55 / 50%);
+}
+
+/* Header Content - Left side */
+.thinking-header-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+}
+
+/* Thinking Icon */
+.thinking-icon {
+    width: 1rem;
+    height: 1rem;
+    color: rgb(99 102 241);
+    flex-shrink: 0;
+}
+
+.dark .thinking-icon {
+    color: rgb(147 197 253);
+}
+
+/* Thinking Label */
+.thinking-label {
+    font-size: 0.813rem;
+    font-weight: 600;
+    color: rgb(75 85 99);
+    letter-spacing: 0.01em;
+}
+
+.dark .thinking-label {
+    color: rgb(209 213 219);
+}
+
+/* Thinking Count Badge */
+.thinking-count {
+    font-size: 0.688rem;
+    padding: 0.125rem 0.5rem;
+    background: rgb(99 102 241 / 15%);
+    color: rgb(67 56 202);
+    border-radius: 0.75rem;
+    font-weight: 500;
+}
+
+.dark .thinking-count {
+    background: rgb(99 102 241 / 25%);
+    color: rgb(165 180 252);
+}
+
+/* Toggle Button */
+.thinking-toggle {
+    padding: 0.25rem;
+    border-radius: 0.25rem;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.thinking-toggle:hover {
+    background: rgb(99 102 241 / 10%);
+}
+
+.dark .thinking-toggle:hover {
+    background: rgb(99 102 241 / 20%);
+}
+
+/* Chevron Icon */
+.thinking-chevron {
+    width: 1rem;
+    height: 1rem;
+    color: rgb(107 114 128);
+    transition: transform 0.2s ease;
+}
+
+.dark .thinking-chevron {
+    color: rgb(156 163 175);
+}
+
+/* Thinking Content - Collapsible area */
+.thinking-content {
+    max-height: 600px;
+    overflow-y: auto;
+    padding: 0.75rem;
+    background: rgb(255 255 255 / 30%);
+    transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.2s ease;
+    opacity: 1;
+}
+
+.thinking-content.collapsed {
+    max-height: 0;
+    padding: 0;
+    opacity: 0;
+    overflow: hidden;
+}
+
+.dark .thinking-content {
+    background: rgb(17 24 39 / 30%);
+}
+
+/* Custom scrollbar for thinking content */
+.thinking-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.thinking-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.thinking-content::-webkit-scrollbar-thumb {
+    background-color: rgb(156 163 175 / 40%);
+    border-radius: 3px;
+}
+
+.thinking-content::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175 / 60%);
+}
+
+/* Individual Thinking Step */
+.thinking-step {
+    display: flex;
+    gap: 0.625rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgb(229 231 235 / 50%);
+    animation: thinking-step-in 0.3s ease-out;
+}
+
+.thinking-step:last-child {
+    border-bottom: none;
+}
+
+.dark .thinking-step {
+    border-bottom-color: rgb(55 65 81 / 50%);
+}
+
+/* Animation for thinking steps appearing */
+@keyframes thinking-step-in {
+    from {
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Step Number Circle */
+.thinking-step-number {
+    flex-shrink: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgb(99 102 241), rgb(139 92 246));
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.688rem;
+    font-weight: 600;
+    box-shadow: 0 2px 4px rgb(99 102 241 / 30%);
+}
+
+.dark .thinking-step-number {
+    box-shadow: 0 2px 4px rgb(99 102 241 / 50%);
+}
+
+/* Step Text Content */
+.thinking-step-text {
+    flex: 1;
+    font-size: 0.813rem;
+    line-height: 1.5;
+    color: rgb(55 65 81);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.dark .thinking-step-text {
+    color: rgb(209 213 219);
+}
+
+/* Final Answer Content - After thinking */
+.final-answer-content {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: rgb(17 24 39);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+}
+
+.dark .final-answer-content {
+    color: rgb(243 244 246);
+}
+
+/* When thinking exists, add subtle separator */
+.thinking-container + .final-answer-content {
+    padding-top: 0.75rem;
+    border-top: 1px solid rgb(229 231 235 / 30%);
+}
+
+.dark .thinking-container + .final-answer-content {
+    border-top-color: rgb(55 65 81 / 30%);
+}
+
+/* Responsive adjustments */
+@media (width <= 640px) {
+    .thinking-container {
+        margin-bottom: 0.5rem;
+    }
+
+    .thinking-header {
+        padding: 0.4rem 0.6rem;
+    }
+
+    .thinking-content {
+        padding: 0.5rem;
+    }
+
+    .thinking-step {
+        gap: 0.5rem;
+    }
+
+    .thinking-step-number {
+        width: 1.25rem;
+        height: 1.25rem;
+        font-size: 0.625rem;
+    }
+
+    .thinking-step-text {
+        font-size: 0.75rem;
+    }
+}
+
+/* ============================================
+   NOTIFICATION ANIMATIONS
+   ============================================ */
+
+/* Smooth transitions for hover states on copy buttons */
+.group:hover svg {
+    transform: scale(1.1);
+}
+
+
+/* ============================================
+   RESPONSIVE TABS
+   ============================================ */
+
+/* Tab navigation container - prevent horizontal overflow */
+nav[class*="-mb-px"] {
+    overflow: auto hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgb(156 163 175 / 50%) transparent;
+    -webkit-overflow-scrolling: touch;
+
+    /* Ensure tabs don't wrap */
+    flex-wrap: nowrap;
+}
+
+/* Hide scrollbar on webkit browsers for cleaner look */
+nav[class*="-mb-px"]::-webkit-scrollbar {
+    height: 4px;
+}
+
+nav[class*="-mb-px"]::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+nav[class*="-mb-px"]::-webkit-scrollbar-thumb {
+    background-color: rgb(156 163 175 / 50%);
+    border-radius: 2px;
+}
+
+nav[class*="-mb-px"]::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(156 163 175 / 70%);
+}
+
+/* Ensure tab links don't shrink below readable size */
+.tab-link {
+    flex-shrink: 0;
+    min-width: max-content;
+}
+
+/* Responsive: stack tabs on very small screens */
+@media (width <= 640px) {
+    nav[class*="-mb-px"] {
+        flex-direction: column;
+        align-items: flex-start;
+        overflow-x: visible;
+    }
+
+    .tab-link {
+        width: 100%;
+        border-bottom: 1px solid rgb(229 231 235 / 50%);
+        border-left: 3px solid transparent;
+        padding-left: 0.75rem;
+    }
+
+    .tab-link[class*="border-indigo"] {
+        border-left-color: rgb(99 102 241);
+        border-bottom-color: transparent;
+    }
+}
+
+/* Medium screens: keep horizontal but with better spacing */
+@media (width >= 641px) and (width <= 1024px) {
+    .tab-link {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+        font-size: 0.813rem;
+    }
+
+    nav[class*="-mb-px"] {
+        gap: 0.5rem;
+    }
+}

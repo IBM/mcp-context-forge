@@ -6,6 +6,7 @@ Revises: 0f81d4a5efe0
 Create Date: 2025-09-30 15:45:43.895080
 
 """
+
 # Standard
 from typing import Sequence, Union
 
