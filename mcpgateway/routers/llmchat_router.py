@@ -25,7 +25,14 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+try:
+    # Third-Party
+    import redis.asyncio as aioredis
+except ImportError:
+    aioredis = None
+
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import (
     AnthropicConfig,
@@ -45,11 +52,22 @@ load_dotenv()
 # Initialize router
 llmchat_router = APIRouter(prefix="/llmchat", tags=["llmchat"])
 
+
+# Redis / In-memory hybrid session storage
+redis_client = None
+if getattr(settings, "cache_type", None) == "redis" and getattr(settings, "redis_url", None):
+    if aioredis is None:
+        raise RuntimeError("Redis support requires 'redis' package. Install with: pip install redis[async]")
+    redis_client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    print("USINGREDISINLLMCHAT")
+
+# Fallback in-memory stores
+
 # Store active chat sessions per user
 active_sessions: Dict[str, MCPChatService] = {}
-
 # Store configuration per user
 user_configs: Dict[str, MCPClientConfig] = {}
+
 
 # Logging
 logging_service = LoggingService()
@@ -402,6 +420,225 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
     )
 
 
+# ---------- SESSION STORAGE HELPERS ----------
+
+# Identify this worker uniquely (used for sticky session ownership)
+WORKER_ID = os.getenv("WORKER_ID") or os.getenv("HOSTNAME") or str(os.getpid())
+
+
+# Tunables (can set via environment)
+SESSION_TTL = int(os.getenv("SESSION_TTL", "300"))  # seconds for active_session key TTL
+LOCK_TTL = int(os.getenv("SESSION_LOCK_TTL", "30"))  # seconds for lock expiry
+LOCK_RETRIES = int(os.getenv("SESSION_LOCK_RETRIES", "10"))  # how many times to poll while waiting
+LOCK_WAIT = float(os.getenv("SESSION_LOCK_WAIT", "0.2"))  # seconds between polls
+
+
+# Redis key helpers
+def _cfg_key(user_id: str) -> str:
+    return f"user_config:{user_id}"
+
+
+def _active_key(user_id: str) -> str:
+    return f"active_session:{user_id}"
+
+
+def _lock_key(user_id: str) -> str:
+    return f"session_lock:{user_id}"
+
+
+# ---------- CONFIG HELPERS (unchanged logic, but async) ----------
+
+
+async def set_user_config(user_id: str, config: MCPClientConfig):
+    if redis_client:
+        await redis_client.set(_cfg_key(user_id), json.dumps(config.model_dump()))
+    else:
+        user_configs[user_id] = config
+
+
+async def get_user_config(user_id: str) -> Optional[MCPClientConfig]:
+    if redis_client:
+        data = await redis_client.get(_cfg_key(user_id))
+        if not data:
+            return None
+        return MCPClientConfig(**json.loads(data))
+    return user_configs.get(user_id)
+
+
+async def delete_user_config(user_id: str):
+    if redis_client:
+        await redis_client.delete(_cfg_key(user_id))
+        await redis_client.delete(f"chat_history:{user_id}")
+    else:
+        user_configs.pop(user_id, None)
+
+
+# ---------- SESSION (active) HELPERS with locking & recreate ----------
+
+
+async def set_active_session(user_id: str, session: MCPChatService):
+    """Register an active session locally and mark ownership in Redis with TTL."""
+    active_sessions[user_id] = session
+    if redis_client:
+        # set owner with TTL so dead workers eventually lose ownership
+        await redis_client.set(_active_key(user_id), WORKER_ID, ex=SESSION_TTL)
+
+
+async def delete_active_session(user_id: str):
+    """Remove active session locally and from Redis."""
+    active_sessions.pop(user_id, None)
+    if redis_client:
+        await redis_client.delete(_active_key(user_id))
+
+
+async def _try_acquire_lock(user_id: str) -> bool:
+    """Attempt to acquire the initialization lock for a user session."""
+    if not redis_client:
+        return True  # no redis -> local only, no lock required
+    return await redis_client.set(_lock_key(user_id), WORKER_ID, nx=True, ex=LOCK_TTL)
+
+
+async def _release_lock_safe(user_id: str):
+    """Release the lock only if we own it (best-effort)."""
+    if not redis_client:
+        return
+    val = await redis_client.get(_lock_key(user_id))
+    if val == WORKER_ID:
+        await redis_client.delete(_lock_key(user_id))
+
+
+async def _create_local_session_from_config(user_id: str) -> Optional[MCPChatService]:
+    """Create MCPChatService locally from stored config. Returns the session or None."""
+    config = await get_user_config(user_id)
+    if not config:
+        return None
+
+    # create and initialize
+    try:
+        chat_service = MCPChatService(config)
+        await chat_service.initialize()
+        await set_active_session(user_id, chat_service)
+        await save_chat_history(user_id, [])
+
+        return chat_service
+    except Exception as e:
+        # If initialization fails, ensure nothing partial remains
+        logger.error(f"Failed to initialize MCPChatService for {user_id}: {e}", exc_info=True)
+        # cleanup local state and redis ownership (if we set it)
+        await delete_active_session(user_id)
+        return None
+
+
+async def get_active_session(user_id: str) -> Optional[MCPChatService]:
+    """
+    Retrieve or (if possible) create the active session for `user_id`.
+
+    Behavior:
+      - If Redis is disabled: return local session or None.
+      - If Redis enabled:
+          * If owner == WORKER_ID and local session exists -> return it (and refresh TTL)
+          * If owner == WORKER_ID but local missing -> try to acquire lock and recreate
+          * If no owner -> try to acquire lock and create session here
+          * If owner != WORKER_ID -> wait a short time for owner to appear or return None
+    """
+    # Fast path: no redis => purely local
+    if not redis_client:
+        return active_sessions.get(user_id)
+
+    active_key = _active_key(user_id)
+    lock_key = _lock_key(user_id)
+
+    owner = await redis_client.get(active_key)
+
+    # 1) Owned by this worker
+    if owner == WORKER_ID:
+        local = active_sessions.get(user_id)
+        if local:
+            # refresh TTL so ownership persists while active
+            try:
+                await redis_client.expire(active_key, SESSION_TTL)
+            except Exception:
+                # non-fatal if expire fails
+                pass
+            return local
+        # Owner in Redis points to this worker but local session missing (process restart or lost).
+        # Try to recreate it (acquire lock).
+        acquired = await _try_acquire_lock(user_id)
+        if acquired:
+            try:
+                # create new local session
+                session = await _create_local_session_from_config(user_id)
+                return session
+            finally:
+                await _release_lock_safe(user_id)
+        else:
+            # someone else is (re)creating; wait a bit for them to finish
+            for _ in range(LOCK_RETRIES):
+                await asyncio.sleep(LOCK_WAIT)
+                if active_sessions.get(user_id):
+                    return active_sessions.get(user_id)
+            return None
+
+    # 2) No owner -> try to claim & create session locally
+    if owner is None:
+        acquired = await _try_acquire_lock(user_id)
+        if acquired:
+            try:
+                session = await _create_local_session_from_config(user_id)
+                return session
+            finally:
+                await _release_lock_safe(user_id)
+        # if we couldn't acquire lock, someone else is creating; wait a short time
+        for _ in range(LOCK_RETRIES):
+            await asyncio.sleep(LOCK_WAIT)
+            owner2 = await redis_client.get(active_key)
+            if owner2 == WORKER_ID and active_sessions.get(user_id):
+                return active_sessions.get(user_id)
+            if owner2 is not None and owner2 != WORKER_ID:
+                # some other worker now owns it
+                return None
+        # final attempt to acquire lock (last resort)
+        acquired = await _try_acquire_lock(user_id)
+        if acquired:
+            try:
+                session = await _create_local_session_from_config(user_id)
+                return session
+            finally:
+                await _release_lock_safe(user_id)
+        return None
+
+    # 3) Owned by another worker -> we don't have it locally
+    # Optionally we could attempt to "steal" if owner is stale, but TTL expiry handles that.
+    return None
+
+
+# ---------- CHAT HISTORY (persistent conversation context) ----------
+
+CHAT_HISTORY_TTL = int(os.getenv("CHAT_HISTORY_TTL", "3600"))  # 1 hour default
+
+
+async def get_chat_history(user_id: str) -> list:
+    """Fetch chat history (list of dicts) for a user."""
+    if redis_client:
+        data = await redis_client.get(f"chat_history:{user_id}")
+        if not data:
+            return []
+        try:
+            return json.loads(data)
+        except Exception:
+            return []
+    return getattr(active_sessions.get(user_id), "_chat_history", [])
+
+
+async def save_chat_history(user_id: str, history: list):
+    """Save chat history to Redis or memory."""
+    if redis_client:
+        await redis_client.set(f"chat_history:{user_id}", json.dumps(history), ex=CHAT_HISTORY_TTL)
+    else:
+        if user_id in active_sessions:
+            setattr(active_sessions[user_id], "_chat_history", history)
+
+
 # ---------- ROUTES ----------
 
 
@@ -475,16 +712,17 @@ async def connect(input_data: ConnectInput, request: Request):
             raise HTTPException(status_code=400, detail="Invalid user ID provided")
 
         # Handle authentication token
-        if input_data.server.auth_token is None or input_data.server.auth_token == "":  # nosec B105 - Checking for empty string, not hardcoded password
+        if input_data.server.auth_token is None or input_data.server.auth_token == "":
             jwt_token = request.cookies.get("jwt_token")
             if not jwt_token:
                 raise HTTPException(status_code=401, detail="Authentication required. Please ensure you are logged in.")
             input_data.server.auth_token = jwt_token
 
         # Close old session if it exists
-        if user_id in active_sessions:
+        existing = await get_active_session(user_id)
+        if existing:
             try:
-                await active_sessions[user_id].shutdown()
+                await existing.shutdown()
             except Exception as shutdown_error:
                 logger.warning(f"Failed to cleanly shutdown existing session for {user_id}: {shutdown_error}")
                 # Continue anyway to establish new connection
@@ -498,7 +736,7 @@ async def connect(input_data: ConnectInput, request: Request):
             raise HTTPException(status_code=400, detail=f"Configuration error: {str(config_error)}")
 
         # Store user configuration
-        user_configs[user_id] = config
+        await set_user_config(user_id, config)
 
         # Initialize chat service
         try:
@@ -506,18 +744,18 @@ async def connect(input_data: ConnectInput, request: Request):
             await chat_service.initialize()
         except ConnectionError as ce:
             # Clean up partial state
-            user_configs.pop(user_id, None)
+            await delete_user_config(user_id)
             raise HTTPException(status_code=503, detail=f"Failed to connect to MCP server: {str(ce)}. Please verify the server URL and authentication.")
         except ValueError as ve:
             # Clean up partial state
-            user_configs.pop(user_id, None)
+            await delete_user_config(user_id)
             raise HTTPException(status_code=400, detail=f"Invalid LLM configuration: {str(ve)}")
         except Exception as init_error:
             # Clean up partial state
-            user_configs.pop(user_id, None)
+            await delete_user_config(user_id)
             raise HTTPException(status_code=500, detail=f"Service initialization failed: {str(init_error)}")
 
-        active_sessions[user_id] = chat_service
+        await set_active_session(user_id, chat_service)
 
         # Extract tool names
         tool_names = []
@@ -708,7 +946,7 @@ async def chat(input_data: ChatInput):
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     # Check for active session
-    chat_service = active_sessions.get(user_id)
+    chat_service = await get_active_session(user_id)
     if not chat_service:
         raise HTTPException(status_code=400, detail="No active session found. Please connect to a server first.")
 
@@ -725,7 +963,30 @@ async def chat(input_data: ChatInput):
             )
         else:
             try:
-                result = await chat_service.chat_with_metadata(input_data.message)
+                # Load prior chat history
+                history = await get_chat_history(user_id)
+
+                # Optionally: include it in the chat message
+                history = await get_chat_history(user_id)
+
+                # Combine prior history and new message into a single prompt
+                context_text = "\n".join([f"{h['role'].capitalize()}: {h['content']}" for h in history])
+                prompt = f"{context_text}\nUser: {input_data.message}\nAssistant:"
+
+                result = await chat_service.chat_with_metadata(prompt)
+
+                # Append & persist
+                history.append({"role": "user", "content": input_data.message})
+                history.append({"role": "assistant", "content": result["text"]})
+                await save_chat_history(user_id, history)
+
+                # Append new exchanges to history
+                history.append({"role": "user", "content": input_data.message})
+                history.append({"role": "assistant", "content": result["text"]})
+
+                # Save updated history
+                await save_chat_history(user_id, history)
+
                 return {
                     "user_id": user_id,
                     "response": result["text"],
@@ -806,9 +1067,10 @@ async def disconnect(input_data: DisconnectInput):
         raise HTTPException(status_code=400, detail="User ID is required")
 
     # Remove and shut down chat service
-    chat_service = active_sessions.pop(user_id, None)
+    chat_service = await get_active_session(user_id)
+    await delete_active_session(user_id)
     # Remove user config
-    user_configs.pop(user_id, None)
+    await delete_user_config(user_id)
 
     if not chat_service:
         return {"status": "no_active_session", "user_id": user_id, "message": "No active session to disconnect"}
@@ -861,7 +1123,8 @@ async def status(user_id: str):
         This endpoint does not validate that the session is properly initialized,
         only that it exists in the active_sessions dictionary.
     """
-    return {"user_id": user_id, "connected": user_id in active_sessions}
+    connected = bool(await get_active_session(user_id))
+    return {"user_id": user_id, "connected": connected}
 
 
 @llmchat_router.get("/config/{user_id}")
@@ -913,7 +1176,7 @@ async def get_config(user_id: str):
         API keys and authentication tokens are explicitly removed before returning.
         Never log or expose these values in responses.
     """
-    config = user_configs.get(user_id)
+    config = await get_user_config(user_id)
     if not config:
         raise HTTPException(status_code=404, detail="No config found for this user.")
 
