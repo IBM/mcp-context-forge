@@ -17,7 +17,7 @@
 
 * **Database-Backed User Authentication** - Argon2id password hashing replacing basic auth ([#544](https://github.com/IBM/mcp-context-forge/issues/544)) 🚧
 
-* **Enterprise SSO Integration** - Support for GitHub, Google, LDAP/Active Directory, and generic OIDC identity providers ([#220](https://github.com/IBM/mcp-context-forge/issues/220), [#277](https://github.com/IBM/mcp-context-forge/issues/277), [#278](https://github.com/IBM/mcp-context-forge/issues/278), [#284](https://github.com/IBM/mcp-context-forge/issues/284), [#1213](https://github.com/IBM/mcp-context-forge/issues/1213))
+* **Enterprise SSO Integration** - Support for GitHub, Google, IBM Security Verify, Microsoft Entra ID, Keycloak, Okta, and generic OIDC identity providers ([#220](https://github.com/IBM/mcp-context-forge/issues/220), [#277](https://github.com/IBM/mcp-context-forge/issues/277), [#278](https://github.com/IBM/mcp-context-forge/issues/278), [#284](https://github.com/IBM/mcp-context-forge/issues/284), [#1213](https://github.com/IBM/mcp-context-forge/issues/1213))
 
 * **OAuth Integration** - Support for OAuth 2.0 for delegated access to MCP servers (✅ [#605](https://github.com/IBM/mcp-context-forge/issues/605))
 
@@ -253,7 +253,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
   - Email-based authentication with Argon2id password hashing
   - JWT tokens with team context and asymmetric algorithm support (HS256/384/512, RS256/384/512, ES256/384/512)
   - OAuth 2.0 with Password Grant Flow, Dynamic Client Registration (DCR), and PKCE support (v0.8.0)
-  - Multi-provider SSO (GitHub, Google, IBM Security Verify, Microsoft Entra ID, Okta, generic OIDC)
+  - Multi-provider SSO (GitHub, Google, IBM Security Verify, Microsoft Entra ID, Keycloak, Okta, generic OIDC)
   - Per-virtual-server API keys and team-level token scoping (v0.8.0)
 * **Input Validation**: Comprehensive validation across all API endpoints using Pydantic v2 (✅ [#339](https://github.com/IBM/mcp-context-forge/issues/339), ✅ [#340](https://github.com/IBM/mcp-context-forge/issues/340))
 * **XSS Prevention**: Character restrictions, URL scheme validation, JSON depth limits (✅ [#409](https://github.com/IBM/mcp-context-forge/issues/409))

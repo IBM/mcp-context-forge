@@ -12,7 +12,7 @@ MCP Gateway supports enterprise Single Sign-On authentication through OAuth2 and
 
 The SSO system provides:
 
-- **Multi-Provider Support**: GitHub, Google, IBM Security Verify, Microsoft Entra ID, and Okta
+- **Multi-Provider Support**: GitHub, Google, IBM Security Verify, Microsoft Entra ID, Keycloak, Okta, and generic OIDC
 - **Hybrid Authentication**: SSO alongside preserved local admin authentication
 - **Automatic User Provisioning**: Creates users on first SSO login
 - **Security Best Practices**: PKCE, CSRF protection, encrypted secrets
@@ -67,6 +67,8 @@ Perfect for developer-focused organizations with GitHub repositories.
 - Repository access integration
 - Developer-friendly onboarding
 
+**Tutorial**: [GitHub SSO Setup Guide](sso-github-tutorial.md)
+
 ### Google OAuth/OIDC
 
 Ideal for Google Workspace organizations.
@@ -76,6 +78,8 @@ Ideal for Google Workspace organizations.
 - Google Workspace domain verification
 - GSuite organization mapping
 - Professional email verification
+
+**Tutorial**: [Google SSO Setup Guide](sso-google-tutorial.md)
 
 ### IBM Security Verify
 
@@ -87,6 +91,8 @@ Enterprise-grade identity provider with advanced security features.
 - Advanced user attributes
 - Corporate directory integration
 
+**Tutorial**: [IBM Security Verify Setup Guide](sso-ibm-tutorial.md)
+
 ### Microsoft Entra ID
 
 Microsoft's cloud-based identity and access management service (formerly Azure AD).
@@ -96,6 +102,23 @@ Microsoft's cloud-based identity and access management service (formerly Azure A
 - Azure Active Directory integration
 - Enterprise application authentication
 - Conditional access policies support
+
+**Tutorial**: [Microsoft Entra ID Setup Guide](sso-microsoft-entra-id-tutorial.md)
+
+### Keycloak
+
+Open-source identity and access management solution with enterprise features.
+
+**Features**:
+
+- Auto-discovery of OIDC endpoints (40% less configuration)
+- User federation with LDAP/Active Directory
+- Identity brokering for external providers
+- Realm and client role mapping
+- Multi-factor authentication support
+- Self-hosted and cost-effective
+
+**Tutorial**: [Keycloak SSO Setup Guide](sso-keycloak-tutorial.md)
 
 ### Okta
 
@@ -107,9 +130,11 @@ Popular enterprise identity provider with extensive integrations.
 - Multi-factor authentication support
 - Custom user attributes
 
+**Tutorial**: [Okta SSO Setup Guide](sso-okta-tutorial.md)
+
 ### Generic OIDC Provider
 
-Support for any OpenID Connect compatible identity provider including Keycloak, Auth0, Authentik, and others.
+Support for any OpenID Connect compatible identity provider including Auth0, Authentik, and others.
 
 **Features**:
 
@@ -117,6 +142,10 @@ Support for any OpenID Connect compatible identity provider including Keycloak, 
 - Flexible endpoint configuration
 - Custom provider branding
 - Works with any OIDC-compliant provider
+
+**Tutorial**: [Generic OIDC Setup Guide](sso-generic-oidc-tutorial.md)
+
+**Note**: For Keycloak, use the dedicated [Keycloak SSO Setup Guide](sso-keycloak-tutorial.md) which leverages auto-discovery for simpler configuration.
 
 ## Quick Start
 
@@ -327,6 +356,43 @@ Add Microsoft Graph API permissions for enhanced user profile access:
 - `profile` - OpenID Connect profile scope
 - `email` - Email address access
 
+**Full Tutorial**: [Microsoft Entra ID Setup Guide](sso-microsoft-entra-id-tutorial.md)
+
+### Keycloak Setup
+
+#### 1. Keycloak Admin Console
+
+1. **Keycloak Admin Console** → **Clients** → **Create client**
+2. **Client type**: OpenID Connect
+3. **Client ID**: `mcp-gateway`
+4. **Client authentication**: On (confidential client)
+5. **Valid redirect URIs**: `https://your-gateway.com/auth/sso/callback/keycloak`
+6. After creation, go to **Credentials** tab and copy the **Client secret**
+
+#### 2. Environment Variables
+
+```bash
+# Keycloak OIDC Configuration (with auto-discovery)
+SSO_KEYCLOAK_ENABLED=true
+SSO_KEYCLOAK_BASE_URL=https://keycloak.yourcompany.com
+SSO_KEYCLOAK_REALM=master
+SSO_KEYCLOAK_CLIENT_ID=mcp-gateway
+SSO_KEYCLOAK_CLIENT_SECRET=your-client-secret-value
+
+# Optional: Role and group mapping
+SSO_KEYCLOAK_MAP_REALM_ROLES=true
+SSO_KEYCLOAK_MAP_CLIENT_ROLES=false
+```
+
+#### 3. Auto-Discovery Benefits
+
+Keycloak's auto-discovery reduces configuration by 40%:
+- Automatically discovers authorization, token, and userinfo endpoints
+- Only requires base URL and realm name
+- No need to manually specify 5+ endpoint URLs
+
+**Full Tutorial**: [Keycloak SSO Setup Guide](sso-keycloak-tutorial.md)
+
 ### Generic OIDC Provider Setup
 
 Configure any OIDC-compliant provider (Keycloak, Auth0, Authentik, etc.).
@@ -477,7 +543,7 @@ GET /auth/sso/login/{provider_id}?redirect_uri={callback_url}&scopes={oauth_scop
 
 Parameters:
 
-- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `entra`, `okta`, or configured generic provider ID)
+- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `entra`, `keycloak`, `okta`, or configured generic provider ID)
 - `redirect_uri`: Callback URL after authentication
 - `scopes`: Optional space-separated OAuth scopes
 
