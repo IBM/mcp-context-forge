@@ -40,9 +40,16 @@ log_monitoring:
   follow_timeout: "30s"
 
 security:
+  # SECURITY: Root path restricts ALL file access within this directory (chroot-like)
+  # When set, all file operations are confined to this root directory
+  # Leave empty ("") to disable root restriction (not recommended for production)
+  # Example: "/opt/monitoring-root" - all paths must be within this directory
+  root_path: ""  # Empty = no root restriction
+
   # SECURITY: Only allow reading from /var/log by default
   # Customize this list for your specific monitoring needs
   # Always use absolute paths, never use /tmp or relative paths
+  # If root_path is set, these paths must be relative to the root
   allowed_paths:
     - "/var/log"
     # Uncomment and customize paths as needed:

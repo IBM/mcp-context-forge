@@ -14,6 +14,9 @@
 # Go build artifacts
 system-monitor-server
 *.bin
+dist/
+coverage/
+coverage.html
 
 # Dependency directories
 vendor/

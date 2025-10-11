@@ -1,47 +1,55 @@
-# System Monitor Server
+# 🖥️  System Monitor Server
 
-A comprehensive system monitoring MCP (Model Context Protocol) server written in Go that provides real-time system metrics, process monitoring, health checking, and log analysis capabilities for LLM applications.
+> Author: Mihai Criveti
+> A comprehensive system monitoring MCP server written in Go that provides real-time system metrics, process monitoring, health checking, and log analysis capabilities for LLM applications.
+
+[![Go Version](https://img.shields.io/badge/go-1.23-blue)]()
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-blue)]()
+
+---
 
 ## Features
 
-### 🔧 Core Monitoring Tools
-
-- **System Metrics**: Real-time CPU, memory, disk, and network usage
-- **Process Management**: List, filter, and monitor running processes
-- **Health Checks**: HTTP, TCP port, command, and file-based service monitoring
-- **Log Analysis**: Tail and filter log files with security controls
-- **Disk Usage**: Analyze disk usage with detailed breakdowns
-
-### 🚀 Advanced Capabilities
-
-- **Real-time Streaming**: Live metrics via WebSocket/SSE
+- **MCP Tools**: System metrics, process monitoring, health checks, log tailing, disk usage
+- **Real-time Monitoring**: Live metrics via WebSocket/SSE
 - **Alert System**: Configurable threshold-based alerts
-- **Cross-platform Support**: Linux, macOS, Windows
-- **Security Controls**: Path validation, file size limits, rate limiting
-- **Multiple Transports**: STDIO, SSE, HTTP, DUAL, and REST API modes
+- **Security Controls**: Path validation, file size limits, rate limiting, ReDoS protection
+- Five transports: `stdio`, `http` (JSON-RPC 2.0), `sse`, `dual` (MCP + REST), and `rest` (REST API only)
+- Cross-platform support: Linux, macOS, Windows
+- Build-time version injection via `main.appVersion`
+- Comprehensive test coverage with HTML reports
+- Docker support with multi-stage builds
 
 ## Quick Start
 
-### Prerequisites
-
-- Go 1.21 or later
-- Git
-
-### Installation
-
 ```bash
-# Clone the repository
-git clone https://github.com/IBM/mcp-context-forge.git
+git clone git@github.com:IBM/mcp-context-forge.git
 cd mcp-context-forge/mcp-servers/go/system-monitor-server
 
-# Build the server
-make build
+# Build & run over stdio
+make run
 
-# Run in stdio mode (for Claude Desktop)
-./system-monitor-server
+# HTTP JSON-RPC on port 8080
+make run-http
 
-# Run in HTTP mode
-./system-monitor-server -transport=http -port=8080
+# SSE endpoint on port 8080
+make run-sse
+
+# REST API on port 8080
+make run-rest
+
+# Dual mode (MCP + REST) on port 8080
+make run-dual
+```
+
+## Installation
+
+**Requires Go 1.23+.**
+
+```bash
+git clone git@github.com:IBM/mcp-context-forge.git
+cd mcp-context-forge/mcp-servers/go/system-monitor-server
+make install
 ```
 
 ### Claude Desktop Integration
@@ -59,236 +67,42 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-## Available Tools
+## CLI Flags
 
-### 1. `get_system_metrics`
+| Flag              | Default   | Description                                       |
+| ----------------- | --------- | ------------------------------------------------- |
+| `-transport`      | `stdio`   | Options: `stdio`, `http`, `sse`, `dual`, `rest` |
+| `-port`           | `8080`    | Port for HTTP/SSE/dual                  |
+| `-log-level`      | `info`    | Logging level: `debug`, `info`, `warn`, `error` |
+| `-config`         | `config.yaml` | Path to configuration file            |
 
-Retrieve current system resource usage including CPU, memory, disk, and network metrics.
+## MCP Features
 
-**Example:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "get_system_metrics",
-    "arguments": {}
-  },
-  "id": 1
-}
-```
+### Tools
 
-**Response:**
-```json
-{
-  "cpu": {
-    "usage_percent": 15.2,
-    "load_avg_1": 0.8,
-    "load_avg_5": 1.2,
-    "load_avg_15": 1.5,
-    "num_cores": 8
-  },
-  "memory": {
-    "total": 16777216000,
-    "available": 8388608000,
-    "used": 8388608000,
-    "free": 4194304000,
-    "usage_percent": 50.0
-  },
-  "disk": [...],
-  "network": [...],
-  "timestamp": "2025-01-15T10:30:00Z"
-}
-```
+The server provides six main MCP tools:
 
-### 2. `list_processes`
+1. **get_system_metrics** - Returns current CPU, memory, disk, and network metrics
+   - No parameters required
 
-List running processes with filtering and sorting options.
+2. **list_processes** - Lists running processes with filtering and sorting
+   - Parameters: `filter_by`, `filter_value`, `sort_by`, `limit`, `include_threads`
 
-**Parameters:**
-- `filter_by`: Filter by name, user, or pid
-- `filter_value`: Value to filter by
-- `sort_by`: Sort by cpu, memory, name, or pid
-- `limit`: Maximum number of processes to return
-- `include_threads`: Include thread count information
+3. **monitor_process** - Monitors a specific process with alert thresholds
+   - Parameters: `pid`, `process_name`, `duration`, `interval`, `cpu_threshold`, `memory_threshold`
 
-**Example:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "list_processes",
-    "arguments": {
-      "sort_by": "cpu",
-      "limit": 10,
-      "filter_by": "name",
-      "filter_value": "python"
-    }
-  },
-  "id": 2
-}
-```
+4. **check_service_health** - Checks health of HTTP, TCP, or file-based services
+   - Parameters: `services` (array), `timeout`
+   - **SECURITY**: Command execution disabled (command injection risk)
 
-### 3. `monitor_process`
+5. **tail_logs** - Streams log file contents with filtering
+   - Parameters: `file_path`, `lines`, `follow`, `filter`, `max_size`
+   - **SECURITY**: Path validation with symlink resolution, ReDoS protection
 
-Monitor a specific process for a given duration with alert thresholds.
+6. **get_disk_usage** - Analyzes disk usage with detailed breakdowns
+   - Parameters: `path`, `max_depth`, `min_size`, `sort_by`, `file_types`
 
-**Parameters:**
-- `pid`: Process ID to monitor
-- `process_name`: Process name to monitor (alternative to PID)
-- `duration`: Monitoring duration in seconds
-- `interval`: Monitoring interval in seconds
-- `cpu_threshold`: CPU usage threshold for alerts
-- `memory_threshold`: Memory usage threshold for alerts
-- `memory_rss_threshold`: Memory RSS threshold for alerts
-
-**Example:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "monitor_process",
-    "arguments": {
-      "process_name": "nginx",
-      "duration": 60,
-      "interval": 5,
-      "cpu_threshold": 80.0,
-      "memory_threshold": 90.0
-    }
-  },
-  "id": 3
-}
-```
-
-### 4. `check_service_health`
-
-Check health of system services and applications.
-
-**Parameters:**
-- `services`: JSON array of services to check
-- `timeout`: Timeout in seconds for health checks
-
-**Example:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "check_service_health",
-    "arguments": {
-      "services": [
-        {
-          "name": "web_server",
-          "type": "http",
-          "target": "http://localhost:8080/health"
-        },
-        {
-          "name": "database",
-          "type": "port",
-          "target": "localhost:5432"
-        }
-      ],
-      "timeout": 10
-    }
-  },
-  "id": 4
-}
-```
-
-### 5. `tail_logs`
-
-Stream log file contents with filtering and security controls.
-
-**Parameters:**
-- `file_path`: Path to the log file to tail
-- `lines`: Number of lines to tail
-- `follow`: Follow the file for new lines
-- `filter`: Regex filter for log lines
-- `max_size`: Maximum file size to process
-
-**Example:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "tail_logs",
-    "arguments": {
-      "file_path": "/var/log/nginx/access.log",
-      "lines": 100,
-      "filter": "ERROR|WARN",
-      "follow": false
-    }
-  },
-  "id": 5
-}
-```
-
-### 6. `get_disk_usage`
-
-Analyze disk usage with detailed breakdowns and filtering.
-
-**Parameters:**
-- `path`: Path to analyze
-- `max_depth`: Maximum directory depth to analyze
-- `min_size`: Minimum file size to include
-- `sort_by`: Sort results by size, name, or modified
-- `file_types`: Filter by file extensions
-
-**Example:**
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": {
-    "name": "get_disk_usage",
-    "arguments": {
-      "path": "/var/log",
-      "max_depth": 2,
-      "min_size": 1024,
-      "sort_by": "size",
-      "file_types": ["log", "txt"]
-    }
-  },
-  "id": 6
-}
-```
-
-## Transport Modes
-
-### STDIO (Default)
-For desktop clients like Claude Desktop:
-```bash
-./system-monitor-server
-```
-
-### SSE (Server-Sent Events)
-For web-based MCP clients:
-```bash
-./system-monitor-server -transport=sse -port=8080
-```
-
-### HTTP
-For REST-style access:
-```bash
-./system-monitor-server -transport=http -port=8080
-```
-
-### DUAL
-Both SSE and HTTP on the same port:
-```bash
-./system-monitor-server -transport=dual -port=8080
-```
-
-### REST API
-Direct HTTP REST endpoints:
-```bash
-./system-monitor-server -transport=rest -port=8080
-```
-
-## Configuration
+### Configuration
 
 The server can be configured via `config.yaml`:
 
@@ -313,119 +127,127 @@ health_checks:
 log_monitoring:
   max_file_size: "100MB"
   max_tail_lines: 1000
-  allowed_paths: ["/var/log", "/tmp", "./logs"]
+  # SECURITY: Only absolute paths, no /tmp by default
+  allowed_paths: ["/var/log"]
 
 security:
-  allowed_paths: ["/var/log", "/tmp", "./logs"]
-  max_file_size: 104857600
+  # SECURITY: Root path restricts ALL file access (chroot-like)
+  # Set to "/opt/monitoring-root" for production
+  root_path: ""  # Empty = no root restriction
+
+  # SECURITY: Only absolute paths, no /tmp by default
+  allowed_paths: ["/var/log"]
+  max_file_size: 104857600  # 100MB
   rate_limit_rps: 10
   enable_audit_log: true
 ```
 
-## Security Features
-
-- **Path Validation**: Only allows access to configured directories
-- **File Size Limits**: Prevents processing of oversized files
-- **Rate Limiting**: Configurable request rate limiting
-- **Audit Logging**: Optional audit trail for administrative actions
-- **Authentication**: Optional Bearer token authentication for HTTP/SSE
-
-## Development
-
-### Building
-
-```bash
-# Build the binary
-make build
-
-# Run tests
-make test
-
-# Run linters
-make lint
-
-# Format code
-make fmt
-
-# Run all checks
-make check
-```
-
-### Testing
-
-```bash
-# Run unit tests
-go test ./...
-
-# Run with coverage
-go test -cover ./...
-
-# Run benchmarks
-go test -bench=. ./...
-
-# Run example commands
-make examples
-```
-
-### Docker
-
-```bash
-# Build Docker image
-make docker
-
-# Run in container
-docker run -p 8080:8080 system-monitor-server:latest -transport=http
-```
-
 ## API Endpoints
 
-### Health Check
+### MCP Endpoints
+- **STDIO**: Standard input/output (default for Claude Desktop)
+- **HTTP**: `/` (JSON-RPC 2.0 endpoint)
+- **SSE**: `/sse` (events), `/messages` (messages)
+- **DUAL**: `/sse` & `/messages` (SSE), `/http` (HTTP)
+- **REST**: `/api/v1/*` (REST API only)
+
+### Health & Version
 ```
 GET /health
-```
-
-### Version Info
-```
 GET /version
 ```
 
-### MCP Endpoints
-- **SSE**: `/sse` (events), `/messages` (messages)
-- **HTTP**: `/` (single endpoint)
-- **DUAL**: `/sse` & `/messages` (SSE), `/http` (HTTP)
-- **REST**: `/api/v1/*` (REST API only)
+## Security Features
+
+### Root Directory Restriction (Chroot-like)
+- **Configurable Root Path**: Set `security.root_path` to restrict all file access within a single directory
+- **Defense in Depth**: When root_path is set, ALL file operations are confined to that directory tree
+- **Production Recommended**: Configure a dedicated root like `/opt/monitoring-root` for production deployments
+- **Layered Security**: Root restriction is enforced BEFORE allowed_paths checks
+
+### Path Traversal Protection
+- **Symlink Resolution**: Uses `filepath.EvalSymlinks()` to prevent path traversal via symlinks
+- **Directory Boundary Checks**: Validates paths are within allowed directories
+- **No /tmp Access**: Removed from default allowed paths (security hardening)
+
+### Command Injection Prevention
+- **Command Execution Disabled**: Health checker no longer allows arbitrary command execution
+- **Alternative**: Use `list_processes` tool to check process status
+
+### ReDoS Protection
+- **Pattern Length Limits**: Maximum 1000 characters
+- **Dangerous Quantifier Detection**: Blocks nested quantifiers like `(a+)+`
+- **Regex Timeout Protection**: Prevents CPU exhaustion
+
+### Memory Exhaustion Prevention
+- **File Size Limits**: Enforced before reading files
+- **Scanner Buffer Limits**: 10MB maximum per line
+- **Rate Limiting**: Configurable requests per second
 
 ## Examples
 
 ### Get System Metrics
 ```bash
-curl -X POST http://localhost:8080/ \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_system_metrics","arguments":{}},"id":1}'
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_system_metrics","arguments":{}},"id":1}' | ./system-monitor-server
 ```
 
 ### List Top CPU Processes
 ```bash
-curl -X POST http://localhost:8080/ \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_processes","arguments":{"sort_by":"cpu","limit":5}},"id":2}'
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_processes","arguments":{"sort_by":"cpu","limit":5}},"id":2}' | ./system-monitor-server
 ```
 
-### Monitor a Process
+### Check Service Health
 ```bash
-curl -X POST http://localhost:8080/ \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"monitor_process","arguments":{"process_name":"nginx","duration":30,"interval":5}},"id":3}'
+echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_service_health","arguments":{"services":[{"name":"ssh","type":"port","target":"localhost:22"}]}},"id":3}' | ./system-monitor-server
 ```
+
+## Docker
+
+```bash
+make docker-build
+make docker-run           # HTTP mode
+make docker-run-sse       # SSE mode
+```
+
+## Development
+
+| Task                 | Command                     |
+| -------------------- | --------------------------- |
+| Format & tidy        | `make fmt tidy`             |
+| Lint & vet           | `make lint staticcheck vet` |
+| Run pre-commit hooks | `make pre-commit`           |
+| Run all checks       | `make check`                |
+
+## Testing & Benchmarking
+
+```bash
+make test       # Unit tests (race detection)
+make coverage   # HTML coverage report → dist/coverage.html
+make bench      # Go benchmarks
+
+# Test MCP tools
+make test-mcp   # Test all MCP tools via stdio
+```
+
+## Cross-Compilation
+
+```bash
+# Build for specific OS/ARCH
+GOOS=linux GOARCH=amd64 make release
+GOOS=darwin GOARCH=arm64 make release
+GOOS=windows GOARCH=amd64 make release
+```
+
+Binaries appear under `dist/<os>-<arch>/`.
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **Permission Denied**: Ensure the server has appropriate permissions to access system resources
-2. **File Access Denied**: Check that file paths are in the allowed directories list
-3. **High CPU Usage**: Adjust monitoring intervals and limits in configuration
-4. **Memory Issues**: Reduce max_processes and history_retention settings
+2. **File Access Denied**: Check that file paths are in the `allowed_paths` configuration
+3. **Symlink Path Traversal**: Server resolves symlinks and validates against allowed paths
+4. **ReDoS Attack**: Server blocks dangerous regex patterns with nested quantifiers
 
 ### Debug Mode
 
@@ -433,10 +255,6 @@ Run with debug logging:
 ```bash
 ./system-monitor-server -log-level=debug
 ```
-
-### Logs
-
-Check server logs for detailed error information and debugging output.
 
 ## Contributing
 
@@ -455,4 +273,3 @@ Apache-2.0 License - see LICENSE file for details.
 
 - **Issues**: [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/IBM/mcp-context-forge/discussions)
-- **Documentation**: [Project Wiki](https://github.com/IBM/mcp-context-forge/wiki)

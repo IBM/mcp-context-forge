@@ -1,175 +1,253 @@
-# System Monitor Server Makefile
-# This Makefile provides common build, test, and development tasks
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#   🖥️  SYSTEM-MONITOR-SERVER - Makefile
+#   (multi-package Go project with internal/, cmd/, pkg/ structure)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# Author : Mihai Criveti
+# Usage  : make <target>   or just `make help`
+#
+# help: 🖥️  SYSTEM-MONITOR-SERVER (Go build & automation helpers)
+# ─────────────────────────────────────────────────────────────────────────
 
-.PHONY: help build test test-coverage coverage clean run install deps lint fmt vet
-
-# Default target
+# =============================================================================
+# 📖 DYNAMIC HELP
+# =============================================================================
+.PHONY: help
 help:
-	@echo "Available targets:"
-	@echo "  build         - Build the system-monitor-server binary"
-	@echo "  test          - Run all tests"
-	@echo "  test-coverage - Run comprehensive test suite with coverage report"
-	@echo "  coverage      - Generate coverage report only"
-	@echo "  clean         - Clean build artifacts"
-	@echo "  run           - Run the server in stdio mode"
-	@echo "  install       - Install the binary to GOPATH/bin"
-	@echo "  deps          - Download and verify dependencies"
-	@echo "  lint          - Run linters"
-	@echo "  fmt           - Format code"
-	@echo "  vet           - Run go vet"
-	@echo "  docker        - Build Docker image"
-	@echo "  examples      - Run example commands"
+	@grep '^# help\:' $(firstword $(MAKEFILE_LIST)) | sed 's/^# help\: //'
 
-# Build the binary
-build:
-	@echo "Building system-monitor-server..."
-	@go build -o system-monitor-server ./cmd/server
-	@echo "Build complete: system-monitor-server"
+# =============================================================================
+# 📦 PROJECT METADATA (variables, colours)
+# =============================================================================
+MODULE          := github.com/IBM/mcp-context-forge/mcp-servers/go/system-monitor-server
+BIN_NAME        := system-monitor-server
+VERSION         ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo "v0.0.0-dev")
 
-# Run tests
-test:
-	@echo "Running tests..."
-	@go test -v -race ./...
-	@echo "Tests completed!"
+DIST_DIR        := dist
+COVERPROFILE    := $(DIST_DIR)/coverage.out
+COVERHTML       := $(DIST_DIR)/coverage.html
 
-# Run comprehensive test suite with coverage
-test-coverage:
-	@echo "Running comprehensive test suite with coverage..."
-	@chmod +x ./test_coverage.sh
-	@./test_coverage.sh
+GO              ?= go
+GOOS            ?= $(shell $(GO) env GOOS)
+GOARCH          ?= $(shell $(GO) env GOARCH)
 
-# Generate coverage report only
-coverage:
-	@echo "Generating coverage report..."
-	@chmod +x ./test_coverage.sh
-	@./test_coverage.sh
+LDFLAGS         := -s -w -X 'main.appVersion=$(VERSION)'
 
-# Clean build artifacts
-clean:
-	@echo "Cleaning build artifacts..."
-	@rm -f system-monitor-server
-	@rm -f coverage.out coverage.html
-	@rm -rf coverage/
-	@go clean
+ifeq ($(shell test -t 1 && echo tty),tty)
+C_BLUE  := \033[38;5;75m
+C_RESET := \033[0m
+else
+C_BLUE  :=
+C_RESET :=
+endif
 
-# Run the server in stdio mode
-run: build
-	@echo "Running system-monitor-server in stdio mode..."
-	@./system-monitor-server -log-level=info
+# =============================================================================
+# 🔧 TOOLING
+# =============================================================================
+# help: 🔧 TOOLING
+# help: tools                 - Install / update golangci-lint & staticcheck
 
-# Install the binary
-install: build
-	@echo "Installing system-monitor-server..."
-	@go install ./cmd/server
-	@echo "Installed to: $(shell go env GOPATH)/bin/system-monitor-server"
+GOBIN := $(shell $(GO) env GOPATH)/bin
 
-# Download dependencies
-deps:
-	@echo "Downloading dependencies..."
-	@go mod download
-	@go mod verify
-	@echo "Dependencies downloaded and verified"
+tools: $(GOBIN)/golangci-lint $(GOBIN)/staticcheck
+$(GOBIN)/golangci-lint: ;	@$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+$(GOBIN)/staticcheck:      ;	@$(GO) install honnef.co/go/tools/cmd/staticcheck@latest
 
-# Run linters
-lint:
-	@echo "Running linters..."
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
-	else \
-		echo "golangci-lint not found, installing..."; \
-		go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest; \
-		golangci-lint run; \
-	fi
+# =============================================================================
+# 📂 MODULE & FORMAT
+# =============================================================================
+# help: 📂 MODULE & FORMAT
+# help: tidy                  - go mod tidy + verify
+# help: fmt                   - Run gofmt & goimports
 
-# Format code
+tidy:
+	@$(GO) mod tidy
+	@$(GO) mod verify
+
 fmt:
-	@echo "Formatting code..."
-	@go fmt ./...
-	@if command -v goimports >/dev/null 2>&1; then \
-		goimports -w .; \
-	else \
-		echo "goimports not found, installing..."; \
-		go install golang.org/x/tools/cmd/goimports@latest; \
-		goimports -w .; \
-	fi
+	@$(GO) fmt ./...
+	@go run golang.org/x/tools/cmd/goimports@latest -w .
 
-# Run go vet
+# =============================================================================
+# 🔍 LINTING & STATIC ANALYSIS
+# =============================================================================
+# help: 🔍 LINTING & STATIC ANALYSIS
+# help: vet                   - go vet
+# help: staticcheck           - Run staticcheck
+# help: lint                  - Run golangci-lint
+# help: pre-commit            - Run all configured pre-commit hooks
+.PHONY: vet staticcheck lint pre-commit
+
 vet:
-	@echo "Running go vet..."
-	@go vet ./...
+	@$(GO) vet ./...
 
-# Build Docker image
-docker:
-	@echo "Building Docker image..."
-	@docker build -t system-monitor-server:latest .
-	@echo "Docker image built: system-monitor-server:latest"
+staticcheck: tools
+	@staticcheck ./...
 
-# Run example commands
-examples: build
-	@echo "Running example commands..."
-	@echo ""
-	@echo "1. Get system metrics:"
-	@echo 'echo '"'"'{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_system_metrics","arguments":{}},"id":1}'"'"' | ./system-monitor-server'
-	@echo ""
-	@echo "2. List processes:"
-	@echo 'echo '"'"'{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_processes","arguments":{"sort_by":"cpu","limit":5}},"id":2}'"'"' | ./system-monitor-server'
-	@echo ""
-	@echo "3. Check service health:"
-	@echo 'echo '"'"'{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_service_health","arguments":{"services":[{"name":"web","type":"http","target":"http://localhost:8080/health"}]}},"id":3}'"'"' | ./system-monitor-server'
+lint: tools
+	@golangci-lint run
 
-# Development server with hot reload
-dev:
-	@echo "Starting development server with hot reload..."
-	@if command -v air >/dev/null 2>&1; then \
-		air; \
-	else \
-		echo "air not found, installing..."; \
-		go install github.com/cosmtrek/air@latest; \
-		air; \
-	fi
+pre-commit:                 ## Run pre-commit hooks on all files
+	@command -v pre-commit >/dev/null 2>&1 || { \
+	    echo '✖ pre-commit not installed → pip install --user pre-commit'; exit 1; }
+	@pre-commit run --all-files --show-diff-on-failure
 
-# Generate mocks for testing
-mocks:
-	@echo "Generating mocks..."
-	@if command -v mockgen >/dev/null 2>&1; then \
-		mockgen -source=internal/metrics/system.go -destination=internal/metrics/mocks/system_mock.go; \
-		mockgen -source=internal/metrics/process.go -destination=internal/metrics/mocks/process_mock.go; \
-		mockgen -source=internal/monitor/health_checker.go -destination=internal/monitor/mocks/health_checker_mock.go; \
-		mockgen -source=internal/monitor/log_monitor.go -destination=internal/monitor/mocks/log_monitor_mock.go; \
-	else \
-		echo "mockgen not found, installing..."; \
-		go install github.com/golang/mock/mockgen@latest; \
-		mockgen -source=internal/metrics/system.go -destination=internal/metrics/mocks/system_mock.go; \
-		mockgen -source=internal/metrics/process.go -destination=internal/metrics/mocks/process_mock.go; \
-		mockgen -source=internal/monitor/health_checker.go -destination=internal/monitor/mocks/health_checker_mock.go; \
-		mockgen -source=internal/monitor/log_monitor.go -destination=internal/monitor/mocks/log_monitor_mock.go; \
-	fi
+# =============================================================================
+# 🧪 TESTS & COVERAGE
+# =============================================================================
+# help: 🧪 TESTS & COVERAGE
+# help: test                  - Run unit tests (race)
+# help: coverage              - Generate HTML coverage report
 
-# Benchmark tests
+test:
+	@$(GO) test -race -timeout=90s ./...
+
+coverage:
+	@mkdir -p $(DIST_DIR)
+	@$(GO) test ./... -covermode=count -coverprofile=$(COVERPROFILE)
+	@$(GO) tool cover -html=$(COVERPROFILE) -o $(COVERHTML)
+	@echo "$(C_BLUE)HTML coverage → $(COVERHTML)$(C_RESET)"
+
+# =============================================================================
+# 🛠 BUILD & RUN
+# =============================================================================
+# help: 🛠 BUILD & RUN
+# help: build                 - Build binary into ./dist
+# help: install               - go install into GOPATH/bin
+# help: release               - Cross-compile (honours GOOS/GOARCH)
+# help: run                   - Build then run (stdio transport)
+# help: run-stdio             - Alias for "run"
+# help: run-http              - Run HTTP  transport on :8080  (POST JSON-RPC)
+# help: run-sse               - Run SSE   transport on :8080  (/sse, /messages)
+# help: run-dual              - Run BOTH  SSE & HTTP on :8080 (/sse, /messages, /http)
+# help: run-rest              - Run REST API on :8080  (/api/v1/*)
+
+build: tidy
+	@mkdir -p $(DIST_DIR)
+	@$(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(DIST_DIR)/$(BIN_NAME) ./cmd/server
+
+install:
+	@$(GO) install -trimpath -ldflags '$(LDFLAGS)' ./cmd/server
+
+release:
+	@mkdir -p $(DIST_DIR)/$(GOOS)-$(GOARCH)
+	@GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 \
+	  $(GO) build -trimpath -ldflags '$(LDFLAGS)' \
+	  -o $(DIST_DIR)/$(GOOS)-$(GOARCH)/$(BIN_NAME) ./cmd/server
+
+# ────── run helpers ────────────────────────────────────────────────────────
+run: build
+	@$(DIST_DIR)/$(BIN_NAME) -transport=stdio -log-level=info
+
+run-stdio: run			# simple alias
+
+run-http: build
+	@$(DIST_DIR)/$(BIN_NAME) -transport=http -port=8080
+
+run-sse: build
+	@$(DIST_DIR)/$(BIN_NAME) -transport=sse -port=8080
+
+run-dual: build
+	@$(DIST_DIR)/$(BIN_NAME) -transport=dual -port=8080
+
+run-rest: build
+	@$(DIST_DIR)/$(BIN_NAME) -transport=rest -port=8080
+
+# =============================================================================
+# 🐳 DOCKER
+# =============================================================================
+# help: 🐳 DOCKER
+# help: docker-build          - Build container image
+# help: docker-run            - Run container on :8080 (HTTP transport)
+# help: docker-run-sse        - Run container on :8080 (SSE transport)
+
+IMAGE ?= $(BIN_NAME):$(VERSION)
+
+docker-build:
+	@docker build --build-arg VERSION=$(VERSION) -t $(IMAGE) .
+	@docker images $(IMAGE)
+
+docker-run: docker-build
+	@docker run --rm -p 8080:8080 $(IMAGE) -transport=http -port=8080
+
+docker-run-sse: docker-build
+	@docker run --rm -p 8080:8080 $(IMAGE) -transport=sse -port=8080
+
+# =============================================================================
+# 📚 MCP TOOLS TESTING
+# =============================================================================
+# help: 📚 MCP TOOLS
+# help: test-metrics          - Test get_system_metrics tool
+# help: test-processes        - Test list_processes tool
+# help: test-health           - Test check_service_health tool
+# help: test-mcp              - Test all MCP tools
+
+.PHONY: test-metrics test-processes test-health test-mcp
+
+test-metrics:
+	@echo "$(C_BLUE)➜ Testing get_system_metrics...$(C_RESET)"
+	@echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"get_system_metrics","arguments":{}},"id":1}' | $(DIST_DIR)/$(BIN_NAME)
+
+test-processes:
+	@echo "$(C_BLUE)➜ Testing list_processes...$(C_RESET)"
+	@echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_processes","arguments":{"sort_by":"cpu","limit":5}},"id":2}' | $(DIST_DIR)/$(BIN_NAME)
+
+test-health:
+	@echo "$(C_BLUE)➜ Testing check_service_health...$(C_RESET)"
+	@echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"check_service_health","arguments":{"services":[{"name":"local","type":"port","target":"localhost:22"}]}},"id":3}' | $(DIST_DIR)/$(BIN_NAME)
+
+test-mcp: build test-metrics test-processes test-health
+	@echo "\n$(C_BLUE)✔ MCP Tools Test Complete$(C_RESET)"
+
+# =============================================================================
+# 🚀 BENCHMARKING
+# =============================================================================
+# help: 🚀 BENCHMARKING
+# help: bench                 - Run Go benchmarks
+# help: bench-http            - Run HTTP load test using 'hey' (run make run-http first)
+
+.PHONY: bench bench-http
+
 bench:
-	@echo "Running benchmarks..."
-	@go test -bench=. -benchmem ./...
+	@$(GO) test -bench=. -benchmem ./...
 
-# Security scan
+bench-http:
+	@command -v hey >/dev/null || { echo '"hey" not installed'; exit 1; }
+	@echo "➜ load-test list_processes via /http"
+	@hey -m POST -T 'application/json' \
+	     -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_processes","arguments":{"limit":10}},"id":1}' \
+	     -n 10000 -c 50 http://localhost:8080/
+
+# =============================================================================
+# 🔒 SECURITY & QUALITY
+# =============================================================================
+# help: 🔒 SECURITY & QUALITY
+# help: security              - Run gosec security scanner
+# help: check                 - Run all checks (fmt, vet, lint, test, security)
+
+.PHONY: security check
+
 security:
-	@echo "Running security scan..."
-	@if command -v gosec >/dev/null 2>&1; then \
-		gosec ./...; \
-	else \
-		echo "gosec not found, installing..."; \
-		go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest; \
-		gosec ./...; \
-	fi
+	@command -v gosec >/dev/null || $(GO) install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+	@gosec -quiet ./...
 
-# All checks
 check: fmt vet lint test security
-	@echo "All checks passed!"
+	@echo "$(C_BLUE)✔ All checks passed!$(C_RESET)"
 
-# Release build
-release: clean
-	@echo "Building release binaries..."
-	@GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o system-monitor-server-linux-amd64 ./cmd/server
-	@GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o system-monitor-server-darwin-amd64 ./cmd/server
-	@GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o system-monitor-server-windows-amd64.exe ./cmd/server
-	@echo "Release binaries built:"
-	@ls -la system-monitor-server-*
+# =============================================================================
+# 🧹 CLEANUP
+# =============================================================================
+# help: 🧹 CLEANUP
+# help: clean                 - Remove build & coverage artefacts
+
+clean:
+	@rm -rf $(DIST_DIR) $(COVERPROFILE) $(COVERHTML)
+	@rm -f $(BIN_NAME) coverage.out coverage.html
+	@rm -rf coverage/
+	@$(GO) clean
+	@echo "Workspace clean ✔"
+
+# ---------------------------------------------------------------------------
+# Default goal
+# ---------------------------------------------------------------------------
+.DEFAULT_GOAL := help
