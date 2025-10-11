@@ -200,6 +200,22 @@ class Settings(BaseSettings):
     sso_okta_client_secret: Optional[str] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
 
+    sso_entra_enabled: bool = Field(default=False, description="Enable Microsoft Entra ID OIDC authentication")
+    sso_entra_client_id: Optional[str] = Field(default=None, description="Microsoft Entra ID client ID")
+    sso_entra_client_secret: Optional[str] = Field(default=None, description="Microsoft Entra ID client secret")
+    sso_entra_tenant_id: Optional[str] = Field(default=None, description="Microsoft Entra ID tenant ID")
+
+    sso_generic_enabled: bool = Field(default=False, description="Enable generic OIDC provider (Keycloak, Auth0, etc.)")
+    sso_generic_provider_id: Optional[str] = Field(default=None, description="Provider ID (e.g., 'keycloak', 'auth0', 'authentik')")
+    sso_generic_display_name: Optional[str] = Field(default=None, description="Display name shown on login page")
+    sso_generic_client_id: Optional[str] = Field(default=None, description="Generic OIDC client ID")
+    sso_generic_client_secret: Optional[str] = Field(default=None, description="Generic OIDC client secret")
+    sso_generic_authorization_url: Optional[str] = Field(default=None, description="Authorization endpoint URL")
+    sso_generic_token_url: Optional[str] = Field(default=None, description="Token endpoint URL")
+    sso_generic_userinfo_url: Optional[str] = Field(default=None, description="Userinfo endpoint URL")
+    sso_generic_issuer: Optional[str] = Field(default=None, description="OIDC issuer URL")
+    sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
+
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
     sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")

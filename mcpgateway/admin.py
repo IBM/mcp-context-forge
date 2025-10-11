@@ -587,6 +587,8 @@ async def get_configuration_settings(
             "sso_google_enabled": settings.sso_google_enabled,
             "sso_ibm_verify_enabled": settings.sso_ibm_verify_enabled,
             "sso_okta_enabled": settings.sso_okta_enabled,
+            "sso_entra_enabled": settings.sso_entra_enabled,
+            "sso_generic_enabled": settings.sso_generic_enabled,
             "sso_auto_create_users": settings.sso_auto_create_users,
             "sso_preserve_admin_auth": settings.sso_preserve_admin_auth,
             "sso_require_admin_approval": settings.sso_require_admin_approval,

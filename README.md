@@ -1324,6 +1324,28 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `SSO_IBM_VERIFY_CLIENT_SECRET` | IBM Security Verify client secret               | (none)                | string  |
 | `SSO_IBM_VERIFY_ISSUER`       | IBM Security Verify OIDC issuer URL             | (none)                | string  |
 
+**Microsoft Entra ID OIDC:**
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_ENTRA_ENABLED`           | Enable Microsoft Entra ID OIDC authentication    | `false`               | bool    |
+| `SSO_ENTRA_CLIENT_ID`         | Microsoft Entra ID client ID                     | (none)                | string  |
+| `SSO_ENTRA_CLIENT_SECRET`     | Microsoft Entra ID client secret                 | (none)                | string  |
+| `SSO_ENTRA_TENANT_ID`         | Microsoft Entra ID tenant ID                     | (none)                | string  |
+
+**Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.):**
+| Setting                              | Description                                      | Default                    | Options |
+| ------------------------------------ | ------------------------------------------------ | -------------------------- | ------- |
+| `SSO_GENERIC_ENABLED`               | Enable generic OIDC provider authentication      | `false`                    | bool    |
+| `SSO_GENERIC_PROVIDER_ID`           | Provider ID (e.g., keycloak, auth0, authentik)   | (none)                     | string  |
+| `SSO_GENERIC_DISPLAY_NAME`          | Display name shown on login page                 | (none)                     | string  |
+| `SSO_GENERIC_CLIENT_ID`             | Generic OIDC client ID                           | (none)                     | string  |
+| `SSO_GENERIC_CLIENT_SECRET`         | Generic OIDC client secret                       | (none)                     | string  |
+| `SSO_GENERIC_AUTHORIZATION_URL`     | Authorization endpoint URL                       | (none)                     | string  |
+| `SSO_GENERIC_TOKEN_URL`             | Token endpoint URL                               | (none)                     | string  |
+| `SSO_GENERIC_USERINFO_URL`          | Userinfo endpoint URL                            | (none)                     | string  |
+| `SSO_GENERIC_ISSUER`                | OIDC issuer URL                                  | (none)                     | string  |
+| `SSO_GENERIC_SCOPE`                 | OAuth scopes (space-separated)                   | `openid profile email`     | string  |
+
 **Okta OIDC:**
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |

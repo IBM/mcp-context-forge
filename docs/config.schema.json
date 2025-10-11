@@ -915,6 +915,174 @@
       "title": "Sso Enabled",
       "type": "boolean"
     },
+    "sso_entra_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client ID",
+      "title": "Sso Entra Client Id"
+    },
+    "sso_entra_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client secret",
+      "title": "Sso Entra Client Secret"
+    },
+    "sso_entra_enabled": {
+      "default": false,
+      "description": "Enable Microsoft Entra ID OIDC authentication",
+      "title": "Sso Entra Enabled",
+      "type": "boolean"
+    },
+    "sso_entra_tenant_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID tenant ID",
+      "title": "Sso Entra Tenant Id"
+    },
+    "sso_generic_authorization_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Authorization endpoint URL",
+      "title": "Sso Generic Authorization Url"
+    },
+    "sso_generic_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client ID",
+      "title": "Sso Generic Client Id"
+    },
+    "sso_generic_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client secret",
+      "title": "Sso Generic Client Secret"
+    },
+    "sso_generic_display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Display name shown on login page",
+      "title": "Sso Generic Display Name"
+    },
+    "sso_generic_enabled": {
+      "default": false,
+      "description": "Enable generic OIDC provider (Keycloak, Auth0, etc.)",
+      "title": "Sso Generic Enabled",
+      "type": "boolean"
+    },
+    "sso_generic_issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC issuer URL",
+      "title": "Sso Generic Issuer"
+    },
+    "sso_generic_provider_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Provider ID (e.g., 'keycloak', 'auth0', 'authentik')",
+      "title": "Sso Generic Provider Id"
+    },
+    "sso_generic_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "openid profile email",
+      "description": "OAuth scopes (space-separated)",
+      "title": "Sso Generic Scope"
+    },
+    "sso_generic_token_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Token endpoint URL",
+      "title": "Sso Generic Token Url"
+    },
+    "sso_generic_userinfo_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Userinfo endpoint URL",
+      "title": "Sso Generic Userinfo Url"
+    },
     "sso_github_admin_orgs": {
       "description": "GitHub orgs granting admin (CSV/JSON)",
       "items": {
