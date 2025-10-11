@@ -2042,12 +2042,15 @@ async def admin_ui(
                 user_teams = []
                 for team in raw_teams:
                     try:
+                        # Get the user's role in this team
+                        user_role = await team_service.get_user_role_in_team(user_email, team.id)
                         team_dict = {
                             "id": str(team.id) if team.id else "",
                             "name": str(team.name) if team.name else "",
                             "type": str(getattr(team, "type", "organization")),
                             "is_personal": bool(getattr(team, "is_personal", False)),
                             "member_count": team.get_member_count() if hasattr(team, "get_member_count") else 0,
+                            "role": user_role or "member",
                         }
                         user_teams.append(team_dict)
                     except Exception as team_error:
@@ -5344,8 +5347,15 @@ async def admin_edit_tool(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=403,
+        )
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_tool_resource: {error_message}")
@@ -6206,10 +6216,17 @@ async def admin_edit_gateway(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
+        )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=403,
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
@@ -6646,11 +6663,15 @@ async def admin_edit_resource(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=get_user_email(user),
         )
         return JSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
             status_code=200,
         )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
@@ -7161,7 +7182,7 @@ async def admin_edit_prompt(
             tags=tags,
             visibility=visibility,
             team_id=team_id,
-            user_email=user_email,
+            owner_email=user_email,
         )
         await prompt_service.update_prompt(
             db,
@@ -7171,11 +7192,15 @@ async def admin_edit_prompt(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Prompt updated successfully!", "success": True},
             status_code=200,
         )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")

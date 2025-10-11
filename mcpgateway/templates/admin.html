@@ -8515,6 +8515,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       window.USER_TEAMS = {{ user_teams | default([]) | tojson }};
       window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT = {{ mcpgateway_ui_tool_test_timeout | tojson }};
       window.CURRENT_USER = {{ current_user | tojson }};
+      window.IS_ADMIN = {{ is_admin | tojson }};
 
       // Display flash messages from URL parameters
       (function() {
@@ -8731,22 +8732,33 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           buttons += `<button onclick="viewServer('${item.id}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
         }
 
-        // Show Edit/Delete buttons - disabled with tooltip if user doesn't own the resource
+        // Show Edit/Delete buttons - check ownership, admin status, and team owner permissions
         const itemOwner = item.owner_email || item.ownerEmail;
-        const isOwner = itemOwner === window.CURRENT_USER;
+        const isDirectOwner = itemOwner === window.CURRENT_USER;
+        const isPlatformAdmin = window.IS_ADMIN;
+
+        // Check if user is team owner for team-scoped resources
+        let isTeamOwner = false;
+        if (item.visibility === 'team' && item.team_id && window.USER_TEAMS) {
+          const userTeam = window.USER_TEAMS.find(t => t.id === item.team_id);
+          isTeamOwner = userTeam && userTeam.role === 'owner';
+        }
+
+        // User can edit if: platform admin, direct owner, or team owner for team resources
+        const canEdit = isPlatformAdmin || isDirectOwner || isTeamOwner;
 
         // Edit button
-        const editDisabled = isOwner ? '' : 'disabled';
-        const editTitle = isOwner ? '' : 'title="You can only edit resources you own"';
-        const editClass = isOwner ? 'text-green-600 hover:text-green-900' : 'text-gray-400 cursor-not-allowed';
-        const editOnclick = isOwner ? `onclick="edit${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
+        const editDisabled = canEdit ? '' : 'disabled';
+        const editTitle = canEdit ? '' : 'title="You can only edit resources you own or resources in teams you manage"';
+        const editClass = canEdit ? 'text-green-600 hover:text-green-900' : 'text-gray-400 cursor-not-allowed';
+        const editOnclick = canEdit ? `onclick="edit${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
         buttons += `<button ${editDisabled} ${editTitle} ${editOnclick} class="${editClass} mr-2">Edit</button>`;
 
         // Delete button
-        const deleteDisabled = isOwner ? '' : 'disabled';
-        const deleteTitle = isOwner ? '' : 'title="You can only delete resources you own"';
-        const deleteClass = isOwner ? 'text-red-600 hover:text-red-900' : 'text-gray-400 cursor-not-allowed';
-        const deleteOnclick = isOwner ? `onclick="delete${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
+        const deleteDisabled = canEdit ? '' : 'disabled';
+        const deleteTitle = canEdit ? '' : 'title="You can only delete resources you own or resources in teams you manage"';
+        const deleteClass = canEdit ? 'text-red-600 hover:text-red-900' : 'text-gray-400 cursor-not-allowed';
+        const deleteOnclick = canEdit ? `onclick="delete${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
         buttons += `<button ${deleteDisabled} ${deleteTitle} ${deleteOnclick} class="${deleteClass}">Delete</button>`;
 
         return buttons;
