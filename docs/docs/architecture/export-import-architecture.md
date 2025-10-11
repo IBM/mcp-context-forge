@@ -77,6 +77,7 @@ graph TB
 ### Export Service (`mcpgateway.services.export_service`)
 
 **Responsibilities:**
+
 - Entity collection from all service layers
 - Data transformation to export schema format
 - Authentication data encryption using existing utilities
@@ -84,6 +85,7 @@ graph TB
 - Export data validation and schema compliance
 
 **Key Methods:**
+
 - `export_configuration()` - Complete configuration export
 - `export_selective()` - Selective entity export
 - `_export_tools()` - Tool-specific export logic
@@ -93,6 +95,7 @@ graph TB
 ### Import Service (`mcpgateway.services.import_service`)
 
 **Responsibilities:**
+
 - Import data validation and schema compliance
 - Entity creation and updates with conflict resolution
 - Authentication data decryption and re-encryption
@@ -100,6 +103,7 @@ graph TB
 - Cross-environment key rotation support
 
 **Key Methods:**
+
 - `import_configuration()` - Main import orchestration
 - `validate_import_data()` - Schema validation
 - `_process_entities()` - Entity processing pipeline
@@ -109,12 +113,14 @@ graph TB
 ### CLI Interface (`mcpgateway.cli_export_import`)
 
 **Responsibilities:**
+
 - Command-line argument parsing
 - Authentication token management
 - HTTP client for gateway API communication
 - User-friendly progress reporting and error handling
 
 **Key Functions:**
+
 - `export_command()` - CLI export handler
 - `import_command()` - CLI import handler
 - `make_authenticated_request()` - API communication

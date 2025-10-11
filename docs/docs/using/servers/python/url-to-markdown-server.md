@@ -53,6 +53,7 @@ make serve-http          # Original version
 Convert any URL to markdown with full control over processing.
 
 **Parameters:**
+
 - `url` (required): URL to convert to markdown
 - `markdown_engine`: Engine to use ("html2text", "markdownify", "beautifulsoup", "readability", "basic")
 - `extraction_method`: Content extraction method ("auto", "readability", "raw")
@@ -65,6 +66,7 @@ Convert any URL to markdown with full control over processing.
 Convert raw content (HTML, text) to markdown.
 
 **Parameters:**
+
 - `content` (required): Raw content to convert
 - `content_type` (required): MIME type of content
 - `base_url`: Base URL for resolving relative links
@@ -75,6 +77,7 @@ Convert raw content (HTML, text) to markdown.
 Convert local files to markdown.
 
 **Parameters:**
+
 - `file_path` (required): Path to local file
 - `markdown_engine`: Engine to use for conversion
 - `include_images`: Include images in markdown (default: true)
@@ -84,6 +87,7 @@ Convert local files to markdown.
 Convert multiple URLs concurrently.
 
 **Parameters:**
+
 - `urls` (required): List of URLs to convert
 - `max_concurrent`: Maximum concurrent requests (default: 3, max: 10)
 - `markdown_engine`: Engine to use for all conversions
@@ -95,6 +99,7 @@ Convert multiple URLs concurrently.
 List available engines and supported formats.
 
 **Returns:**
+
 - Available conversion engines and their capabilities
 - Supported input and output formats
 - Engine recommendations for different content types

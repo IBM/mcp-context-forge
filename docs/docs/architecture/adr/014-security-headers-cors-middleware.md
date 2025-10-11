@@ -11,6 +11,7 @@
 The MCP Gateway needed comprehensive security headers and proper CORS configuration to prevent common web attacks including XSS, clickjacking, MIME sniffing, and cross-origin attacks. Additionally, the nodejsscan static analysis tool identified 9 missing security headers specifically for the Admin UI and static assets.
 
 The previous implementation had:
+
 - Basic CORS middleware with wildcard origins in some configurations
 - Limited security headers only in the DocsAuthMiddleware
 - No comprehensive security header implementation
@@ -19,6 +20,7 @@ The previous implementation had:
 - No static analysis tool compatibility
 
 Security requirements included:
+
 - **Essential security headers** for all responses (issue #344)
 - **Configurable security headers** for Admin UI and static assets (issue #533)
 - **Environment-aware CORS** configuration for development vs production
@@ -68,11 +70,13 @@ del response.headers["Server"]        # if present
 Enhanced CORS setup in `mcpgateway/main.py` with automatic origin configuration:
 
 **Development Environment:**
+
 - Automatically configures origins for common development ports: localhost:3000, localhost:8080, gateway port
 - Includes both `localhost` and `127.0.0.1` variants
 - Allows HTTP origins for development convenience
 
 **Production Environment:**
+
 - Constructs HTTPS origins from `APP_DOMAIN` setting
 - Creates origins: `https://{domain}`, `https://app.{domain}`, `https://admin.{domain}`
 - Enforces HTTPS-only origins
@@ -216,6 +220,7 @@ By default, iframe embedding is **disabled** for security via `X-Frame-Options: 
 ## Testing Strategy
 
 Implemented comprehensive test coverage (42 new tests):
+
 - **Security headers validation** across all endpoints
 - **CORS behavior testing** for allowed and blocked origins
 - **Environment-aware configuration** testing
@@ -227,6 +232,7 @@ Implemented comprehensive test coverage (42 new tests):
 ## Future Enhancements
 
 Potential improvements for future iterations:
+
 - **CSP Nonces**: Replace 'unsafe-inline' with nonces for dynamic content
 - **Subresource Integrity**: Add SRI for external CDN resources
 - **CSP Violation Reporting**: Implement CSP violation reporting endpoint

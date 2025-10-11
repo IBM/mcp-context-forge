@@ -56,6 +56,7 @@ python3 -m mcpgateway.reverse_proxy \
 ```
 
 Options:
+
 - `--local-stdio`: Command to run the local MCP server (required)
 - `--gateway`: Remote gateway URL (or use REVERSE_PROXY_GATEWAY env var)
 - `--token`: Bearer token for authentication (or use REVERSE_PROXY_TOKEN env var)
@@ -138,6 +139,7 @@ services:
       REVERSE_PROXY_GATEWAY: https://gateway.example.com
       REVERSE_PROXY_TOKEN: ${TOKEN}
     volumes:
+
       - ./data:/data:ro
     command: >
       python -m mcpgateway.reverse_proxy
@@ -163,21 +165,26 @@ spec:
         app: mcp-reverse-proxy
     spec:
       containers:
+
       - name: reverse-proxy
         image: mcp-gateway:latest
         env:
+
         - name: REVERSE_PROXY_GATEWAY
           value: "https://gateway.example.com"
+
         - name: REVERSE_PROXY_TOKEN
           valueFrom:
             secretKeyRef:
               name: mcp-credentials
               key: token
         command:
+
         - python
         - -m
         - mcpgateway.reverse_proxy
         args:
+
         - --local-stdio
         - "mcp-server-git"
         - --keepalive
@@ -317,6 +324,7 @@ Run multiple reverse proxies for different servers:
 ```yaml
 # multi-server.yaml
 servers:
+
   - name: git-server
     command: "uvx mcp-server-git"
     gateway: "https://gateway1.example.com"

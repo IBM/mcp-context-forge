@@ -108,6 +108,7 @@ Both MCP (SSE/HTTP) and REST API:
 ```
 
 Endpoints:
+
 - `/sse` - MCP SSE events
 - `/messages` - MCP SSE messages
 - `/http` - MCP HTTP (JSON-RPC)
@@ -1202,21 +1203,28 @@ services:
     image: ghcr.io/ibm/fast-time-server:0.8.0
     command: ["-transport=dual", "-port=8080"]
     ports:
+
       - "8080:8080"
     environment:
+
       - AUTH_TOKEN=${FAST_TIME_AUTH_TOKEN}
     networks:
+
       - mcp-network
 
   mcp-gateway:
     image: ghcr.io/ibm/mcp-gateway:latest
     ports:
+
       - "4444:4444"
     environment:
+
       - DATABASE_URL=sqlite:///data/mcp.db
     volumes:
+
       - ./data:/data
     networks:
+
       - mcp-network
 
 networks:
@@ -1299,12 +1307,15 @@ services:
   fast-time:
     image: ghcr.io/ibm/fast-time-server:0.8.0
     command:
+
       - "-transport=dual"
       - "-port=8080"
       - "-log-level=info"
     ports:
+
       - "8080:8080"
     environment:
+
       - AUTH_TOKEN=${AUTH_TOKEN:-}
     restart: unless-stopped
     healthcheck:
@@ -1409,6 +1420,7 @@ The REST API returns consistent error responses:
 ```
 
 Common HTTP status codes:
+
 - `200 OK`: Successful request
 - `400 Bad Request`: Invalid parameters
 - `401 Unauthorized`: Missing or invalid authentication
@@ -1698,6 +1710,7 @@ print(f"Converted time: {result['converted_time']}")
 ## Support
 
 For issues, questions, or contributions:
+
 - Open an issue on [GitHub](https://github.com/IBM/mcp-context-forge/issues)
 - Check the [MCP Gateway discussions](https://github.com/IBM/mcp-context-forge/discussions)
 - Review the [source code](https://github.com/IBM/mcp-context-forge/tree/main/mcp-servers/go/fast-time-server)

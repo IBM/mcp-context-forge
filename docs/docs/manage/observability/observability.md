@@ -216,6 +216,7 @@ Each span includes standard attributes:
 ### Error Tracking
 
 Failed operations include:
+
 - `error`: `true`
 - `error.type`: Exception class name
 - `error.message`: Error description
@@ -246,15 +247,20 @@ spec:
   template:
     spec:
       containers:
+
       - name: gateway
         image: ghcr.io/ibm/mcp-context-forge:0.8.0
         env:
+
         - name: OTEL_ENABLE_OBSERVABILITY
           value: "true"
+
         - name: OTEL_TRACES_EXPORTER
           value: "otlp"
+
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://otel-collector:4317"
+
         - name: OTEL_SERVICE_NAME
           valueFrom:
             fieldRef:
@@ -289,6 +295,7 @@ python tests/integration/helpers/trace_generator.py
 ```
 
 This will send sample traces for:
+
 - Tool invocations
 - Prompt rendering
 - Resource fetching

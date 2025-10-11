@@ -156,11 +156,13 @@ Discoverable; membership by invite/request"]
 
     subgraph "Team Roles"
         R1["Owner
+
 - Full team control
 - Invite/remove members
 - Manage resources
 - Delete team"]
         R2["Member
+
 - Access team resources
 - Create resources
 - No member management"]
@@ -284,6 +286,7 @@ Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are
   - Mutations: Only the resource owner, team owners, or Platform Admins can modify/delete.
 
 Enforcement summary:
+
 - Listing queries include resources where (a) owner_email == user.email, (b) team_id ∈ user_teams with visibility ∈ {team, public}, and (c) visibility == public.
 - Read follows the same rules as list; write operations require ownership or delegated/team administrative rights.
 
@@ -505,18 +508,22 @@ Roles are assigned to users within specific scopes:
 flowchart TD
     subgraph "RBAC Roles"
         A["Platform Admin
+
 - All permissions (*)
 - Global scope
 - System management"]
         B["Team Admin
+
 - Team management
 - Member control
 - Resource access"]
         C["Developer
+
 - Tool execution
 - Resource access
 - No team management"]
         D["Viewer
+
 - Read-only access
 - No execution
 - No management"]
@@ -1060,13 +1067,16 @@ SSO_REQUIRE_ADMIN_APPROVAL=false
 flowchart TD
     subgraph "Security Layers"
         A["Authentication Layer
+
 - JWT validation
 - Session management"]
         B["Authorization Layer
+
 - Team membership
 - Resource ownership
 - Visibility checks"]
         C["Data Isolation Layer
+
 - Team-scoped queries
 - Owner validation
 - Access logging"]
@@ -1074,14 +1084,17 @@ flowchart TD
 
     subgraph "Security Controls"
         D["Input Validation
+
 - Team ID validation
 - Email format
 - Role validation"]
         E["Rate Limiting
+
 - Per-user limits
 - Per-team limits
 - API quotas"]
         F["Audit Logging
+
 - Access attempts
 - Resource changes
 - Team modifications"]
@@ -1089,12 +1102,15 @@ flowchart TD
 
     subgraph "Attack Prevention"
         G["Team Enumeration
+
 - UUID team IDs
 - Access validation"]
         H["Resource Access
+
 - Ownership checks
 - Visibility enforcement"]
         I["Privilege Escalation
+
 - Role validation
 - Permission boundaries"]
     end

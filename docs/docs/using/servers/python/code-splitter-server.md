@@ -44,6 +44,7 @@ make serve-http
 Split code into logical segments using AST analysis.
 
 **Parameters:**
+
 - `code` (required): Source code to split
 - `language`: Programming language (currently "python" only)
 - `split_level`: What to extract - "function", "class", "method", "import", or "all"
@@ -52,6 +53,7 @@ Split code into logical segments using AST analysis.
 - `min_lines`: Minimum lines per segment (default: 5, min: 1)
 
 **Returns:**
+
 - `success`: Boolean indicating success/failure
 - `language`: Programming language used
 - `split_level`: The split level used
@@ -62,12 +64,14 @@ Split code into logical segments using AST analysis.
 Analyze code structure, complexity, and dependencies.
 
 **Parameters:**
+
 - `code` (required): Source code to analyze
 - `language`: Programming language (default: "python")
 - `include_complexity`: Include complexity metrics (default: true)
 - `include_dependencies`: Include dependency analysis (default: true)
 
 **Returns:**
+
 - Code statistics and structure information
 - Complexity metrics (cyclomatic complexity, nesting depth)
 - Dependency analysis (imports categorized by type)
@@ -76,6 +80,7 @@ Analyze code structure, complexity, and dependencies.
 Extract only function definitions from code.
 
 **Parameters:**
+
 - `code` (required): Source code
 - `language`: Programming language (default: "python")
 - `include_docstrings`: Include function docstrings (default: true)
@@ -85,6 +90,7 @@ Extract only function definitions from code.
 Extract only class definitions from code.
 
 **Parameters:**
+
 - `code` (required): Source code
 - `language`: Programming language (default: "python")
 - `include_methods`: Include class methods (default: true)
@@ -262,6 +268,7 @@ asyncio.run(split_code())
 ### Complexity Metrics
 
 The complexity analysis includes:
+
 - **Cyclomatic Complexity**: Measures code complexity based on control flow
 - **Nesting Depth**: Maximum depth of nested structures
 - **Complexity Rating**: Low (<10), Medium (10-20), High (>20)
@@ -269,6 +276,7 @@ The complexity analysis includes:
 ### Dependency Categorization
 
 Dependencies are categorized into:
+
 - **Standard Library**: Built-in Python modules
 - **Third Party**: External packages
 - **Local**: Relative imports
@@ -304,6 +312,7 @@ Help students understand code structure and organization.
 
 ### Syntax Error Handling
 If code splitting fails with syntax errors:
+
 - Ensure the code is valid Python
 - Check for proper indentation
 - Verify all brackets and quotes are balanced

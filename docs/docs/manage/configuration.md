@@ -413,8 +413,10 @@ services:
   gateway:
     image: ghcr.io/ibm/mcp-context-forge:latest
     ports:
+
       - "4444:4444"
     environment:
+
       - DATABASE_URL=mysql+pymysql://mysql:changeme@mysql:3306/mcp
       - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=my-secret-key
@@ -427,11 +429,13 @@ services:
   mysql:
     image: mysql:8
     environment:
+
       - MYSQL_ROOT_PASSWORD=mysecretpassword
       - MYSQL_DATABASE=mcp
       - MYSQL_USER=mysql
       - MYSQL_PASSWORD=changeme
     volumes:
+
       - mysql_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
@@ -442,6 +446,7 @@ services:
   redis:
     image: redis:7
     volumes:
+
       - redis_data:/data
 
 volumes:
@@ -489,21 +494,28 @@ spec:
         app: mysql
     spec:
       containers:
+
         - name: mysql
           image: mysql:8
           env:
+
             - name: MYSQL_ROOT_PASSWORD
               value: "mysecretpassword"
+
             - name: MYSQL_DATABASE
               value: "mcp"
+
             - name: MYSQL_USER
               value: "mysql"
+
             - name: MYSQL_PASSWORD
               value: "changeme"
           volumeMounts:
+
             - name: mysql-storage
               mountPath: /var/lib/mysql
       volumes:
+
         - name: mysql-storage
           persistentVolumeClaim:
             claimName: mysql-pvc
@@ -516,6 +528,7 @@ spec:
   selector:
     app: mysql
   ports:
+
     - port: 3306
       targetPort: 3306
 ```

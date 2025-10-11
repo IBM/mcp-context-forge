@@ -44,11 +44,13 @@ sequenceDiagram
 ### Database Schema
 
 **SSOProvider Table**:
+
 - Provider configuration (OAuth endpoints, client credentials)
 - Encrypted client secrets using Fernet encryption
 - Trusted domains and team mapping rules
 
 **SSOAuthSession Table**:
+
 - Temporary session tracking during OAuth flow
 - CSRF state parameters and PKCE verifiers
 - 10-minute expiration for security
@@ -60,6 +62,7 @@ sequenceDiagram
 Perfect for developer-focused organizations with GitHub repositories.
 
 **Features**:
+
 - GitHub organization mapping to teams
 - Repository access integration
 - Developer-friendly onboarding
@@ -69,6 +72,7 @@ Perfect for developer-focused organizations with GitHub repositories.
 Ideal for Google Workspace organizations.
 
 **Features**:
+
 - Google Workspace domain verification
 - GSuite organization mapping
 - Professional email verification
@@ -78,6 +82,7 @@ Ideal for Google Workspace organizations.
 Enterprise-grade identity provider with advanced security features.
 
 **Features**:
+
 - Enterprise SSO compliance
 - Advanced user attributes
 - Corporate directory integration
@@ -87,6 +92,7 @@ Enterprise-grade identity provider with advanced security features.
 Microsoft's cloud-based identity and access management service (formerly Azure AD).
 
 **Features**:
+
 - Azure Active Directory integration
 - Enterprise application authentication
 - Conditional access policies support
@@ -96,6 +102,7 @@ Microsoft's cloud-based identity and access management service (formerly Azure A
 Popular enterprise identity provider with extensive integrations.
 
 **Features**:
+
 - Enterprise directory synchronization
 - Multi-factor authentication support
 - Custom user attributes
@@ -105,6 +112,7 @@ Popular enterprise identity provider with extensive integrations.
 Support for any OpenID Connect compatible identity provider including Keycloak, Auth0, Authentik, and others.
 
 **Features**:
+
 - Standards-based OIDC integration
 - Flexible endpoint configuration
 - Custom provider branding
@@ -314,6 +322,7 @@ SSO_ENTRA_TENANT_ID=87654321-4321-4321-4321-210987654321
 #### 3. API Permissions (Optional)
 
 Add Microsoft Graph API permissions for enhanced user profile access:
+
 - `User.Read` - Basic profile information
 - `profile` - OpenID Connect profile scope
 - `email` - Email address access
@@ -467,6 +476,7 @@ GET /auth/sso/login/{provider_id}?redirect_uri={callback_url}&scopes={oauth_scop
 ```
 
 Parameters:
+
 - `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `entra`, `okta`, or configured generic provider ID)
 - `redirect_uri`: Callback URL after authentication
 - `scopes`: Optional space-separated OAuth scopes

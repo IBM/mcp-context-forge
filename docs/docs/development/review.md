@@ -139,6 +139,7 @@ GitHub will delete the `pr-<number>` branch automatically.
 
 ## 7. Cleaning Up Locally
 After the PR is merged:
+
 * Switch back to the main branch
 * Delete the local feature branch
 * Prune deleted remote branches

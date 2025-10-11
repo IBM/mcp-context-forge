@@ -192,6 +192,7 @@ Add tags at the top of `README.md` between YAML markers to declare your server's
 ```markdown
 ---
 tags:
+
   - needs_filesystem_access
   - needs_api_key_user
 ---

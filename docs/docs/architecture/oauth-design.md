@@ -11,11 +11,13 @@ This document outlines the design for integrating OAuth 2.0 authentication into 
 ## Motivation
 
 Current limitations:
+
 - Personal Access Tokens (PATs) provide broad access with security risks
 - Manual token management across multiple services
 - No native support for delegated authorization with scoped permissions
 
 OAuth 2.0 provides:
+
 - Standardized authentication flows
 - Scoped access control
 - Temporary access without storing user credentials

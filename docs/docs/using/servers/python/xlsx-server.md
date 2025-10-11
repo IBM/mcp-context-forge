@@ -47,6 +47,7 @@ make serve-http
 Create a new XLSX workbook with optional sheet names.
 
 **Parameters:**
+
 - `file_path` (required): Path where the workbook will be saved
 - `sheet_names`: List of sheet names to create (default: ["Sheet1"])
 - `include_default_sheet`: Include default sheet (default: true)
@@ -55,6 +56,7 @@ Create a new XLSX workbook with optional sheet names.
 Write data to a worksheet with optional headers.
 
 **Parameters:**
+
 - `file_path` (required): Path to XLSX workbook
 - `sheet_name` (required): Name of worksheet
 - `data` (required): 2D array of data to write
@@ -67,6 +69,7 @@ Write data to a worksheet with optional headers.
 Read data from a worksheet or specific range.
 
 **Parameters:**
+
 - `file_path` (required): Path to XLSX workbook
 - `sheet_name` (required): Name of worksheet
 - `range`: Cell range to read (e.g., "A1:C10")
@@ -78,6 +81,7 @@ Read data from a worksheet or specific range.
 Apply formatting to cell ranges.
 
 **Parameters:**
+
 - `file_path` (required): Path to XLSX workbook
 - `sheet_name` (required): Name of worksheet
 - `range` (required): Cell range to format (e.g., "A1:C10")
@@ -93,6 +97,7 @@ Apply formatting to cell ranges.
 Add Excel formulas to cells.
 
 **Parameters:**
+
 - `file_path` (required): Path to XLSX workbook
 - `sheet_name` (required): Name of worksheet
 - `cell` (required): Cell address (e.g., "A1")
@@ -102,9 +107,11 @@ Add Excel formulas to cells.
 Analyze workbook structure and content.
 
 **Parameters:**
+
 - `file_path` (required): Path to XLSX workbook
 
 **Returns:**
+
 - Workbook metadata and structure
 - Sheet information and statistics
 - Data type analysis
@@ -114,6 +121,7 @@ Analyze workbook structure and content.
 Create charts from data ranges.
 
 **Parameters:**
+
 - `file_path` (required): Path to XLSX workbook
 - `sheet_name` (required): Name of worksheet
 - `chart_type` (required): Chart type ("column", "bar", "line", "pie", "scatter")

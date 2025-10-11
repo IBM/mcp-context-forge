@@ -815,6 +815,7 @@ async def test_oauth_callback_end_to_end():
 This design provides a comprehensive framework for implementing OAuth 2.0 Authorization Code flow with user consent in the MCP Gateway UI. The implementation balances security, usability, and maintainability while extending the existing OAuth infrastructure.
 
 Key benefits of this approach:
+
 - **User Consent**: Proper user delegation with scoped permissions
 - **Token Efficiency**: Reuse of valid tokens with automatic refresh
 - **Security**: Encrypted token storage and comprehensive validation
