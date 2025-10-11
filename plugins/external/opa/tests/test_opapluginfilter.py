@@ -289,4 +289,3 @@ async def test_opapluginfilter_backward_compatibility():
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.tool_pre_invoke(payload, context)
     assert not result.continue_processing
-

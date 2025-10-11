@@ -24,14 +24,15 @@ import time
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
-# Third-Party
 try:
+    # Third-Party
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
     from langchain_core.tools import BaseTool
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from langchain_ollama import ChatOllama
-    from langchain_openai import AzureChatOpenAI
+    from langchain_openai import AzureChatOpenAI, ChatOpenAI
     from langgraph.prebuilt import create_react_agent
+
     _LLMCHAT_AVAILABLE = True
 except ImportError:
     # Optional dependencies for LLM chat feature not installed
@@ -44,8 +45,29 @@ except ImportError:
     MultiServerMCPClient = None  # type: ignore
     ChatOllama = None  # type: ignore
     AzureChatOpenAI = None  # type: ignore
+    ChatOpenAI = None  # type: ignore
     create_react_agent = None  # type: ignore
 
+# Try to import Anthropic and Bedrock providers (they may not be installed)
+try:
+    # Third-Party
+    from langchain_anthropic import ChatAnthropic
+
+    _ANTHROPIC_AVAILABLE = True
+except ImportError:
+    _ANTHROPIC_AVAILABLE = False
+    ChatAnthropic = None  # type: ignore
+
+try:
+    # Third-Party
+    from langchain_aws import ChatBedrock
+
+    _BEDROCK_AVAILABLE = True
+except ImportError:
+    _BEDROCK_AVAILABLE = False
+    ChatBedrock = None  # type: ignore
+
+# Third-Party
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
@@ -297,6 +319,138 @@ class OllamaConfig(BaseModel):
     model_config = {"json_schema_extra": {"example": {"base_url": "http://localhost:11434", "model": "llama2", "temperature": 0.7}}}
 
 
+class OpenAIConfig(BaseModel):
+    """
+    Configuration for OpenAI provider (non-Azure).
+
+    Defines parameters for connecting to OpenAI API (or OpenAI-compatible endpoints).
+
+    Attributes:
+        api_key: OpenAI API authentication key.
+        base_url: Optional base URL for OpenAI-compatible endpoints.
+        model: Model identifier (e.g., gpt-4, gpt-3.5-turbo).
+        temperature: Sampling temperature for response generation (0.0-2.0).
+        max_tokens: Maximum number of tokens to generate.
+        timeout: Request timeout duration in seconds.
+        max_retries: Maximum number of retry attempts for failed requests.
+
+    Examples:
+        >>> config = OpenAIConfig(
+        ...     api_key="sk-...",
+        ...     model="gpt-4",
+        ...     temperature=0.7
+        ... )
+        >>> config.model
+        'gpt-4'
+    """
+
+    api_key: str = Field(..., description="OpenAI API key")
+    base_url: Optional[str] = Field(None, description="Base URL for OpenAI-compatible endpoints")
+    model: str = Field(default="gpt-4o-mini", description="Model name (e.g., gpt-4, gpt-3.5-turbo)")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+    max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens to generate")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+    max_retries: int = Field(default=2, ge=0, description="Maximum number of retries")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "api_key": "sk-...",
+                "model": "gpt-4o-mini",
+                "temperature": 0.7,
+            }
+        }
+    }
+
+
+class AnthropicConfig(BaseModel):
+    """
+    Configuration for Anthropic Claude provider.
+
+    Defines parameters for connecting to Anthropic's Claude API.
+
+    Attributes:
+        api_key: Anthropic API authentication key.
+        model: Claude model identifier (e.g., claude-3-5-sonnet-20241022, claude-3-opus).
+        temperature: Sampling temperature for response generation (0.0-1.0).
+        max_tokens: Maximum number of tokens to generate.
+        timeout: Request timeout duration in seconds.
+        max_retries: Maximum number of retry attempts for failed requests.
+
+    Examples:
+        >>> config = AnthropicConfig(
+        ...     api_key="sk-ant-...",
+        ...     model="claude-3-5-sonnet-20241022",
+        ...     temperature=0.7
+        ... )
+        >>> config.model
+        'claude-3-5-sonnet-20241022'
+    """
+
+    api_key: str = Field(..., description="Anthropic API key")
+    model: str = Field(default="claude-3-5-sonnet-20241022", description="Claude model name")
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="Sampling temperature")
+    max_tokens: int = Field(default=4096, gt=0, description="Maximum tokens to generate")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+    max_retries: int = Field(default=2, ge=0, description="Maximum number of retries")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "api_key": "sk-ant-...",
+                "model": "claude-3-5-sonnet-20241022",
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            }
+        }
+    }
+
+
+class AWSBedrockConfig(BaseModel):
+    """
+    Configuration for AWS Bedrock provider.
+
+    Defines parameters for connecting to AWS Bedrock LLM services.
+
+    Attributes:
+        model_id: Bedrock model identifier (e.g., anthropic.claude-v2, amazon.titan-text-express-v1).
+        region_name: AWS region name (e.g., us-east-1, us-west-2).
+        aws_access_key_id: Optional AWS access key ID (uses default credential chain if not provided).
+        aws_secret_access_key: Optional AWS secret access key.
+        aws_session_token: Optional AWS session token for temporary credentials.
+        temperature: Sampling temperature for response generation (0.0-1.0).
+        max_tokens: Maximum number of tokens to generate.
+
+    Examples:
+        >>> config = AWSBedrockConfig(
+        ...     model_id="anthropic.claude-v2",
+        ...     region_name="us-east-1",
+        ...     temperature=0.7
+        ... )
+        >>> config.model_id
+        'anthropic.claude-v2'
+    """
+
+    model_id: str = Field(..., description="Bedrock model ID")
+    region_name: str = Field(default="us-east-1", description="AWS region name")
+    aws_access_key_id: Optional[str] = Field(None, description="AWS access key ID")
+    aws_secret_access_key: Optional[str] = Field(None, description="AWS secret access key")
+    aws_session_token: Optional[str] = Field(None, description="AWS session token")
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="Sampling temperature")
+    max_tokens: int = Field(default=4096, gt=0, description="Maximum tokens to generate")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "model_id": "anthropic.claude-v2",
+                "region_name": "us-east-1",
+                "temperature": 0.7,
+                "max_tokens": 4096,
+            }
+        }
+    }
+
+
 class LLMConfig(BaseModel):
     """
     Configuration for LLM provider.
@@ -305,7 +459,7 @@ class LLMConfig(BaseModel):
     a discriminated union pattern.
 
     Attributes:
-        provider: Type of LLM provider (azure_openai or ollama).
+        provider: Type of LLM provider (azure_openai, openai, anthropic, aws_bedrock, or ollama).
         config: Provider-specific configuration object.
 
     Examples:
@@ -321,6 +475,17 @@ class LLMConfig(BaseModel):
         >>> config.provider
         'azure_openai'
 
+        >>> # OpenAI configuration
+        >>> config = LLMConfig(
+        ...     provider="openai",
+        ...     config=OpenAIConfig(
+        ...         api_key="sk-...",
+        ...         model="gpt-4"
+        ...     )
+        ... )
+        >>> config.provider
+        'openai'
+
         >>> # Ollama configuration
         >>> config = LLMConfig(
         ...     provider="ollama",
@@ -330,12 +495,12 @@ class LLMConfig(BaseModel):
         'ollama'
     """
 
-    provider: Literal["azure_openai", "ollama"] = Field(..., description="LLM provider type")
-    config: Union[AzureOpenAIConfig, OllamaConfig] = Field(..., description="Provider-specific configuration")
+    provider: Literal["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama"] = Field(..., description="LLM provider type")
+    config: Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig] = Field(..., description="Provider-specific configuration")
 
     @field_validator("config", mode="before")
     @classmethod
-    def validate_config_type(cls, v: Any, info) -> Union[AzureOpenAIConfig, OllamaConfig]:
+    def validate_config_type(cls, v: Any, info) -> Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig]:
         """
         Validate and convert config dictionary to appropriate provider type.
 
@@ -344,7 +509,7 @@ class LLMConfig(BaseModel):
             info: Validation context containing provider information.
 
         Returns:
-            Union[AzureOpenAIConfig, OllamaConfig]: Validated configuration object.
+            Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig]: Validated configuration object.
 
         Examples:
             >>> # Automatically converts dict to appropriate config type
@@ -360,6 +525,12 @@ class LLMConfig(BaseModel):
         if isinstance(v, dict):
             if provider == "azure_openai":
                 return AzureOpenAIConfig(**v)
+            if provider == "openai":
+                return OpenAIConfig(**v)
+            if provider == "anthropic":
+                return AnthropicConfig(**v)
+            if provider == "aws_bedrock":
+                return AWSBedrockConfig(**v)
             if provider == "ollama":
                 return OllamaConfig(**v)
 
@@ -602,6 +773,323 @@ class OllamaProvider:
         return self.config.model
 
 
+class OpenAIProvider:
+    """
+    OpenAI provider implementation (non-Azure).
+
+    Manages connection and interaction with OpenAI API or OpenAI-compatible endpoints.
+
+    Attributes:
+        config: OpenAI configuration object.
+
+    Examples:
+        >>> config = OpenAIConfig(
+        ...     api_key="sk-...",
+        ...     model="gpt-4"
+        ... )
+        >>> provider = OpenAIProvider(config)
+        >>> provider.get_model_name()
+        'gpt-4'
+
+    Note:
+        The LLM instance is lazily initialized on first access for
+        improved startup performance.
+    """
+
+    def __init__(self, config: OpenAIConfig):
+        """
+        Initialize OpenAI provider.
+
+        Args:
+            config: OpenAI configuration with API key and settings.
+
+        Examples:
+            >>> config = OpenAIConfig(
+            ...     api_key="sk-...",
+            ...     model="gpt-4"
+            ... )
+            >>> provider = OpenAIProvider(config)
+        """
+        self.config = config
+        self._llm = None
+        logger.info(f"Initializing OpenAI provider with model: {config.model}")
+
+    def get_llm(self) -> ChatOpenAI:
+        """
+        Get OpenAI LLM instance with lazy initialization.
+
+        Creates and caches the OpenAI chat model instance on first call.
+        Subsequent calls return the cached instance.
+
+        Returns:
+            ChatOpenAI: Configured OpenAI chat model.
+
+        Raises:
+            Exception: If LLM initialization fails (e.g., invalid credentials).
+
+        Examples:
+            >>> config = OpenAIConfig(
+            ...     api_key="sk-...",
+            ...     model="gpt-4"
+            ... )
+            >>> provider = OpenAIProvider(config)
+            >>> # llm = provider.get_llm()  # Returns ChatOpenAI instance
+        """
+        if self._llm is None:
+            try:
+                kwargs = {
+                    "api_key": self.config.api_key,
+                    "model": self.config.model,
+                    "temperature": self.config.temperature,
+                    "max_tokens": self.config.max_tokens,
+                    "timeout": self.config.timeout,
+                    "max_retries": self.config.max_retries,
+                }
+                if self.config.base_url:
+                    kwargs["base_url"] = self.config.base_url
+
+                self._llm = ChatOpenAI(**kwargs)
+                logger.info("OpenAI LLM instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create OpenAI LLM: {e}")
+                raise
+
+        return self._llm
+
+    def get_model_name(self) -> str:
+        """
+        Get the OpenAI model name.
+
+        Returns:
+            str: The model name configured for this provider.
+
+        Examples:
+            >>> config = OpenAIConfig(
+            ...     api_key="sk-...",
+            ...     model="gpt-4"
+            ... )
+            >>> provider = OpenAIProvider(config)
+            >>> provider.get_model_name()
+            'gpt-4'
+        """
+        return self.config.model
+
+
+class AnthropicProvider:
+    """
+    Anthropic Claude provider implementation.
+
+    Manages connection and interaction with Anthropic's Claude API.
+
+    Attributes:
+        config: Anthropic configuration object.
+
+    Examples:
+        >>> config = AnthropicConfig(  # doctest: +SKIP
+        ...     api_key="sk-ant-...",
+        ...     model="claude-3-5-sonnet-20241022"
+        ... )
+        >>> provider = AnthropicProvider(config)  # doctest: +SKIP
+        >>> provider.get_model_name()  # doctest: +SKIP
+        'claude-3-5-sonnet-20241022'
+
+    Note:
+        Requires langchain-anthropic package to be installed.
+    """
+
+    def __init__(self, config: AnthropicConfig):
+        """
+        Initialize Anthropic provider.
+
+        Args:
+            config: Anthropic configuration with API key and settings.
+
+        Raises:
+            ImportError: If langchain-anthropic is not installed.
+
+        Examples:
+            >>> config = AnthropicConfig(  # doctest: +SKIP
+            ...     api_key="sk-ant-...",
+            ...     model="claude-3-5-sonnet-20241022"
+            ... )
+            >>> provider = AnthropicProvider(config)  # doctest: +SKIP
+        """
+        if not _ANTHROPIC_AVAILABLE:
+            raise ImportError("Anthropic provider requires langchain-anthropic package. Install it with: pip install langchain-anthropic")
+        self.config = config
+        self._llm = None
+        logger.info(f"Initializing Anthropic provider with model: {config.model}")
+
+    def get_llm(self) -> ChatAnthropic:
+        """
+        Get Anthropic LLM instance with lazy initialization.
+
+        Creates and caches the Anthropic chat model instance on first call.
+        Subsequent calls return the cached instance.
+
+        Returns:
+            ChatAnthropic: Configured Anthropic chat model.
+
+        Raises:
+            Exception: If LLM initialization fails (e.g., invalid credentials).
+
+        Examples:
+            >>> config = AnthropicConfig(  # doctest: +SKIP
+            ...     api_key="sk-ant-...",
+            ...     model="claude-3-5-sonnet-20241022"
+            ... )
+            >>> provider = AnthropicProvider(config)  # doctest: +SKIP
+            >>> # llm = provider.get_llm()  # Returns ChatAnthropic instance
+        """
+        if self._llm is None:
+            try:
+                self._llm = ChatAnthropic(
+                    api_key=self.config.api_key,
+                    model=self.config.model,
+                    temperature=self.config.temperature,
+                    max_tokens=self.config.max_tokens,
+                    timeout=self.config.timeout,
+                    max_retries=self.config.max_retries,
+                )
+                logger.info("Anthropic LLM instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create Anthropic LLM: {e}")
+                raise
+
+        return self._llm
+
+    def get_model_name(self) -> str:
+        """
+        Get the Anthropic model name.
+
+        Returns:
+            str: The model name configured for this provider.
+
+        Examples:
+            >>> config = AnthropicConfig(  # doctest: +SKIP
+            ...     api_key="sk-ant-...",
+            ...     model="claude-3-5-sonnet-20241022"
+            ... )
+            >>> provider = AnthropicProvider(config)  # doctest: +SKIP
+            >>> provider.get_model_name()  # doctest: +SKIP
+            'claude-3-5-sonnet-20241022'
+        """
+        return self.config.model
+
+
+class AWSBedrockProvider:
+    """
+    AWS Bedrock provider implementation.
+
+    Manages connection and interaction with AWS Bedrock LLM services.
+
+    Attributes:
+        config: AWS Bedrock configuration object.
+
+    Examples:
+        >>> config = AWSBedrockConfig(  # doctest: +SKIP
+        ...     model_id="anthropic.claude-v2",
+        ...     region_name="us-east-1"
+        ... )
+        >>> provider = AWSBedrockProvider(config)  # doctest: +SKIP
+        >>> provider.get_model_name()  # doctest: +SKIP
+        'anthropic.claude-v2'
+
+    Note:
+        Requires langchain-aws package and boto3 to be installed.
+        Uses AWS default credential chain if credentials not explicitly provided.
+    """
+
+    def __init__(self, config: AWSBedrockConfig):
+        """
+        Initialize AWS Bedrock provider.
+
+        Args:
+            config: AWS Bedrock configuration with model ID and settings.
+
+        Raises:
+            ImportError: If langchain-aws is not installed.
+
+        Examples:
+            >>> config = AWSBedrockConfig(  # doctest: +SKIP
+            ...     model_id="anthropic.claude-v2",
+            ...     region_name="us-east-1"
+            ... )
+            >>> provider = AWSBedrockProvider(config)  # doctest: +SKIP
+        """
+        if not _BEDROCK_AVAILABLE:
+            raise ImportError("AWS Bedrock provider requires langchain-aws package. Install it with: pip install langchain-aws boto3")
+        self.config = config
+        self._llm = None
+        logger.info(f"Initializing AWS Bedrock provider with model: {config.model_id}")
+
+    def get_llm(self) -> ChatBedrock:
+        """
+        Get AWS Bedrock LLM instance with lazy initialization.
+
+        Creates and caches the Bedrock chat model instance on first call.
+        Subsequent calls return the cached instance.
+
+        Returns:
+            ChatBedrock: Configured AWS Bedrock chat model.
+
+        Raises:
+            Exception: If LLM initialization fails (e.g., invalid credentials, permissions).
+
+        Examples:
+            >>> config = AWSBedrockConfig(  # doctest: +SKIP
+            ...     model_id="anthropic.claude-v2",
+            ...     region_name="us-east-1"
+            ... )
+            >>> provider = AWSBedrockProvider(config)  # doctest: +SKIP
+            >>> # llm = provider.get_llm()  # Returns ChatBedrock instance
+        """
+        if self._llm is None:
+            try:
+                # Build credentials dict if provided
+                credentials_kwargs = {}
+                if self.config.aws_access_key_id:
+                    credentials_kwargs["aws_access_key_id"] = self.config.aws_access_key_id
+                if self.config.aws_secret_access_key:
+                    credentials_kwargs["aws_secret_access_key"] = self.config.aws_secret_access_key
+                if self.config.aws_session_token:
+                    credentials_kwargs["aws_session_token"] = self.config.aws_session_token
+
+                self._llm = ChatBedrock(
+                    model_id=self.config.model_id,
+                    region_name=self.config.region_name,
+                    model_kwargs={
+                        "temperature": self.config.temperature,
+                        "max_tokens": self.config.max_tokens,
+                    },
+                    **credentials_kwargs,
+                )
+                logger.info("AWS Bedrock LLM instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create AWS Bedrock LLM: {e}")
+                raise
+
+        return self._llm
+
+    def get_model_name(self) -> str:
+        """
+        Get the AWS Bedrock model ID.
+
+        Returns:
+            str: The model ID configured for this provider.
+
+        Examples:
+            >>> config = AWSBedrockConfig(  # doctest: +SKIP
+            ...     model_id="anthropic.claude-v2",
+            ...     region_name="us-east-1"
+            ... )
+            >>> provider = AWSBedrockProvider(config)  # doctest: +SKIP
+            >>> provider.get_model_name()  # doctest: +SKIP
+            'anthropic.claude-v2'
+        """
+        return self.config.model_id
+
+
 class LLMProviderFactory:
     """
     Factory for creating LLM providers.
@@ -624,7 +1112,7 @@ class LLMProviderFactory:
     """
 
     @staticmethod
-    def create(llm_config: LLMConfig) -> Union[AzureOpenAIProvider, OllamaProvider]:
+    def create(llm_config: LLMConfig) -> Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider]:
         """
         Create an LLM provider based on configuration.
 
@@ -632,10 +1120,11 @@ class LLMProviderFactory:
             llm_config: LLM configuration specifying provider type and settings.
 
         Returns:
-            Union[AzureOpenAIProvider, OllamaProvider]: Instantiated provider.
+            Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider]: Instantiated provider.
 
         Raises:
             ValueError: If provider type is not supported.
+            ImportError: If required provider package is not installed.
 
         Examples:
             >>> # Create Azure OpenAI provider
@@ -651,6 +1140,18 @@ class LLMProviderFactory:
             >>> isinstance(provider, AzureOpenAIProvider)
             True
 
+            >>> # Create OpenAI provider
+            >>> config = LLMConfig(
+            ...     provider="openai",
+            ...     config=OpenAIConfig(
+            ...         api_key="sk-...",
+            ...         model="gpt-4"
+            ...     )
+            ... )
+            >>> provider = LLMProviderFactory.create(config)
+            >>> isinstance(provider, OpenAIProvider)
+            True
+
             >>> # Create Ollama provider
             >>> config = LLMConfig(
             ...     provider="ollama",
@@ -662,12 +1163,15 @@ class LLMProviderFactory:
         """
         provider_map = {
             "azure_openai": AzureOpenAIProvider,
+            "openai": OpenAIProvider,
+            "anthropic": AnthropicProvider,
+            "aws_bedrock": AWSBedrockProvider,
             "ollama": OllamaProvider,
         }
 
         provider_class = provider_map.get(llm_config.provider)
         if not provider_class:
-            raise ValueError(f"Unsupported LLM provider: {llm_config.provider}. " f"Supported providers: {list(provider_map.keys())}")
+            raise ValueError(f"Unsupported LLM provider: {llm_config.provider}. Supported providers: {list(provider_map.keys())}")
 
         logger.info(f"Creating LLM provider: {llm_config.provider}")
         return provider_class(llm_config.config)
@@ -1036,7 +1540,7 @@ class MCPChatService:
                 await self.mcp_client.connect()
             except ConnectionError as ce:
                 logger.error(f"MCP server connection failed: {ce}")
-                raise ConnectionError(f"Unable to connect to MCP server at {self.config.mcp_server.url}. " f"Please verify the server is running and the URL is correct. Details: {ce}") from ce
+                raise ConnectionError(f"Unable to connect to MCP server at {self.config.mcp_server.url}. Please verify the server is running and the URL is correct. Details: {ce}") from ce
             except Exception as conn_error:
                 logger.error(f"Unexpected error connecting to MCP server: {conn_error}")
                 raise ConnectionError(f"MCP server connection error: {conn_error}") from conn_error
@@ -1071,7 +1575,7 @@ class MCPChatService:
                 raise RuntimeError(f"Agent creation failed: {agent_error}") from agent_error
 
             self._initialized = True
-            logger.info(f"Chat service initialized successfully with " f"{len(tools)} tools and {self.llm_provider.get_model_name()} model")
+            logger.info(f"Chat service initialized successfully with {len(tools)} tools and {self.llm_provider.get_model_name()} model")
 
         except (ConnectionError, ValueError, RuntimeError):
             # Re-raise expected exceptions

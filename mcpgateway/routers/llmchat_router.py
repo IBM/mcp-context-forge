@@ -28,12 +28,15 @@ from pydantic import BaseModel
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import (
+    AnthropicConfig,
+    AWSBedrockConfig,
     AzureOpenAIConfig,
     LLMConfig,
     MCPChatService,
     MCPClientConfig,
     MCPServerConfig,
     OllamaConfig,
+    OpenAIConfig,
 )
 
 # Load environment variables
@@ -264,7 +267,7 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
     cfg = llm.config if llm else {}
 
     # Validate provider
-    valid_providers = ["azure_openai", "ollama", "openai"]
+    valid_providers = ["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama"]
     if provider not in valid_providers:
         raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: {', '.join(valid_providers)}")
 
@@ -289,6 +292,56 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
                 temperature=fallback(cfg.get("temperature"), "AZURE_OPENAI_TEMPERATURE", 0.7),
             ),
         )
+    elif provider == "openai":
+        api_key = fallback(cfg.get("api_key"), "OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OpenAI API key is required but not provided")
+
+        return LLMConfig(
+            provider="openai",
+            config=OpenAIConfig(
+                api_key=api_key,
+                model=fallback(cfg.get("model"), "OPENAI_MODEL", "gpt-4o-mini"),
+                temperature=fallback(cfg.get("temperature"), "OPENAI_TEMPERATURE", 0.7),
+                base_url=fallback(cfg.get("base_url"), "OPENAI_BASE_URL"),
+                max_tokens=cfg.get("max_tokens"),
+                timeout=cfg.get("timeout"),
+                max_retries=fallback(cfg.get("max_retries"), "OPENAI_MAX_RETRIES", 2),
+            ),
+        )
+    elif provider == "anthropic":
+        api_key = fallback(cfg.get("api_key"), "ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("Anthropic API key is required but not provided")
+
+        return LLMConfig(
+            provider="anthropic",
+            config=AnthropicConfig(
+                api_key=api_key,
+                model=fallback(cfg.get("model"), "ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+                temperature=fallback(cfg.get("temperature"), "ANTHROPIC_TEMPERATURE", 0.7),
+                max_tokens=fallback(cfg.get("max_tokens"), "ANTHROPIC_MAX_TOKENS", 4096),
+                timeout=cfg.get("timeout"),
+                max_retries=fallback(cfg.get("max_retries"), "ANTHROPIC_MAX_RETRIES", 2),
+            ),
+        )
+    elif provider == "aws_bedrock":
+        model_id = fallback(cfg.get("model_id"), "AWS_BEDROCK_MODEL_ID")
+        if not model_id:
+            raise ValueError("AWS Bedrock model_id is required but not provided")
+
+        return LLMConfig(
+            provider="aws_bedrock",
+            config=AWSBedrockConfig(
+                model_id=model_id,
+                region_name=fallback(cfg.get("region_name"), "AWS_BEDROCK_REGION", "us-east-1"),
+                aws_access_key_id=fallback(cfg.get("aws_access_key_id"), "AWS_ACCESS_KEY_ID"),
+                aws_secret_access_key=fallback(cfg.get("aws_secret_access_key"), "AWS_SECRET_ACCESS_KEY"),
+                aws_session_token=fallback(cfg.get("aws_session_token"), "AWS_SESSION_TOKEN"),
+                temperature=fallback(cfg.get("temperature"), "AWS_BEDROCK_TEMPERATURE", 0.7),
+                max_tokens=fallback(cfg.get("max_tokens"), "AWS_BEDROCK_MAX_TOKENS", 4096),
+            ),
+        )
     elif provider == "ollama":
         model = fallback(cfg.get("model"), "OLLAMA_MODEL", "llama3")
         if not model:
@@ -299,21 +352,10 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
             config=OllamaConfig(
                 model=model,
                 temperature=fallback(cfg.get("temperature"), "OLLAMA_TEMPERATURE", 0.7),
+                base_url=fallback(cfg.get("base_url"), "OLLAMA_BASE_URL", "http://localhost:11434"),
+                timeout=cfg.get("timeout"),
+                num_ctx=cfg.get("num_ctx"),
             ),
-        )
-    elif provider == "openai":
-        api_key = fallback(cfg.get("api_key"), "OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OpenAI API key is required but not provided")
-
-        return LLMConfig(
-            provider="openai",
-            config={
-                "api_key": api_key,
-                "model": fallback(cfg.get("model"), "OPENAI_MODEL", "gpt-4o-mini"),
-                "temperature": fallback(cfg.get("temperature"), "OPENAI_TEMPERATURE", 0.7),
-                "base_url": fallback(cfg.get("base_url"), "OPENAI_BASE_URL"),
-            },
         )
 
 

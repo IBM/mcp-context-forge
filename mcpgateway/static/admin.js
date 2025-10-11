@@ -14081,29 +14081,29 @@ async function loadVirtualServersForChat() {
                     : "";
 
                 return `
-                <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors 
-                    ${llmChatState.selectedServerId === server.id ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900" : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600"} 
-                    ${!isActive ? "opacity-50" : ""}" 
+                <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors
+                    ${llmChatState.selectedServerId === server.id ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900" : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600"}
+                    ${!isActive ? "opacity-50" : ""}"
                     onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
                     style="position: relative;">
-                    
+
                     ${
                         requiresToken
                             ? `
-                        <div class="tooltip" 
-                        style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px; 
-                                background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px; 
+                        <div class="tooltip"
+                        style="position: absolute; left: 50%; transform: translateX(-50%); bottom: 120%; margin-bottom: 8px;
+                                background-color: #6B7280; color: white; font-size: 10px; border-radius: 4px;
                                 padding: 4px 20px; /* More horizontal width */
-                                opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in; 
+                                opacity: 0; visibility: hidden; transition: opacity 0.2s ease-in;
                                 z-index: 1000;"> <!-- Added higher z-index to ensure it's above other elements -->
                         ${tooltipMessage}
-                        <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%); 
-                                    width: 0; height: 0; border-left: 5px solid transparent; 
+                        <div style="position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
+                                    width: 0; height: 0; border-left: 5px solid transparent;
                                     border-right: 5px solid transparent; border-top: 5px solid #6B7280;"></div>
                         </div>`
                             : ""
                     }
-                    
+
                     <div class="flex justify-between items-start">
                         <div class="flex-1 min-w-0">
                             <h4 class="text-sm font-medium text-gray-900 dark:text-white truncate">${escapeHtml(server.name)}</h4>
@@ -14246,15 +14246,27 @@ function toggleLLMConfig() {
 function handleLLMProviderChange() {
     const provider = document.getElementById("llm-provider").value;
     const azureFields = document.getElementById("azure-openai-fields");
+    const openaiFields = document.getElementById("openai-fields");
+    const anthropicFields = document.getElementById("anthropic-fields");
+    const awsBedrockFields = document.getElementById("aws-bedrock-fields");
     const ollamaFields = document.getElementById("ollama-fields");
 
     // Hide all fields first
     azureFields.classList.add("hidden");
+    openaiFields.classList.add("hidden");
+    anthropicFields.classList.add("hidden");
+    awsBedrockFields.classList.add("hidden");
     ollamaFields.classList.add("hidden");
 
     // Show relevant fields
     if (provider === "azure_openai") {
         azureFields.classList.remove("hidden");
+    } else if (provider === "openai") {
+        openaiFields.classList.remove("hidden");
+    } else if (provider === "anthropic") {
+        anthropicFields.classList.remove("hidden");
+    } else if (provider === "aws_bedrock") {
+        awsBedrockFields.classList.remove("hidden");
     } else if (provider === "ollama") {
         ollamaFields.classList.remove("hidden");
     }
@@ -14482,6 +14494,71 @@ function buildLLMConfig(provider) {
         if (temperature) {
             config.config.temperature = parseFloat(temperature);
         }
+    } else if (provider === "openai") {
+        const apiKey = document.getElementById("openai-api-key").value.trim();
+        const model = document.getElementById("openai-model").value.trim();
+        const baseUrl = document.getElementById("openai-base-url").value.trim();
+        const temperature = document.getElementById("openai-temperature").value.trim();
+
+        // Only include non-empty values
+        if (apiKey) {
+            config.config.api_key = apiKey;
+        }
+        if (model) {
+            config.config.model = model;
+        }
+        if (baseUrl) {
+            config.config.base_url = baseUrl;
+        }
+        if (temperature) {
+            config.config.temperature = parseFloat(temperature);
+        }
+    } else if (provider === "anthropic") {
+        const apiKey = document.getElementById("anthropic-api-key").value.trim();
+        const model = document.getElementById("anthropic-model").value.trim();
+        const temperature = document.getElementById("anthropic-temperature").value.trim();
+        const maxTokens = document.getElementById("anthropic-max-tokens").value.trim();
+
+        // Only include non-empty values
+        if (apiKey) {
+            config.config.api_key = apiKey;
+        }
+        if (model) {
+            config.config.model = model;
+        }
+        if (temperature) {
+            config.config.temperature = parseFloat(temperature);
+        }
+        if (maxTokens) {
+            config.config.max_tokens = parseInt(maxTokens, 10);
+        }
+    } else if (provider === "aws_bedrock") {
+        const modelId = document.getElementById("aws-bedrock-model-id").value.trim();
+        const region = document.getElementById("aws-bedrock-region").value.trim();
+        const accessKeyId = document.getElementById("aws-access-key-id").value.trim();
+        const secretAccessKey = document.getElementById("aws-secret-access-key").value.trim();
+        const temperature = document.getElementById("aws-bedrock-temperature").value.trim();
+        const maxTokens = document.getElementById("aws-bedrock-max-tokens").value.trim();
+
+        // Only include non-empty values
+        if (modelId) {
+            config.config.model_id = modelId;
+        }
+        if (region) {
+            config.config.region_name = region;
+        }
+        if (accessKeyId) {
+            config.config.aws_access_key_id = accessKeyId;
+        }
+        if (secretAccessKey) {
+            config.config.aws_secret_access_key = secretAccessKey;
+        }
+        if (temperature) {
+            config.config.temperature = parseFloat(temperature);
+        }
+        if (maxTokens) {
+            config.config.max_tokens = parseInt(maxTokens, 10);
+        }
     } else if (provider === "ollama") {
         const model = document.getElementById("ollama-model").value.trim();
         const baseUrl = document.getElementById("ollama-base-url").value.trim();
@@ -14516,10 +14593,21 @@ AZURE_OPENAI_API_VERSION=2024-02-15-preview
 AZURE_OPENAI_DEPLOYMENT=gpt4o
 AZURE_OPENAI_MODEL=gpt4o`,
 
-        ollama: "OLLAMA_MODEL=qwen3:1.7b",
-
         openai: `OPENAI_API_KEY=<api_key>
-OPENAI_MODEL=gpt-4o-mini`,
+OPENAI_MODEL=gpt-4o-mini
+OPENAI_BASE_URL=https://api.openai.com/v1`,
+
+        anthropic: `ANTHROPIC_API_KEY=<api_key>
+ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+ANTHROPIC_MAX_TOKENS=4096`,
+
+        aws_bedrock: `AWS_BEDROCK_MODEL_ID=anthropic.claude-v2
+AWS_BEDROCK_REGION=us-east-1
+AWS_ACCESS_KEY_ID=<optional>
+AWS_SECRET_ACCESS_KEY=<optional>`,
+
+        ollama: `OLLAMA_MODEL=llama3
+OLLAMA_BASE_URL=http://localhost:11434`,
     };
 
     const variables = envVariables[provider];
@@ -15650,12 +15738,12 @@ style.textContent = `
   .streaming-indicator {
     animation: blink 1s infinite;
   }
-  
+
   @keyframes blink {
     0%, 50% { opacity: 1; }
     51%, 100% { opacity: 0; }
   }
-  
+
   #chat-input {
     max-height: 120px;
     overflow-y: auto;

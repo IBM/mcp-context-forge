@@ -2348,6 +2348,7 @@ async def admin_ui(
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
+            "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),

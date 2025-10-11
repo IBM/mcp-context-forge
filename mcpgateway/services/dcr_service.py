@@ -233,7 +233,7 @@ class DcrService:
         # No existing client, check if auto-register is enabled
         if not self.settings.dcr_auto_register_on_missing_credentials:
             raise DcrError(
-                f"No registered client found for gateway {gateway_id} and issuer {issuer}. " "Auto-register is disabled. Set MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true to enable."
+                f"No registered client found for gateway {gateway_id} and issuer {issuer}. Auto-register is disabled. Set MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true to enable."
             )
 
         # Auto-register

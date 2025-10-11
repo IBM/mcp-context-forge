@@ -1182,6 +1182,85 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### LLM Chat MCP Client
+
+The LLM Chat MCP Client allows you to interact with MCP servers using conversational AI from multiple LLM providers. This feature enables natural language interaction with tools, resources, and prompts exposed by MCP servers.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `LLMCHAT_ENABLED`             | Enable LLM Chat functionality          | `false` | bool    |
+| `LLM_PROVIDER`                | LLM provider selection                 | `azure_openai` | `azure_openai`, `openai`, `anthropic`, `aws_bedrock`, `ollama` |
+
+**Azure OpenAI Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `AZURE_OPENAI_ENDPOINT`       | Azure OpenAI endpoint URL              | (none)  | string  |
+| `AZURE_OPENAI_API_KEY`        | Azure OpenAI API key                   | (none)  | string  |
+| `AZURE_OPENAI_DEPLOYMENT`     | Azure OpenAI deployment name           | (none)  | string  |
+| `AZURE_OPENAI_API_VERSION`    | Azure OpenAI API version               | `2024-02-15-preview` | string |
+| `AZURE_OPENAI_TEMPERATURE`    | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+| `AZURE_OPENAI_MAX_TOKENS`     | Maximum tokens to generate             | (none)  | int     |
+
+**OpenAI Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `OPENAI_API_KEY`              | OpenAI API key                         | (none)  | string  |
+| `OPENAI_MODEL`                | OpenAI model name                      | `gpt-4o-mini` | string |
+| `OPENAI_BASE_URL`             | Base URL for OpenAI-compatible endpoints | (none) | string  |
+| `OPENAI_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+| `OPENAI_MAX_RETRIES`          | Maximum number of retries              | `2`     | int     |
+
+**Anthropic Claude Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `ANTHROPIC_API_KEY`           | Anthropic API key                      | (none)  | string  |
+| `ANTHROPIC_MODEL`             | Claude model name                      | `claude-3-5-sonnet-20241022` | string |
+| `ANTHROPIC_TEMPERATURE`       | Sampling temperature                   | `0.7`   | float (0.0-1.0) |
+| `ANTHROPIC_MAX_TOKENS`        | Maximum tokens to generate             | `4096`  | int     |
+| `ANTHROPIC_MAX_RETRIES`       | Maximum number of retries              | `2`     | int     |
+
+**AWS Bedrock Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `AWS_BEDROCK_MODEL_ID`        | Bedrock model ID                       | (none)  | string  |
+| `AWS_BEDROCK_REGION`          | AWS region name                        | `us-east-1` | string |
+| `AWS_BEDROCK_TEMPERATURE`     | Sampling temperature                   | `0.7`   | float (0.0-1.0) |
+| `AWS_BEDROCK_MAX_TOKENS`      | Maximum tokens to generate             | `4096`  | int     |
+| `AWS_ACCESS_KEY_ID`           | AWS access key ID (optional)           | (none)  | string  |
+| `AWS_SECRET_ACCESS_KEY`       | AWS secret access key (optional)       | (none)  | string  |
+| `AWS_SESSION_TOKEN`           | AWS session token (optional)           | (none)  | string  |
+
+**Ollama Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `OLLAMA_BASE_URL`             | Ollama base URL                        | `http://localhost:11434` | string |
+| `OLLAMA_MODEL`                | Ollama model name                      | `llama3.2` | string |
+| `OLLAMA_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+
+> 🤖 **LLM Chat Integration**: Chat with MCP servers using natural language powered by Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, or Ollama
+> 🔧 **Flexible Providers**: Switch between different LLM providers without changing your MCP integration
+> 🔒 **Security**: API keys and credentials are securely stored and never exposed in responses
+> 🎛️ **Admin UI**: Dedicated LLM Chat tab in the admin interface for interactive conversations
+
+**LLM Chat Configuration Effects:**
+- `LLMCHAT_ENABLED=false` (default): Completely disables LLM Chat features (API endpoints return 404, admin tab hidden)
+- `LLMCHAT_ENABLED=true`: Enables LLM Chat functionality with the selected provider
+
+**Provider Requirements:**
+- **Azure OpenAI**: Requires `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_DEPLOYMENT`
+- **OpenAI**: Requires `OPENAI_API_KEY`
+- **Anthropic**: Requires `ANTHROPIC_API_KEY` and `pip install langchain-anthropic`
+- **AWS Bedrock**: Requires `AWS_BEDROCK_MODEL_ID` and `pip install langchain-aws boto3`. Uses AWS credential chain if explicit credentials not provided.
+- **Ollama**: Requires local Ollama instance running (default: `http://localhost:11434`)
+
+**Documentation:**
+- [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/manage/llm-chat/) - Complete LLM Chat setup and provider configuration
+
 ### Email-Based Authentication & User Management
 
 | Setting                        | Description                                      | Default               | Options |
