@@ -139,7 +139,7 @@ mcpContextForge:
 
     # ─ Cache behaviour ─
     CACHE_TYPE: redis                # Backend cache driver (redis, memory, database)
-    CACHE_PREFIX: mcpgw              # Prefix applied to every cache key
+    CACHE_PREFIX: "mcpgw:"           # Prefix applied to every cache key
     SESSION_TTL: "3600"              # TTL (s) for user sessions
     MESSAGE_TTL: "600"               # TTL (s) for ephemeral messages (completions)
 
@@ -163,6 +163,22 @@ mcpContextForge:
     MCPGATEWAY_A2A_DEFAULT_TIMEOUT: "30" # default timeout for A2A HTTP requests
     MCPGATEWAY_A2A_MAX_RETRIES: "3"     # maximum retry attempts for A2A calls
     MCPGATEWAY_A2A_METRICS_ENABLED: "true" # enable A2A agent metrics collection
+
+    # ─ MCP Server Catalog Configuration ─
+    MCPGATEWAY_CATALOG_ENABLED: "true"  # enable MCP server catalog feature
+    MCPGATEWAY_CATALOG_FILE: "mcp-catalog.yml" # path to catalog configuration file
+    MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK: "true" # automatically health check catalog servers
+    MCPGATEWAY_CATALOG_CACHE_TTL: "3600" # catalog cache TTL in seconds
+    MCPGATEWAY_CATALOG_PAGE_SIZE: "100" # number of catalog servers per page
+
+    # ─ UI Configuration ─
+    MCPGATEWAY_UI_TOOL_TEST_TIMEOUT: "60000" # tool test timeout in milliseconds for the admin UI
+
+    # ─ LLM Chat Feature ─
+    LLMCHAT_ENABLED: "false"            # enable LLM Chat feature
+
+    # ─ Default Configuration ─
+    DEFAULT_ROOTS: "[]"                 # default roots configuration (JSON array)
 
     # ─ Security & CORS ─
     ENVIRONMENT: development         # deployment environment (development/production)
@@ -214,7 +230,7 @@ mcpContextForge:
     FEDERATION_ENABLED: "true"       # enable federated mode
     FEDERATION_DISCOVERY: "false"    # advertise & discover peers automatically
     FEDERATION_PEERS: '[]'           # explicit peer list (JSON array)
-    FEDERATION_TIMEOUT: "30"         # seconds before peer request timeout
+    FEDERATION_TIMEOUT: "120"        # seconds before peer request timeout
     FEDERATION_SYNC_INTERVAL: "300"  # seconds between peer syncs
 
     # ─ Resource cache ─
@@ -285,6 +301,29 @@ mcpContextForge:
     ENABLE_OVERWRITE_BASE_HEADERS: "false" # enable overwriting of base headers (advanced usage)
     DEFAULT_PASSTHROUGH_HEADERS: '["X-Tenant-Id", "X-Trace-Id"]' # default headers to pass through (JSON array)
 
+    # ─ Advanced Validation Configuration ─
+    # These are advanced security validation settings with sensible defaults.
+    # Most users won't need to change these values.
+    VALIDATION_ALLOWED_URL_SCHEMES: '["http://", "https://", "ws://", "wss://"]' # allowed URL schemes (JSON array)
+    VALIDATION_ALLOWED_MIME_TYPES: '["text/plain", "text/html", "text/css", "text/markdown", "text/javascript", "application/json", "application/xml", "application/pdf", "image/png", "image/jpeg", "image/gif", "image/svg+xml", "application/octet-stream"]' # allowed MIME types (JSON array)
+    VALIDATION_DANGEROUS_HTML_PATTERN: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>' # pattern to detect dangerous HTML tags
+    VALIDATION_DANGEROUS_JS_PATTERN: '(?i)(?:^|\s|[\"''`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)' # pattern to detect JavaScript injection
+    VALIDATION_NAME_PATTERN: '^[a-zA-Z0-9_.\-\s]+$' # pattern for validating names (allows spaces)
+    VALIDATION_IDENTIFIER_PATTERN: '^[a-zA-Z0-9_\-\.]+$' # pattern for validating IDs (no spaces)
+    VALIDATION_SAFE_URI_PATTERN: '^[a-zA-Z0-9_\-.:/?=&%]+$' # pattern for safe URI characters
+    VALIDATION_UNSAFE_URI_PATTERN: '[<>"''\\]' # pattern to detect unsafe URI characters
+    VALIDATION_TOOL_NAME_PATTERN: '^[a-zA-Z][a-zA-Z0-9._-]*$' # MCP tool naming pattern
+    VALIDATION_TOOL_METHOD_PATTERN: '^[a-zA-Z][a-zA-Z0-9_\./-]*$' # MCP tool method naming pattern
+    VALIDATION_MAX_NAME_LENGTH: "255" # maximum length for names
+    VALIDATION_MAX_DESCRIPTION_LENGTH: "8192" # maximum length for descriptions (8KB)
+    VALIDATION_MAX_TEMPLATE_LENGTH: "65536" # maximum length for templates (64KB)
+    VALIDATION_MAX_CONTENT_LENGTH: "1048576" # maximum length for content (1MB)
+    VALIDATION_MAX_JSON_DEPTH: "10" # maximum JSON nesting depth
+    VALIDATION_MAX_URL_LENGTH: "2048" # maximum URL length
+    VALIDATION_MAX_RPC_PARAM_SIZE: "262144" # maximum RPC parameter size (256KB)
+    VALIDATION_MAX_METHOD_LENGTH: "128" # maximum method name length
+    VALIDATION_MAX_REQUESTS_PER_MINUTE: "60" # rate limiting: max requests per minute
+
   ####################################################################
   # SENSITIVE SETTINGS
   # Rendered into an Opaque Secret.  NO $(VAR) expansion here.
@@ -321,6 +360,9 @@ mcpContextForge:
     PASSWORD_REQUIRE_SPECIAL: "false"      # require special characters in passwords
     MAX_FAILED_LOGIN_ATTEMPTS: "5"         # maximum failed login attempts before lockout
     ACCOUNT_LOCKOUT_DURATION_MINUTES: "30" # account lockout duration in minutes
+    MIN_PASSWORD_LENGTH: "12"              # minimum password length for validation
+    MIN_SECRET_LENGTH: "32"                # minimum secret key length for validation
+    REQUIRE_STRONG_SECRETS: "false"        # enforce strong secrets (fail startup on weak secrets)
 
     # ─ MCP Client Authentication ─
     MCP_CLIENT_AUTH_ENABLED: "true"        # enable JWT authentication for MCP client operations
@@ -330,6 +372,23 @@ mcpContextForge:
     # ─ OAuth Configuration ─
     OAUTH_REQUEST_TIMEOUT: "30"            # OAuth request timeout in seconds
     OAUTH_MAX_RETRIES: "3"                 # maximum retries for OAuth token requests
+    OAUTH_DEFAULT_TIMEOUT: "3600"          # default OAuth token timeout in seconds
+
+    # ─ OAuth Dynamic Client Registration (DCR) & PKCE ─
+    DCR_ENABLED: "true"                    # enable Dynamic Client Registration (RFC 7591)
+    DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS: "true" # auto-register when gateway has issuer but no client_id
+    DCR_DEFAULT_SCOPES: '["mcp:read"]'     # default OAuth scopes to request during DCR (JSON array)
+    DCR_ALLOWED_ISSUERS: "[]"              # allowlist of trusted issuer URLs for DCR (empty = allow any)
+    DCR_TOKEN_ENDPOINT_AUTH_METHOD: "client_secret_basic" # token endpoint auth method for DCR
+    DCR_METADATA_CACHE_TTL: "3600"         # AS metadata cache TTL in seconds (RFC 8414 discovery)
+    DCR_CLIENT_NAME_TEMPLATE: "MCP Gateway ({gateway_name})" # template for client_name in DCR requests
+    OAUTH_DISCOVERY_ENABLED: "true"        # enable AS metadata discovery (RFC 8414)
+    OAUTH_PREFERRED_CODE_CHALLENGE_METHOD: "S256" # PKCE code challenge method (S256 or plain)
+
+    # ─ JWT Configuration (Advanced) ─
+    JWT_AUDIENCE_VERIFICATION: "true"      # JWT audience verification (disable for DCR)
+    JWT_PRIVATE_KEY_PATH: ""               # path to JWT private key file (RSA/ECDSA algorithms)
+    JWT_PUBLIC_KEY_PATH: ""                # path to JWT public key file (RSA/ECDSA algorithms)
 
     # ─ SSO (Single Sign-On) Configuration ─
     SSO_ENABLED: "false"                   # master switch for Single Sign-On authentication
@@ -338,6 +397,7 @@ mcpContextForge:
     SSO_PRESERVE_ADMIN_AUTH: "true"        # preserve local admin authentication when SSO enabled
     SSO_REQUIRE_ADMIN_APPROVAL: "false"    # require admin approval for new SSO registrations
     SSO_AUTO_ADMIN_DOMAINS: "[]"           # email domains that automatically get admin privileges
+    SSO_ISSUERS: ""                        # optional JSON array of issuer URLs for SSO providers
 
     # ─ GitHub OAuth ─
     SSO_GITHUB_ENABLED: "false"            # enable GitHub OAuth authentication
