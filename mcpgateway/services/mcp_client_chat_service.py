@@ -25,12 +25,27 @@ from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
 # Third-Party
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.tools import BaseTool
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_ollama import ChatOllama
-from langchain_openai import AzureChatOpenAI
-from langgraph.prebuilt import create_react_agent
+try:
+    from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+    from langchain_core.tools import BaseTool
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langchain_ollama import ChatOllama
+    from langchain_openai import AzureChatOpenAI
+    from langgraph.prebuilt import create_react_agent
+    _LLMCHAT_AVAILABLE = True
+except ImportError:
+    # Optional dependencies for LLM chat feature not installed
+    # These are only needed if LLMCHAT_ENABLED=true
+    _LLMCHAT_AVAILABLE = False
+    AIMessage = None  # type: ignore
+    BaseMessage = None  # type: ignore
+    HumanMessage = None  # type: ignore
+    BaseTool = None  # type: ignore
+    MultiServerMCPClient = None  # type: ignore
+    ChatOllama = None  # type: ignore
+    AzureChatOpenAI = None  # type: ignore
+    create_react_agent = None  # type: ignore
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
