@@ -740,7 +740,7 @@ class ToolService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
-                    raise PermissionError(f"Only the owner can delete this tool")
+                    raise PermissionError("Only the owner can delete this tool")
 
             tool_info = {"id": tool.id, "name": tool.name}
             db.delete(tool)
@@ -1198,7 +1198,7 @@ class ToolService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
-                    raise PermissionError(f"Only the owner can update this tool")
+                    raise PermissionError("Only the owner can update this tool")
 
             # Check for name change and ensure uniqueness
             if tool_update.name and tool_update.name != tool.name:

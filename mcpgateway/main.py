@@ -99,7 +99,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -3280,6 +3280,9 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
 
     Returns:
         Status message.
+
+    Raises:
+        HTTPException: If permission denied (403), gateway not found (404), or other gateway error (400).
     """
     logger.debug(f"User '{user}' requested deletion of gateway {gateway_id}")
     try:

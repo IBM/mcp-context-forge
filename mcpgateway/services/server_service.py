@@ -682,6 +682,7 @@ class ServerService:
 
         Raises:
             ServerNotFoundError: If the server is not found.
+            PermissionError: If user doesn't own the server.
             ServerNameConflictError: If a new name conflicts with an existing server.
             ServerError: For other update errors.
             IntegrityError: If a database integrity error occurs.
@@ -722,7 +723,7 @@ class ServerService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
-                    raise PermissionError(f"Only the owner can update this server")
+                    raise PermissionError("Only the owner can update this server")
 
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
@@ -978,7 +979,7 @@ class ServerService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
-                    raise PermissionError(f"Only the owner can delete this server")
+                    raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)

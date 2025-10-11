@@ -792,7 +792,7 @@ class PromptService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, prompt):
-                    raise PermissionError(f"Only the owner can update this prompt")
+                    raise PermissionError("Only the owner can update this prompt")
 
             if prompt_update.name is not None:
                 prompt.name = prompt_update.name
@@ -999,7 +999,7 @@ class PromptService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, prompt):
-                    raise PermissionError(f"Only the owner can delete this prompt")
+                    raise PermissionError("Only the owner can delete this prompt")
 
             prompt_info = {"id": prompt.id, "name": prompt.name}
             db.delete(prompt)

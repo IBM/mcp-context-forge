@@ -1001,7 +1001,7 @@ class ResourceService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, resource):
-                    raise PermissionError(f"Only the owner can update this resource")
+                    raise PermissionError("Only the owner can update this resource")
 
             # Update fields if provided
             if resource_update.name is not None:
@@ -1108,7 +1108,7 @@ class ResourceService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, resource):
-                    raise PermissionError(f"Only the owner can delete this resource")
+                    raise PermissionError("Only the owner can delete this resource")
 
             # Store resource info for notification before deletion.
             resource_info = {

@@ -411,7 +411,7 @@ class A2AAgentService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, agent):
-                    raise PermissionError(f"Only the owner can update this agent")
+                    raise PermissionError("Only the owner can update this agent")
 
             # Check for name conflict if name is being updated
             if agent_data.name and agent_data.name != agent.name:
@@ -506,7 +506,7 @@ class A2AAgentService:
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, agent):
-                    raise PermissionError(f"Only the owner can delete this agent")
+                    raise PermissionError("Only the owner can delete this agent")
 
             agent_name = agent.name
             db.delete(agent)

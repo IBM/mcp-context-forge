@@ -1069,7 +1069,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):
-                    raise PermissionError(f"Only the owner can update this gateway")
+                    raise PermissionError("Only the owner can update this gateway")
 
             if gateway.enabled or include_inactive:
                 # Check for name conflicts if name is being changed
@@ -1589,7 +1589,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):
-                    raise PermissionError(f"Only the owner can delete this gateway")
+                    raise PermissionError("Only the owner can delete this gateway")
 
             # Store gateway info for notification before deletion
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
@@ -1613,9 +1613,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db.rollback()
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
-    async def forward_request(
-        self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None
-    ) -> Any:  # noqa: F811 # pylint: disable=function-redefined
+    async def forward_request(self, gateway_or_db, method: str, params: Optional[Dict[str, Any]] = None, app_user_email: Optional[str] = None) -> Any:  # noqa: F811 # pylint: disable=function-redefined
         """
         Forward a request to a gateway or multiple gateways.
 
