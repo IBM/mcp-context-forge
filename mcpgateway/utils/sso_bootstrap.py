@@ -8,14 +8,16 @@ Bootstrap SSO providers with predefined configurations.
 """
 
 # Future
-# Future
 from __future__ import annotations
 
 # Standard
+import logging
 from typing import Dict, List
 
 # First-Party
 from mcpgateway.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def get_predefined_sso_providers() -> List[Dict]:
