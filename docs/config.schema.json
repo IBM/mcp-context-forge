@@ -915,6 +915,51 @@
       "title": "Sso Enabled",
       "type": "boolean"
     },
+    "sso_entra_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client ID",
+      "title": "Sso Entra Client Id"
+    },
+    "sso_entra_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client secret",
+      "title": "Sso Entra Client Secret"
+    },
+    "sso_entra_enabled": {
+      "default": false,
+      "description": "Enable Microsoft Entra ID OIDC authentication",
+      "title": "Sso Entra Enabled",
+      "type": "boolean"
+    },
+    "sso_entra_tenant_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID tenant ID",
+      "title": "Sso Entra Tenant Id"
+    },
     "sso_github_admin_orgs": {
       "description": "GitHub orgs granting admin (CSV/JSON)",
       "items": {

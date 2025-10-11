@@ -253,7 +253,7 @@ MCP Gateway implements a comprehensive, multi-layered security approach with "de
   - Email-based authentication with Argon2id password hashing
   - JWT tokens with team context and asymmetric algorithm support (HS256/384/512, RS256/384/512, ES256/384/512)
   - OAuth 2.0 with Password Grant Flow, Dynamic Client Registration (DCR), and PKCE support (v0.8.0)
-  - Multi-provider SSO (GitHub, Google, IBM Security Verify, Okta)
+  - Multi-provider SSO (GitHub, Google, IBM Security Verify, Microsoft Entra ID, Okta)
   - Per-virtual-server API keys and team-level token scoping (v0.8.0)
 * **Input Validation**: Comprehensive validation across all API endpoints using Pydantic v2 (✅ [#339](https://github.com/IBM/mcp-context-forge/issues/339), ✅ [#340](https://github.com/IBM/mcp-context-forge/issues/340))
 * **XSS Prevention**: Character restrictions, URL scheme validation, JSON depth limits (✅ [#409](https://github.com/IBM/mcp-context-forge/issues/409))

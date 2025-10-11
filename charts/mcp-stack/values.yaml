@@ -363,6 +363,12 @@ mcpContextForge:
     SSO_OKTA_CLIENT_SECRET: ""             # Okta client secret
     SSO_OKTA_ISSUER: ""                    # Okta issuer URL
 
+    # ─ Microsoft Entra ID OIDC ─
+    SSO_ENTRA_ENABLED: "false"             # enable Microsoft Entra ID (Azure AD) OIDC authentication
+    SSO_ENTRA_CLIENT_ID: ""                # Microsoft Entra ID client ID
+    SSO_ENTRA_CLIENT_SECRET: ""            # Microsoft Entra ID client secret
+    SSO_ENTRA_TENANT_ID: ""                # Microsoft Entra ID tenant ID
+
     # ─ Personal Teams Configuration ─
     AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
     PERSONAL_TEAM_PREFIX: personal         # personal team naming prefix

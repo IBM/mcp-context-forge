@@ -12,7 +12,7 @@ MCP Gateway supports enterprise Single Sign-On authentication through OAuth2 and
 
 The SSO system provides:
 
-- **Multi-Provider Support**: GitHub, Google, IBM Security Verify, and Okta
+- **Multi-Provider Support**: GitHub, Google, IBM Security Verify, Microsoft Entra ID, and Okta
 - **Hybrid Authentication**: SSO alongside preserved local admin authentication
 - **Automatic User Provisioning**: Creates users on first SSO login
 - **Security Best Practices**: PKCE, CSRF protection, encrypted secrets
@@ -81,6 +81,15 @@ Enterprise-grade identity provider with advanced security features.
 - Enterprise SSO compliance
 - Advanced user attributes
 - Corporate directory integration
+
+### Microsoft Entra ID
+
+Microsoft's cloud-based identity and access management service (formerly Azure AD).
+
+**Features**:
+- Azure Active Directory integration
+- Enterprise application authentication
+- Conditional access policies support
 
 ### Okta
 
@@ -270,6 +279,35 @@ SSO_OKTA_CLIENT_SECRET=1234567890abcdef1234567890abcdef12345678
 SSO_OKTA_ISSUER=https://your-company.okta.com
 ```
 
+### Microsoft Entra ID Setup
+
+#### 1. Azure Portal Configuration
+
+1. **Azure Portal** → **Microsoft Entra ID** → **App registrations**
+2. **New registration**:
+   - **Name**: `MCP Gateway - YourOrg`
+   - **Supported account types**: Accounts in this organizational directory only
+   - **Redirect URI**: `https://your-gateway.com/auth/sso/callback/entra`
+3. After creation, note the **Application (client) ID** and **Directory (tenant) ID**
+4. **Certificates & secrets** → **New client secret** → Note the secret value
+
+#### 2. Environment Variables
+
+```bash
+# Microsoft Entra ID OIDC Configuration
+SSO_ENTRA_ENABLED=true
+SSO_ENTRA_CLIENT_ID=12345678-1234-1234-1234-123456789012
+SSO_ENTRA_CLIENT_SECRET=your-client-secret-value
+SSO_ENTRA_TENANT_ID=87654321-4321-4321-4321-210987654321
+```
+
+#### 3. API Permissions (Optional)
+
+Add Microsoft Graph API permissions for enhanced user profile access:
+- `User.Read` - Basic profile information
+- `profile` - OpenID Connect profile scope
+- `email` - Email address access
+
 ## Advanced Configuration
 
 ### Trusted Domains
@@ -348,7 +386,7 @@ GET /auth/sso/login/{provider_id}?redirect_uri={callback_url}&scopes={oauth_scop
 ```
 
 Parameters:
-- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `okta`)
+- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `entra`, `okta`)
 - `redirect_uri`: Callback URL after authentication
 - `scopes`: Optional space-separated OAuth scopes
 

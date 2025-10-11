@@ -42,6 +42,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_google_enabled=False,
         ...     sso_ibm_verify_enabled=False,
         ...     sso_okta_enabled=False,
+        ...     sso_entra_enabled=False,
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
         ...     result = get_predefined_sso_providers()
@@ -53,7 +54,7 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
         ...     sso_google_enabled=True, sso_google_client_id='gid', sso_google_client_secret='gsec',
-        ...     sso_ibm_verify_enabled=False, sso_okta_enabled=False
+        ...     sso_ibm_verify_enabled=False, sso_okta_enabled=False, sso_entra_enabled=False
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
         ...     result = get_predefined_sso_providers()
@@ -65,7 +66,19 @@ def get_predefined_sso_providers() -> List[Dict]:
         ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
         ...     sso_trusted_domains=[], sso_auto_create_users=True,
         ...     sso_google_enabled=False, sso_okta_enabled=True, sso_okta_client_id='ok', sso_okta_client_secret='os', sso_okta_issuer='https://company.okta.com',
-        ...     sso_ibm_verify_enabled=False
+        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Microsoft Entra ID provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=False, sso_okta_enabled=False,
+        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=True, sso_entra_client_id='entra_client', sso_entra_client_secret='entra_secret', sso_entra_tenant_id='tenant-id-123'
         ... )
         >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
         ...     result = get_predefined_sso_providers()
@@ -152,6 +165,29 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "token_url": f"{base_url}/oauth2/default/v1/token",
                 "userinfo_url": f"{base_url}/oauth2/default/v1/userinfo",
                 "issuer": f"{base_url}/oauth2/default",
+                "scope": "openid profile email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
+    # Microsoft Entra ID Provider
+    if settings.sso_entra_enabled and settings.sso_entra_client_id and settings.sso_entra_tenant_id:
+        tenant_id = settings.sso_entra_tenant_id
+        base_url = f"https://login.microsoftonline.com/{tenant_id}"
+        providers.append(
+            {
+                "id": "entra",
+                "name": "entra",
+                "display_name": "Microsoft Entra ID",
+                "provider_type": "oidc",
+                "client_id": settings.sso_entra_client_id,
+                "client_secret": settings.sso_entra_client_secret or "",
+                "authorization_url": f"{base_url}/oauth2/v2.0/authorize",
+                "token_url": f"{base_url}/oauth2/v2.0/token",
+                "userinfo_url": "https://graph.microsoft.com/oidc/userinfo",
+                "issuer": f"{base_url}/v2.0",
                 "scope": "openid profile email",
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,

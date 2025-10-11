@@ -22,6 +22,7 @@ nav:
   - sso-github-tutorial.md
   - sso-google-tutorial.md
   - sso-ibm-tutorial.md
+  - sso-microsoft-entra-id-tutorial.md
   - sso-okta-tutorial.md
   - rbac.md
   - teams.md

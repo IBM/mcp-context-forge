@@ -590,6 +590,17 @@ class SSOService:
                 "provider": "okta",
             }
 
+        # Handle Microsoft Entra ID provider
+        if provider.id == "entra":
+            return {
+                "email": user_data.get("email"),
+                "full_name": user_data.get("name"),
+                "avatar_url": user_data.get("picture"),
+                "provider_id": user_data.get("sub") or user_data.get("oid"),
+                "username": user_data.get("preferred_username") or user_data.get("email", "").split("@")[0],
+                "provider": "entra",
+            }
+
         # Generic OIDC format for all other providers
         return {
             "email": user_data.get("email"),

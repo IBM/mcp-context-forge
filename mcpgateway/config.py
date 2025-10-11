@@ -200,6 +200,11 @@ class Settings(BaseSettings):
     sso_okta_client_secret: Optional[str] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
 
+    sso_entra_enabled: bool = Field(default=False, description="Enable Microsoft Entra ID OIDC authentication")
+    sso_entra_client_id: Optional[str] = Field(default=None, description="Microsoft Entra ID client ID")
+    sso_entra_client_secret: Optional[str] = Field(default=None, description="Microsoft Entra ID client secret")
+    sso_entra_tenant_id: Optional[str] = Field(default=None, description="Microsoft Entra ID tenant ID")
+
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
     sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
