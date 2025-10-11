@@ -1299,6 +1299,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
 | `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
 | `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
+| `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
 
 **GitHub OAuth:**
 | Setting                        | Description                                      | Default               | Options |
@@ -1371,18 +1372,18 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 - ✅ Encrypted credential storage with Fernet encryption
 - ✅ Configurable issuer allowlist for security
 
-| Setting                                                | Description                                                    | Default                        | Options       |
-|-------------------------------------------------------|----------------------------------------------------------------|--------------------------------|---------------|
-| `MCPGATEWAY_DCR_ENABLED`                              | Enable Dynamic Client Registration (RFC 7591)                  | `true`                         | bool          |
-| `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Auto-register when gateway has issuer but no client_id         | `true`                         | bool          |
-| `MCPGATEWAY_DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `mcp:read`                     | string        |
-| `MCPGATEWAY_DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
-| `MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
-| `MCPGATEWAY_DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
-| `MCPGATEWAY_DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
-| `MCPGATEWAY_OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
-| `MCPGATEWAY_OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
-| `JWT_AUDIENCE_VERIFICATION`                           | JWT audience verification (disable for DCR)                    | `true`                         | bool          |
+| Setting                                     | Description                                                    | Default                        | Options       |
+|--------------------------------------------|----------------------------------------------------------------|--------------------------------|---------------|
+| `DCR_ENABLED`                              | Enable Dynamic Client Registration (RFC 7591)                  | `true`                         | bool          |
+| `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Auto-register when gateway has issuer but no client_id         | `true`                         | bool          |
+| `DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `["mcp:read"]`                 | JSON array    |
+| `DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
+| `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
+| `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
+| `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
+| `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
+| `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
+| `JWT_AUDIENCE_VERIFICATION`                | JWT audience verification (disable for DCR)                    | `true`                         | bool          |
 
 **Documentation:**
 - [DCR Configuration Guide](https://ibm.github.io/mcp-context-forge/manage/dcr/) - Complete DCR setup and troubleshooting
