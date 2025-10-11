@@ -939,6 +939,7 @@ class ResourceService:
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        user_email: Optional[str] = None,
     ) -> ResourceRead:
         """
         Update a resource.
@@ -951,12 +952,14 @@ class ResourceService:
             modified_from_ip: IP address where the modification request originated
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
+            user_email: Email of user performing update (for ownership check)
 
         Returns:
             The updated ResourceRead object
 
         Raises:
             ResourceNotFoundError: If the resource is not found
+            PermissionError: If user doesn't own the resource
             ResourceError: For other update errors
             IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
@@ -990,6 +993,15 @@ class ResourceService:
                     raise ResourceNotFoundError(f"Resource '{uri}' exists but is inactive")
 
                 raise ResourceNotFoundError(f"Resource not found: {uri}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, resource):
+                    raise PermissionError("Only the owner can update this resource")
 
             # Update fields if provided
             if resource_update.name is not None:
@@ -1040,6 +1052,9 @@ class ResourceService:
 
             logger.info(f"Updated resource: {uri}")
             return self._convert_resource_to_read(resource)
+        except PermissionError:
+            db.rollback()
+            raise
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -1050,16 +1065,18 @@ class ResourceService:
                 raise e
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
-    async def delete_resource(self, db: Session, uri: str) -> None:
+    async def delete_resource(self, db: Session, uri: str, user_email: Optional[str] = None) -> None:
         """
         Delete a resource.
 
         Args:
             db: Database session
             uri: Resource URI
+            user_email: Email of user performing delete (for ownership check)
 
         Raises:
             ResourceNotFoundError: If the resource is not found
+            PermissionError: If user doesn't own the resource
             ResourceError: For other deletion errors
 
         Examples:
@@ -1084,6 +1101,15 @@ class ResourceService:
                 db.rollback()
                 raise ResourceNotFoundError(f"Resource not found: {uri}")
 
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, resource):
+                    raise PermissionError("Only the owner can delete this resource")
+
             # Store resource info for notification before deletion.
             resource_info = {
                 "id": resource.id,
@@ -1103,6 +1129,9 @@ class ResourceService:
 
             logger.info(f"Permanently deleted resource: {uri}")
 
+        except PermissionError:
+            db.rollback()
+            raise
         except ResourceNotFoundError:
             # ResourceNotFoundError is re-raised to be handled in the endpoint.
             raise

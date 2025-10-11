@@ -260,6 +260,44 @@ class PermissionService:
 
         return True
 
+    async def check_resource_ownership(self, user_email: str, resource: any, allow_team_admin: bool = True) -> bool:
+        """Check if user owns a resource or is a team admin for team resources.
+
+        This method checks resource ownership based on the owner_email field
+        and optionally allows team admins to modify team-scoped resources.
+
+        Args:
+            user_email: Email of the user to check
+            resource: Resource object with owner_email, team_id, and visibility attributes
+            allow_team_admin: Whether to allow team admins for team-scoped resources
+
+        Returns:
+            bool: True if user owns the resource or is authorized team admin
+
+        Examples:
+            >>> from unittest.mock import Mock
+            >>> service = PermissionService(Mock())
+            >>> import asyncio
+            >>> asyncio.iscoroutinefunction(service.check_resource_ownership)
+            True
+        """
+        # Check if user is platform admin (bypass ownership checks)
+        if await self._is_user_admin(user_email):
+            return True
+
+        # Check direct ownership
+        if hasattr(resource, "owner_email") and resource.owner_email == user_email:
+            return True
+
+        # Check team admin permission for team resources
+        if allow_team_admin and hasattr(resource, "visibility") and resource.visibility == "team":
+            if hasattr(resource, "team_id") and resource.team_id:
+                user_role = await self._get_user_team_role(user_email, resource.team_id)
+                if user_role == "owner":
+                    return True
+
+        return False
+
     async def check_admin_permission(self, user_email: str) -> bool:
         """Check if user has any admin permissions.
 

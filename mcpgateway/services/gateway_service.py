@@ -1030,6 +1030,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
+        user_email: Optional[str] = None,
     ) -> GatewayRead:
         """Update a gateway.
 
@@ -1042,12 +1043,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
             include_inactive: Whether to include inactive gateways
+            user_email: Email of user performing update (for ownership check)
 
         Returns:
             Updated gateway information
 
         Raises:
             GatewayNotFoundError: If gateway not found
+            PermissionError: If user doesn't own the gateway
             GatewayError: For other update errors
             GatewayNameConflictError: If gateway name conflict occurs
             IntegrityError: If there is a database integrity error
@@ -1058,6 +1061,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, gateway):
+                    raise PermissionError("Only the owner can update this gateway")
 
             if gateway.enabled or include_inactive:
                 # Check for name conflicts if name is being changed
@@ -1309,6 +1321,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             raise GatewayError(f"Failed to update gateway: {str(e)}")
@@ -1531,16 +1546,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
-    async def delete_gateway(self, db: Session, gateway_id: str) -> None:
+    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None) -> None:
         """
         Delete a gateway by its ID.
 
         Args:
             db: Database session
             gateway_id: Gateway ID
+            user_email: Email of user performing deletion (for ownership check)
 
         Raises:
             GatewayNotFoundError: If the gateway is not found
+            PermissionError: If user doesn't own the gateway
             GatewayError: For other deletion errors
 
         Examples:
@@ -1555,7 +1572,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> service._notify_gateway_deleted = MagicMock()
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.delete_gateway(db, 'gateway_id'))
+            ...     asyncio.run(service.delete_gateway(db, 'gateway_id', 'user@example.com'))
             ... except Exception:
             ...     pass
         """
@@ -1564,6 +1581,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, gateway):
+                    raise PermissionError("Only the owner can delete this gateway")
 
             # Store gateway info for notification before deletion
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
@@ -1580,6 +1606,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             logger.info(f"Permanently deleted gateway: {gateway.name}")
 
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             raise GatewayError(f"Failed to delete gateway: {str(e)}")

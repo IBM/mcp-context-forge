@@ -682,6 +682,7 @@ class ServerService:
 
         Raises:
             ServerNotFoundError: If the server is not found.
+            PermissionError: If user doesn't own the server.
             ServerNameConflictError: If a new name conflicts with an existing server.
             ServerError: For other update errors.
             IntegrityError: If a database integrity error occurs.
@@ -695,6 +696,9 @@ class ServerService:
             >>> db = MagicMock()
             >>> server = MagicMock()
             >>> server.id = 'server_id'
+            >>> server.owner_email = 'user_email'  # Set owner to match user performing update
+            >>> server.team_id = None
+            >>> server.visibility = 'public'
             >>> db.get.return_value = server
             >>> db.commit = MagicMock()
             >>> db.refresh = MagicMock()
@@ -711,6 +715,15 @@ class ServerService:
             server = db.get(DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, server):
+                    raise PermissionError("Only the owner can update this server")
 
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
@@ -928,15 +941,17 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: str) -> None:
+    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
         """Permanently delete a server.
 
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
+            user_email: Email of user performing deletion (for ownership check).
 
         Raises:
             ServerNotFoundError: If the server is not found.
+            PermissionError: If user doesn't own the server.
             ServerError: For other deletion errors.
 
         Examples:
@@ -950,12 +965,21 @@ class ServerService:
             >>> db.commit = MagicMock()
             >>> service._notify_server_deleted = AsyncMock()
             >>> import asyncio
-            >>> asyncio.run(service.delete_server(db, 'server_id'))
+            >>> asyncio.run(service.delete_server(db, 'server_id', 'user@example.com'))
         """
         try:
             server = db.get(DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, server):
+                    raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)
@@ -963,6 +987,9 @@ class ServerService:
 
             await self._notify_server_deleted(server_info)
             logger.info(f"Deleted server: {server_info['name']}")
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             raise ServerError(f"Failed to delete server: {str(e)}")

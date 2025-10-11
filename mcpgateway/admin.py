@@ -1240,6 +1240,9 @@ async def admin_edit_server(
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except IntegrityError as ex:
         return JSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
@@ -1412,7 +1415,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>>
         >>> async def test_admin_delete_server_exception():
         ...     result = await admin_delete_server(server_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "#catalog" in result.headers["location"] and "error=" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_delete_server_exception())
         True
@@ -1420,15 +1423,28 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
         >>> # Restore original method
         >>> server_service.delete_server = original_delete_server
     """
+    error_message = None
     try:
-        LOGGER.debug(f"User {get_user_email(user)} is deleting server ID {server_id}")
-        await server_service.delete_server(db, server_id)
+        user_email = get_user_email(user)
+        LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
+        await server_service.delete_server(db, server_id, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting server: {e}")
+        error_message = "Failed to delete server. Please try again."
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
@@ -1699,9 +1715,9 @@ async def admin_list_gateways(
         ...     slug="test-gateway"
         ... )
         >>>
-        >>> # Mock the gateway_service.list_gateways method
-        >>> original_list_gateways = gateway_service.list_gateways
-        >>> gateway_service.list_gateways = AsyncMock(return_value=[mock_gateway])
+        >>> # Mock the gateway_service.list_gateways_for_user method
+        >>> original_list_gateways = gateway_service.list_gateways_for_user
+        >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[mock_gateway])
         >>>
         >>> # Test listing active gateways
         >>> async def test_admin_list_gateways_active():
@@ -1720,7 +1736,7 @@ async def admin_list_gateways(
         ...     auth_header_key=None, auth_header_value=None,
         ...     slug="test-gateway"
         ... )
-        >>> gateway_service.list_gateways = AsyncMock(return_value=[
+        >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[
         ...     mock_gateway, # Return the GatewayRead objects, not pre-dumped dicts
         ...     mock_inactive_gateway # Return the GatewayRead objects, not pre-dumped dicts
         ... ])
@@ -1732,7 +1748,7 @@ async def admin_list_gateways(
         True
         >>>
         >>> # Test empty list
-        >>> gateway_service.list_gateways = AsyncMock(return_value=[])
+        >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[])
         >>> async def test_admin_list_gateways_empty():
         ...     result = await admin_list_gateways(include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
@@ -1741,7 +1757,7 @@ async def admin_list_gateways(
         True
         >>>
         >>> # Test exception handling
-        >>> gateway_service.list_gateways = AsyncMock(side_effect=Exception("Gateway list error"))
+        >>> gateway_service.list_gateways_for_user = AsyncMock(side_effect=Exception("Gateway list error"))
         >>> async def test_admin_list_gateways_exception():
         ...     try:
         ...         await admin_list_gateways(False, mock_db, mock_user)
@@ -1753,10 +1769,11 @@ async def admin_list_gateways(
         True
         >>>
         >>> # Restore original method
-        >>> gateway_service.list_gateways = original_list_gateways
+        >>> gateway_service.list_gateways_for_user = original_list_gateways
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested gateway list")
-    gateways = await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} requested gateway list")
+    gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive)
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
 
@@ -2028,12 +2045,15 @@ async def admin_ui(
                 user_teams = []
                 for team in raw_teams:
                     try:
+                        # Get the user's role in this team
+                        user_role = await team_service.get_user_role_in_team(user_email, team.id)
                         team_dict = {
                             "id": str(team.id) if team.id else "",
                             "name": str(team.name) if team.name else "",
                             "type": str(getattr(team, "type", "organization")),
                             "is_personal": bool(getattr(team, "is_personal", False)),
                             "member_count": team.get_member_count() if hasattr(team, "get_member_count") else 0,
+                            "role": user_role or "member",
                         }
                         user_teams.append(team_dict)
                     except Exception as team_error:
@@ -5330,8 +5350,15 @@ async def admin_edit_tool(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=403,
+        )
     except IntegrityError as ex:
         error_message = ErrorFormatter.format_database_error(ex)
         LOGGER.error(f"IntegrityError in admin_tool_resource: {error_message}")
@@ -5414,7 +5441,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>>
         >>> async def test_admin_delete_tool_exception():
         ...     result = await admin_delete_tool(tool_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#tools" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "#tools" in result.headers["location"] and "error=" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_delete_tool_exception())
         True
@@ -5422,15 +5449,28 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
         >>> # Restore original method
         >>> tool_service.delete_tool = original_delete_tool
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting tool ID {tool_id}")
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
+    error_message = None
     try:
-        await tool_service.delete_tool(db, tool_id)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting tool: {e}")
+        error_message = "Failed to delete tool. Please try again."
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
@@ -6179,10 +6219,17 @@ async def admin_edit_gateway(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Gateway updated successfully!", "success": True},
             status_code=200,
+        )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(
+            content={"message": str(e), "success": False},
+            status_code=403,
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
@@ -6262,7 +6309,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>>
         >>> async def test_admin_delete_gateway_exception():
         ...     result = await admin_delete_gateway(gateway_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#gateways" in result.headers["location"]
+        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "#gateways" in result.headers["location"] and "error=" in result.headers["location"]
         >>>
         >>> asyncio.run(test_admin_delete_gateway_exception())
         True
@@ -6270,15 +6317,28 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
         >>> # Restore original method
         >>> gateway_service.delete_gateway = original_delete_gateway
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting gateway ID {gateway_id}")
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is deleting gateway ID {gateway_id}")
+    error_message = None
     try:
-        await gateway_service.delete_gateway(db, gateway_id)
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting gateway: {e}")
+        error_message = "Failed to delete gateway. Please try again."
 
     form = await request.form()
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
@@ -6606,11 +6666,15 @@ async def admin_edit_resource(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=get_user_email(user),
         )
         return JSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
             status_code=200,
         )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_resource: {ErrorFormatter.format_validation_error(ex)}")
@@ -6678,11 +6742,29 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
         True
         >>> resource_service.delete_resource = original_delete_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting resource URI {uri}")
-    await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, uri)
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is deleting resource URI {uri}")
+    error_message = None
+    try:
+        await resource_service.delete_resource(db, uri, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} deleting resource {uri}: {e}")
+        error_message = str(e)
+    except Exception as e:
+        LOGGER.error(f"Error deleting resource: {e}")
+        error_message = "Failed to delete resource. Please try again."
+
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
@@ -7103,7 +7185,7 @@ async def admin_edit_prompt(
             tags=tags,
             visibility=visibility,
             team_id=team_id,
-            user_email=user_email,
+            owner_email=user_email,
         )
         await prompt_service.update_prompt(
             db,
@@ -7113,11 +7195,15 @@ async def admin_edit_prompt(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Prompt updated successfully!", "success": True},
             status_code=200,
         )
+    except PermissionError as e:
+        LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
+        return JSONResponse(content={"message": str(e), "success": False}, status_code=403)
     except Exception as ex:
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_edit_prompt: {ErrorFormatter.format_validation_error(ex)}")
@@ -7185,11 +7271,29 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
         True
         >>> prompt_service.delete_prompt = original_delete_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting prompt name {name}")
-    await prompt_service.delete_prompt(db, name)
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is deleting prompt name {name}")
+    error_message = None
+    try:
+        await prompt_service.delete_prompt(db, name, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {name}: {e}")
+        error_message = str(e)
+    except Exception as e:
+        LOGGER.error(f"Error deleting prompt: {e}")
+        error_message = "Failed to delete prompt. Please try again."
+
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
@@ -9114,19 +9218,28 @@ async def admin_delete_a2a_agent(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    error_message = None
     try:
-        await a2a_service.delete_agent(db, agent_id)
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
-
+        user_email = get_user_email(user)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting A2A agent {agent_id}: {e}")
+        error_message = str(e)
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent delete failed - not found: {e}")
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        error_message = "A2A agent not found."
     except Exception as e:
         LOGGER.error(f"Error deleting A2A agent: {e}")
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        error_message = "Failed to delete A2A agent. Please try again."
+
+    root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
+
+    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/test")
