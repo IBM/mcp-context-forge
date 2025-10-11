@@ -296,6 +296,7 @@ class SupportBundleService:
             "sso_ibm_verify_client_secret",
             "sso_okta_client_secret",
             "sso_entra_client_secret",
+            "sso_generic_client_secret",
         }
         config = settings.model_dump(exclude=exclude_fields)
 

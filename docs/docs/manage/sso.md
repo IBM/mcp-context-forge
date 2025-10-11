@@ -100,6 +100,16 @@ Popular enterprise identity provider with extensive integrations.
 - Multi-factor authentication support
 - Custom user attributes
 
+### Generic OIDC Provider
+
+Support for any OpenID Connect compatible identity provider including Keycloak, Auth0, Authentik, and others.
+
+**Features**:
+- Standards-based OIDC integration
+- Flexible endpoint configuration
+- Custom provider branding
+- Works with any OIDC-compliant provider
+
 ## Quick Start
 
 ### 1. Enable SSO
@@ -308,6 +318,77 @@ Add Microsoft Graph API permissions for enhanced user profile access:
 - `profile` - OpenID Connect profile scope
 - `email` - Email address access
 
+### Generic OIDC Provider Setup
+
+Configure any OIDC-compliant provider (Keycloak, Auth0, Authentik, etc.).
+
+#### 1. Obtain Provider Information
+
+From your OIDC provider's configuration (usually at `https://provider.com/.well-known/openid-configuration`):
+
+- **Authorization endpoint**: `https://provider.com/auth`
+- **Token endpoint**: `https://provider.com/token`
+- **Userinfo endpoint**: `https://provider.com/userinfo`
+- **Issuer**: `https://provider.com`
+- **Client ID and Secret**: From provider's application registration
+
+#### 2. Environment Variables
+
+```bash
+# Generic OIDC Provider Configuration
+SSO_GENERIC_ENABLED=true
+SSO_GENERIC_PROVIDER_ID=keycloak  # or auth0, authentik, etc.
+SSO_GENERIC_DISPLAY_NAME=Keycloak
+SSO_GENERIC_CLIENT_ID=your-oidc-client-id
+SSO_GENERIC_CLIENT_SECRET=your-oidc-client-secret
+SSO_GENERIC_AUTHORIZATION_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/auth
+SSO_GENERIC_TOKEN_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token
+SSO_GENERIC_USERINFO_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo
+SSO_GENERIC_ISSUER=https://keycloak.company.com/auth/realms/master
+SSO_GENERIC_SCOPE=openid profile email  # Optional, defaults to this
+```
+
+#### 3. Callback URL Configuration
+
+Configure your provider's redirect URI to:
+```
+https://your-gateway.com/auth/sso/callback/{provider_id}
+```
+
+Replace `{provider_id}` with your configured `SSO_GENERIC_PROVIDER_ID` (e.g., `keycloak`, `auth0`).
+
+#### 4. Provider-Specific Examples
+
+**Keycloak**:
+```bash
+SSO_GENERIC_PROVIDER_ID=keycloak
+SSO_GENERIC_DISPLAY_NAME=Company SSO
+SSO_GENERIC_AUTHORIZATION_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/auth
+SSO_GENERIC_TOKEN_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token
+SSO_GENERIC_USERINFO_URL=https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo
+SSO_GENERIC_ISSUER=https://keycloak.company.com/auth/realms/master
+```
+
+**Auth0**:
+```bash
+SSO_GENERIC_PROVIDER_ID=auth0
+SSO_GENERIC_DISPLAY_NAME=Auth0
+SSO_GENERIC_AUTHORIZATION_URL=https://your-tenant.auth0.com/authorize
+SSO_GENERIC_TOKEN_URL=https://your-tenant.auth0.com/oauth/token
+SSO_GENERIC_USERINFO_URL=https://your-tenant.auth0.com/userinfo
+SSO_GENERIC_ISSUER=https://your-tenant.auth0.com/
+```
+
+**Authentik**:
+```bash
+SSO_GENERIC_PROVIDER_ID=authentik
+SSO_GENERIC_DISPLAY_NAME=Authentik
+SSO_GENERIC_AUTHORIZATION_URL=https://authentik.company.com/application/o/authorize/
+SSO_GENERIC_TOKEN_URL=https://authentik.company.com/application/o/token/
+SSO_GENERIC_USERINFO_URL=https://authentik.company.com/application/o/userinfo/
+SSO_GENERIC_ISSUER=https://authentik.company.com/application/o/mcp-gateway/
+```
+
 ## Advanced Configuration
 
 ### Trusted Domains
@@ -386,7 +467,7 @@ GET /auth/sso/login/{provider_id}?redirect_uri={callback_url}&scopes={oauth_scop
 ```
 
 Parameters:
-- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `entra`, `okta`)
+- `provider_id`: Provider identifier (`github`, `google`, `ibm_verify`, `entra`, `okta`, or configured generic provider ID)
 - `redirect_uri`: Callback URL after authentication
 - `scopes`: Optional space-separated OAuth scopes
 
