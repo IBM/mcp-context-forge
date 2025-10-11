@@ -368,7 +368,7 @@ class TokenCatalogService:
             ).scalar_one_or_none()
 
             if not membership:
-                raise ValueError(f"User {user_email} is not an active member of team {team_id}. " f"Only team members can create tokens for the team.")
+                raise ValueError(f"User {user_email} is not an active member of team {team_id}. Only team members can create tokens for the team.")
 
         # Check for duplicate active token name for this user+team
         existing_token = self.db.execute(
@@ -416,7 +416,7 @@ class TokenCatalogService:
         self.db.refresh(api_token)
 
         token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
-        logger.info(f"Created {token_type} API token '{name}' for user {user_email}. " f"Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
+        logger.info(f"Created {token_type} API token '{name}' for user {user_email}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
         return api_token, raw_token
 
     async def list_user_tokens(self, user_email: str, include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[EmailApiToken]:
