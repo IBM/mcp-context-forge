@@ -14304,6 +14304,11 @@ async function connectLLMChat() {
         return;
     }
 
+    // Clear previous chat history before connecting
+    clearChatMessages();
+    llmChatState.messageHistory = [];
+
+
     // Show loading state
     const connectBtn = document.getElementById("llm-connect-btn");
     const originalText = connectBtn.textContent;
