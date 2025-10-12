@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """A2A agent generator for load testing."""
 
 import random

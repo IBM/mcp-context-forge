@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """MCP session and subscription generators for load testing."""
 
 import json

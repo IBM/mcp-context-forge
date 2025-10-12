@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Association table generators for load testing."""
 
 import random
