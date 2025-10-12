@@ -1,0 +1,123 @@
+# Small load profile - Development testing
+# Target: 100 users, ~1K teams, ~10K resources
+# Generation time: <1 minute
+
+profile:
+  name: small
+  description: "Small-scale load test for development (100 users)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  batch_size: 100
+  progress_bar: true
+  parallel: false
+  workers: 1
+  email_domain: "loadtest.example.com"
+  output_report: "reports/small_load_report.json"
+  log_level: INFO
+
+database:
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30
+  echo: false
+
+scale:
+  # Users
+  users: 100
+  users_active_percent: 80
+  users_admin_percent: 5
+
+  # Teams
+  personal_teams_per_user: 1
+  additional_teams_per_user: 5
+  teams_private_percent: 60
+  teams_public_percent: 40
+
+  # Team membership
+  members_per_team_min: 1
+  members_per_team_max: 10
+  members_per_team_distribution: "power_law"
+
+  # Invitations
+  invitations_per_team_avg: 2
+  invitations_accepted_percent: 70
+
+  # API Tokens
+  tokens_per_user_min: 1
+  tokens_per_user_max: 5
+  tokens_per_user_avg: 2
+  tokens_active_percent: 90
+
+  # Gateways
+  gateways: 10
+  tools_per_gateway_min: 10
+  tools_per_gateway_max: 50
+  tools_per_gateway_avg: 20
+  tools_enabled_percent: 95
+
+  # Resources
+  resources_per_user_min: 10
+  resources_per_user_max: 50
+  resources_per_user_avg: 20
+
+  # Prompts
+  prompts_per_user_min: 10
+  prompts_per_user_max: 50
+  prompts_per_user_avg: 20
+
+  # Virtual Servers
+  servers_per_user_min: 1
+  servers_per_user_max: 5
+  servers_per_user_avg: 2
+
+distributions:
+  team_size: "power_law"
+  resource_access: "zipf"
+  prompt_access: "zipf"
+  tool_invocation: "zipf"
+  temporal: "exponential_decay"
+
+temporal:
+  start_date: "2024-01-01"
+  end_date: "2025-10-12"
+  recent_data_percent: 80
+  historical_data_percent: 20
+
+realism:
+  use_faker: true
+  faker_locale: "en_US"
+  name_length_min: 5
+  name_length_max: 50
+  description_length_min: 50
+  description_length_max: 200
+
+performance:
+  batch_size: 100
+  commit_frequency: 1000
+  disable_indexes: false
+  analyze_after_load: false
+
+generation_order:
+  - users
+  - teams
+  - team_members
+  - tokens
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+
+validation:
+  enabled: true
+  checks:
+    - foreign_keys
+    - required_fields
+    - email_formats
+
+reporting:
+  enabled: true
+  format: json
+  output_file: "reports/small_load_report.json"

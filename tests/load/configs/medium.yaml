@@ -1,0 +1,74 @@
+# Medium load profile - Staging testing
+# Target: 10K users, ~100K teams, ~1M resources
+# Generation time: <10 minutes
+
+profile:
+  name: medium
+  description: "Medium-scale load test for staging (10K users)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  batch_size: 500
+  progress_bar: true
+  parallel: true
+  workers: 4
+  email_domain: "loadtest.example.com"
+  output_report: "reports/medium_load_report.json"
+  log_level: INFO
+
+database:
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  echo: false
+
+scale:
+  users: 10000
+  users_active_percent: 80
+  users_admin_percent: 2
+
+  personal_teams_per_user: 1
+  additional_teams_per_user: 10
+  teams_private_percent: 60
+
+  members_per_team_min: 1
+  members_per_team_max: 50
+  members_per_team_distribution: "power_law"
+
+  tokens_per_user_avg: 5
+  tokens_active_percent: 90
+
+  gateways: 1000
+  tools_per_gateway_avg: 50
+
+  resources_per_user_avg: 100
+  prompts_per_user_avg: 100
+  servers_per_user_avg: 10
+
+temporal:
+  start_date: "2024-01-01"
+  end_date: "2025-10-12"
+  recent_data_percent: 80
+
+performance:
+  batch_size: 500
+  commit_frequency: 5000
+
+generation_order:
+  - users
+  - teams
+  - team_members
+  - tokens
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+
+validation:
+  enabled: true
+
+reporting:
+  enabled: true
+  output_file: "reports/medium_load_report.json"
