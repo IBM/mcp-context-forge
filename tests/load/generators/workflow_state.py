@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Workflow state generators for load testing."""
 
 import random
