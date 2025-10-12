@@ -10,7 +10,7 @@
 #        # now visit http://localhost:8080/sse   or   http://localhost:8080/http
 #
 # This build supports multi-platform builds through standard Docker Buildx
-# techniques, including the $TARGETPLATFORM environment veriable.
+# techniques, including the $TARGETPLATFORM environment variable.
 # =============================================================================
 
 # =============================================================================

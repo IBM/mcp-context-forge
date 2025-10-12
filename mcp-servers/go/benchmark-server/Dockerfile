@@ -1,5 +1,5 @@
 # This build supports multi-platform builds through standard Docker Buildx
-# techniques, including the $TARGETPLATFORM environment veriable.
+# techniques, including the $TARGETPLATFORM environment variable.
 FROM golang:1.23 AS builder
 WORKDIR /src
 COPY go.mod .

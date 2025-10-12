@@ -1,7 +1,7 @@
 # Multi-stage container for {{ project_name }}
 
 # This build supports multi-platform builds through standard Docker Buildx
-# techniques, including the $TARGETPLATFORM environment veriable.
+# techniques, including the $TARGETPLATFORM environment variable.
 
 FROM golang:{{ go_version }} AS builder
 WORKDIR /src
