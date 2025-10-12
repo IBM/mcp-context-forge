@@ -361,6 +361,97 @@ doctest-check:
 		python3 -m pytest --doctest-modules mcpgateway/ --tb=no -q && \
 		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)"
 
+
+# =============================================================================
+# 📊 LOAD TESTING - Database population and performance testing
+# =============================================================================
+# help: 📊 LOAD TESTING
+# help: generate-small       - Generate small load test data (100 users, ~74K records, <1 min)
+# help: generate-medium      - Generate medium load test data (10K users, ~70M records, ~10 min)
+# help: generate-large       - Generate large load test data (100K users, ~700M records, ~1-2 hours)
+# help: generate-massive     - Generate massive load test data (1M users, billions of records, ~10-20 hours)
+# help: generate-clean       - Clean all generated load test data and reports
+# help: generate-report      - Display most recent load test report
+
+.PHONY: generate-small generate-medium generate-large generate-massive generate-clean generate-report
+
+generate-small:                            ## Generate small load test dataset (100 users)
+	@echo "📊 Generating small load test data..."
+	@echo "   Target: 100 users, ~74K records"
+	@echo "   Time: <1 minute"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.load.generate --profile small"
+	@echo ""
+	@echo "✅ Small load test data generated!"
+	@echo "📄 Report: reports/small_load_report.json"
+
+generate-medium:                           ## Generate medium load test dataset (10K users)
+	@echo "📊 Generating medium load test data..."
+	@echo "   Target: 10K users, ~70M records"
+	@echo "   Time: ~10 minutes"
+	@echo "   ⚠️  Recommended: Use PostgreSQL or MySQL for better performance"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.load.generate --profile medium"
+	@echo ""
+	@echo "✅ Medium load test data generated!"
+	@echo "📄 Report: reports/medium_load_report.json"
+
+generate-large:                            ## Generate large load test dataset (100K users)
+	@echo "📊 Generating large load test data..."
+	@echo "   Target: 100K users, ~700M records"
+	@echo "   Time: ~1-2 hours"
+	@echo "   ⚠️  REQUIRED: PostgreSQL or MySQL"
+	@echo "   ⚠️  Recommended: 16GB+ RAM, SSD storage"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.load.generate --profile large"
+	@echo ""
+	@echo "✅ Large load test data generated!"
+	@echo "📄 Report: reports/large_load_report.json"
+
+generate-massive:                          ## Generate massive load test dataset (1M users)
+	@echo "📊 Generating massive load test data..."
+	@echo "   Target: 1M users, billions of records"
+	@echo "   Time: ~10-20 hours"
+	@echo "   ⚠️  REQUIRED: PostgreSQL or MySQL with high-performance config"
+	@echo "   ⚠️  REQUIRED: 32GB+ RAM, SSD storage, multi-core CPU"
+	@echo ""
+	@read -p "This will take 10-20 hours. Continue? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			python -m tests.load.generate --profile massive"; \
+		echo ""; \
+		echo "✅ Massive load test data generated!"; \
+		echo "📄 Report: reports/massive_load_report.json"; \
+	else \
+		echo "❌ Cancelled"; \
+		exit 1; \
+	fi
+
+generate-clean:                            ## Clean all generated load test data
+	@echo "🧹 Cleaning load test data..."
+	@rm -f reports/*_load_report.json
+	@echo "✅ Load test reports cleaned!"
+	@echo ""
+	@echo "⚠️  Note: This does NOT clean the database itself."
+	@echo "   To clean database, use: make clean-db"
+
+generate-report:                           ## Display most recent load test report
+	@echo "📊 Most Recent Load Test Reports:"
+	@echo ""
+	@for report in reports/*_load_report.json; do \
+		if [ -f "$$report" ]; then \
+			echo "📄 $$report:"; \
+			jq -r '"  Profile: \(.profile)\n  Duration: \(.duration_seconds)s\n  Records: \(.total_generated | tonumber | tostring) total\n  Rate: \(.records_per_second | floor | tostring) records/sec\n  Timestamp: \(.timestamp)"' "$$report" 2>/dev/null || \
+			cat "$$report" | head -20; \
+			echo ""; \
+		fi; \
+	done || echo "❌ No reports found. Run 'make generate-small' first."
+
 # =============================================================================
 # 🧬 MUTATION TESTING
 # =============================================================================
