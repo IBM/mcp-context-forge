@@ -68,6 +68,8 @@ from mcpgateway.db import (
 logger = logging.getLogger(__name__)
 
 
+# pylint: disable=not-callable
+# SQLAlchemy's func.count() is callable at runtime but pylint cannot detect this
 class SystemStatsService:
     """Service for retrieving comprehensive system metrics.
 
@@ -141,8 +143,8 @@ class SystemStatsService:
             >>> # assert "active" in stats["breakdown"]
         """
         total = db.query(func.count(EmailUser.email)).scalar() or 0
-        active = db.query(func.count(EmailUser.email)).filter(EmailUser.is_active == True).scalar() or 0  # noqa: E712
-        admins = db.query(func.count(EmailUser.email)).filter(EmailUser.is_admin == True).scalar() or 0  # noqa: E712
+        active = db.query(func.count(EmailUser.email)).filter(EmailUser.is_active.is_(True)).scalar() or 0
+        admins = db.query(func.count(EmailUser.email)).filter(EmailUser.is_admin.is_(True)).scalar() or 0
 
         return {"total": total, "breakdown": {"active": active, "inactive": total - active, "admins": admins}}
 
@@ -163,7 +165,7 @@ class SystemStatsService:
             >>> # assert "organizational" in stats["breakdown"]
         """
         total_teams = db.query(func.count(EmailTeam.id)).scalar() or 0
-        personal_teams = db.query(func.count(EmailTeam.id)).filter(EmailTeam.is_personal == True).scalar() or 0  # noqa: E712
+        personal_teams = db.query(func.count(EmailTeam.id)).filter(EmailTeam.is_personal.is_(True)).scalar() or 0
         team_members = db.query(func.count(EmailTeamMember.id)).scalar() or 0
 
         return {"total": total_teams, "breakdown": {"personal": personal_teams, "organizational": total_teams - personal_teams, "members": team_members}}
@@ -211,7 +213,7 @@ class SystemStatsService:
             >>> # assert "active" in stats["breakdown"]
         """
         total = db.query(func.count(EmailApiToken.id)).scalar() or 0
-        active = db.query(func.count(EmailApiToken.id)).filter(EmailApiToken.is_active == True).scalar() or 0  # noqa: E712
+        active = db.query(func.count(EmailApiToken.id)).filter(EmailApiToken.is_active.is_(True)).scalar() or 0
         revoked = db.query(func.count(TokenRevocation.jti)).scalar() or 0
 
         return {"total": total, "breakdown": {"active": active, "inactive": total - active, "revoked": revoked}}
@@ -294,7 +296,7 @@ class SystemStatsService:
         auth_events = db.query(func.count(EmailAuthEvent.id)).scalar() or 0
         audit_logs = db.query(func.count(PermissionAuditLog.id)).scalar() or 0
         pending_approvals = db.query(func.count(PendingUserApproval.id)).filter(PendingUserApproval.status == "pending").scalar() or 0
-        sso_providers = db.query(func.count(SSOProvider.id)).filter(SSOProvider.is_enabled == True).scalar() or 0  # noqa: E712
+        sso_providers = db.query(func.count(SSOProvider.id)).filter(SSOProvider.is_enabled.is_(True)).scalar() or 0
 
         total = auth_events + audit_logs + pending_approvals
 
@@ -315,7 +317,7 @@ class SystemStatsService:
             >>> # assert stats["total"] >= 0
             >>> # assert "team_invitations" in stats["breakdown"]
         """
-        invitations = db.query(func.count(EmailTeamInvitation.id)).filter(EmailTeamInvitation.is_active == True).scalar() or 0  # noqa: E712
+        invitations = db.query(func.count(EmailTeamInvitation.id)).filter(EmailTeamInvitation.is_active.is_(True)).scalar() or 0
         join_requests = db.query(func.count(EmailTeamJoinRequest.id)).filter(EmailTeamJoinRequest.status == "pending").scalar() or 0
 
         total = invitations + join_requests
