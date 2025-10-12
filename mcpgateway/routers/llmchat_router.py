@@ -778,10 +778,13 @@ async def connect(input_data: ConnectInput, request: Request):
         existing = await get_active_session(user_id)
         if existing:
             try:
+                logger.debug(f"Disconnecting existing session for {user_id} before reconnecting")
                 await existing.shutdown()
             except Exception as shutdown_error:
                 logger.warning(f"Failed to cleanly shutdown existing session for {user_id}: {shutdown_error}")
-                # Continue anyway to establish new connection
+            finally:
+                # Always remove the session from active sessions, even if shutdown failed
+                await delete_active_session(user_id)
 
         # Build and validate configuration
         try:
