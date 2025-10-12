@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Main CLI for generating load test data.
 
 Usage:
@@ -31,6 +32,26 @@ from .generators import (
     ResourceGenerator,
     PromptGenerator,
     ServerGenerator,
+    A2AAgentGenerator,
+    ServerToolAssociationGenerator,
+    ServerResourceAssociationGenerator,
+    ServerPromptAssociationGenerator,
+    ServerA2AAssociationGenerator,
+    ToolMetricsGenerator,
+    ResourceMetricsGenerator,
+    PromptMetricsGenerator,
+    ServerMetricsGenerator,
+    A2AAgentMetricsGenerator,
+    TokenUsageLogGenerator,
+    EmailAuthEventGenerator,
+    PermissionAuditLogGenerator,
+    MCPSessionGenerator,
+    MCPMessageGenerator,
+    ResourceSubscriptionGenerator,
+    TeamInvitationGenerator,
+    TeamJoinRequestGenerator,
+    TokenRevocationGenerator,
+    OAuthTokenGenerator,
 )
 from .utils.progress import ProgressTracker
 from .utils.validation import DataValidator
@@ -46,6 +67,7 @@ logger = logging.getLogger(__name__)
 
 # Generator registry
 GENERATORS = {
+    # Core entities
     "users": UserGenerator,
     "teams": TeamGenerator,
     "team_members": TeamMemberGenerator,
@@ -55,6 +77,31 @@ GENERATORS = {
     "resources": ResourceGenerator,
     "prompts": PromptGenerator,
     "servers": ServerGenerator,
+    "a2a_agents": A2AAgentGenerator,
+    # Associations
+    "server_tool_associations": ServerToolAssociationGenerator,
+    "server_resource_associations": ServerResourceAssociationGenerator,
+    "server_prompt_associations": ServerPromptAssociationGenerator,
+    "server_a2a_associations": ServerA2AAssociationGenerator,
+    # Metrics
+    "tool_metrics": ToolMetricsGenerator,
+    "resource_metrics": ResourceMetricsGenerator,
+    "prompt_metrics": PromptMetricsGenerator,
+    "server_metrics": ServerMetricsGenerator,
+    "a2a_agent_metrics": A2AAgentMetricsGenerator,
+    # Activity logs
+    "token_usage_logs": TokenUsageLogGenerator,
+    "email_auth_events": EmailAuthEventGenerator,
+    "permission_audit_logs": PermissionAuditLogGenerator,
+    # Sessions
+    "mcp_sessions": MCPSessionGenerator,
+    "mcp_messages": MCPMessageGenerator,
+    "resource_subscriptions": ResourceSubscriptionGenerator,
+    # Workflow state
+    "team_invitations": TeamInvitationGenerator,
+    "team_join_requests": TeamJoinRequestGenerator,
+    "token_revocations": TokenRevocationGenerator,
+    "oauth_tokens": OAuthTokenGenerator,
 }
 
 

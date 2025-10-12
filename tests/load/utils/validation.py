@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Data validation utilities."""
 
 import logging
@@ -127,7 +128,7 @@ class DataValidator:
             # Check EmailUser required fields
             result = self.db.execute(text("""
                 SELECT COUNT(*) FROM email_users
-                WHERE email IS NULL OR full_name IS NULL OR hashed_password IS NULL
+                WHERE email IS NULL OR full_name IS NULL OR password_hash IS NULL
             """))
             user_issues = result.scalar()
             if user_issues > 0:
@@ -136,7 +137,7 @@ class DataValidator:
             # Check EmailTeam required fields
             result = self.db.execute(text("""
                 SELECT COUNT(*) FROM email_teams
-                WHERE name IS NULL OR owner_email IS NULL
+                WHERE name IS NULL OR created_by IS NULL
             """))
             team_issues = result.scalar()
             if team_issues > 0:

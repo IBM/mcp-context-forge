@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Resource generator for load testing."""
 
 import random
@@ -55,6 +56,9 @@ class ResourceGenerator(BaseGenerator):
             num_resources = resources_per_user[user_i]
 
             for j in range(num_resources):
+                if resource_idx >= len(timestamps):
+                    break
+
                 resource_type = random.choice(resource_types)
                 uri = f"resource://{user_email.split('@')[0]}/{resource_type}/{j+1}"
 
@@ -65,6 +69,10 @@ class ResourceGenerator(BaseGenerator):
                     mime_type=random.choice(mime_types),
                     size=random.randint(100, 100000),
                     created_by=user_email,
+                    is_active=True,
+                    tags=[],
+                    version=1,
+                    visibility=random.choice(["public", "private", "team"]),
                     created_at=timestamps[resource_idx],
                     updated_at=timestamps[resource_idx],
                 )

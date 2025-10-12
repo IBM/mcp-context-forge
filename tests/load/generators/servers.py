@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Virtual server generator for load testing."""
 
 import random
@@ -53,6 +54,9 @@ class ServerGenerator(BaseGenerator):
             num_servers = servers_per_user[user_i]
 
             for j in range(num_servers):
+                if server_idx >= len(timestamps):
+                    break
+
                 server_id = str(uuid.uuid4())
                 name = f"{self.faker.word()}-server-{user_i+1}-{j+1}"
 
@@ -61,7 +65,10 @@ class ServerGenerator(BaseGenerator):
                     name=name,
                     description=self.faker.sentence(),
                     created_by=user_email,
-                    enabled=random.choice([True, True, True, False]),  # 75% enabled
+                    is_active=random.choice([True, True, True, False]),  # 75% active
+                    tags=[],
+                    version=1,
+                    visibility=random.choice(["public", "private", "team"]),
                     created_at=timestamps[server_idx],
                     updated_at=timestamps[server_idx],
                 )

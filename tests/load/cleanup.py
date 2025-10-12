@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """CLI for cleaning up load test data.
 
 Usage:

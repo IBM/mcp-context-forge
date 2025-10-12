@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Progress tracking utilities."""
 
 import sys

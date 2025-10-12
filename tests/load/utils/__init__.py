@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Utility functions for load testing."""
 
 from .distributions import (

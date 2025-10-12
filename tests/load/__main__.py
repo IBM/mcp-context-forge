@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Entry point for load testing module.
 
 Allows running as: python -m tests.load.generate

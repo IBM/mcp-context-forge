@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Load testing data generation framework.
 
 This module provides tools for generating production-scale test data

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Base generator class for all data generators."""
 
 import logging
@@ -82,18 +83,32 @@ class BaseGenerator(ABC):
         """
         return self.__class__.__name__.replace("Generator", "").lower()
 
-    def batch_insert(self, records: List[Any]) -> None:
+    def batch_insert(self, records: List[Any], table_name: Optional[str] = None) -> None:
         """Batch insert records efficiently.
 
         Args:
-            records: List of model instances to insert
+            records: List of model instances or dicts to insert
+            table_name: Optional table name for dict-based inserts
         """
         if not records:
             return
 
         try:
-            self.db.bulk_save_objects(records)
-            self.db.flush()
+            # Check if records are dicts (for association tables)
+            if records and isinstance(records[0], dict):
+                if not table_name:
+                    raise ValueError("table_name required for dict-based inserts")
+                from sqlalchemy import text
+                # Build bulk insert statement
+                columns = list(records[0].keys())
+                placeholders = ", ".join([f":{col}" for col in columns])
+                query = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+                self.db.execute(text(query), records)
+                self.db.flush()
+            else:
+                # ORM objects - use add_all() to properly handle autoincrement fields
+                self.db.add_all(records)
+                self.db.flush()
             self.inserted_count += len(records)
         except Exception as e:
             self.logger.error(f"Batch insert failed for {self.get_name()}: {e}")

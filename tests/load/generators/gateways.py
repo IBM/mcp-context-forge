@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Gateway generator for load testing."""
 
 import random
@@ -41,17 +42,28 @@ class GatewayGenerator(BaseGenerator):
             gateway_id = str(uuid.uuid4())
             name = f"{self.faker.company()}-mcp-server-{i+1}".lower().replace(" ", "-")
 
+            # Typical MCP server capabilities
+            capabilities = {
+                "tools": random.choice([True, False]),
+                "resources": random.choice([True, False]),
+                "prompts": random.choice([True, False]),
+            }
+
             gateway = Gateway(
                 id=gateway_id,
                 name=name,
                 slug=name,
                 url=f"https://{name}.example.com:8000",
                 description=self.faker.catch_phrase(),
-                transport="sse",
+                transport=random.choice(["sse", "stdio", "websocket"]),
+                capabilities=capabilities,
                 enabled=random.choice([True, True, True, False]),  # 75% enabled
                 reachable=random.choice([True, True, True, False]),
                 created_at=timestamps[i],
                 updated_at=timestamps[i],
+                tags=[],
+                version=1,
+                visibility=random.choice(["public", "private", "team"]),
             )
 
             yield gateway

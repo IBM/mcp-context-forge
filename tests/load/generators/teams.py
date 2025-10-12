@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Team generator for load testing."""
 
 import random

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Statistical distribution utilities for realistic data generation."""
 
 import random

@@ -72,6 +72,68 @@ scale:
   servers_per_user_max: 5
   servers_per_user_avg: 2
 
+  # A2A Agents
+  a2a_agents_per_user_min: 0
+  a2a_agents_per_user_max: 3
+  a2a_agents_per_user_avg: 1
+
+  # Server Associations
+  tools_per_server_min: 1
+  tools_per_server_max: 10
+  tools_per_server_avg: 3
+  resources_per_server_min: 1
+  resources_per_server_max: 20
+  resources_per_server_avg: 5
+  prompts_per_server_min: 1
+  prompts_per_server_max: 15
+  prompts_per_server_avg: 4
+  a2a_agents_per_server_min: 0
+  a2a_agents_per_server_max: 2
+  a2a_agents_per_server_avg: 0
+
+  # Metrics
+  metrics_per_tool_min: 5
+  metrics_per_tool_max: 50
+  metrics_per_tool_avg: 20
+  metrics_per_resource_min: 3
+  metrics_per_resource_max: 30
+  metrics_per_resource_avg: 10
+  metrics_per_prompt_min: 2
+  metrics_per_prompt_max: 20
+  metrics_per_prompt_avg: 8
+  metrics_per_server_min: 10
+  metrics_per_server_max: 100
+  metrics_per_server_avg: 40
+  metrics_per_a2a_agent_min: 5
+  metrics_per_a2a_agent_max: 80
+  metrics_per_a2a_agent_avg: 30
+
+  # Activity Logs
+  logs_per_token_min: 20
+  logs_per_token_max: 200
+  logs_per_token_avg: 80
+  auth_events_per_user_min: 3
+  auth_events_per_user_max: 30
+  auth_events_per_user_avg: 12
+  permission_audits_per_user_min: 5
+  permission_audits_per_user_max: 50
+  permission_audits_per_user_avg: 20
+
+  # MCP Sessions
+  mcp_sessions_per_server_min: 1
+  mcp_sessions_per_server_max: 10
+  mcp_sessions_per_server_avg: 3
+  mcp_messages_per_session_min: 3
+  mcp_messages_per_session_max: 20
+  mcp_messages_per_session_avg: 8
+  resource_subscription_rate: 0.05  # 5% of resources subscribed
+
+  # Workflow State
+  invitation_generation_rate: 0.2  # 20% of teams
+  join_request_generation_rate: 0.1  # 10% of teams
+  token_revocation_rate: 0.03  # 3% of tokens
+  oauth_token_rate: 0.05  # 5% of user-gateway combinations
+
 distributions:
   team_size: "power_law"
   resource_access: "zipf"
@@ -100,6 +162,7 @@ performance:
   analyze_after_load: false
 
 generation_order:
+  # Core entities (must come first)
   - users
   - teams
   - team_members
@@ -109,6 +172,31 @@ generation_order:
   - resources
   - prompts
   - servers
+  - a2a_agents
+  # Associations (depend on core entities)
+  - server_tool_associations
+  - server_resource_associations
+  - server_prompt_associations
+  - server_a2a_associations
+  # Metrics (depend on core entities)
+  - tool_metrics
+  - resource_metrics
+  - prompt_metrics
+  - server_metrics
+  - a2a_agent_metrics
+  # Activity logs (depend on core entities)
+  - token_usage_logs
+  - email_auth_events
+  - permission_audit_logs
+  # Sessions (depend on servers and resources)
+  - mcp_sessions
+  - mcp_messages
+  - resource_subscriptions
+  # Workflow state (depend on core entities)
+  - team_invitations
+  - team_join_requests
+  - token_revocations
+  - oauth_tokens
 
 validation:
   enabled: true

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """API token generator for load testing."""
 
 import random

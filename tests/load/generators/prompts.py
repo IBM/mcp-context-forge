@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Prompt generator for load testing."""
 
 import random
@@ -54,13 +55,28 @@ class PromptGenerator(BaseGenerator):
             num_prompts = prompts_per_user[user_i]
 
             for j in range(num_prompts):
+                if prompt_idx >= len(timestamps):
+                    break
+
                 category = random.choice(prompt_categories)
                 name = f"{category}_prompt_{user_i+1}_{j+1}"
 
                 prompt = Prompt(
                     name=name,
                     description=self.faker.sentence(),
+                    template=f"Perform {category} on: {{input}}",
+                    argument_schema={
+                        "type": "object",
+                        "properties": {
+                            "input": {"type": "string", "description": "Input data"}
+                        },
+                        "required": ["input"]
+                    },
                     created_by=user_email,
+                    is_active=True,
+                    tags=[],
+                    version=1,
+                    visibility=random.choice(["public", "private", "team"]),
                     created_at=timestamps[prompt_idx],
                     updated_at=timestamps[prompt_idx],
                 )

@@ -1,0 +1,208 @@
+# Large load profile - Pre-production testing
+# Target: 100K users, ~1M teams, ~10M resources
+# Generation time: ~1-2 hours
+# Recommended: Use PostgreSQL or MySQL for this profile
+
+profile:
+  name: large
+  description: "Large-scale load test for pre-production (100K users)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  batch_size: 1000
+  progress_bar: true
+  parallel: true
+  workers: 8
+  email_domain: "loadtest.example.com"
+  output_report: "reports/large_load_report.json"
+  log_level: INFO
+
+database:
+  pool_size: 20
+  max_overflow: 40
+  pool_timeout: 60
+  echo: false
+
+scale:
+  # Users
+  users: 100000
+  users_active_percent: 75
+  users_admin_percent: 1
+
+  # Teams
+  personal_teams_per_user: 1
+  additional_teams_per_user: 10
+  teams_private_percent: 65
+  teams_public_percent: 35
+
+  # Team membership
+  members_per_team_min: 1
+  members_per_team_max: 100
+  members_per_team_distribution: "power_law"
+
+  # API Tokens
+  tokens_per_user_min: 2
+  tokens_per_user_max: 15
+  tokens_per_user_avg: 6
+  tokens_active_percent: 85
+
+  # Gateways
+  gateways: 5000
+  tools_per_gateway_min: 20
+  tools_per_gateway_max: 150
+  tools_per_gateway_avg: 60
+  tools_enabled_percent: 95
+
+  # Resources
+  resources_per_user_min: 50
+  resources_per_user_max: 300
+  resources_per_user_avg: 120
+
+  # Prompts
+  prompts_per_user_min: 50
+  prompts_per_user_max: 300
+  prompts_per_user_avg: 120
+
+  # Virtual Servers
+  servers_per_user_min: 5
+  servers_per_user_max: 25
+  servers_per_user_avg: 12
+
+  # A2A Agents
+  a2a_agents_per_user_min: 0
+  a2a_agents_per_user_max: 6
+  a2a_agents_per_user_avg: 2
+
+  # Server Associations
+  tools_per_server_min: 2
+  tools_per_server_max: 25
+  tools_per_server_avg: 6
+  resources_per_server_min: 5
+  resources_per_server_max: 60
+  resources_per_server_avg: 12
+  prompts_per_server_min: 3
+  prompts_per_server_max: 40
+  prompts_per_server_avg: 10
+  a2a_agents_per_server_min: 0
+  a2a_agents_per_server_max: 4
+  a2a_agents_per_server_avg: 1
+
+  # Metrics
+  metrics_per_tool_min: 20
+  metrics_per_tool_max: 200
+  metrics_per_tool_avg: 60
+  metrics_per_resource_min: 10
+  metrics_per_resource_max: 100
+  metrics_per_resource_avg: 25
+  metrics_per_prompt_min: 10
+  metrics_per_prompt_max: 80
+  metrics_per_prompt_avg: 20
+  metrics_per_server_min: 30
+  metrics_per_server_max: 300
+  metrics_per_server_avg: 120
+  metrics_per_a2a_agent_min: 20
+  metrics_per_a2a_agent_max: 250
+  metrics_per_a2a_agent_avg: 100
+
+  # Activity Logs
+  logs_per_token_min: 100
+  logs_per_token_max: 1000
+  logs_per_token_avg: 350
+  auth_events_per_user_min: 10
+  auth_events_per_user_max: 100
+  auth_events_per_user_avg: 35
+  permission_audits_per_user_min: 20
+  permission_audits_per_user_max: 200
+  permission_audits_per_user_avg: 70
+
+  # MCP Sessions
+  mcp_sessions_per_server_min: 3
+  mcp_sessions_per_server_max: 30
+  mcp_sessions_per_server_avg: 12
+  mcp_messages_per_session_min: 8
+  mcp_messages_per_session_max: 60
+  mcp_messages_per_session_avg: 25
+  resource_subscription_rate: 0.10  # 10% of resources subscribed
+
+  # Workflow State
+  invitation_generation_rate: 0.30  # 30% of teams
+  join_request_generation_rate: 0.20  # 20% of teams
+  token_revocation_rate: 0.07  # 7% of tokens
+  oauth_token_rate: 0.10  # 10% of user-gateway combinations
+
+distributions:
+  team_size: "power_law"
+  resource_access: "zipf"
+  prompt_access: "zipf"
+  tool_invocation: "zipf"
+  temporal: "exponential_decay"
+
+temporal:
+  start_date: "2023-01-01"
+  end_date: "2025-10-12"
+  recent_data_percent: 80
+  historical_data_percent: 20
+
+realism:
+  use_faker: true
+  faker_locale: "en_US"
+  name_length_min: 5
+  name_length_max: 50
+  description_length_min: 50
+  description_length_max: 200
+
+performance:
+  batch_size: 1000
+  commit_frequency: 10000
+  disable_indexes: false
+  analyze_after_load: true
+
+generation_order:
+  # Core entities (must come first)
+  - users
+  - teams
+  - team_members
+  - tokens
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+  - a2a_agents
+  # Associations (depend on core entities)
+  - server_tool_associations
+  - server_resource_associations
+  - server_prompt_associations
+  - server_a2a_associations
+  # Metrics (depend on core entities)
+  - tool_metrics
+  - resource_metrics
+  - prompt_metrics
+  - server_metrics
+  - a2a_agent_metrics
+  # Activity logs (depend on core entities)
+  - token_usage_logs
+  - email_auth_events
+  - permission_audit_logs
+  # Sessions (depend on servers and resources)
+  - mcp_sessions
+  - mcp_messages
+  - resource_subscriptions
+  # Workflow state (depend on core entities)
+  - team_invitations
+  - team_join_requests
+  - token_revocations
+  - oauth_tokens
+
+validation:
+  enabled: true
+  checks:
+    - foreign_keys
+    - required_fields
+    - email_formats
+
+reporting:
+  enabled: true
+  format: json
+  output_file: "reports/large_load_report.json"

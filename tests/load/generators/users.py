@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """User generator for load testing."""
 
 import hashlib

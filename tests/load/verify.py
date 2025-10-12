@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """CLI for verifying load test data integrity.
 
 Usage:
