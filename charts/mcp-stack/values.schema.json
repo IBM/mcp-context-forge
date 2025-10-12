@@ -1026,6 +1026,22 @@
             }
           },
           "additionalProperties": false
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Extra volumes to mount in the gateway pod",
+          "items": {
+            "type": "object"
+          },
+          "default": []
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Extra volume mounts for the gateway container",
+          "items": {
+            "type": "object"
+          },
+          "default": []
         }
       },
       "additionalProperties": false

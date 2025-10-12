@@ -41,6 +41,14 @@ spec:
             - name: redis
               containerPort: {{ .Values.redis.service.port }}
 
+          {{- with .Values.mcpContextForge.extraVolumeMounts }}
+          ################################################################
+          # EXTRA VOLUME MOUNTS
+          ################################################################
+          volumeMounts:
+            {{- tpl (toYaml .) $ | nindent 12 -}}
+          {{- end }}
+
           # ─── Readiness probe ───
           {{- with .Values.redis.probes.readiness }}
           readinessProbe:
@@ -58,3 +66,9 @@ spec:
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
 {{- end }}
+
+      {{- with .Values.mcpContextForge.extraVolumes }}
+      volumes:
+        {{- tpl (toYaml .) $ | nindent 8 -}}
+      {{- end }}
+

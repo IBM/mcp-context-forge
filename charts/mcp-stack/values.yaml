@@ -638,6 +638,22 @@ redis:
       successThreshold: 1
       failureThreshold: 5
 
+  extraVolumes: []
+  # - name: customConfig
+  #   configMap:
+  #     name: '{{ include "mcp-stack.fullname" . }}-custom-config'
+  # - name: additionalSecret
+  #   secret:
+  #     secretName: my-secret
+  #     defaultMode: 0600
+
+  extraVolumeMounts: []
+  # - name: customConfig
+  #   mountPath: /mnt/config
+  #   readOnly: true
+  # - name: additionalSecret
+  #   mountPath: /mnt/secret
+
 ########################################################################
 # PGADMIN - Web UI for Postgres
 ########################################################################
