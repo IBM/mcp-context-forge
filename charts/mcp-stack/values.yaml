@@ -95,7 +95,7 @@ mcpContextForge:
   extraVolumes: []
   # - name: customConfig
   #   configMap:
-  #     name: '{{ template "mcp-stack.fullname . }}-custom-config'
+  #     name: '{{ include "mcp-stack.fullname" . }}-custom-config'
   # - name: additionalSecret
   #   secret:
   #     secretName: my-secret
