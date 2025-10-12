@@ -1921,33 +1921,26 @@ class TestErrorHandling:
         assert any("Field required" in str(error) for error in errors)
 
     async def test_internal_server_error(self, client: AsyncClient, mock_auth):
-        """Simulate internal server error by patching a dependency."""
+        """Simulate internal server error by patching the health check function."""
         # First-Party
-        from mcpgateway.main import app, get_db
+        from mcpgateway import main as main_module
 
-        def failing_db():
-            def _gen():
-                raise Exception("Simulated DB failure")
-                yield
+        # Mock check_db_health to simulate database failure
+        original_check_db_health = main_module.check_db_health
 
-            return _gen()
+        def failing_health_check():
+            return False
 
-        original_override = app.dependency_overrides.get(get_db)
-        app.dependency_overrides[get_db] = failing_db
+        main_module.check_db_health = failing_health_check
         try:
             response = await client.get("/health", headers=TEST_AUTH_HEADER)
-            # Some test setups may still return 200 with error info in body, so check both
-            if response.status_code == 500:
-                assert True
-            else:
-                # Accept 200 only if error is present in response
-                data = response.json()
-                assert "error" in data or data.get("status") != "healthy"
+            # Health check should return 200 with status "unhealthy"
+            assert response.status_code == 200
+            data = response.json()
+            assert data.get("status") == "unhealthy" or "error" in data
         finally:
-            if original_override:
-                app.dependency_overrides[get_db] = original_override
-            else:
-                app.dependency_overrides.pop(get_db, None)
+            # Restore original function
+            main_module.check_db_health = original_check_db_health
 
     async def test_validation_error(self, client: AsyncClient, mock_auth):
         """Test validation error for endpoint expecting required fields."""
