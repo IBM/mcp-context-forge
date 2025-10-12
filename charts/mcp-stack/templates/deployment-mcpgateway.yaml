@@ -92,6 +92,14 @@ spec:
             - configMapRef:
                 name: {{ include "mcp-stack.fullname" . }}-gateway-config
 
+          {{- with .Values.mcpContextForge.extraVolumeMounts }}
+          ################################################################
+          # EXTRA VOLUME MOUNTS
+          ################################################################
+          volumeMounts:
+            {{- tpl (toYaml .) $ | nindent 12 -}}
+          {{- end }}
+
           ################################################################
           # HEALTH & READINESS PROBES
           ################################################################
@@ -135,3 +143,9 @@ spec:
           # Resource requests / limits
           resources:
 {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
+
+      {{- with .Values.mcpContextForge.extraVolumes }}
+      volumes:
+        {{- tpl (toYaml .) $ | nindent 8 -}}
+      {{- end }}
+

@@ -92,6 +92,22 @@ mcpContextForge:
       enabled: false            # Set to true to enable TLS
       secretName: ""            # Name of the TLS secret (auto-generated if empty)
 
+  extraVolumes: []
+  # - name: customConfig
+  #   configMap:
+  #     name: '{{ template "mcp-stack.fullname . }}-custom-config'
+  # - name: additionalSecret
+  #   secret:
+  #     secretName: my-secret
+  #     defaultMode: 0600
+
+  extraVolumeMounts: []
+  # - name: customConfig
+  #   mountPath: /mnt/config
+  #   readOnly: true
+  # - name: additionalSecret
+  #   mountPath: /mnt/secret
+
   ####################################################################
   # CORE ENVIRONMENT - injected one-by-one as name/value pairs.
   # Only the DATABASE / CACHE connection points live here; everything
