@@ -776,8 +776,12 @@ async function fetchWithTimeoutAndRetry(
  * Show loading state for metrics
  */
 function showMetricsLoading() {
-    const metricsPanel = safeGetElement("metrics-panel", true); // suppress warning
-    if (metricsPanel) {
+    // Only clear the aggregated metrics section, not the entire panel (to preserve System Metrics)
+    const aggregatedSection = safeGetElement(
+        "aggregated-metrics-section",
+        true,
+    );
+    if (aggregatedSection) {
         const existingLoading = safeGetElement("metrics-loading", true);
         if (existingLoading) {
             return;
@@ -789,12 +793,12 @@ function showMetricsLoading() {
         loadingDiv.innerHTML = `
             <div class="text-center">
                 <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-                <p class="text-gray-600">Loading metrics...</p>
+                <p class="text-gray-600">Loading aggregated metrics...</p>
                 <p class="text-sm text-gray-500 mt-2">This may take a moment</p>
             </div>
         `;
-        metricsPanel.innerHTML = "";
-        metricsPanel.appendChild(loadingDiv);
+        aggregatedSection.innerHTML = "";
+        aggregatedSection.appendChild(loadingDiv);
     }
 }
 
@@ -812,8 +816,9 @@ function hideMetricsLoading() {
  * Enhanced error display with retry option
  */
 function showMetricsError(error) {
-    const metricsPanel = safeGetElement("metrics-panel");
-    if (metricsPanel) {
+    // Only show error in the aggregated metrics section, not the entire panel
+    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+    if (aggregatedSection) {
         const errorDiv = document.createElement("div");
         errorDiv.className = "text-center p-8";
 
@@ -835,7 +840,7 @@ function showMetricsError(error) {
                 <svg class="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                 </svg>
-                <h3 class="text-lg font-medium mb-2">Failed to Load Metrics</h3>
+                <h3 class="text-lg font-medium mb-2">Failed to Load Aggregated Metrics</h3>
                 <p class="text-sm mb-2">${escapeHtml(errorMessage)}</p>
                 <p class="text-xs text-gray-500 mb-4">${helpText}</p>
                 <button
@@ -846,8 +851,8 @@ function showMetricsError(error) {
             </div>
         `;
 
-        metricsPanel.innerHTML = "";
-        metricsPanel.appendChild(errorDiv);
+        aggregatedSection.innerHTML = "";
+        aggregatedSection.appendChild(errorDiv);
     }
 }
 
@@ -866,14 +871,14 @@ function retryLoadMetrics() {
 window.retryLoadMetrics = retryLoadMetrics;
 
 function showMetricsPlaceholder() {
-    const metricsPanel = safeGetElement("metrics-panel");
-    if (metricsPanel) {
+    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+    if (aggregatedSection) {
         const placeholderDiv = document.createElement("div");
         placeholderDiv.className = "text-gray-600 p-4 text-center";
         placeholderDiv.textContent =
-            "Metrics endpoint not available. This feature may not be implemented yet.";
-        metricsPanel.innerHTML = "";
-        metricsPanel.appendChild(placeholderDiv);
+            "Aggregated metrics endpoint not available. This feature may not be implemented yet.";
+        aggregatedSection.innerHTML = "";
+        aggregatedSection.appendChild(placeholderDiv);
     }
 }
 
@@ -882,9 +887,9 @@ function showMetricsPlaceholder() {
 // ===================================================================
 
 function displayMetrics(data) {
-    const metricsPanel = safeGetElement("metrics-panel");
-    if (!metricsPanel) {
-        console.error("Metrics panel element not found");
+    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+    if (!aggregatedSection) {
+        console.error("Aggregated metrics section element not found");
         return;
     }
 
@@ -903,8 +908,8 @@ function displayMetrics(data) {
                     Refresh Metrics
                 </button>
             `;
-            metricsPanel.innerHTML = "";
-            metricsPanel.appendChild(emptyStateDiv);
+            aggregatedSection.innerHTML = "";
+            aggregatedSection.appendChild(emptyStateDiv);
             return;
         }
 
@@ -989,8 +994,8 @@ function displayMetrics(data) {
         }
 
         // Safe content replacement
-        metricsPanel.innerHTML = "";
-        metricsPanel.appendChild(mainContainer);
+        aggregatedSection.innerHTML = "";
+        aggregatedSection.appendChild(mainContainer);
 
         console.log("✓ Enhanced metrics display rendered successfully");
     } catch (error) {

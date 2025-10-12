@@ -9987,6 +9987,71 @@ async def catalog_partial(
 
 
 # ===================================
+# System Metrics Endpoints
+# ===================================
+
+
+@admin_router.get("/system/stats")
+async def get_system_stats(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Get comprehensive system metrics for administrators.
+
+    Returns detailed counts across all entity types including users, teams,
+    MCP resources (servers, tools, resources, prompts, A2A agents, gateways),
+    API tokens, sessions, metrics, security events, and workflow state.
+
+    Designed for capacity planning, performance optimization, and demonstrating
+    system capabilities to administrators.
+
+    Args:
+        request: FastAPI request object
+        db: Database session dependency
+        user: Authenticated user from dependency (must have admin access)
+
+    Returns:
+        HTMLResponse or JSONResponse: Comprehensive system metrics
+        Returns HTML partial when requested via HTMX, JSON otherwise
+
+    Raises:
+        HTTPException: If metrics collection fails
+
+    Examples:
+        >>> # Request system metrics via API
+        >>> # GET /admin/system/stats
+        >>> # Returns JSON with users, teams, mcp_resources, tokens, sessions, metrics, security, workflow
+    """
+    try:
+        LOGGER.info(f"System metrics requested by user: {user}")
+
+        # First-Party
+        from mcpgateway.services.system_stats_service import SystemStatsService  # pylint: disable=import-outside-toplevel
+
+        # Get metrics
+        service = SystemStatsService()
+        stats = service.get_comprehensive_stats(db)
+
+        LOGGER.info(f"System metrics retrieved successfully for user {user}")
+
+        # Check if this is an HTMX request for HTML partial
+        if request.headers.get("hx-request"):
+            # Return HTML partial for HTMX
+            return request.app.state.templates.TemplateResponse(
+                "metrics_partial.html",
+                {"request": request, "stats": stats, "root_path": request.scope.get("root_path", "")},
+            )
+
+        # Return JSON for API requests
+        return JSONResponse(content=stats)
+
+    except Exception as e:
+        LOGGER.error(f"System metrics retrieval failed for user {user}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve system metrics: {str(e)}")
+
+
+# ===================================
 # Support Bundle Endpoints
 # ===================================
 

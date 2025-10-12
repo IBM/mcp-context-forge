@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Metrics generators for load testing."""
 
 import random

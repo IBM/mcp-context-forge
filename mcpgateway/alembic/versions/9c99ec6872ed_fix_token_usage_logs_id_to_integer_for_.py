@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """fix_token_usage_logs_id_to_integer
 
 Revision ID: 9c99ec6872ed
