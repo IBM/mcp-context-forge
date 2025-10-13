@@ -47,7 +47,7 @@ async def test_client_load_stdio():
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(name="test_prompt", args = {"text": "That was innovative!"})
+    prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"text": "That was innovative!"})
     result = await plugin.prompt_pre_fetch(prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
@@ -70,7 +70,7 @@ async def test_client_load_stdio_overrides():
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(name="test_prompt", args = {"text": "That was innovative!"})
+    prompt = PromptPrehookPayload(prompt_id="test_prompt", args = {"text": "That was innovative!"})
     result = await plugin.prompt_pre_fetch(prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
@@ -95,7 +95,7 @@ async def test_client_load_stdio_post_prompt():
 
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
-    prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
+    prompt = PromptPrehookPayload(prompt_id="test_prompt", args = {"user": "What a crapshow!"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_pre_fetch(prompt, context)
     assert result.modified_payload.args["user"] == "What a yikesshow!"
@@ -108,7 +108,7 @@ async def test_client_load_stdio_post_prompt():
     message = Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
 
-    payload_result = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+    payload_result = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
 
     result = await plugin.prompt_post_fetch(payload_result, context=context)
     assert len(result.modified_payload.result.messages) == 1
@@ -174,7 +174,7 @@ async def test_hooks():
         await pm.shutdown()
     plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_stdio_external_plugin_passthrough.yaml")
     await plugin_manager.initialize()
-    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    payload = PromptPrehookPayload(prompt_id="test_prompt", name="test_prompt", args={"arg0": "This is a crap argument"})
     global_context = GlobalContext(request_id="1")
     result, _ = await plugin_manager.prompt_pre_fetch(payload, global_context)
     # Assert expected behaviors
@@ -183,7 +183,7 @@ async def test_hooks():
     # Customize payload for testing
     message = Message(content=TextContent(type="text", text="prompt"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
-    payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+    payload = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
     result, _ = await plugin_manager.prompt_post_fetch(payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
@@ -205,7 +205,7 @@ async def test_hooks():
     # Assert expected behaviors
     assert result.continue_processing
 
-    content = ResourceContent(type="resource", uri="file:///data.txt",
+    content = ResourceContent(type="resource", id="123", uri="file:///data.txt",
            text="Hello World")
     payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
     result, _ = await plugin_manager.resource_post_fetch(payload, global_context)
@@ -219,7 +219,7 @@ async def test_errors():
     os.environ["PYTHONPATH"] = "."
     plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/error_stdio_external_plugin.yaml")
     await plugin_manager.initialize()
-    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    payload = PromptPrehookPayload(prompt_id="test_prompt", name="test_prompt", args={"arg0": "This is a crap argument"})
     global_context = GlobalContext(request_id="1")
     escaped_regex = re.escape("ValueError('Sadly! Prompt prefetch is broken!')")
     with pytest.raises(PluginError, match=escaped_regex):
