@@ -6,7 +6,7 @@ LABEL maintainer="Mihai Criveti" \
 
 ARG PYTHON_VERSION=3.12
 ARG TARGETPLATFORM
-ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL="False"
+ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 
 # Install Python and build dependencies
 # hadolint ignore=DL3041
@@ -25,11 +25,11 @@ WORKDIR /app
 # ----------------------------------------------------------------------------
 RUN if [ "$TARGETPLATFORM" = "linux/s390x" ]; then \
         echo "Building for s390x."; \
-        echo "GRPC_PYTHON_BUILD_SYSTEM_OPENSSL="True"" >> /etc/profile.d/use-openssl.sh; \
+        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
-        echo "GRPC_PYTHON_BUILD_SYSTEM_OPENSSL="False"" >> /etc/profile.d/use-openssl.sh; \
+        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
     fi
-RUN chmod +x /etc/profile.d/use-openssl.sh
+RUN chmod 644 /etc/profile.d/use-openssl.sh
 
 # Copy project files into container
 COPY . /app
