@@ -1,6 +1,24 @@
 <!-- htmlhint doctype-first:false -->
 <!-- Tools Table Rows Partial for HTMX Pagination -->
 <!-- This template renders the table body content and pagination controls -->
+{#
+  This partial expects either:
+    - `data` (a list of tools for the current page) and `pagination` dict;
+  or
+    - `tools` (the full list) when included directly on first-page render.
+
+  Provide safe defaults so admin.html can include this partial directly
+  and it will render page 1.
+#}
+
+{%- set per_page = (pagination.per_page if pagination is defined else 50) -%}
+{%- set page = (pagination.page if pagination is defined else 1) -%}
+{%- if data is not defined -%}
+  {%- set _all_tools = (tools if tools is defined else []) -%}
+  {%- set start = (page - 1) * per_page -%}
+  {%- set end = start + per_page -%}
+  {%- set data = _all_tools[start:end] -%}
+{%- endif -%}
 
 {% for tool in data %}
 <tr>
@@ -263,12 +281,3 @@
   </td>
 </tr>
 {% endfor %}
-
-<!-- Out-of-band swap for pagination controls -->
-<div id="tools-pagination-controls" hx-swap-oob="outerHTML">
-  {% set base_url = root_path + '/admin/tools/partial' %}
-  {% set hx_target = '#tools-table-body' %}
-  {% set hx_indicator = '#tools-loading' %}
-  {% set query_params = {'include_inactive': include_inactive} %}
-  {% include 'pagination_controls.html' %}
-</div>
