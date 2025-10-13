@@ -2401,9 +2401,10 @@
                 </tr>
               </thead>
               <tbody
+                id="tools-table-body"
                 class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700"
               >
-                {% for tool in tools %}
+                {% for tool in tools[:50] %}
                 <tr>
                   <td
                     class="px-2 py-4 whitespace-nowrap text-sm font-medium text-gray-900 w-12 dark:text-gray-100"
@@ -2683,6 +2684,32 @@
                 {% endfor %}
               </tbody>
             </table>
+          </div>
+
+          <!-- Loading Indicator for HTMX -->
+          <div id="tools-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading tools...</span>
+            </div>
+          </div>
+
+          <!-- Pagination Controls -->
+          <div id="tools-pagination-controls">
+            {% if tools|length > 0 %}
+            {% set total_items = tools|length %}
+            {% set per_page = 50 %}
+            {% set total_pages = ((total_items + per_page - 1) // per_page) %}
+            {% set pagination = {'page': 1, 'per_page': per_page, 'total_items': total_items, 'total_pages': total_pages, 'has_next': (total_items > per_page), 'has_prev': false} %}
+            {% set base_url = root_path + '/admin/tools/partial' %}
+            {% set hx_target = '#tools-table-body' %}
+            {% set hx_indicator = '#tools-loading' %}
+            {% set query_params = {'include_inactive': include_inactive} %}
+            {% include 'pagination_controls.html' %}
+            {% endif %}
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">

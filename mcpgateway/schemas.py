@@ -5820,3 +5820,130 @@ class CatalogBulkRegisterResponse(BaseModel):
     failed: List[Dict[str, str]] = Field(..., description="Failed registrations with error messages")
     total_attempted: int = Field(..., description="Total servers attempted")
     total_successful: int = Field(..., description="Total successful registrations")
+
+
+# ===================================
+# Pagination Schemas
+# ===================================
+
+
+class PaginationMeta(BaseModel):
+    """Pagination metadata.
+
+    Attributes:
+        page: Current page number (1-indexed)
+        per_page: Items per page
+        total_items: Total number of items across all pages
+        total_pages: Total number of pages
+        has_next: Whether there is a next page
+        has_prev: Whether there is a previous page
+        next_cursor: Cursor for next page (cursor-based only)
+        prev_cursor: Cursor for previous page (cursor-based only)
+
+    Examples:
+        >>> meta = PaginationMeta(
+        ...     page=2,
+        ...     per_page=50,
+        ...     total_items=250,
+        ...     total_pages=5,
+        ...     has_next=True,
+        ...     has_prev=True
+        ... )
+        >>> meta.page
+        2
+        >>> meta.total_pages
+        5
+    """
+
+    page: int = Field(..., description="Current page number (1-indexed)", ge=1)
+    per_page: int = Field(..., description="Items per page", ge=1)
+    total_items: int = Field(..., description="Total number of items", ge=0)
+    total_pages: int = Field(..., description="Total number of pages", ge=0)
+    has_next: bool = Field(..., description="Whether there is a next page")
+    has_prev: bool = Field(..., description="Whether there is a previous page")
+    next_cursor: Optional[str] = Field(None, description="Cursor for next page (cursor-based only)")
+    prev_cursor: Optional[str] = Field(None, description="Cursor for previous page (cursor-based only)")
+
+
+class PaginationLinks(BaseModel):
+    """Pagination navigation links.
+
+    Attributes:
+        self: Current page URL
+        first: First page URL
+        last: Last page URL
+        next: Next page URL (None if no next page)
+        prev: Previous page URL (None if no previous page)
+
+    Examples:
+        >>> links = PaginationLinks(
+        ...     self="/admin/tools?page=2&per_page=50",
+        ...     first="/admin/tools?page=1&per_page=50",
+        ...     last="/admin/tools?page=5&per_page=50",
+        ...     next="/admin/tools?page=3&per_page=50",
+        ...     prev="/admin/tools?page=1&per_page=50"
+        ... )
+        >>> links.self
+        '/admin/tools?page=2&per_page=50'
+    """
+
+    self: str = Field(..., description="Current page URL")
+    first: str = Field(..., description="First page URL")
+    last: str = Field(..., description="Last page URL")
+    next: Optional[str] = Field(None, description="Next page URL")
+    prev: Optional[str] = Field(None, description="Previous page URL")
+
+
+class PaginatedResponse(BaseModel):
+    """Generic paginated response wrapper.
+
+    This is a container for paginated data with metadata and navigation links.
+    The actual data is stored in the 'data' field as a list of items.
+
+    Attributes:
+        data: List of items for the current page
+        pagination: Pagination metadata (counts, page info)
+        links: Navigation links (optional)
+
+    Examples:
+        >>> from mcpgateway.schemas import ToolRead
+        >>> response = PaginatedResponse(
+        ...     data=[],
+        ...     pagination=PaginationMeta(
+        ...         page=1, per_page=50, total_items=0,
+        ...         total_pages=0, has_next=False, has_prev=False
+        ...     ),
+        ...     links=None
+        ... )
+        >>> response.pagination.page
+        1
+    """
+
+    data: List[Any] = Field(..., description="List of items")
+    pagination: PaginationMeta = Field(..., description="Pagination metadata")
+    links: Optional[PaginationLinks] = Field(None, description="Navigation links")
+
+
+class PaginationParams(BaseModel):
+    """Common pagination query parameters.
+
+    Attributes:
+        page: Page number (1-indexed)
+        per_page: Items per page
+        cursor: Cursor for cursor-based pagination
+        sort_by: Field to sort by
+        sort_order: Sort order (asc/desc)
+
+    Examples:
+        >>> params = PaginationParams(page=1, per_page=50)
+        >>> params.page
+        1
+        >>> params.sort_order
+        'desc'
+    """
+
+    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
+    per_page: int = Field(default=50, ge=1, le=500, description="Items per page (max 500)")
+    cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
+    sort_by: Optional[str] = Field("created_at", description="Sort field")
+    sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")
