@@ -62,8 +62,7 @@
 
     // Trigger HTMX request
     htmx.ajax('GET', url.toString(), {
-      target: '{{ hx_target|default("#content") }}',
-      swap: 'innerHTML',
+      swap: 'none',
       indicator: '{{ hx_indicator|default("#loading") }}'
     });
   }
