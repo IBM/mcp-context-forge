@@ -459,7 +459,7 @@ class TestResourceReading:
         with patch.object(resource_service, "_read_template_resource", return_value=mock_content) as mock_template:
             result = await resource_service.read_resource(mock_db, mock_resource.id)
             assert result.text == "template content"
-            mock_template.assert_called_once_with(mock_resource.id)
+            mock_template.assert_called_once_with(mock_template_resource.uri)
 
 
 # --------------------------------------------------------------------------- #
