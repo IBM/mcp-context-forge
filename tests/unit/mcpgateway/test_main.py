@@ -217,8 +217,11 @@ def test_client(app):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization required")
 
         try:
-            # Try to decode JWT token - use actual settings, skip audience verification for tests
-            payload = jwt_lib.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm], options={"verify_aud": False})
+            # Always coerce key to str in case SecretStr leaks through
+            key = settings.jwt_secret_key
+            if hasattr(key, "get_secret_value"):
+                key = key.get_secret_value()
+            payload = jwt_lib.decode(token, key, algorithms=[settings.jwt_algorithm], options={"verify_aud": False})
             username = payload.get("sub")
             if username:
                 return username
@@ -293,7 +296,7 @@ def mock_jwt_token():
         "iss": "mcpgateway",
         "aud": "mcpgateway-api"
     }
-    secret = settings.jwt_secret_key
+    secret = settings.jwt_secret_key.get_secret_value()
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
 
@@ -716,12 +719,13 @@ class TestResourceEndpoints:
         """Test reading resource content."""
         mock_read_resource.return_value = ResourceContent(
             type="resource",
+            id="1",
             uri="test/resource",
             mime_type="text/plain",
             text="This is test content",
         )
 
-        response = test_client.get("/resources/test/resource", headers=auth_headers)
+        response = test_client.get("/resources/1", headers=auth_headers)
         assert response.status_code == 200
         body = response.json()
         assert body["uri"] == "test/resource" and body["text"] == "This is test content"
@@ -731,8 +735,9 @@ class TestResourceEndpoints:
     def test_update_resource_endpoint(self, mock_update, test_client, auth_headers):
         """Test updating an existing resource."""
         mock_update.return_value = ResourceRead(**MOCK_RESOURCE_READ)
+        resource_id = mock_update.return_value.id
         req = {"description": "Updated description"}
-        response = test_client.put("/resources/test/resource", json=req, headers=auth_headers)
+        response = test_client.put(f"/resources/{resource_id}", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_update.assert_called_once()
 
@@ -740,7 +745,9 @@ class TestResourceEndpoints:
     def test_delete_resource_endpoint(self, mock_delete, test_client, auth_headers):
         """Test deleting a resource."""
         mock_delete.return_value = None
-        response = test_client.delete("/resources/test/resource", headers=auth_headers)
+        # Use the same resource_id as in test_update_resource_endpoint
+        resource_id = MOCK_RESOURCE_READ["id"]
+        response = test_client.delete(f"/resources/{resource_id}", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -766,7 +773,8 @@ class TestResourceEndpoints:
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
-        response = test_client.post("/resources/subscribe/test/resource", headers=auth_headers)
+        resource_id = MOCK_RESOURCE_READ["id"]
+        response = test_client.post(f"/resources/subscribe/{resource_id}", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
@@ -1483,7 +1491,7 @@ class TestErrorHandling:
         # First-Party
         from mcpgateway.config import settings
 
-        expired_token = jwt.encode(expired_payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+        expired_token = jwt.encode(expired_payload, settings.jwt_secret_key.get_secret_value(), algorithm=settings.jwt_algorithm)
         headers = {"Authorization": f"Bearer {expired_token}"}
         response = test_client.get("/docs", headers=headers)
         assert response.status_code == 401
