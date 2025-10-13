@@ -1240,6 +1240,43 @@ Disallow: /
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)
 
+    # ===================================
+    # Pagination Configuration
+    # ===================================
+
+    # Default number of items per page for paginated endpoints
+    pagination_default_page_size: int = Field(default=50, ge=1, le=1000, description="Default number of items per page")
+
+    # Maximum allowed items per page (prevents abuse)
+    pagination_max_page_size: int = Field(default=500, ge=1, le=10000, description="Maximum allowed items per page")
+
+    # Minimum items per page
+    pagination_min_page_size: int = Field(default=1, ge=1, description="Minimum items per page")
+
+    # Threshold for switching from offset to cursor-based pagination
+    pagination_cursor_threshold: int = Field(default=10000, ge=1, description="Threshold for cursor-based pagination")
+
+    # Enable cursor-based pagination globally
+    pagination_cursor_enabled: bool = Field(default=True, description="Enable cursor-based pagination")
+
+    # Default sort field for paginated queries
+    pagination_default_sort_field: str = Field(default="created_at", description="Default sort field")
+
+    # Default sort order for paginated queries
+    pagination_default_sort_order: str = Field(default="desc", pattern="^(asc|desc)$", description="Default sort order")
+
+    # Maximum offset allowed for offset-based pagination (prevents abuse)
+    pagination_max_offset: int = Field(default=100000, ge=0, description="Maximum offset for pagination")
+
+    # Cache pagination counts for performance (seconds)
+    pagination_count_cache_ttl: int = Field(default=300, ge=0, description="Cache TTL for pagination counts")
+
+    # Enable pagination links in API responses
+    pagination_include_links: bool = Field(default=True, description="Include pagination links")
+
+    # Base URL for pagination links (defaults to request URL)
+    pagination_base_url: Optional[str] = Field(default=None, description="Base URL for pagination links")
+
     def __init__(self, **kwargs):
         """Initialize Settings with environment variable parsing.
 
