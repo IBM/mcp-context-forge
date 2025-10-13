@@ -1,11 +1,14 @@
+# CONTRIBUTING
+
 ## Contributing In General
+
 Our project welcomes external contributions. If you have an itch, please feel
 free to scratch it.
 
-To contribute code or documentation, please submit a **FIXME** [pull request](https://github.com/ibm/mcp-context-forge/pulls).
+To contribute code or documentation, please submit a [pull request](https://github.com/ibm/mcp-context-forge/pulls).
 
 A good way to familiarize yourself with the codebase and contribution process is
-to look for and tackle low-hanging fruit in the **FIXME** [issue tracker](https://github.com/ibm/mcp-context-forge/issues).
+to look for and tackle low-hanging fruit in the [issue tracker](https://github.com/ibm/mcp-context-forge/issues).
 Before embarking on a more ambitious contribution, please quickly [get in touch](#communication) with us.
 
 **Note: We appreciate your effort, and want to avoid a situation where a contribution
@@ -14,14 +17,14 @@ cannot be accepted at all!**
 
 ### Proposing new features
 
-If you would like to implement a new feature, please **FIXME** [raise an issue](https://github.com/ibm/mcp-context-forge/issues)
+If you would like to implement a new feature, please [raise an issue](https://github.com/ibm/mcp-context-forge/issues)
 before sending a pull request so the feature can be discussed. This is to avoid
 you wasting your valuable time working on a feature that the project developers
 are not interested in accepting into the code base.
 
 ### Fixing bugs
 
-If you would like to fix a bug, please **FIXME** [raise an issue](https://github.com/ibm/mcp-context-forge/issues) before sending a
+If you would like to fix a bug, please [raise an issue](https://github.com/ibm/mcp-context-forge/issues) before sending a
 pull request so it can be tracked.
 
 ### Merge approval
@@ -38,12 +41,9 @@ Each source file must include a license header for the Apache
 Software License 2.0. Using the SPDX format is the simplest approach.
 e.g.
 
-```
-/*
-Copyright <holder> All Rights Reserved.
-
-SPDX-License-Identifier: Apache-2.0
-*/
+```python
+# Copyright <holder> All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
 ```
 
 We have tried to make it as easy as possible to make contributions. This
@@ -57,31 +57,41 @@ must include a sign-off statement in the commit message.
 Here is an example Signed-off-by line, which indicates that the
 submitter accepts the DCO:
 
-```
+```text
 Signed-off-by: John Doe <john.doe@example.com>
 ```
 
 You can include this automatically when you commit a change to your
 local git repository using the following command:
 
-```
+```bash
 git commit -s
 ```
 
 ## Communication
-**FIXME** Please feel free to connect with us on our [Slack channel](link).
+
+Please feel free to connect with us through the [issue tracker](https://github.com/ibm/mcp-context-forge/issues).
 
 ## Setup
-**FIXME** Please add any special setup instructions for your project to help the developer
-become productive quickly.
+
+For setup instructions, please see the [Quick Start sections](README.md#quick-start---pypi) in the README, or refer to the [Installation](README.md#installation) section for detailed instructions.
 
 ## Testing
-**FIXME** Please provide information that helps the developer test any changes they make
-before submitting.
+
+Before submitting changes, run the test suite as outlined in the [Bug-fix PR template](.github/PULL_REQUEST_TEMPLATE/bug_fix.md):
+
+1. `make lint` - passes all linters
+2. `make test` - all unit + integration tests green
+3. `make coverage` - ≥ 90%
 
 ## Coding style guidelines
-**FIXME** Optional, but recommended: please share any specific style guidelines you might
-have for your project.
+
+- **Python >= 3.11** with type hints
+- **Formatting**: Black (line length 200), isort (profile=black)
+- **Linting**: Ruff, Pylint per `pyproject.toml`
+- **Naming**: `snake_case` functions, `PascalCase` classes, `UPPER_CASE` constants
+
+See [CLAUDE.md](CLAUDE.md#code-style--standards) for complete coding standards.
 
 ### Python File Headers
 
