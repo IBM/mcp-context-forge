@@ -80,90 +80,9 @@ dependencies = [
 ]
 
 # ----------------------------------------------------------------
-# Optional dependency groups (extras)
+# Development dependencies (for contributors and maintainers)
 # ----------------------------------------------------------------
-[project.optional-dependencies]
-
-# Optional dependency groups (runtime)
-redis = [
-    "redis>=6.4.0",
-]
-
-postgres = [
-    "psycopg2-binary>=2.9.10",
-]
-
-mysql = [
-    "pymysql>=1.1.2",
-]
-
-llmchat = [
-    "langchain-core>=0.3.0",
-    "langchain-mcp-adapters>=0.1.11",
-    "langgraph>=0.2.0",
-    "langchain-openai>=0.2.0",
-    "langchain-ollama>=0.1.0",
-]
-
-# Fuzzing and property-based testing
-fuzz = [
-    "hypothesis>=6.138.16",
-    "pytest-benchmark>=5.1.0",
-    "pytest-xdist>=3.8.0",
-    "schemathesis>=4.1.4",
-]
-
-# Coverage-guided fuzzing (requires clang/libfuzzer)
-fuzz-atheris = [
-    "atheris>=2.3.0",
-]
-
-alembic = [
-    "alembic>=1.16.5",
-]
-
-# Observability dependencies (optional)
-observability = [
-    "opentelemetry-api>=1.37.0",
-    "opentelemetry-exporter-otlp>=1.37.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.37.0",
-    "opentelemetry-sdk>=1.37.0",
-]
-
-# Additional observability backends (optional)
-observability-jaeger = [
-    "opentelemetry-exporter-jaeger>=1.21.0",
-]
-
-observability-zipkin = [
-    "opentelemetry-exporter-zipkin>=1.37.0",
-]
-
-observability-all = [
-    "mcp-contextforge-gateway[observability]>=0.6.0",
-    "opentelemetry-exporter-jaeger>=1.21.0",
-    "opentelemetry-exporter-zipkin>=1.37.0",
-]
-
-# Async SQLite Driver (optional)
-aiosqlite = [
-    "aiosqlite>=0.21.0",
-]
-
-# Async PostgreSQL driver (optional)
-asyncpg = [
-    "asyncpg>=0.30.0",
-]
-
-# Chuck/Chuk MCP Runtime (optional) - External plugin server runtime
-# Provides MCP tool decorators, plugin hooks, and multi-transport server support
-# Used by: mcpgateway/plugins/framework/external/mcp/server/runtime.py
-# Required only if you plan to create external MCP plugin servers
-chuck = [
-    "chuk-mcp-runtime>=0.6.5",
-]
-
-# Optional dependency groups (development)
+[dependency-groups]
 dev = [
     "aiohttp>=3.12.15",
     "argparse-manpage>=4.7",
@@ -214,7 +133,7 @@ dev = [
     "radon>=6.0.1",
     "redis>=6.4.0",
     "ruff>=0.13.0",
-    "semgrep>=1.136.0",
+    #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlcheck>=0.2.3",
@@ -231,6 +150,73 @@ dev = [
     "yamllint>=1.37.1",
 ]
 
+# ----------------------------------------------------------------
+# Optional dependency groups (extras)
+# ----------------------------------------------------------------
+[project.optional-dependencies]
+
+# Optional dependency groups (runtime)
+redis = [
+    "redis>=6.4.0",
+]
+
+postgres = [
+    "psycopg2-binary>=2.9.10",
+]
+
+mysql = [
+    "pymysql>=1.1.2",
+]
+
+llmchat = [
+    "langchain-core>=0.3.0",
+    "langchain-mcp-adapters>=0.1.11",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.2.0",
+    "langchain-ollama>=0.1.0",
+]
+
+# Fuzzing and property-based testing
+fuzz = [
+    "hypothesis>=6.138.16",
+    "pytest-benchmark>=5.1.0",
+    "pytest-xdist>=3.8.0",
+    "schemathesis>=4.1.4",
+]
+
+# Coverage-guided fuzzing (requires clang/libfuzzer)
+fuzz-atheris = [
+    "atheris>=2.3.0",
+]
+
+alembic = [
+    "alembic>=1.16.5",
+]
+
+# Observability dependencies (optional)
+observability = [
+    "opentelemetry-api>=1.37.0",
+    "opentelemetry-sdk>=1.37.0",
+]
+
+# Async SQLite Driver (optional)
+aiosqlite = [
+    "aiosqlite>=0.21.0",
+]
+
+# Async PostgreSQL driver (optional)
+asyncpg = [
+    "asyncpg>=0.30.0",
+]
+
+# Chuck/Chuk MCP Runtime (optional) - External plugin server runtime
+# Provides MCP tool decorators, plugin hooks, and multi-transport server support
+# Used by: mcpgateway/plugins/framework/external/mcp/server/runtime.py
+# Required only if you plan to create external MCP plugin servers
+chuck = [
+    "chuk-mcp-runtime>=0.6.5",
+]
+
 # UI Testing
 playwright = [
     "playwright>=1.55.0",
@@ -242,9 +228,6 @@ playwright = [
 # Convenience meta-extras
 all = [
     "mcp-contextforge-gateway[redis]>=0.6.0",
-]
-dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.6.0",
 ]
 
 # --------------------------------------------------------------------
