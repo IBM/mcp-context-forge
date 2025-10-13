@@ -15,21 +15,22 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import contextlib
 import json
-import subprocess
+import os
 import sys
-import time
-from typing import Any, Dict, List, Optional
 
 # Third-Party
 import httpx
 import pytest
 
+from collections.abc import Callable, Coroutine
+from typing import cast, Any
+
 # First-Party
 from mcpgateway.translate import _build_fastapi, _PubSub, _run_stdio_to_sse, StdIOEndpoint
 
 # Test configuration
-TEST_PORT = 19999  # Use high port to avoid conflicts
 TEST_HOST = "127.0.0.1"
 
 
@@ -104,13 +105,13 @@ while True:
 
 
 @pytest.mark.asyncio
-async def test_stdio_to_sse_echo_initialize(echo_server):
+async def test_stdio_to_sse_echo_initialize(echo_server, unused_tcp_port):
     """Test basic initialize handshake through stdio→SSE bridge."""
     # Start the bridge server in background
     server_task = asyncio.create_task(
         _run_stdio_to_sse(
             cmd=echo_server,
-            port=TEST_PORT,
+            port=unused_tcp_port,
             host=TEST_HOST,
             log_level="error"  # Quiet for tests
         )
@@ -125,7 +126,7 @@ async def test_stdio_to_sse_echo_initialize(echo_server):
             message_endpoint = None
             received_messages = []
 
-            async with client.stream('GET', f'http://{TEST_HOST}:{TEST_PORT}/sse') as response:
+            async with client.stream('GET', f'http://{TEST_HOST}:{unused_tcp_port}/sse') as response:
                 line_count = 0
                 async for line in response.aiter_lines():
                     line_count += 1
@@ -186,7 +187,7 @@ async def test_stdio_to_sse_echo_initialize(echo_server):
 
 
 @pytest.mark.asyncio
-async def test_stdio_to_sse_multiple_clients():
+async def test_stdio_to_sse_multiple_clients(unused_tcp_port):
     """Test multiple SSE clients receiving the same messages."""
     # Use a simple cat command as echo server
     pubsub = _PubSub()
@@ -197,8 +198,8 @@ async def test_stdio_to_sse_multiple_clients():
 
     # Mock request for testing
     class MockRequest:
-        def __init__(self):
-            self.base_url = f"http://{TEST_HOST}:{TEST_PORT}/"
+        def __init__(self) -> None:
+            self.base_url = f"http://{TEST_HOST}:{unused_tcp_port}/"
             self._disconnected = False
 
         async def is_disconnected(self):
@@ -207,7 +208,7 @@ async def test_stdio_to_sse_multiple_clients():
     # Get SSE handler
     sse_handler = None
     for route in app.routes:
-        if getattr(route, 'path', None) == '/sse':
+        if hasattr(route, 'path') and hasattr(route, 'endpoint') and route.path == '/sse':
             sse_handler = route.endpoint
             break
 
@@ -216,7 +217,7 @@ async def test_stdio_to_sse_multiple_clients():
     # Create multiple clients
     clients = []
     for i in range(3):
-        req = MockRequest()
+        req: MockRequest = MockRequest()
         response = await sse_handler(req)
         clients.append((req, response))
 
@@ -261,7 +262,7 @@ async def test_message_endpoint_validation():
     # Get message handler
     message_handler = None
     for route in app.routes:
-        if getattr(route, 'path', None) == '/message':
+        if hasattr(route, 'path') and hasattr(route, 'endpoint') and route.path == '/message':
             message_handler = route.endpoint
             break
 
@@ -288,10 +289,9 @@ async def test_message_endpoint_validation():
     async def mock_send(x):
         pass
 
-    stdio.send = mock_send
-    response = await message_handler(valid_req, session_id="test")
-    assert response.status_code == 202
-
+    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+        response = await message_handler(valid_req, session_id="test")
+        assert response.status_code == 202
 
 @pytest.mark.asyncio
 async def test_keepalive_events():
@@ -303,7 +303,7 @@ async def test_keepalive_events():
     app = _build_fastapi(pubsub, stdio, keep_alive=0.1)  # 100ms
 
     class MockRequest:
-        def __init__(self):
+        def __init__(self) -> None:
             self.base_url = "http://test/"
             self._checks = 0
 
@@ -314,9 +314,10 @@ async def test_keepalive_events():
     # Get SSE handler
     sse_handler = None
     for route in app.routes:
-        if getattr(route, 'path', None) == '/sse':
+        if hasattr(route, 'path') and hasattr(route, 'endpoint') and getattr(route, 'path', None) == '/sse':
             sse_handler = route.endpoint
             break
+    assert sse_handler is not None
 
     response = await sse_handler(MockRequest())
 
@@ -376,7 +377,7 @@ async def test_session_id_tracking():
     app = _build_fastapi(pubsub, stdio)
 
     class MockRequest:
-        def __init__(self):
+        def __init__(self) -> None:
             self.base_url = "http://test/"
             self._disconnected = False
 
@@ -389,9 +390,10 @@ async def test_session_id_tracking():
     # Get SSE handler
     sse_handler = None
     for route in app.routes:
-        if getattr(route, 'path', None) == '/sse':
+        if hasattr(route, 'path') and hasattr(route, 'endpoint') and getattr(route, 'path', None) == '/sse':
             sse_handler = route.endpoint
             break
+    assert sse_handler is not None
 
     # Connect and get endpoint URL
     response = await sse_handler(MockRequest())
@@ -421,16 +423,30 @@ async def test_concurrent_requests():
     # Track sent messages
     sent_messages = []
 
+    class MockProc:
+        def __init__(self) -> None:
+            self._pid = 12345
+            self._returncode = None
+
+        @property
+        def pid(self) -> int:
+            return self._pid
+
+        @property
+        def returncode(self) -> int | None:
+            return self._returncode
+
     class MockStdio:
-        def __init__(self):
-            self._proc = None
+
+        def __init__(self)-> None:
+            self._proc: MockProc | None = None
 
         async def send(self, msg):
             sent_messages.append(msg)
 
         async def start(self, additional_env_vars=None):
             """Mock start method - does nothing but ensures the process appears running."""
-            self._proc = type('MockProc', (), {'pid': 12345, 'returncode': None})()
+            self._proc = MockProc()
 
         async def stop(self):
             """Mock stop method - does nothing."""
@@ -441,21 +457,22 @@ async def test_concurrent_requests():
             return self._proc is not None and self._proc.returncode is None
 
     stdio = MockStdio()
-    app = _build_fastapi(pubsub, stdio)
+    app = _build_fastapi(pubsub, cast(StdIOEndpoint, stdio))
 
     # Get message handler
     message_handler = None
     for route in app.routes:
-        if getattr(route, 'path', None) == '/message':
+        if hasattr(route, 'path') and hasattr(route, 'endpoint') and getattr(route, 'path', None) == '/message':
             message_handler = route.endpoint
             break
+    assert message_handler is not None
 
     # Send multiple concurrent requests
     requests = []
     for i in range(10):
         # Create a closure to capture the current index
-        def create_body_func(idx):
-            async def body(self):
+        def create_body_func(idx: int) -> Callable[[Any], Coroutine[Any, Any, bytes]]:
+            async def body(self: Any) -> bytes:
                 return json.dumps({"id": idx}).encode()
             return body
 
@@ -492,12 +509,7 @@ async def test_subprocess_termination():
     await stdio.stop()
 
     # Process should be terminated (either returncode is set or proc is None)
-    if stdio._proc is not None:
-        assert stdio._proc.returncode is not None or stdio._proc.terminated
-    else:
-        # Process was cleaned up, which is also valid
-        assert True
-
+    assert stdio._proc is None or stdio._proc.returncode is not None
 
 @pytest.mark.asyncio
 async def test_large_message_handling():

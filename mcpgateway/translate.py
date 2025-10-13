@@ -623,7 +623,7 @@ class SSEEvent:
 def _build_fastapi(
     pubsub: _PubSub,
     stdio: StdIOEndpoint,
-    keep_alive: int = KEEP_ALIVE_INTERVAL,
+    keep_alive: float = KEEP_ALIVE_INTERVAL,
     sse_path: str = "/sse",
     message_path: str = "/message",
     cors_origins: Optional[List[str]] = None,
@@ -1026,7 +1026,7 @@ async def _run_stdio_to_sse(
     host: str = "127.0.0.1",
     sse_path: str = "/sse",
     message_path: str = "/message",
-    keep_alive: int = KEEP_ALIVE_INTERVAL,
+    keep_alive: float = KEEP_ALIVE_INTERVAL,
     header_mappings: Optional[Dict[str, str]] = None,
 ) -> None:
     """Run stdio to SSE bridge.
@@ -1771,7 +1771,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     expose_streamable_http: bool = False,
     sse_path: str = "/sse",
     message_path: str = "/message",
-    keep_alive: int = KEEP_ALIVE_INTERVAL,
+    keep_alive: float = KEEP_ALIVE_INTERVAL,
     stateless: bool = False,
     json_response: bool = False,
     header_mappings: Optional[Dict[str, str]] = None,
@@ -2250,7 +2250,7 @@ def start_streamable_http_client(url: str, bearer_token: Optional[str] = None, t
 
 
 def start_stdio(
-    cmd: str, port: int, log_level: str, cors: Optional[List[str]], host: str = "127.0.0.1", sse_path: str = "/sse", message_path: str = "/message", keep_alive: int = KEEP_ALIVE_INTERVAL
+    cmd: str, port: int, log_level: str, cors: Optional[List[str]], host: str = "127.0.0.1", sse_path: str = "/sse", message_path: str = "/message", keep_alive: float = KEEP_ALIVE_INTERVAL
 ) -> None:
     """Start stdio bridge.
 

@@ -113,7 +113,7 @@ venv:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm"
 	# Eventually, we want to transition to using uv/uvx exclusively, at which point we will only need
 	# a virtual environment if the user has not installed uv into their account.
-	@/bin/bash -c "type uv || source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv"
+	@/bin/bash -c "type uv || ( source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv )"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
 .PHONY: activate

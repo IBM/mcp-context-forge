@@ -102,6 +102,7 @@ dev = [
     "fawltydeps>=0.20.0",
     "flake8>=7.3.0",
     "gprof2dot>=2025.4.14",
+    "hypothesis>=6.140.3",
     "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.0.1",
