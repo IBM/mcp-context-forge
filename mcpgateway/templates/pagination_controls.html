@@ -17,6 +17,7 @@
   totalPages: {{ pagination.total_pages }},
   hasNext: {{ 'true' if pagination.has_next else 'false' }},
   hasPrev: {{ 'true' if pagination.has_prev else 'false' }},
+  targetSelector: '{{ hx_target|default("#tools-table-body") }}',
 
   // Navigate to specific page
   goToPage(page) {
@@ -62,7 +63,8 @@
 
     // Trigger HTMX request
     htmx.ajax('GET', url.toString(), {
-      swap: 'none',
+      target: this.targetSelector,
+      swap: 'innerHTML',
       indicator: '{{ hx_indicator|default("#loading") }}'
     });
   }

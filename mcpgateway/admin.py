@@ -4882,7 +4882,8 @@ async def admin_tools_partial_html(
 
     # Apply pagination
     offset = (page - 1) * per_page
-    query = query.order_by(DbTool.url, DbTool.original_name).offset(offset).limit(per_page)
+    # Ensure deterministic pagination even when URL/name fields collide by including primary key
+    query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id).offset(offset).limit(per_page)
 
     # Execute query
     tools_db = list(db.scalars(query).all())
@@ -4923,16 +4924,17 @@ async def admin_tools_partial_html(
     )
 
     # Render template with paginated data
-    template = request.app.state.templates.get_template("tools_partial.html")
-    html_content = template.render(
-        request=request,
-        data=data,
-        pagination=pagination.model_dump(),
-        links=links.model_dump() if links else None,
-        root_path=settings.app_root_path,
-        include_inactive=include_inactive,
+    return request.app.state.templates.TemplateResponse(
+        "tools_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": settings.app_root_path,
+            "include_inactive": include_inactive,
+        },
     )
-    return HTMLResponse(content=html_content, media_type="text/html")
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)

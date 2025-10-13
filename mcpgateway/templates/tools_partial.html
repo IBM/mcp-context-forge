@@ -2,7 +2,6 @@
 <!-- Tools Table Rows Partial for HTMX Pagination -->
 <!-- This template renders the table body content and pagination controls -->
 
-<tbody id="tools-table-body" hx-swap-oob="outerHTML" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
 {% for tool in data %}
 <tr>
   <td
@@ -264,7 +263,6 @@
   </td>
 </tr>
 {% endfor %}
-</tbody>
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="tools-pagination-controls" hx-swap-oob="outerHTML">
