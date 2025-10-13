@@ -693,8 +693,8 @@ class ResourceService:
                 "user": user or "anonymous",
                 "server_id": server_id,
                 "request_id": request_id,
-                "http.url": uri if uri.startswith("http") else None,
-                "resource.type": "template" if ("{" in uri and "}" in uri) else "static",
+                "http.url": uri if uri is not None and uri.startswith("http") else None,
+                "resource.type": "template" if (uri is not None and "{" in uri and "}" in uri) else "static",
             },
         ) as span:
             try:
@@ -739,8 +739,9 @@ class ResourceService:
                         logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
 
                 # Original resource fetching logic
+                logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
                 # Check for template
-                if "{" in uri and "}" in uri:
+                if uri is not None and "{" in uri and "}" in uri:
                     content = await self._read_template_resource(uri)
                 else:
                     # Find resource
