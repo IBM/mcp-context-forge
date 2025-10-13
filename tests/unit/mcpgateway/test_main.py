@@ -219,7 +219,8 @@ def test_client(app):
         try:
             # Always coerce key to str in case SecretStr leaks through
             key = settings.jwt_secret_key
-            if hasattr(key, "get_secret_value"):
+            # Only call get_secret_value if it exists and is callable (not a string)
+            if hasattr(key, "get_secret_value") and callable(getattr(key, "get_secret_value", None)):
                 key = key.get_secret_value()
             payload = jwt_lib.decode(token, key, algorithms=[settings.jwt_algorithm], options={"verify_aud": False})
             username = payload.get("sub")
@@ -296,7 +297,9 @@ def mock_jwt_token():
         "iss": "mcpgateway",
         "aud": "mcpgateway-api"
     }
-    secret = settings.jwt_secret_key.get_secret_value()
+    secret = settings.jwt_secret_key
+    if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
+        secret = secret.get_secret_value()
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
 
@@ -717,6 +720,10 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.read_resource")
     def test_read_resource_endpoint(self, mock_read_resource, test_client, auth_headers):
         """Test reading resource content."""
+        # Clear the resource cache to avoid stale/cached values
+        from mcpgateway import main as mcpgateway_main
+        mcpgateway_main.resource_cache.clear()
+
         mock_read_resource.return_value = ResourceContent(
             type="resource",
             id="1",
@@ -1491,7 +1498,12 @@ class TestErrorHandling:
         # First-Party
         from mcpgateway.config import settings
 
-        expired_token = jwt.encode(expired_payload, settings.jwt_secret_key.get_secret_value(), algorithm=settings.jwt_algorithm)
+        key = settings.jwt_secret_key
+        print(f"[DEBUG] settings.jwt_secret_key type: {type(key)}, value: {key}")
+        if hasattr(key, "get_secret_value") and callable(getattr(key, "get_secret_value", None)):
+            key = key.get_secret_value()
+        print(f"[DEBUG] settings.jwt_secret_key after possible unwrap: {type(key)}, value: {key}")
+        expired_token = jwt.encode(expired_payload, key, algorithm=settings.jwt_algorithm)
         headers = {"Authorization": f"Bearer {expired_token}"}
         response = test_client.get("/docs", headers=headers)
         assert response.status_code == 401
