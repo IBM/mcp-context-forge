@@ -14308,7 +14308,6 @@ async function connectLLMChat() {
     clearChatMessages();
     llmChatState.messageHistory = [];
 
-
     // Show loading state
     const connectBtn = document.getElementById("llm-connect-btn");
     const originalText = connectBtn.textContent;
