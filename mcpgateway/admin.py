@@ -1341,15 +1341,28 @@ async def admin_toggle_server(
         >>> server_service.toggle_server_status = original_toggle_server_status
     """
     form = await request.form()
-    LOGGER.debug(f"User {get_user_email(user)} is toggling server ID {server_id} with activate: {form.get('activate')}")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling server ID {server_id} with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await server_service.toggle_server_status(db, server_id, activate)
+        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling servers {server_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling server status: {e}")
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
     return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
@@ -5584,16 +5597,29 @@ async def admin_toggle_tool(
         >>> # Restore original method
         >>> tool_service.toggle_tool_status = original_toggle_tool_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling tool ID {tool_id}")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling tool ID {tool_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
+        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling tools {tool_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling tool status: {e}")
 
     root_path = request.scope.get("root_path", "")
+    
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)

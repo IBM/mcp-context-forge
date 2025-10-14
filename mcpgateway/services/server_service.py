@@ -876,7 +876,7 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: str, activate: bool) -> ServerRead:
+    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
         """Toggle the activation status of a server.
 
         Args:
@@ -914,6 +914,14 @@ class ServerService:
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, server):
+                    raise PermissionError("Only the owner can activate the Server" if activate else "Only the owner can deactivate the Server")
+
             if server.is_active != activate:
                 server.is_active = activate
                 server.updated_at = datetime.now(timezone.utc)
@@ -940,6 +948,8 @@ class ServerService:
             }
             logger.debug(f"Server Data: {server_data}")
             return self._convert_server_to_read(server)
+        except PermissionError as e:
+            raise e
         except Exception as e:
             db.rollback()
             raise ServerError(f"Failed to toggle server status: {str(e)}")

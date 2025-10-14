@@ -1532,8 +1532,11 @@ async def toggle_server_status(
         HTTPException: If the server is not found or there is an error.
     """
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is toggling server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.toggle_server_status(db, server_id, activate)
+        return await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerError as e:
@@ -2352,12 +2355,15 @@ async def toggle_tool_status(
     """
     try:
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
             "tool": tool.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -3092,6 +3098,8 @@ async def toggle_gateway_status(
             "message": f"Gateway {gateway_id} {'activated' if activate else 'deactivated'}",
             "gateway": gateway.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
