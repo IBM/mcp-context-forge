@@ -456,12 +456,14 @@ class A2AAgentService:
             agent_id: Agent ID.
             activate: True to activate, False to deactivate.
             reachable: Optional reachability status.
-            user_email Optional[str]: The email of the user to check if the user has permission to modify.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
+
         Returns:
             Updated agent data.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
+            PermissionError: If user doesn't own the agent.
         """
         query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
         agent = db.execute(query).scalar_one_or_none()

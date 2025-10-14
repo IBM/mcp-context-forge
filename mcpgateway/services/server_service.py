@@ -883,7 +883,7 @@ class ServerService:
             db: Database session.
             server_id: The unique identifier of the server.
             activate: True to activate, False to deactivate.
-            user_email Optional[str]: The email of the user to check if the user has permission to modify.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated ServerRead object.
@@ -891,6 +891,7 @@ class ServerService:
         Raises:
             ServerNotFoundError: If the server is not found.
             ServerError: For other errors.
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService

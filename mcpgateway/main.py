@@ -2423,7 +2423,7 @@ async def toggle_resource_status(
     logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        resource = await resource_service.toggle_resource_status(db, resource_id, activate)
+        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",

@@ -799,7 +799,7 @@ class ResourceService:
             db: Database session
             resource_id: Resource ID
             activate: True to activate, False to deactivate
-            user_email Optional[str]: The email of the user to check if the user has permission to modify.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated ResourceRead object
@@ -807,6 +807,7 @@ class ResourceService:
         Raises:
             ResourceNotFoundError: If the resource is not found
             ResourceError: For other errors
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService

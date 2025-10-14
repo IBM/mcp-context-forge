@@ -5614,7 +5614,7 @@ async def admin_toggle_tool(
         error_message = "Failed to toggle tool status. Please try again."
 
     root_path = request.scope.get("root_path", "")
-    
+
     # Build redirect URL with error message if present
     if error_message:
         error_param = f"?error={urllib.parse.quote(error_message)}"
@@ -9254,7 +9254,7 @@ async def admin_toggle_a2a_agent(
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
 
         user_email = get_user_email(user)
-        
+
         await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)

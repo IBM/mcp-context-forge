@@ -766,7 +766,7 @@ class ToolService:
             tool_id (str): The unique identifier of the tool.
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
-            user_email Optional[str]: The email of the user to check if the user has permission to modify.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             ToolRead: The updated tool object.
@@ -774,6 +774,7 @@ class ToolService:
         Raises:
             ToolNotFoundError: If the tool is not found.
             ToolError: For other errors.
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService

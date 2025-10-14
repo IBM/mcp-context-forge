@@ -870,7 +870,7 @@ class PromptService:
             db: Database session
             prompt_id: Prompt ID
             activate: True to activate, False to deactivate
-            user_email Optional[str]: The email of the user to check if the user has permission to modify.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated PromptRead object
@@ -878,6 +878,7 @@ class PromptService:
         Raises:
             PromptNotFoundError: If the prompt is not found
             PromptError: For other errors
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
