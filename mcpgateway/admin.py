@@ -1332,7 +1332,14 @@ async def admin_toggle_server(
         >>>
         >>> async def test_admin_toggle_server_exception():
         ...     result = await admin_toggle_server(server_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
+        ...     location_header = result.headers["location"]
+        ...     return (
+        ...         isinstance(result, RedirectResponse)
+        ...         and result.status_code == 303
+        ...         and "/admin" in location_header  # Ensure '/admin' is present
+        ...         and "error=" in location_header  # Ensure the error parameter is in the query string
+        ...         and location_header.endswith("#catalog")  # Ensure the fragment is correct
+        ...     )
         >>>
         >>> asyncio.run(test_admin_toggle_server_exception())
         True
@@ -1341,15 +1348,29 @@ async def admin_toggle_server(
         >>> server_service.toggle_server_status = original_toggle_server_status
     """
     form = await request.form()
-    LOGGER.debug(f"User {get_user_email(user)} is toggling server ID {server_id} with activate: {form.get('activate')}")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling server ID {server_id} with activate: {form.get('activate')}")
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await server_service.toggle_server_status(db, server_id, activate)
+        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling servers {server_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling server status: {e}")
+        error_message = "Error toggling server status. Please try again."
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#catalog", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#catalog", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
     return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
@@ -1841,18 +1862,6 @@ async def admin_toggle_gateway(
         >>> asyncio.run(test_admin_toggle_gateway_deactivate())
         True
         >>>
-        >>> # Edge case: Toggle with inactive checkbox checked
-        >>> form_data_inactive = FormData([("activate", "true"), ("is_inactive_checked", "true")])
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
-        >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
-        >>>
-        >>> async def test_admin_toggle_gateway_inactive_checked():
-        ...     result = await admin_toggle_gateway(gateway_id, mock_request_inactive, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/?include_inactive=true#gateways" in result.headers["location"]
-        >>>
-        >>> asyncio.run(test_admin_toggle_gateway_inactive_checked())
-        True
-        >>>
         >>> # Error path: Simulate an exception during toggle
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
@@ -1861,25 +1870,45 @@ async def admin_toggle_gateway(
         >>>
         >>> async def test_admin_toggle_gateway_exception():
         ...     result = await admin_toggle_gateway(gateway_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#gateways" in result.headers["location"]
+        ...     location_header = result.headers["location"]
+        ...     return (
+        ...         isinstance(result, RedirectResponse)
+        ...         and result.status_code == 303
+        ...         and "/admin" in location_header  # Ensure '/admin' is present
+        ...         and "error=" in location_header  # Ensure the error parameter is in the query string
+        ...         and location_header.endswith("#gateways")  # Ensure the fragment is correct
+        ...     )
         >>>
         >>> asyncio.run(test_admin_toggle_gateway_exception())
         True
-        >>>
         >>> # Restore original method
         >>> gateway_service.toggle_gateway_status = original_toggle_gateway_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling gateway ID {gateway_id}")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling gateway ID {gateway_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
 
     try:
-        await gateway_service.toggle_gateway_status(db, gateway_id, activate)
+        await gateway_service.toggle_gateway_status(db, gateway_id, activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling gateway {gateway_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling gateway status: {e}")
+        error_message = "Failed to toggle gateway status. Please try again."
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#gateways", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#gateways", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
@@ -5562,7 +5591,14 @@ async def admin_toggle_tool(
         >>>
         >>> async def test_admin_toggle_tool_exception():
         ...     result = await admin_toggle_tool(tool_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#tools" in result.headers["location"]
+        ...     location_header = result.headers["location"]
+        ...     return (
+        ...         isinstance(result, RedirectResponse)
+        ...         and result.status_code == 303
+        ...         and "/admin" in location_header  # Ensure '/admin' is in the URL
+        ...         and "error=" in location_header  # Ensure error query param is present
+        ...         and location_header.endswith("#tools")  # Ensure fragment is correct
+        ...     )
         >>>
         >>> asyncio.run(test_admin_toggle_tool_exception())
         True
@@ -5570,16 +5606,30 @@ async def admin_toggle_tool(
         >>> # Restore original method
         >>> tool_service.toggle_tool_status = original_toggle_tool_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling tool ID {tool_id}")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling tool ID {tool_id}")
     form = await request.form()
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
+        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling tools {tool_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling tool status: {e}")
+        error_message = "Failed to toggle tool status. Please try again."
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#tools", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#tools", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
@@ -6869,16 +6919,30 @@ async def admin_toggle_resource(
         True
         >>> resource_service.toggle_resource_status = original_toggle_resource_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling resource ID {resource_id}")
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling resource ID {resource_id}")
     form = await request.form()
+    error_message = None
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await resource_service.toggle_resource_status(db, resource_id, activate)
+        await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling resource status {resource_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling resource status: {e}")
+        error_message = "Failed to toggle resource status. Please try again."
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
@@ -7398,16 +7462,30 @@ async def admin_toggle_prompt(
         True
         >>> prompt_service.toggle_prompt_status = original_toggle_prompt_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling prompt ID {prompt_id}")
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling prompt ID {prompt_id}")
+    error_message = None
     form = await request.form()
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
-        await prompt_service.toggle_prompt_status(db, prompt_id, activate)
+        await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling prompt {prompt_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling prompt status: {e}")
+        error_message = "Failed to toggle prompt status. Please try again."
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
@@ -9177,23 +9255,38 @@ async def admin_toggle_a2a_agent(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    error_message = None
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
 
-        await a2a_service.toggle_agent_status(db, agent_id, activate)
+        user_email = get_user_email(user)
+
+        await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling A2A agent status{agent_id}: {e}")
+        error_message = str(e)
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent toggle failed - not found: {e}")
         root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        error_message = "A2A agent not found."
     except Exception as e:
         LOGGER.error(f"Error toggling A2A agent: {e}")
         root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        error_message = "Failed to toggle status of A2A agent. Please try again."
+
+    root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
+
+    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/delete")

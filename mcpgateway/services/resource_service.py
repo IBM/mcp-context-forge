@@ -791,7 +791,7 @@ class ResourceService:
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
 
-    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool) -> ResourceRead:
+    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
         """
         Toggle the activation status of a resource.
 
@@ -799,6 +799,7 @@ class ResourceService:
             db: Database session
             resource_id: Resource ID
             activate: True to activate, False to deactivate
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated ResourceRead object
@@ -806,6 +807,7 @@ class ResourceService:
         Raises:
             ResourceNotFoundError: If the resource is not found
             ResourceError: For other errors
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -830,6 +832,14 @@ class ResourceService:
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, resource):
+                    raise PermissionError("Only the owner can activate the Resource" if activate else "Only the owner can deactivate the Resource")
+
             # Update status if it's different
             if resource.is_active != activate:
                 resource.is_active = activate
@@ -847,7 +857,8 @@ class ResourceService:
 
             resource.team = self._get_team_name(db, resource.team_id)
             return self._convert_resource_to_read(resource)
-
+        except PermissionError as e:
+            raise e
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to toggle resource status: {str(e)}")
