@@ -8,18 +8,20 @@ MCP Client Service Module.
 
 This module provides a comprehensive client implementation for interacting with
 MCP servers, managing LLM providers, and orchestrating conversational AI agents.
-It supports multiple transport protocols and LLM providers
+It supports multiple transport protocols and LLM providers.
 
 The module consists of several key components:
 - Configuration classes for MCP servers and LLM providers
 - LLM provider factory and implementations
 - MCP client for tool management
+- Chat history manager for Redis and in-memory storage
 - Chat service for conversational interactions
-
 """
 
 # Standard
 from datetime import datetime, timezone
+import json
+import os
 import time
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
@@ -176,7 +178,6 @@ class MCPServerConfig(BaseModel):
             ValueError: If URL is missing for streamable_http or sse transport.
 
         Examples:
-            >>> from pydantic import ValidationInfo
             >>> # Valid case
             >>> MCPServerConfig(
             ...     url="https://example.com",
@@ -587,6 +588,9 @@ class MCPClientConfig(BaseModel):
     }
 
 
+# ==================== LLM PROVIDER IMPLEMENTATIONS ====================
+
+
 class AzureOpenAIProvider:
     """
     Azure OpenAI provider implementation.
@@ -757,6 +761,7 @@ class OllamaProvider:
                     model_kwargs["num_ctx"] = self.config.num_ctx
 
                 self._llm = ChatOllama(base_url=self.config.base_url, model=self.config.model, temperature=self.config.temperature, timeout=self.config.timeout, **model_kwargs)
+
                 logger.info("Ollama LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create Ollama LLM: {e}")
@@ -845,10 +850,12 @@ class OpenAIProvider:
                     "timeout": self.config.timeout,
                     "max_retries": self.config.max_retries,
                 }
+
                 if self.config.base_url:
                     kwargs["base_url"] = self.config.base_url
 
                 self._llm = ChatOpenAI(**kwargs)
+
                 logger.info("OpenAI LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create OpenAI LLM: {e}")
@@ -916,6 +923,7 @@ class AnthropicProvider:
         """
         if not _ANTHROPIC_AVAILABLE:
             raise ImportError("Anthropic provider requires langchain-anthropic package. Install it with: pip install langchain-anthropic")
+
         self.config = config
         self._llm = None
         logger.info(f"Initializing Anthropic provider with model: {config.model}")
@@ -1019,6 +1027,7 @@ class AWSBedrockProvider:
         """
         if not _BEDROCK_AVAILABLE:
             raise ImportError("AWS Bedrock provider requires langchain-aws package. Install it with: pip install langchain-aws boto3")
+
         self.config = config
         self._llm = None
         logger.info(f"Initializing AWS Bedrock provider with model: {config.model_id}")
@@ -1170,11 +1179,281 @@ class LLMProviderFactory:
         }
 
         provider_class = provider_map.get(llm_config.provider)
+
         if not provider_class:
             raise ValueError(f"Unsupported LLM provider: {llm_config.provider}. Supported providers: {list(provider_map.keys())}")
 
         logger.info(f"Creating LLM provider: {llm_config.provider}")
         return provider_class(llm_config.config)
+
+
+# ==================== CHAT HISTORY MANAGER ====================
+
+
+class ChatHistoryManager:
+    """
+    Centralized chat history management with Redis and in-memory fallback.
+
+    Provides a unified interface for storing and retrieving chat histories across
+    multiple workers using Redis, with automatic fallback to in-memory storage
+    when Redis is not available.
+
+    This class eliminates duplication between router and service layers by
+    providing a single source of truth for all chat history operations.
+
+    Attributes:
+        redis_client: Optional Redis async client for distributed storage.
+        max_messages: Maximum number of messages to retain per user.
+        ttl: Time-to-live for Redis entries in seconds.
+        _memory_store: In-memory dict fallback when Redis unavailable.
+
+    Examples:
+        >>> import asyncio
+        >>> # Create manager without Redis (in-memory mode)
+        >>> manager = ChatHistoryManager(redis_client=None, max_messages=50)
+        >>> # asyncio.run(manager.save_history("user123", [{"role": "user", "content": "Hello"}]))
+        >>> # history = asyncio.run(manager.get_history("user123"))
+        >>> # len(history) >= 0
+        True
+
+    Note:
+        Thread-safe for Redis operations. In-memory mode suitable for
+        single-worker deployments only.
+    """
+
+    def __init__(self, redis_client: Optional[Any] = None, max_messages: int = 50, ttl: int = 3600):
+        """
+        Initialize chat history manager.
+
+        Args:
+            redis_client: Optional Redis async client. If None, uses in-memory storage.
+            max_messages: Maximum messages to retain per user (default: 50).
+            ttl: Time-to-live for Redis entries in seconds (default: 3600).
+
+        Examples:
+            >>> manager = ChatHistoryManager(redis_client=None, max_messages=100)
+            >>> manager.max_messages
+            100
+            >>> manager.ttl
+            3600
+        """
+        self.redis_client = redis_client
+        self.max_messages = max_messages
+        self.ttl = ttl
+        self._memory_store: Dict[str, List[Dict[str, str]]] = {}
+
+        if redis_client:
+            logger.info("ChatHistoryManager initialized with Redis backend")
+        else:
+            logger.info("ChatHistoryManager initialized with in-memory backend")
+
+    def _history_key(self, user_id: str) -> str:
+        """
+        Generate Redis key for user's chat history.
+
+        Args:
+            user_id: User identifier.
+
+        Returns:
+            str: Redis key string.
+
+        Examples:
+            >>> manager = ChatHistoryManager()
+            >>> manager._history_key("user123")
+            'chat_history:user123'
+        """
+        return f"chat_history:{user_id}"
+
+    async def get_history(self, user_id: str) -> List[Dict[str, str]]:
+        """
+        Retrieve chat history for a user.
+
+        Fetches history from Redis if available, otherwise from in-memory store.
+
+        Args:
+            user_id: User identifier.
+
+        Returns:
+            List[Dict[str, str]]: List of message dictionaries with 'role' and 'content' keys.
+                                 Returns empty list if no history exists.
+
+        Examples:
+            >>> import asyncio
+            >>> manager = ChatHistoryManager()
+            >>> # history = asyncio.run(manager.get_history("user123"))
+            >>> # isinstance(history, list)
+            True
+
+        Note:
+            Automatically handles JSON deserialization errors by returning empty list.
+        """
+        if self.redis_client:
+            try:
+                data = await self.redis_client.get(self._history_key(user_id))
+                if not data:
+                    return []
+                return json.loads(data)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to decode chat history for user {user_id}")
+                return []
+            except Exception as e:
+                logger.error(f"Error retrieving chat history from Redis for user {user_id}: {e}")
+                return []
+        else:
+            return self._memory_store.get(user_id, [])
+
+    async def save_history(self, user_id: str, history: List[Dict[str, str]]) -> None:
+        """
+        Save chat history for a user.
+
+        Stores history in Redis (with TTL) if available, otherwise in memory.
+        Automatically trims history to max_messages before saving.
+
+        Args:
+            user_id: User identifier.
+            history: List of message dictionaries to save.
+
+        Examples:
+            >>> import asyncio
+            >>> manager = ChatHistoryManager(max_messages=50)
+            >>> messages = [{"role": "user", "content": "Hello"}]
+            >>> # asyncio.run(manager.save_history("user123", messages))
+
+        Note:
+            History is automatically trimmed to max_messages limit before storage.
+        """
+        # Trim history before saving
+        trimmed = self._trim_messages(history)
+
+        if self.redis_client:
+            try:
+                await self.redis_client.set(self._history_key(user_id), json.dumps(trimmed), ex=self.ttl)
+            except Exception as e:
+                logger.error(f"Error saving chat history to Redis for user {user_id}: {e}")
+        else:
+            self._memory_store[user_id] = trimmed
+
+    async def append_message(self, user_id: str, role: str, content: str) -> None:
+        """
+        Append a single message to user's chat history.
+
+        Convenience method that fetches current history, appends the message,
+        trims if needed, and saves back.
+
+        Args:
+            user_id: User identifier.
+            role: Message role ('user' or 'assistant').
+            content: Message content text.
+
+        Examples:
+            >>> import asyncio
+            >>> manager = ChatHistoryManager()
+            >>> # asyncio.run(manager.append_message("user123", "user", "Hello!"))
+
+        Note:
+            This method performs a read-modify-write operation which may
+            not be atomic in distributed environments.
+        """
+        history = await self.get_history(user_id)
+        history.append({"role": role, "content": content})
+        await self.save_history(user_id, history)
+
+    async def clear_history(self, user_id: str) -> None:
+        """
+        Clear all chat history for a user.
+
+        Deletes history from Redis or memory store.
+
+        Args:
+            user_id: User identifier.
+
+        Examples:
+            >>> import asyncio
+            >>> manager = ChatHistoryManager()
+            >>> # asyncio.run(manager.clear_history("user123"))
+
+        Note:
+            This operation cannot be undone.
+        """
+        if self.redis_client:
+            try:
+                await self.redis_client.delete(self._history_key(user_id))
+            except Exception as e:
+                logger.error(f"Error clearing chat history from Redis for user {user_id}: {e}")
+        else:
+            self._memory_store.pop(user_id, None)
+
+    def _trim_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """
+        Trim message list to max_messages limit.
+
+        Keeps the most recent messages up to max_messages count.
+
+        Args:
+            messages: List of message dictionaries.
+
+        Returns:
+            List[Dict[str, str]]: Trimmed message list.
+
+        Examples:
+            >>> manager = ChatHistoryManager(max_messages=2)
+            >>> messages = [
+            ...     {"role": "user", "content": "1"},
+            ...     {"role": "assistant", "content": "2"},
+            ...     {"role": "user", "content": "3"}
+            ... ]
+            >>> trimmed = manager._trim_messages(messages)
+            >>> len(trimmed)
+            2
+            >>> trimmed[0]["content"]
+            '2'
+        """
+        if len(messages) > self.max_messages:
+            return messages[-self.max_messages :]
+        return messages
+
+    async def get_langchain_messages(self, user_id: str) -> List[BaseMessage]:
+        """
+        Get chat history as LangChain message objects.
+
+        Converts stored history dictionaries to LangChain HumanMessage and
+        AIMessage objects for use with LangChain agents.
+
+        Args:
+            user_id: User identifier.
+
+        Returns:
+            List[BaseMessage]: List of LangChain message objects.
+
+        Examples:
+            >>> import asyncio
+            >>> manager = ChatHistoryManager()
+            >>> # messages = asyncio.run(manager.get_langchain_messages("user123"))
+            >>> # isinstance(messages, list)
+            True
+
+        Note:
+            Returns empty list if LangChain is not available or history is empty.
+        """
+        if not _LLMCHAT_AVAILABLE:
+            return []
+
+        history = await self.get_history(user_id)
+        lc_messages = []
+
+        for msg in history:
+            role = msg.get("role")
+            content = msg.get("content", "")
+
+            if role == "user":
+                lc_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                lc_messages.append(AIMessage(content=content))
+
+        return lc_messages
+
+
+# ==================== MCP CLIENT ====================
 
 
 class MCPClient:
@@ -1270,9 +1549,9 @@ class MCPClient:
                 server_config["command"] = self.config.command
                 if self.config.args:
                     server_config["args"] = self.config.args
+
             # Create MultiServerMCPClient with single server
             self._client = MultiServerMCPClient({"default": server_config})
-
             self._connected = True
             logger.info("Successfully connected to MCP server")
 
@@ -1364,52 +1643,11 @@ class MCPClient:
             logger.info("Loading tools from MCP server...")
             self._tools = await self._client.get_tools()
             logger.info(f"Successfully loaded {len(self._tools)} tools")
-
-            # Log tool names for debugging
-            if self._tools:
-                tool_names = [tool.name for tool in self._tools]
-                logger.debug(f"Available tools: {tool_names}")
-
             return self._tools
 
         except Exception as e:
-            logger.error(f"Failed to load tools from MCP server: {e}")
+            logger.error(f"Failed to load tools: {e}")
             raise
-
-    async def health_check(self) -> bool:
-        """
-        Check if the MCP server connection is healthy.
-
-        Performs a lightweight health check by attempting to reload tools
-        from the server.
-
-        Returns:
-            bool: True if connection is healthy, False otherwise.
-
-        Examples:
-            >>> import asyncio
-            >>> config = MCPServerConfig(
-            ...     url="https://example.com/mcp",
-            ...     transport="streamable_http"
-            ... )
-            >>> client = MCPClient(config)
-            >>> # asyncio.run(client.connect())
-            >>> # is_healthy = asyncio.run(client.health_check())
-            >>> # isinstance(is_healthy, bool) -> True
-
-        Note:
-            Returns False if not connected or if tool loading fails.
-        """
-        if not self._connected or not self._client:
-            return False
-
-        try:
-            # Try to load tools as a health check
-            await self.get_tools(force_reload=True)
-            return True
-        except Exception as e:
-            logger.error(f"Health check failed: {e}")
-            return False
 
     @property
     def is_connected(self) -> bool:
@@ -1431,18 +1669,27 @@ class MCPClient:
         return self._connected
 
 
+# ==================== MCP CHAT SERVICE ====================
+
+
 class MCPChatService:
     """
     Main chat service for MCP client backend.
+    Orchestrates chat sessions with LLM and MCP server integration.
 
-    Orchestrates MCP client, LLM provider, and conversation management to provide
-    a complete conversational AI service. Supports both streaming and non-streaming
-    responses, maintains conversation history, and provides detailed event tracking.
+    Provides a high-level interface for managing conversational AI sessions
+    that combine LLM capabilities with MCP server tools. Handles conversation
+    history management, tool execution, and streaming responses.
+
+    This service integrates:
+    - LLM providers (Azure OpenAI, OpenAI, Anthropic, AWS Bedrock, Ollama)
+    - MCP server tools
+    - Centralized chat history management (Redis or in-memory)
+    - Streaming and non-streaming response modes
 
     Attributes:
         config: Complete MCP client configuration.
-        mcp_client: MCP server client instance.
-        llm_provider: LLM provider instance.
+        user_id: Optional user identifier for history management.
 
     Examples:
         >>> import asyncio
@@ -1460,18 +1707,19 @@ class MCPChatService:
         >>> service.is_initialized
         False
         >>> # asyncio.run(service.initialize())
-        >>> # response = asyncio.run(service.chat("Hello!"))
 
     Note:
-        Must call initialize() before using chat functionality.
+        Must call initialize() before using chat methods.
     """
 
-    def __init__(self, config: MCPClientConfig):
+    def __init__(self, config: MCPClientConfig, user_id: Optional[str] = None, redis_client: Optional[Any] = None):
         """
-        Initialize chat service.
+        Initialize MCP chat service.
 
         Args:
-            config: Complete MCP client configuration including server and LLM settings.
+            config: Complete MCP client configuration.
+            user_id: Optional user identifier for chat history management.
+            redis_client: Optional Redis client for distributed history storage.
 
         Examples:
             >>> config = MCPClientConfig(
@@ -1484,19 +1732,23 @@ class MCPChatService:
             ...         config=OllamaConfig(model="llama2")
             ...     )
             ... )
-            >>> service = MCPChatService(config)
-            >>> service.config.enable_streaming
-            True
+            >>> service = MCPChatService(config, user_id="user123")
+            >>> service.user_id
+            'user123'
         """
         self.config = config
+        self.user_id = user_id
         self.mcp_client = MCPClient(config.mcp_server)
         self.llm_provider = LLMProviderFactory.create(config.llm)
-        self._agent = None
-        self._conversation_history: List[BaseMessage] = []
-        self._initialized = False
-        self._tools: Optional[List[BaseTool]] = None
 
-        logger.info("MCPChatService initialized")
+        # Initialize centralized chat history manager
+        self.history_manager = ChatHistoryManager(redis_client=redis_client, max_messages=config.chat_history_max_messages, ttl=int(os.getenv("CHAT_HISTORY_TTL", "3600")))
+
+        self._agent = None
+        self._initialized = False
+        self._tools: List[BaseTool] = []
+
+        logger.info(f"MCPChatService initialized for user: {user_id or 'anonymous'}")
 
     async def initialize(self) -> None:
         """
@@ -1507,8 +1759,7 @@ class MCPChatService:
 
         Raises:
             ConnectionError: If MCP server connection fails.
-            ValueError: If LLM initialization fails.
-            RuntimeError: If agent creation or tool loading fails.
+            Exception: If initialization fails.
 
         Examples:
             >>> import asyncio
@@ -1527,138 +1778,108 @@ class MCPChatService:
             >>> # service.is_initialized -> True
 
         Note:
-            Subsequent calls to initialize() when already initialized will log
-            a warning but won't re-initialize.
+            Automatically loads tools from MCP server and creates agent.
         """
         if self._initialized:
             logger.warning("Chat service already initialized")
             return
 
         try:
-            # Connect to MCP server
-            try:
-                await self.mcp_client.connect()
-            except ConnectionError as ce:
-                logger.error(f"MCP server connection failed: {ce}")
-                raise ConnectionError(f"Unable to connect to MCP server at {self.config.mcp_server.url}. Please verify the server is running and the URL is correct. Details: {ce}") from ce
-            except Exception as conn_error:
-                logger.error(f"Unexpected error connecting to MCP server: {conn_error}")
-                raise ConnectionError(f"MCP server connection error: {conn_error}") from conn_error
+            logger.info("Initializing chat service...")
 
-            # Load tools from MCP server
-            try:
-                tools = await self.mcp_client.get_tools()
-                self._tools = tools
+            # Connect to MCP server and load tools
+            await self.mcp_client.connect()
+            self._tools = await self.mcp_client.get_tools()
 
-                if not tools:
-                    logger.warning("No tools loaded from MCP server - service will have limited functionality")
-            except Exception as tool_error:
-                logger.error(f"Failed to load tools from MCP server: {tool_error}")
-                await self.shutdown()
-                raise RuntimeError(f"Failed to load tools: {tool_error}") from tool_error
+            # Create LLM instance
+            llm = self.llm_provider.get_llm()
 
-            # Get LLM instance
-            try:
-                llm = self.llm_provider.get_llm()
-            except Exception as llm_error:
-                logger.error(f"Failed to initialize LLM provider: {llm_error}")
-                await self.shutdown()
-                raise ValueError(f"LLM initialization failed. Please check your API credentials and configuration. Details: {llm_error}") from llm_error
-
-            # Create ReAct agent
-            try:
-                logger.info("Creating ReAct agent...")
-                self._agent = create_react_agent(llm, tools)
-            except Exception as agent_error:
-                logger.error(f"Failed to create ReAct agent: {agent_error}")
-                await self.shutdown()
-                raise RuntimeError(f"Agent creation failed: {agent_error}") from agent_error
+            # Create ReAct agent with tools
+            self._agent = create_react_agent(llm, self._tools)
 
             self._initialized = True
-            logger.info(f"Chat service initialized successfully with {len(tools)} tools and {self.llm_provider.get_model_name()} model")
+            logger.info(f"Chat service initialized successfully with {len(self._tools)} tools")
 
-        except (ConnectionError, ValueError, RuntimeError):
-            # Re-raise expected exceptions
-            raise
         except Exception as e:
-            logger.error(f"Unexpected error during initialization: {e}", exc_info=True)
-            await self.shutdown()
-            raise RuntimeError(f"Service initialization failed: {e}") from e
+            logger.error(f"Failed to initialize chat service: {e}")
+            self._initialized = False
+            raise
 
     async def chat(self, message: str) -> str:
         """
-        Send a message and get a response (non-streaming).
+        Send a message and get a complete response.
 
-        Processes a user message through the agent and returns the complete
-        response. Maintains conversation history automatically.
+        Processes the user's message through the LLM with tool access,
+        manages conversation history, and returns the complete response.
 
         Args:
             message: User's message text.
 
         Returns:
-            str: AI assistant's complete response.
+            str: Complete AI response text.
 
         Raises:
             RuntimeError: If service not initialized.
-            Exception: If message processing fails.
+            ValueError: If message is empty.
+            Exception: If processing fails.
 
         Examples:
             >>> import asyncio
             >>> # Assuming service is initialized
-            >>> # response = asyncio.run(service.chat("What is 2+2?"))
-            >>> # isinstance(response, str) -> True
+            >>> # response = asyncio.run(service.chat("Hello!"))
+            >>> # isinstance(response, str)
+            True
 
         Note:
-            For streaming responses, use chat_stream() instead.
+            Automatically saves conversation history after response.
         """
         if not self._initialized or not self._agent:
             raise RuntimeError("Chat service not initialized. Call initialize() first.")
 
-        try:
-            logger.debug("Processing chat message:...")
+        if not message or not message.strip():
+            raise ValueError("Message cannot be empty")
 
-            # Add user message to history
+        try:
+            logger.debug("Processing chat message...")
+
+            # Get conversation history from manager
+            lc_messages = await self.history_manager.get_langchain_messages(self.user_id) if self.user_id else []
+
+            # Add user message
             user_message = HumanMessage(content=message)
-            self._conversation_history.append(user_message)
+            lc_messages.append(user_message)
 
             # Invoke agent
-            response = await self._agent.ainvoke({"messages": self._conversation_history})
+            response = await self._agent.ainvoke({"messages": lc_messages})
 
             # Extract AI response
-            ai_messages = response.get("messages", [])
-            if ai_messages:
-                last_message = ai_messages[-1]
-                if isinstance(last_message, AIMessage):
-                    ai_content = last_message.content
+            ai_message = response["messages"][-1]
+            response_text = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
 
-                    # Add AI response to history
-                    self._conversation_history.append(last_message)
+            # Save history if user_id provided
+            if self.user_id:
+                await self.history_manager.append_message(self.user_id, "user", message)
+                await self.history_manager.append_message(self.user_id, "assistant", response_text)
 
-                    # Trim history if needed
-                    self._trim_history()
-
-                    logger.debug("Chat message processed successfully")
-                    return ai_content
-
-            logger.warning("No response from agent")
-            return "I apologize, but I couldn't generate a response."
+            logger.debug("Chat message processed successfully")
+            return response_text
 
         except Exception as e:
             logger.error(f"Error processing chat message: {e}")
             raise
 
-    async def chat_with_metadata(self, message: str) -> dict[str, Any]:
+    async def chat_with_metadata(self, message: str) -> Dict[str, Any]:
         """
-        Send a message and get response with detailed metadata.
+        Send a message and get response with metadata.
 
-        Provides complete information about the chat interaction including
-        full text, tool usage, and performance metrics.
+        Similar to chat() but collects all events and returns detailed
+        information about tool usage and timing.
 
         Args:
             message: User's message text.
 
         Returns:
-            dict[str, Any]: Dictionary containing:
+            Dict[str, Any]: Dictionary containing:
                 - text (str): Complete response text
                 - tool_used (bool): Whether any tools were invoked
                 - tools (List[str]): Names of tools that were used
@@ -1672,18 +1893,17 @@ class MCPChatService:
         Examples:
             >>> import asyncio
             >>> # Assuming service is initialized
-            >>> # result = asyncio.run(service.chat_with_metadata("Hello"))
-            >>> # 'text' in result -> True
-            >>> # 'tool_used' in result -> True
-            >>> # isinstance(result['elapsed_ms'], int) -> True
+            >>> # result = asyncio.run(service.chat_with_metadata("What's 2+2?"))
+            >>> # 'text' in result and 'elapsed_ms' in result
+            True
 
         Note:
-            This method collects all events and returns them as a single response,
-            making it suitable for batch processing or logging scenarios.
+            This method collects all events and returns them as a single response.
         """
         text = ""
         tool_invocations: list[dict[str, Any]] = []
         final: dict[str, Any] = {}
+
         async for ev in self.chat_events(message):
             t = ev.get("type")
             if t == "token":
@@ -1692,6 +1912,7 @@ class MCPChatService:
                 tool_invocations.append(ev)
             elif t == "final":
                 final = ev
+
         return {
             "text": text,
             "tool_used": final.get("tool_used", False),
@@ -1742,13 +1963,16 @@ class MCPChatService:
         try:
             logger.debug("Processing streaming chat message...")
 
-            # Add user message to history
+            # Get conversation history
+            lc_messages = await self.history_manager.get_langchain_messages(self.user_id) if self.user_id else []
+
+            # Add user message
             user_message = HumanMessage(content=message)
-            self._conversation_history.append(user_message)
+            lc_messages.append(user_message)
 
             # Stream agent response
             full_response = ""
-            async for event in self._agent.astream_events({"messages": self._conversation_history}, version="v2"):
+            async for event in self._agent.astream_events({"messages": lc_messages}, version="v2"):
                 kind = event["event"]
 
                 # Stream LLM tokens
@@ -1760,11 +1984,10 @@ class MCPChatService:
                             full_response += content
                             yield content
 
-            # Add complete response to history
-            if full_response:
-                ai_message = AIMessage(content=full_response)
-                self._conversation_history.append(ai_message)
-                self._trim_history()
+            # Save history
+            if self.user_id and full_response:
+                await self.history_manager.append_message(self.user_id, "user", message)
+                await self.history_manager.append_message(self.user_id, "assistant", full_response)
 
             logger.debug("Streaming chat message processed successfully")
 
@@ -1772,7 +1995,7 @@ class MCPChatService:
             logger.error(f"Error processing streaming chat message: {e}")
             raise
 
-    async def chat_events(self, message: str):
+    async def chat_events(self, message: str) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Stream structured events during chat processing.
 
@@ -1797,8 +2020,6 @@ class MCPChatService:
         Raises:
             RuntimeError: If service not initialized.
             ValueError: If message is empty or whitespace only.
-            ConnectionError: If connection to MCP server is lost.
-            TimeoutError: If LLM request times out.
 
         Examples:
             >>> import asyncio
@@ -1822,16 +2043,19 @@ class MCPChatService:
         if not message or not message.strip():
             raise ValueError("Message cannot be empty")
 
+        # Get conversation history
+        lc_messages = await self.history_manager.get_langchain_messages(self.user_id) if self.user_id else []
+
         # Append user message
         user_message = HumanMessage(content=message)
-        self._conversation_history.append(user_message)
+        lc_messages.append(user_message)
 
         full_response = ""
         start_ts = time.time()
         tool_runs: dict[str, dict[str, Any]] = {}
 
         try:
-            async for event in self._agent.astream_events({"messages": self._conversation_history}, version="v2"):
+            async for event in self._agent.astream_events({"messages": lc_messages}, version="v2"):
                 kind = event.get("event")
                 now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -1841,115 +2065,69 @@ class MCPChatService:
                         name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
                         input_data = event.get("data", {}).get("input")
 
-                        # Serialize input safely
-                        if hasattr(input_data, "dict"):
-                            input_data = input_data.dict()
-                        elif hasattr(input_data, "__dict__"):
-                            input_data = str(input_data)
+                        tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
 
-                        rec = {"id": run_id, "name": name, "input": input_data, "start": now_iso}
-                        tool_runs[run_id] = rec
-                        yield {"type": "tool_start", **rec}
+                        yield {"type": "tool_start", "id": run_id, "tool": name, "input": input_data, "start": now_iso}
 
                     elif kind == "on_tool_end":
                         run_id = str(event.get("run_id") or uuid4())
-                        name = event.get("name") or event.get("data", {}).get("name") or event.get("data", {}).get("tool")
                         output = event.get("data", {}).get("output")
 
-                        # Serialize output safely
-                        if hasattr(output, "content"):
-                            output = output.content
-                        elif hasattr(output, "dict"):
-                            output = output.dict()
-                        elif not isinstance(output, (str, int, float, bool, list, dict, type(None))):
-                            output = str(output)
+                        if run_id in tool_runs:
+                            tool_runs[run_id]["end"] = now_iso
 
-                        rec = tool_runs.get(run_id, {"id": run_id, "name": name, "start": now_iso})
-                        rec["end"] = now_iso
-                        rec["output"] = output
-                        tool_runs[run_id] = rec
-                        yield {"type": "tool_end", **rec}
+                            if hasattr(output, "content"):
+                                tool_runs[run_id]["output"] = output.content
+                            elif (hasattr(output, "__class__")) or (hasattr(output, "dict") and callable(output.dict)):
+                                tool_runs[run_id]["output"] = output.dict()
+                            elif not isinstance(output, (str, int, float, bool, list, dict, type(None))):
+                                tool_runs[run_id]["output"] = str(output)
+
+                        if tool_runs[run_id]["output"] == "":
+                            error = "Tool execution failed: Please check if the tool is accessible"
+                            yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
+
+                        yield {"type": "tool_end", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "output": tool_runs[run_id]["output"], "end": now_iso}
 
                     elif kind == "on_tool_error":
                         run_id = str(event.get("run_id") or uuid4())
-                        err = event.get("data", {}).get("error")
-                        yield {"type": "tool_error", "id": run_id, "error": str(err) if err else "Tool execution failed", "time": now_iso}
+                        error = str(event.get("data", {}).get("error", "Unknown error"))
+
+                        yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
 
                     elif kind == "on_chat_model_stream":
                         chunk = event.get("data", {}).get("chunk")
-                        if chunk and hasattr(chunk, "content") and chunk.content:
+                        if chunk and hasattr(chunk, "content"):
                             content = chunk.content
-                            full_response += content
-                            yield {"type": "token", "content": content}
+                            if content:
+                                full_response += content
+                                yield {"type": "token", "content": content}
 
                 except Exception as event_error:
                     logger.warning(f"Error processing event {kind}: {event_error}")
-                    # Continue processing other events
                     continue
 
-            # Append AI message and trim
-            if full_response:
-                ai_message = AIMessage(content=full_response)
-                self._conversation_history.append(ai_message)
-                self._trim_history()
+            # Calculate elapsed time
+            elapsed_ms = int((time.time() - start_ts) * 1000)
 
-            used_tools_list = list({rec.get("name") for rec in tool_runs.values() if rec.get("name")})
-            yield {
-                "type": "final",
-                "content": full_response,
-                "tool_used": len(used_tools_list) > 0,
-                "tools": used_tools_list,
-                "elapsed_ms": int((time.time() - start_ts) * 1000),
-            }
+            # Determine tool usage
+            tools_used = list({tr["name"] for tr in tool_runs.values() if tr.get("name")})
 
-        except ConnectionError as ce:
-            logger.error(f"Connection error during chat: {ce}")
-            raise ConnectionError(f"Lost connection to MCP server: {ce}") from ce
-        except TimeoutError as te:
-            logger.error(f"Timeout during chat: {te}")
-            raise TimeoutError("LLM request timed out") from te
+            # Yield final event
+            yield {"type": "final", "content": full_response, "tool_used": len(tools_used) > 0, "tools": tools_used, "elapsed_ms": elapsed_ms}
+
+            # Save history
+            if self.user_id and full_response:
+                await self.history_manager.append_message(self.user_id, "user", message)
+                await self.history_manager.append_message(self.user_id, "assistant", full_response)
+
         except Exception as e:
-            logger.error(f"Error in chat_events: {e}", exc_info=True)
+            logger.error(f"Error in chat_events: {e}")
             raise RuntimeError(f"Chat processing error: {e}") from e
-
-    def _trim_history(self) -> None:
-        """
-        Trim conversation history to maximum configured messages.
-
-        Maintains conversation history within the configured limit by keeping
-        only the most recent messages. Called automatically after each chat interaction.
-
-        Examples:
-            >>> config = MCPClientConfig(
-            ...     mcp_server=MCPServerConfig(
-            ...         url="https://example.com/mcp",
-            ...         transport="streamable_http"
-            ...     ),
-            ...     llm=LLMConfig(
-            ...         provider="ollama",
-            ...         config=OllamaConfig(model="llama2")
-            ...     ),
-            ...     chat_history_max_messages=3
-            ... )
-            >>> service = MCPChatService(config)
-            >>> # After multiple chat interactions, history is automatically trimmed
-
-        Note:
-            This is an internal method called automatically; manual invocation
-            is typically not necessary.
-        """
-        max_messages = self.config.chat_history_max_messages
-        if len(self._conversation_history) > max_messages:
-            # Keep the most recent messages
-            self._conversation_history = self._conversation_history[-max_messages:]
-            logger.debug(f"Trimmed conversation history to {max_messages} messages")
 
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         """
-        Get conversation history.
-
-        Retrieves the current conversation history as a list of message dictionaries
-        with role and content fields.
+        Get conversation history for the current user.
 
         Returns:
             List[Dict[str, str]]: Conversation messages with keys:
@@ -1958,42 +2136,41 @@ class MCPChatService:
 
         Examples:
             >>> import asyncio
-            >>> # Assuming service is initialized and has chat history
+            >>> # Assuming service is initialized with user_id
             >>> # history = asyncio.run(service.get_conversation_history())
-            >>> # all('role' in msg and 'content' in msg for msg in history) -> True
+            >>> # all('role' in msg and 'content' in msg for msg in history)
+            True
 
         Note:
-            Returns empty list if no conversation has occurred yet.
+            Returns empty list if no user_id set or no history exists.
         """
-        history = []
-        for msg in self._conversation_history:
-            if isinstance(msg, HumanMessage):
-                history.append({"role": "user", "content": msg.content})
-            elif isinstance(msg, AIMessage):
-                history.append({"role": "assistant", "content": msg.content})
+        if not self.user_id:
+            return []
 
-        return history
+        return await self.history_manager.get_history(self.user_id)
 
     async def clear_history(self) -> None:
         """
-        Clear conversation history.
+        Clear conversation history for the current user.
 
         Removes all messages from the conversation history. Useful for starting
         fresh conversations or managing memory usage.
 
         Examples:
             >>> import asyncio
-            >>> # Assuming service is initialized
+            >>> # Assuming service is initialized with user_id
             >>> # asyncio.run(service.clear_history())
             >>> # history = asyncio.run(service.get_conversation_history())
             >>> # len(history) -> 0
 
         Note:
-            This action cannot be undone. Consider saving history before clearing
-            if needed for logging or analysis.
+            This action cannot be undone. No-op if no user_id set.
         """
-        self._conversation_history.clear()
-        logger.info("Conversation history cleared")
+        if not self.user_id:
+            return
+
+        await self.history_manager.clear_history(self.user_id)
+        logger.info(f"Conversation history cleared for user {self.user_id}")
 
     async def shutdown(self) -> None:
         """
@@ -2035,7 +2212,6 @@ class MCPChatService:
 
             # Clear state
             self._agent = None
-            self._conversation_history.clear()
             self._initialized = False
             self._tools = []
 
@@ -2107,6 +2283,7 @@ class MCPChatService:
             # Recreate agent with new tools
             llm = self.llm_provider.get_llm()
             self._agent = create_react_agent(llm, tools)
+            self._tools = tools
 
             logger.info(f"Reloaded {len(tools)} tools successfully")
             return len(tools)
