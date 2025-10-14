@@ -472,6 +472,9 @@ class A2AAgentService:
         except A2AAgentNameConflictError as ie:
             db.rollback()
             raise ie
+        except A2AAgentNotFoundError as nf:
+            db.rollback()
+            raise nf
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
