@@ -250,7 +250,7 @@ async def test_prompt_scan_blocks_on_url():
 
     pr = PromptResult(messages=[Message(role="assistant", content=TextContent(type="text", text=f"see {url}"))])
     from mcpgateway.plugins.framework.models import PromptPosthookPayload
-    payload = PromptPosthookPayload(name="p", result=pr)
+    payload = PromptPosthookPayload(prompt_id="p", result=pr)
     ctx = PluginContext(global_context=GlobalContext(request_id="r5"))
     res = await plugin.prompt_post_fetch(payload, ctx)
     assert res.violation is not None
@@ -290,7 +290,7 @@ async def test_resource_scan_blocks_on_url():
     os.environ["VT_API_KEY"] = "dummy"
 
     from mcpgateway.models import ResourceContent
-    rc = ResourceContent(type="resource", uri="test://x", mime_type="text/plain", text=f"{url} is fishy")
+    rc = ResourceContent(type="resource", id="345",uri="test://x", mime_type="text/plain", text=f"{url} is fishy")
     from mcpgateway.plugins.framework.models import ResourcePostFetchPayload
     payload = ResourcePostFetchPayload(uri="test://x", content=rc)
     ctx = PluginContext(global_context=GlobalContext(request_id="r6"))

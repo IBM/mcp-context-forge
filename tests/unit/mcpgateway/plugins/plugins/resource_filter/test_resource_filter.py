@@ -102,6 +102,7 @@ class TestResourceFilterPlugin:
 
         content = ResourceContent(
             type="resource",
+            id="123",
             uri="test://config",
             text="Database config:\npassword: mysecret123\napi_key: sk-12345\nport: 5432",
         )
@@ -126,6 +127,7 @@ class TestResourceFilterPlugin:
 
         large_content = ResourceContent(
             type="resource",
+            id="123",
             uri="test://large",
             text="x" * 2000,  # Exceeds 1024 byte limit
         )
@@ -146,6 +148,7 @@ class TestResourceFilterPlugin:
 
         binary_content = ResourceContent(
             type="resource",
+            id="123",
             uri="test://binary",
             blob=b"\x00\x01\x02\x03",  # Binary data
         )
@@ -191,6 +194,7 @@ class TestResourceFilterPlugin:
 
         content = ResourceContent(
             type="resource",
+            id="123",
             uri="test://config",
             text=(
                 "Config file:\n"
@@ -245,6 +249,7 @@ class TestResourceFilterPlugin:
         # Don't set uri_validated state
         content = ResourceContent(
             type="resource",
+            id="123",
             uri="test://config",
             text="password: secret",
         )
@@ -263,6 +268,7 @@ class TestResourceFilterPlugin:
 
         empty_content = ResourceContent(
             type="resource",
+            id="123",
             uri="test://empty",
             text="",
         )
