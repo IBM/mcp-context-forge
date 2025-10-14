@@ -281,9 +281,17 @@ sys.stdout.flush()
     async def test_empty_env_vars(self, echo_script):
         """Test with empty environment variables dictionary."""
         pubsub = _PubSub()
-        env_vars = {}
 
-        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub, env_vars)
+        env_vars = os.environ.copy()
+        env_vars.update({
+            "GITHUB_TOKEN": "github-token-123",
+            "TENANT_ID": "acme-corp",
+            "API_KEY": "api-key-456",
+            "ENVIRONMENT": "production",
+            "DEBUG": "false",
+        })
+
+        endpoint = StdIOEndpoint(f"{sys.executable} {test_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
