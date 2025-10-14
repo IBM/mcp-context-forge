@@ -3908,7 +3908,8 @@ semgrep:                            ## 🔍 Security patterns & anti-patterns
 	# resolution conflict with other packages.
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uvx semgrep --config=auto $(TARGET) \
-			--exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 ||:"
+			--exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 \
+			|| true"
 
 dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
