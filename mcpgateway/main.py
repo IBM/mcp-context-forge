@@ -3080,10 +3080,12 @@ async def toggle_gateway_status(
     """
     logger.debug(f"User '{user}' requested toggle for gateway {gateway_id}, activate={activate}")
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         gateway = await gateway_service.toggle_gateway_status(
             db,
             gateway_id,
             activate,
+            user_email=user_email,
         )
         return {
             "status": "success",
