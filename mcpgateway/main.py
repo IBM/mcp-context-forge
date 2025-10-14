@@ -65,6 +65,7 @@ from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
@@ -120,8 +121,6 @@ from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
-
-from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
@@ -891,12 +890,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 # Add request logging middleware if enabled
 if settings.log_requests:
-    app.add_middleware(
-        RequestLoggingMiddleware,
-        log_requests=settings.log_requests,
-        log_level=settings.log_level,
-        max_body_size=settings.log_max_size_mb * 1024 * 1024  # Convert MB to bytes
-    )
+    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
 
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
