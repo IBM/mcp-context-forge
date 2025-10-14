@@ -65,6 +65,7 @@ from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
@@ -883,7 +884,6 @@ app.add_middleware(
     expose_headers=["Content-Length", "X-Request-ID"],
 )
 
-
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -902,6 +902,9 @@ app.add_middleware(DocsAuthMiddleware)
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+# Add request logging middleware if enabled
+if settings.log_requests:
+    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
