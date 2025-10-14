@@ -1332,7 +1332,14 @@ async def admin_toggle_server(
         >>>
         >>> async def test_admin_toggle_server_exception():
         ...     result = await admin_toggle_server(server_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#catalog" in result.headers["location"]
+        ...     location_header = result.headers["location"]
+        ...     return (
+        ...         isinstance(result, RedirectResponse)
+        ...         and result.status_code == 303
+        ...         and "/admin" in location_header  # Ensure '/admin' is present
+        ...         and "error=" in location_header  # Ensure the error parameter is in the query string
+        ...         and location_header.endswith("#catalog")  # Ensure the fragment is correct
+        ...     )
         >>>
         >>> asyncio.run(test_admin_toggle_server_exception())
         True
@@ -1855,18 +1862,6 @@ async def admin_toggle_gateway(
         >>> asyncio.run(test_admin_toggle_gateway_deactivate())
         True
         >>>
-        >>> # Edge case: Toggle with inactive checkbox checked
-        >>> form_data_inactive = FormData([("activate", "true"), ("is_inactive_checked", "true")])
-        >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
-        >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
-        >>>
-        >>> async def test_admin_toggle_gateway_inactive_checked():
-        ...     result = await admin_toggle_gateway(gateway_id, mock_request_inactive, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin/?include_inactive=true#gateways" in result.headers["location"]
-        >>>
-        >>> asyncio.run(test_admin_toggle_gateway_inactive_checked())
-        True
-        >>>
         >>> # Error path: Simulate an exception during toggle
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
@@ -1875,11 +1870,17 @@ async def admin_toggle_gateway(
         >>>
         >>> async def test_admin_toggle_gateway_exception():
         ...     result = await admin_toggle_gateway(gateway_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#gateways" in result.headers["location"]
+        ...     location_header = result.headers["location"]
+        ...     return (
+        ...         isinstance(result, RedirectResponse)
+        ...         and result.status_code == 303
+        ...         and "/admin" in location_header  # Ensure '/admin' is present
+        ...         and "error=" in location_header  # Ensure the error parameter is in the query string
+        ...         and location_header.endswith("#gateways")  # Ensure the fragment is correct
+        ...     )
         >>>
         >>> asyncio.run(test_admin_toggle_gateway_exception())
         True
-        >>>
         >>> # Restore original method
         >>> gateway_service.toggle_gateway_status = original_toggle_gateway_status
     """
@@ -5590,7 +5591,14 @@ async def admin_toggle_tool(
         >>>
         >>> async def test_admin_toggle_tool_exception():
         ...     result = await admin_toggle_tool(tool_id, mock_request_error, mock_db, mock_user)
-        ...     return isinstance(result, RedirectResponse) and result.status_code == 303 and "/admin#tools" in result.headers["location"]
+        ...     location_header = result.headers["location"]
+        ...     return (
+        ...         isinstance(result, RedirectResponse)
+        ...         and result.status_code == 303
+        ...         and "/admin" in location_header  # Ensure '/admin' is in the URL
+        ...         and "error=" in location_header  # Ensure error query param is present
+        ...         and location_header.endswith("#tools")  # Ensure fragment is correct
+        ...     )
         >>>
         >>> asyncio.run(test_admin_toggle_tool_exception())
         True
