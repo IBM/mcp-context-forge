@@ -1981,10 +1981,13 @@ async def toggle_a2a_agent_status(
         HTTPException: If the agent is not found or there is an error.
     """
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.toggle_agent_status(db, agent_id, activate)
+        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:

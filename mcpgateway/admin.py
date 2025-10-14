@@ -9247,23 +9247,38 @@ async def admin_toggle_a2a_agent(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    error_message = None
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
 
-        await a2a_service.toggle_agent_status(db, agent_id, activate)
+        user_email = get_user_email(user)
+        
+        await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling A2A agent status{agent_id}: {e}")
+        error_message = str(e)
     except A2AAgentNotFoundError as e:
         LOGGER.error(f"A2A agent toggle failed - not found: {e}")
         root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        error_message = "A2A agent not found."
     except Exception as e:
         LOGGER.error(f"Error toggling A2A agent: {e}")
         root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        error_message = "Failed to toggle status of A2A agent. Please try again."
+
+    root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
+
+    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
