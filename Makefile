@@ -110,7 +110,10 @@ venv:
 	@rm -Rf "$(VENV_DIR)"
 	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
 	@python3 -m venv "$(VENV_DIR)"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm"
+	# Eventually, we want to transition to using uv/uvx exclusively, at which point we will only need
+	# a virtual environment if the user has not installed uv into their account.
+	@/bin/bash -c "type uv || ( source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv )"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
 .PHONY: activate
@@ -276,10 +279,9 @@ test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pytest pytest-asyncio pytest-cov && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		python3 -m pytest --maxfail=0 --disable-warnings -v --ignore=tests/fuzz"
+		uv run pytest --maxfail=0 --disable-warnings -v --ignore=tests/fuzz"
 
 coverage:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -3902,9 +3904,12 @@ security-all:
 semgrep:                            ## 🔍 Security patterns & anti-patterns
 	@echo "🔍  semgrep - scanning for security patterns..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	# Notice the use of uvx below -- semgrep is not in the project dependencies because it introduces a
+	# resolution conflict with other packages.
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q semgrep && \
-		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 || true"
+		uvx semgrep --config=auto $(TARGET) \
+			--exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 \
+			|| true"
 
 dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
