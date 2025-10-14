@@ -8,7 +8,7 @@ Authors: Manav Gupta
 
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.
 """
-
+import sys
 import asyncio
 import pytest
 import tempfile
@@ -253,15 +253,18 @@ sys.stdout.flush()
     async def test_multiple_env_vars(self, test_script):
         """Test with multiple environment variables."""
         pubsub = _PubSub()
-        env_vars = {
+
+        env_vars = os.environ.copy()
+        env_vars.update({
             "GITHUB_TOKEN": "github-token-123",
             "TENANT_ID": "acme-corp",
             "API_KEY": "api-key-456",
             "ENVIRONMENT": "production",
             "DEBUG": "false",
-        }
+        })
 
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"{sys.executable} {test_script}", pubsub, env_vars)
+
         await endpoint.start()
 
         try:
