@@ -31,7 +31,7 @@ DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .p
 	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
 	node_modules .mutmut-cache html
 
-FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
+FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-* \
 	$(PROJECT_NAME).sbom.json \
 	snakefood.dot packages.dot classes.dot \
 	$(DOCS_DIR)/pstats.png \
@@ -236,18 +236,14 @@ certs-all: certs certs-jwt       ## Generate both TLS certificates and JWT RSA k
 .PHONY: clean
 clean:
 	@echo "🧹  Cleaning workspace..."
-	@bash -eu -o pipefail -c '\
-		# Remove matching directories \
-		for dir in $(DIRS_TO_CLEAN); do \
-			find . -type d -name "$$dir" -exec rm -rf {} +; \
-		done; \
-		# Remove listed files \
-		rm -f $(FILES_TO_CLEAN); \
-		# Delete Python bytecode \
-		find . -name "*.py[cod]" -delete; \
-		# Delete coverage annotated files \
-		find . -name "*.py,cover" -delete; \
-	'
+	@set +e; \
+	for dir in $(DIRS_TO_CLEAN); do \
+		find . -type d -name "$$dir" -prune -exec rm -rf {} +; \
+	done; \
+	set -e
+	@rm -f $(FILES_TO_CLEAN)
+	@find . -name "*.py[cod]" -delete
+	@find . -name "*.py,cover" -delete
 	@echo "✅  Clean complete."
 
 
