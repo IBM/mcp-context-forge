@@ -757,7 +757,7 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
         """
         Toggle the activation status of a tool.
 
@@ -766,6 +766,7 @@ class ToolService:
             tool_id (str): The unique identifier of the tool.
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             ToolRead: The updated tool object.
@@ -773,6 +774,7 @@ class ToolService:
         Raises:
             ToolNotFoundError: If the tool is not found.
             ToolError: For other errors.
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -797,6 +799,14 @@ class ToolService:
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, tool):
+                    raise PermissionError("Only the owner can activate the Tool" if activate else "Only the owner can deactivate the Tool")
+
             is_activated = is_reachable = False
             if tool.enabled != activate:
                 tool.enabled = activate
@@ -817,6 +827,8 @@ class ToolService:
                     await self._notify_tool_deactivated(tool)
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
             return self._convert_tool_to_read(tool)
+        except PermissionError as e:
+            raise e
         except Exception as e:
             db.rollback()
             raise ToolError(f"Failed to toggle tool status: {str(e)}")

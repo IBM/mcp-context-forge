@@ -1391,7 +1391,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False) -> GatewayRead:
+    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
         """
         Toggle the activation status of a gateway.
 
@@ -1401,6 +1401,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             activate: True to activate, False to deactivate
             reachable: Whether the gateway is reachable
             only_update_reachable: Only update reachable status
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated GatewayRead object
@@ -1408,11 +1409,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Raises:
             GatewayNotFoundError: If the gateway is not found
             GatewayError: For other errors
+            PermissionError: If user doesn't own the agent.
         """
         try:
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, gateway):
+                    raise PermissionError("Only the owner can activate the gateway" if activate else "Only the owner can deactivate the gateway")
 
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
@@ -1522,6 +1532,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
+        except PermissionError as e:
+            raise e
         except Exception as e:
             db.rollback()
             raise GatewayError(f"Failed to toggle gateway status: {str(e)}")
