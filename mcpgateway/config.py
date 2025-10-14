@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     # Basic Settings
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
-    port: PositiveInt = Field(default=4444, ge=1, le=65535, env="PORT")
+    port: PositiveInt = Field(default=4444, ge=1, le=65535)
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: str = "changeme"
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(default="my-test-key", env="JWT_SECRET_KEY")
+    jwt_secret_key: SecretStr = Field(default="my-test-key")
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -247,7 +247,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"), env="AUTH_ENCRYPTION_SECRET")
+    auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"))
 
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
@@ -346,28 +346,28 @@ class Settings(BaseSettings):
     cors_enabled: bool = True
 
     # Environment
-    environment: Literal["development", "staging", "production"] = Field(default="development", env="ENVIRONMENT")
+    environment: Literal["development", "staging", "production"] = Field(default="development")
 
     # Domain configuration
-    app_domain: HttpUrl = Field(default="http://localhost:4444", env="APP_DOMAIN")
+    app_domain: HttpUrl = Field(default="http://localhost:4444")
 
     # Security settings
-    secure_cookies: bool = Field(default=True, env="SECURE_COOKIES")
-    cookie_samesite: str = Field(default="lax", env="COOKIE_SAMESITE")
+    secure_cookies: bool = Field(default=True)
+    cookie_samesite: str = Field(default="lax")
 
     # CORS settings
-    cors_allow_credentials: bool = Field(default=True, env="CORS_ALLOW_CREDENTIALS")
+    cors_allow_credentials: bool = Field(default=True)
 
     # Security Headers Configuration
-    security_headers_enabled: bool = Field(default=True, env="SECURITY_HEADERS_ENABLED")
-    x_frame_options: str = Field(default="DENY", env="X_FRAME_OPTIONS")
-    x_content_type_options_enabled: bool = Field(default=True, env="X_CONTENT_TYPE_OPTIONS_ENABLED")
-    x_xss_protection_enabled: bool = Field(default=True, env="X_XSS_PROTECTION_ENABLED")
-    x_download_options_enabled: bool = Field(default=True, env="X_DOWNLOAD_OPTIONS_ENABLED")
-    hsts_enabled: bool = Field(default=True, env="HSTS_ENABLED")
-    hsts_max_age: int = Field(default=31536000, env="HSTS_MAX_AGE")  # 1 year
-    hsts_include_subdomains: bool = Field(default=True, env="HSTS_INCLUDE_SUBDOMAINS")
-    remove_server_headers: bool = Field(default=True, env="REMOVE_SERVER_HEADERS")
+    security_headers_enabled: bool = Field(default=True)
+    x_frame_options: str = Field(default="DENY")
+    x_content_type_options_enabled: bool = Field(default=True)
+    x_xss_protection_enabled: bool = Field(default=True)
+    x_download_options_enabled: bool = Field(default=True)
+    hsts_enabled: bool = Field(default=True)
+    hsts_max_age: int = Field(default=31536000)  # 1 year
+    hsts_include_subdomains: bool = Field(default=True)
+    remove_server_headers: bool = Field(default=True)
 
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
@@ -656,7 +656,7 @@ class Settings(BaseSettings):
         return set(v)
 
     # Logging
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR", env="LOG_LEVEL")
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
     log_format: Literal["json", "text"] = "json"  # json or text
     log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
     log_filemode: str = "a+"  # append or overwrite
@@ -709,7 +709,7 @@ class Settings(BaseSettings):
     federation_discovery: bool = False
 
     # For federation_peers strip out quotes to ensure we're passing valid JSON via env
-    federation_peers: List[HttpUrl] = Field(default_factory=list, env="FEDERATION_PEERS")
+    federation_peers: List[HttpUrl] = Field(default_factory=list)
 
     @field_validator("federation_peers", mode="before")
     @classmethod
@@ -765,7 +765,7 @@ class Settings(BaseSettings):
 
     # SSO
     # For sso_issuers strip out quotes to ensure we're passing valid JSON via env
-    sso_issuers: Optional[list[HttpUrl]] = Field(default=None, env="SSO_ISSUERS")
+    sso_issuers: Optional[list[HttpUrl]] = Field(default=None)
 
     @field_validator("sso_issuers", mode="before")
     @classmethod
