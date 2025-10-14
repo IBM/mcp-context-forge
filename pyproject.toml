@@ -80,6 +80,78 @@ dependencies = [
 ]
 
 # ----------------------------------------------------------------
+# Development dependencies (for contributors and maintainers)
+# ----------------------------------------------------------------
+[dependency-groups]
+dev = [
+    "aiohttp>=3.12.15",
+    "argparse-manpage>=4.7",
+    "autoflake>=2.3.1",
+    "bandit>=1.8.6",
+    "black>=25.1.0",
+    "bump2version>=1.0.1",
+    "check-manifest>=0.50",
+    "chuk-mcp-runtime>=0.6.5",
+    "code2flow>=2.5.1",
+    "cookiecutter>=2.6.0",
+    "coverage>=7.10.6",
+    "coverage-badge>=1.1.2",
+    "darglint>=1.8.1",
+    "dlint>=0.16.0",
+    "dodgy>=0.2.1",
+    "fawltydeps>=0.20.0",
+    "flake8>=7.3.0",
+    "gprof2dot>=2025.4.14",
+    "hypothesis>=6.140.3",
+    "importchecker>=3.0",
+    "interrogate>=1.7.0",
+    "isort>=6.0.1",
+    "mypy>=1.18.1",
+    "pexpect>=4.9.0",
+    "pip-licenses>=5.0.0",
+    "pip_audit>=2.9.0",
+    "pre-commit>=4.3.0",
+    "prospector[with_everything]>=1.17.3",
+    "pydocstyle>=6.3.0",
+    "pylint>=3.3.8",
+    "pylint-pydantic>=0.3.5",
+    "pyre-check>=0.9.25",
+    "pyrefly>=0.32.0",
+    "pyright>=1.1.405",
+    "pyroma>=5.0",
+    "pyspelling>=2.11",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
+    "pytest-cov>=7.0.0",
+    "pytest-env>=1.1.5",
+    "pytest-examples>=0.0.18",
+    "pytest-md-report>=0.7.0",
+    "pytest-rerunfailures>=16.0.1",
+    "pytest-trio>=0.8.0",
+    "pytest-xdist>=3.8.0",
+    "pytype>=2024.10.11",
+    "pyupgrade>=3.20.0",
+    "radon>=6.0.1",
+    "redis>=6.4.0",
+    "ruff>=0.13.0",
+    #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
+    "settings-doc>=4.3.2",
+    "snakeviz>=2.2.2",
+    "tomlcheck>=0.2.3",
+    "tomlkit>=0.13.3",
+    "tox>=4.30.2",
+    "tox-uv>=1.28.0",
+    "twine>=6.2.0",
+    "ty>=0.0.1a20",
+    "types-tabulate>=0.9.0.20241207",
+    "unimport>=1.2.1",
+    "uv>=0.8.17",
+    "vulture>=2.14",
+    "websockets>=15.0.1",
+    "yamllint>=1.37.1",
+]
+
+# ----------------------------------------------------------------
 # Optional dependency groups (extras)
 # ----------------------------------------------------------------
 [project.optional-dependencies]
@@ -125,24 +197,7 @@ alembic = [
 # Observability dependencies (optional)
 observability = [
     "opentelemetry-api>=1.37.0",
-    "opentelemetry-exporter-otlp>=1.37.0",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.37.0",
     "opentelemetry-sdk>=1.37.0",
-]
-
-# Additional observability backends (optional)
-observability-jaeger = [
-    "opentelemetry-exporter-jaeger>=1.21.0",
-]
-
-observability-zipkin = [
-    "opentelemetry-exporter-zipkin>=1.37.0",
-]
-
-observability-all = [
-    "mcp-contextforge-gateway[observability]>=0.6.0",
-    "opentelemetry-exporter-jaeger>=1.21.0",
-    "opentelemetry-exporter-zipkin>=1.37.0",
 ]
 
 # Async SQLite Driver (optional)
@@ -163,74 +218,6 @@ chuck = [
     "chuk-mcp-runtime>=0.6.5",
 ]
 
-# Optional dependency groups (development)
-dev = [
-    "aiohttp>=3.12.15",
-    "argparse-manpage>=4.7",
-    "autoflake>=2.3.1",
-    "bandit>=1.8.6",
-    "black>=25.1.0",
-    "bump2version>=1.0.1",
-    "check-manifest>=0.50",
-    "chuk-mcp-runtime>=0.6.5",
-    "code2flow>=2.5.1",
-    "cookiecutter>=2.6.0",
-    "coverage>=7.10.6",
-    "coverage-badge>=1.1.2",
-    "darglint>=1.8.1",
-    "dlint>=0.16.0",
-    "dodgy>=0.2.1",
-    "fawltydeps>=0.20.0",
-    "flake8>=7.3.0",
-    "gprof2dot>=2025.4.14",
-    "importchecker>=3.0",
-    "interrogate>=1.7.0",
-    "isort>=6.0.1",
-    "mypy>=1.18.1",
-    "pexpect>=4.9.0",
-    "pip-licenses>=5.0.0",
-    "pip_audit>=2.9.0",
-    "pre-commit>=4.3.0",
-    "prospector[with_everything]>=1.17.3",
-    "pydocstyle>=6.3.0",
-    "pylint>=3.3.8",
-    "pylint-pydantic>=0.3.5",
-    "pyre-check>=0.9.25",
-    "pyrefly>=0.32.0",
-    "pyright>=1.1.405",
-    "pyroma>=5.0",
-    "pyspelling>=2.11",
-    "pytest>=8.4.2",
-    "pytest-asyncio>=1.2.0",
-    "pytest-cov>=7.0.0",
-    "pytest-env>=1.1.5",
-    "pytest-examples>=0.0.18",
-    "pytest-md-report>=0.7.0",
-    "pytest-rerunfailures>=16.0.1",
-    "pytest-trio>=0.8.0",
-    "pytest-xdist>=3.8.0",
-    "pytype>=2024.10.11",
-    "pyupgrade>=3.20.0",
-    "radon>=6.0.1",
-    "redis>=6.4.0",
-    "ruff>=0.13.0",
-    "semgrep>=1.136.0",
-    "settings-doc>=4.3.2",
-    "snakeviz>=2.2.2",
-    "tomlcheck>=0.2.3",
-    "tomlkit>=0.13.3",
-    "tox>=4.30.2",
-    "tox-uv>=1.28.0",
-    "twine>=6.2.0",
-    "ty>=0.0.1a20",
-    "types-tabulate>=0.9.0.20241207",
-    "unimport>=1.2.1",
-    "uv>=0.8.17",
-    "vulture>=2.14",
-    "websockets>=15.0.1",
-    "yamllint>=1.37.1",
-]
-
 # UI Testing
 playwright = [
     "playwright>=1.55.0",
@@ -242,9 +229,6 @@ playwright = [
 # Convenience meta-extras
 all = [
     "mcp-contextforge-gateway[redis]>=0.6.0",
-]
-dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.6.0",
 ]
 
 # --------------------------------------------------------------------
