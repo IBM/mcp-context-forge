@@ -884,13 +884,8 @@ app.add_middleware(
     expose_headers=["Content-Length", "X-Request-ID"],
 )
 
-
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
-
-# Add request logging middleware if enabled
-if settings.log_requests:
-    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
 
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
@@ -907,6 +902,9 @@ app.add_middleware(DocsAuthMiddleware)
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+# Add request logging middleware if enabled
+if settings.log_requests:
+    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
