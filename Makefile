@@ -122,20 +122,20 @@ activate:
 
 .PHONY: install
 install: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install ."
 
 .PHONY: install-db
 install-db: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install .[redis,postgres]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install .[redis,postgres]"
 
 .PHONY: install-dev
 install-dev: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install .[dev]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
 
 .PHONY: update
 update:
 	@echo "⬆️   Updating installed dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -U .[dev]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -U --group dev ."
 
 # help: check-env            - Verify all required env vars in .env are present
 .PHONY: check-env check-env-dev
