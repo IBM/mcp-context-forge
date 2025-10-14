@@ -163,7 +163,7 @@ def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginC
         if not matches(condition, context):
             current_result = False
 
-        if condition.prompts and payload.name not in condition.prompts:
+        if condition.prompts and payload.prompt_id not in condition.prompts:
             current_result = False
         if current_result:
             return True
