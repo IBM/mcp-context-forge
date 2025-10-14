@@ -603,8 +603,8 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         exc: The PluginViolationError exception containing constraint
              violation details.
 
-    Returns:
-        JSONResponse: A 403 response with access forbidden.
+    Raises:
+        JSONRPCError: A -32602 JSON RPC error, which indicates invalid parameters.
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginViolationError
@@ -619,13 +619,16 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         ...     code="PROHIBITED_CONTENT",
         ...     details={"field": "message", "value": "test"}
         ... ))
-        >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
-        >>> result.status_code
-        403
+        >>> asyncio.run(plugin_violation_exception_handler(None, mock_error))
+        Traceback (most recent call last):
+        ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: The input contains prohibited content
     """
     policy_violation = exc.violation.model_dump() if exc.violation else {}
+    message = exc.violation.description if exc.violation else "A plugin violation occurred."
     policy_violation["message"] = exc.message
-    return JSONResponse(status_code=403, content=policy_violation)
+    status_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
+    raise JSONRPCError(code=status_code, message=message, data=policy_violation)
 
 
 @app.exception_handler(PluginError)
@@ -641,8 +644,8 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         exc: The PluginError exception containing constraint
              violation details.
 
-    Returns:
-        JSONResponse: A 500 response with internal server error.
+    Raises:
+        JSONRPCError: A -32603 JSON RPC error internal server error.
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginViolationError
@@ -657,12 +660,15 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         ...     plugin_name="abc",
         ...     details={"field": "message", "value": "test"}
         ... ))
-        >>> result = asyncio.run(plugin_exception_handler(None, mock_error))
-        >>> result.status_code
-        500
+        >>> asyncio.run(plugin_exception_handler(None, mock_error))
+        Traceback (most recent call last):
+        ...
+        mcpgateway.validation.jsonrpc.JSONRPCError: plugin error
     """
     error_obj = exc.error.model_dump() if exc.error else {}
-    return JSONResponse(status_code=500, content=error_obj)
+    message = exc.error.message if exc.error else "A plugin error occurred."
+    status_code = exc.error.mcp_error_code if exc.error else -32603
+    raise JSONRPCError(code=status_code, message=message, data=error_obj)
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
