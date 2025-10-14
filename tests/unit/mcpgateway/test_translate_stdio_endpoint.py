@@ -8,7 +8,7 @@ Authors: Manav Gupta
 
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.
 """
-
+import sys
 import asyncio
 import pytest
 import tempfile
