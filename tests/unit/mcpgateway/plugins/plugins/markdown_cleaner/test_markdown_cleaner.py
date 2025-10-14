@@ -31,7 +31,7 @@ async def test_cleans_markdown_prompt():
     )
     txt = "#Heading\n\n\n* item\n\n```\n\n```\n"
     pr = PromptResult(messages=[Message(role="assistant", content=TextContent(type="text", text=txt))])
-    payload = PromptPosthookPayload(name="p", result=pr)
+    payload = PromptPosthookPayload(prompt_id="p", result=pr)
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
     res = await plugin.prompt_post_fetch(payload, ctx)
     assert res.modified_payload is not None
