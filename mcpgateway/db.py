@@ -2413,8 +2413,8 @@ class Gateway(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    slug: Mapped[str] = mapped_column(String(255), nullable=False)
-    url: Mapped[str] = mapped_column(String(767), nullable=False)
+    slug: Mapped[str] = mapped_column(String(191), nullable=False)
+    url: Mapped[str] = mapped_column(String(191), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     transport: Mapped[str] = mapped_column(String(20), default="SSE")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON)
