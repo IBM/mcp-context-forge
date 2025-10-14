@@ -2419,12 +2419,15 @@ async def toggle_resource_status(
     """
     logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         resource = await resource_service.toggle_resource_status(db, resource_id, activate)
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
             "resource": resource.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2746,12 +2749,15 @@ async def toggle_prompt_status(
     """
     logger.debug(f"User: {user} requested toggle for prompt {prompt_id}, activate={activate}")
     try:
-        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
             "prompt": prompt.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 

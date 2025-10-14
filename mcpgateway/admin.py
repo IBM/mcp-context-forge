@@ -1353,6 +1353,7 @@ async def admin_toggle_server(
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling server status: {e}")
+        error_message = "Error toggling server status. Please try again."
 
     root_path = request.scope.get("root_path", "")
 
@@ -5610,6 +5611,7 @@ async def admin_toggle_tool(
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling tool status: {e}")
+        error_message = "Failed to toggle tool status. Please try again."
 
     root_path = request.scope.get("root_path", "")
     
@@ -6909,16 +6911,30 @@ async def admin_toggle_resource(
         True
         >>> resource_service.toggle_resource_status = original_toggle_resource_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling resource ID {resource_id}")
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling resource ID {resource_id}")
     form = await request.form()
+    error_message = None
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await resource_service.toggle_resource_status(db, resource_id, activate)
+        await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling resource status {resource_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling resource status: {e}")
+        error_message = "Failed to toggle resource status. Please try again."
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#resources", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#resources", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
@@ -7438,16 +7454,30 @@ async def admin_toggle_prompt(
         True
         >>> prompt_service.toggle_prompt_status = original_toggle_prompt_status
     """
-    LOGGER.debug(f"User {get_user_email(user)} is toggling prompt ID {prompt_id}")
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is toggling prompt ID {prompt_id}")
+    error_message = None
     form = await request.form()
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
-        await prompt_service.toggle_prompt_status(db, prompt_id, activate)
+        await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
+    except PermissionError as e:
+        LOGGER.warning(f"Permission denied for user {user_email} toggling prompt {prompt_id}: {e}")
+        error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error toggling prompt status: {e}")
+        error_message = "Failed to toggle prompt status. Please try again."
 
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/{error_param}&include_inactive=true#prompts", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/{error_param}#prompts", status_code=303)
+
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)

@@ -862,7 +862,7 @@ class PromptService:
             db.rollback()
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
-    async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool) -> PromptRead:
+    async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
         """
         Toggle the activation status of a prompt.
 
@@ -900,6 +900,15 @@ class PromptService:
             prompt = db.get(DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
+
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, prompt):
+                    raise PermissionError("Only the owner can activate the Prompt" if activate else "Only the owner can deactivate the Prompt")
+
             if prompt.is_active != activate:
                 prompt.is_active = activate
                 prompt.updated_at = datetime.now(timezone.utc)
@@ -912,6 +921,8 @@ class PromptService:
                 logger.info(f"Prompt {prompt.name} {'activated' if activate else 'deactivated'}")
             prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
+        except PermissionError as e:
+            raise e
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
