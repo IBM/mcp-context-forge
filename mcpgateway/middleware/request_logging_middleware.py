@@ -100,13 +100,36 @@ def mask_sensitive_headers(headers):
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware for logging HTTP requests with sensitive data masking.
+    
+    Logs incoming requests including method, path, headers, and body while
+    masking sensitive information like passwords, tokens, and authorization headers.
+    """
+    
     def __init__(self, app, log_requests: bool = True, log_level: str = "DEBUG", max_body_size: int = 4096):
+        """Initialize the request logging middleware.
+        
+        Args:
+            app: The FastAPI application instance
+            log_requests: Whether to enable request logging
+            log_level: The log level for requests (not used, logs at INFO)
+            max_body_size: Maximum request body size to log in bytes
+        """
         super().__init__(app)
         self.log_requests = log_requests
         self.log_level = log_level.upper()
         self.max_body_size = max_body_size  # Expected to be in bytes
 
     async def dispatch(self, request: Request, call_next: Callable):
+        """Process incoming request and log details with sensitive data masked.
+        
+        Args:
+            request: The incoming HTTP request
+            call_next: Function to call the next middleware/handler
+            
+        Returns:
+            Response: The HTTP response from downstream handlers
+        """
         # Skip logging if disabled
         if not self.log_requests:
             return await call_next(request)
@@ -161,6 +184,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         # Recreate request stream for downstream handlers
         async def receive():
+            """Recreate request body for downstream handlers.
+            
+            Returns:
+                dict: ASGI receive message with request body
+            """
             return {"type": "http.request", "body": body, "more_body": False}
 
         # Create new request with the body we've already read
