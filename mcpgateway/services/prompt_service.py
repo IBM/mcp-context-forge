@@ -870,6 +870,7 @@ class PromptService:
             db: Database session
             prompt_id: Prompt ID
             activate: True to activate, False to deactivate
+            user_email Optional[str]: The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated PromptRead object

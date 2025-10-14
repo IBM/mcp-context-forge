@@ -1401,6 +1401,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             activate: True to activate, False to deactivate
             reachable: Whether the gateway is reachable
             only_update_reachable: Only update reachable status
+            user_email Optional[str]: The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated GatewayRead object

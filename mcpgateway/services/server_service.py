@@ -883,6 +883,7 @@ class ServerService:
             db: Database session.
             server_id: The unique identifier of the server.
             activate: True to activate, False to deactivate.
+            user_email Optional[str]: The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated ServerRead object.

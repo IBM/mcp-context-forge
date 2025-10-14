@@ -766,6 +766,7 @@ class ToolService:
             tool_id (str): The unique identifier of the tool.
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
+            user_email Optional[str]: The email of the user to check if the user has permission to modify.
 
         Returns:
             ToolRead: The updated tool object.
