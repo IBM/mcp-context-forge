@@ -638,9 +638,9 @@ async def get_active_session(user_id: str) -> Optional[MCPChatService]:
             # refresh TTL so ownership persists while active
             try:
                 await redis_client.expire(active_key, SESSION_TTL)
-            except Exception:
-                # non-fatal if expire fails
-                pass
+            except Exception as e:  # nosec B110
+                # non-fatal if expire fails, just log the error
+                logger.debug(f"Failed to refresh session TTL for {user_id}: {e}")
             return local
 
         # Owner in Redis points to this worker but local session missing (process restart or lost).
@@ -768,7 +768,8 @@ async def connect(input_data: ConnectInput, request: Request):
             raise HTTPException(status_code=400, detail="Invalid user ID provided")
 
         # Handle authentication token
-        if input_data.server and (input_data.server.auth_token is None or input_data.server.auth_token == ""):
+        empty_token = ""  # nosec B105
+        if input_data.server and (input_data.server.auth_token is None or input_data.server.auth_token == empty_token):
             jwt_token = request.cookies.get("jwt_token")
             if not jwt_token:
                 raise HTTPException(status_code=401, detail="Authentication required. Please ensure you are logged in.")
