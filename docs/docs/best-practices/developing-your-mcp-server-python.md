@@ -59,6 +59,7 @@ if __name__ == "__main__":
 ### 2.2 Understanding the Code
 
 !!! info "Code breakdown"
+
     - **FastMCP**: Main application class that handles MCP protocol
     - **@mcp.tool()**: Decorator that registers the function as an MCP tool
     - **Type hints**: Python type hints define input/output schemas automatically

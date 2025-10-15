@@ -29,6 +29,7 @@ class MyInProcessPlugin(Plugin):
 ```
 
 **Rationale:**
+
 - **Self‑contained plugins** deliver sub‑ms latency for simple transformations
 - **External plugins over MCP** enable advanced AI middleware with clear isolation
 - **Unified interface** keeps development consistent across deployment models
@@ -49,6 +50,7 @@ class HookType(str, Enum):
 ```
 
 **Rationale:**
+
 - **Complete coverage** of MCP request lifecycle enables comprehensive AI safety
 - **Pre/post pattern** supports both input validation and output sanitization
 - **Resource hooks** enable content filtering and security scanning
@@ -75,6 +77,7 @@ class PluginExecutor:
 ```
 
 **Rationale:**
+
 - **Sequential execution** provides predictable behavior and easier debugging
 - **Priority‑based ordering** ensures security plugins run before transformers
 - **Conditional execution** enables fine‑grained targeting by context (servers, tenants, tools, prompts, resources)
@@ -87,12 +90,14 @@ class PluginExecutor:
 ```yaml
 # plugins/config.yaml
 plugins:
+
   - name: "PIIFilterPlugin"
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     mode: "enforce"  # enforce | permissive | disabled
     priority: 50     # Lower = higher priority
     conditions:
+
       - server_ids: ["prod-server"]
         tools: ["sensitive-tool"]
     config:
@@ -101,6 +106,7 @@ plugins:
 ```
 
 **Rationale:**
+
 - **File‑based configuration** supports GitOps and version control
 - **Structured validation** with Pydantic ensures configuration correctness
 - **Hierarchical conditions** enable precise plugin targeting
@@ -118,6 +124,7 @@ plugins:
   - Per‑plugin mode: `enforce`, `enforce_ignore_error`, `permissive`, `disabled`
 
 **Rationale:**
+
 - **Timeout protection** prevents plugin hangs from affecting gateway
 - **Payload size limits** prevent resource exhaustion
 - **Error isolation** ensures plugin failures don't crash the gateway
@@ -142,6 +149,7 @@ class PluginManager:
 ```
 
 **Rationale:**
+
 - **Request-scoped contexts** enable plugins to share state within a request
 - **Automatic cleanup** prevents memory leaks in long-running deployments
 - **Global context sharing** provides request metadata (user, tenant, server)

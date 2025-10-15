@@ -89,21 +89,25 @@ JWT_AUDIENCE_VERIFICATION=true
 ### Benefits of Asymmetric Support
 
 ✅ **Enhanced Security**
+
 - Private key never leaves the signing service
 - Public key can be safely distributed for verification
 - Eliminates shared secret management challenges
 
 ✅ **Scalability & Federation**
+
 - Multiple services can verify tokens independently
 - No need to distribute signing secrets
 - Supports microservices and distributed architectures
 
 ✅ **Enterprise Compliance**
+
 - Meets enterprise security standards (SOC2, ISO 27001)
 - Supports Hardware Security Module (HSM) integration
 - Enables proper key lifecycle management
 
 ✅ **Future-Proof Architecture**
+
 - Foundation for advanced features like key rotation
 - Compatible with industry-standard JWT libraries
 - Supports Dynamic Client Registration scenarios

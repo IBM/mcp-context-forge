@@ -5,7 +5,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-MCP Gateway v0.7.0 - Test Plan Generator from YAML
+MCP Gateway v0.8.0 - Test Plan Generator from YAML
 
 Generates Excel test plan from YAML test definition files.
 Much cleaner and more maintainable approach.

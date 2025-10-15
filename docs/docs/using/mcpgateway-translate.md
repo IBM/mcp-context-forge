@@ -26,6 +26,7 @@ python3 -m mcpgateway.translate \
 ```
 
 **Endpoints**:
+
 - `GET /sse` - SSE stream for receiving messages
 - `POST /message` - Send JSON-RPC requests
 - `GET /healthz` - Health check
@@ -66,6 +67,7 @@ python3 -m mcpgateway.translate \
 ```
 
 **Endpoints**:
+
 - `POST /mcp` - Handle MCP requests
 - `GET /mcp` - SSE stream (when not in JSON response mode)
 - `GET /healthz` - Health check
@@ -216,6 +218,7 @@ curl -X POST http://localhost:9000/message \
 ```
 
 **Security features**:
+
 - Header names validated (alphanumeric + hyphens only)
 - Environment variable names validated (standard naming rules)
 - Values sanitized (dangerous characters removed, length limits enforced)
@@ -233,6 +236,7 @@ Establishes an SSE connection for receiving MCP messages.
 **Response**: Server-Sent Events stream
 
 **Events**:
+
 - `endpoint`: Initial bootstrap with unique message URL
 - `message`: JSON-RPC responses from the MCP server
 - `keepalive`: Periodic keepalive signals
@@ -387,6 +391,7 @@ curl -X POST http://localhost:9000/message \
 ```
 
 **Benefits**:
+
 - Each user's credentials are isolated per request
 - No shared token security risks
 - Supports different enterprise hosts per user
@@ -473,6 +478,7 @@ python3 -m mcpgateway.translate \
 ### Connection Pooling
 
 When bridging to remote endpoints, connections are reused with automatic retry:
+
 - Initial retry delay: 1 second
 - Exponential backoff: Up to 30 seconds
 - Maximum retries: 5 (configurable in code)
@@ -488,11 +494,13 @@ When bridging to remote endpoints, connections are reused with automatic retry:
 ## Integration with MCP Gateway
 
 This tool complements the full MCP Gateway by providing:
+
 - Lightweight alternative for simple bridging needs
 - Development and testing utility
 - Protocol conversion without full gateway features
 
 For production deployments requiring:
+
 - Multiple server management
 - Persistent configuration
 - Advanced routing
@@ -551,5 +559,6 @@ headers = {
 ## Support
 
 For issues, feature requests, or contributions:
+
 - GitHub: [mcp-context-forge](https://github.com/contingentai/mcp-context-forge)
 - Issues: [Report bugs](https://github.com/contingentai/mcp-context-forge/issues)

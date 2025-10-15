@@ -185,6 +185,7 @@ external_servers:
       auth_url: "https://account.box.com/api/oauth2/authorize"
       token_url: "https://account.box.com/api/oauth2/token"
       scopes:
+
         - "root_readonly"
         - "root_readwrite"
         - "manage_enterprise"

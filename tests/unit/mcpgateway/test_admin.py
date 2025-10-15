@@ -531,21 +531,21 @@ class TestAdminToolRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False)
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email='test-user')
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False)
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email='test-user')
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True)
+        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email='test-user')
 
 
 class TestAdminBulkImportRoutes:
@@ -882,11 +882,11 @@ class TestAdminResourceRoutes:
         """Test toggling resource with numeric ID."""
         # Test with integer ID
         await admin_toggle_resource(123, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, 123, True)
+        mock_toggle_status.assert_called_with(mock_db, 123, True, user_email='test-user')
 
         # Test with string number
         await admin_toggle_resource("456", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "456", True)
+        mock_toggle_status.assert_called_with(mock_db, "456", True, user_email='test-user')
 
 
 class TestAdminPromptRoutes:
@@ -1038,17 +1038,17 @@ class TestAdminPromptRoutes:
         """Test toggling prompt with edge cases."""
         # Test with string ID that looks like number
         await admin_toggle_prompt("123", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "123", True)
+        mock_toggle_status.assert_called_with(mock_db, "123", True, user_email='test-user')
 
         # Test with negative number
         await admin_toggle_prompt(-1, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, -1, True)
+        mock_toggle_status.assert_called_with(mock_db, -1, True, user_email='test-user')
 
 
 class TestAdminGatewayRoutes:
     """Test admin routes for gateway management with enhanced coverage."""
 
-    @patch.object(GatewayService, "list_gateways")
+    @patch.object(GatewayService, "list_gateways_for_user")
     async def test_admin_list_gateways_with_auth_info(self, mock_list_gateways, mock_db):
         """Test listing gateways with authentication information."""
         mock_gateway = MagicMock()
@@ -1904,7 +1904,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_toggle_status.assert_called_with(mock_db, "agent-1", True)
+        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email='test-user')
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):
@@ -1921,7 +1921,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_delete_agent.assert_called_with(mock_db, "agent-1")
+        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user")
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
@@ -2794,7 +2794,7 @@ class TestEdgeCasesAndErrorHandling:
             if form_field == "activate":
                 # Only "true" (case-insensitive) should be True
                 expected = value.lower() == "true"
-                mock_toggle.assert_called_with(mock_db, "server-1", expected)
+                mock_toggle.assert_called_with(mock_db, "server-1", expected, user_email='test-user')
 
     async def test_json_field_valid_cases(self, mock_request, mock_db):
         """Test JSON field parsing with valid cases."""

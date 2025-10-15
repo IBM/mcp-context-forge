@@ -82,6 +82,11 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.updated_at = "2023-01-01T00:00:00"
     server.is_active = True
 
+    # Ownership fields for RBAC
+    server.owner_email = "user@example.com"  # Match default test user
+    server.team_id = None
+    server.visibility = "public"
+
     # Associated objects -------------------------------------------------- #
     server.tools = [mock_tool]
     server.resources = [mock_resource]
@@ -600,102 +605,107 @@ class TestServerService:
         import types
         from mcpgateway.services.server_service import ServerNameConflictError, ServerError
 
-        # --- PRIVATE: allow same name across users/teams (should NOT raise ServerNameConflictError) --- #
-        server_private = mock_server
-        server_private.id = "1"
-        server_private.name = "other_server"
-        server_private.visibility = "private"
-        server_private.team_id = "teamA"
+        # Mock PermissionService to bypass ownership checks (this test is about name conflicts)
+        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+            mock_perm_service = mock_perm_service_class.return_value
+            mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
-        # Simulate no conflict found (should not raise)
-        test_db.get = Mock(return_value=server_private)
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        test_db.execute = Mock(return_value=mock_scalar)
-        test_db.rollback = Mock()
-        test_db.refresh = Mock()
+            # --- PRIVATE: allow same name across users/teams (should NOT raise ServerNameConflictError) --- #
+            server_private = mock_server
+            server_private.id = "1"
+            server_private.name = "other_server"
+            server_private.visibility = "private"
+            server_private.team_id = "teamA"
 
-        # Should not raise ServerNameConflictError for private, but should raise IntegrityError for duplicate name
-        from sqlalchemy.exc import IntegrityError
-        test_db.commit = Mock(side_effect=IntegrityError("Duplicate name", None, None))
+            # Simulate no conflict found (should not raise)
+            test_db.get = Mock(return_value=server_private)
+            mock_scalar = Mock()
+            mock_scalar.scalar_one_or_none.return_value = None
+            test_db.execute = Mock(return_value=mock_scalar)
+            test_db.rollback = Mock()
+            test_db.refresh = Mock()
 
-        test_user_email = "user@example.com"
+            # Should not raise ServerNameConflictError for private, but should raise IntegrityError for duplicate name
+            from sqlalchemy.exc import IntegrityError
+            test_db.commit = Mock(side_effect=IntegrityError("Duplicate name", None, None))
 
-        with pytest.raises(IntegrityError):
-            await server_service.update_server(
-                test_db,
-                "1",
-                ServerUpdate(name="existing_server", visibility="private"),
-                test_user_email,
+            test_user_email = "user@example.com"
+
+            with pytest.raises(IntegrityError):
+                await server_service.update_server(
+                    test_db,
+                    "1",
+                    ServerUpdate(name="existing_server", visibility="private"),
+                    test_user_email,
+                )
+
+            # --- TEAM: restrict within team only (should raise ServerNameConflictError) --- #
+            server_team = mock_server
+            server_team.id = "2"
+            server_team.name = "other_server"
+            server_team.visibility = "team"
+            server_team.team_id = "teamA"
+
+            conflict_team_server = types.SimpleNamespace(
+                id="3",
+                name="existing_server",
+                is_active=True,
+                visibility="team",
+                team_id="teamA"
             )
 
-        # --- TEAM: restrict within team only (should raise ServerNameConflictError) --- #
-        server_team = mock_server
-        server_team.id = "2"
-        server_team.name = "other_server"
-        server_team.visibility = "team"
-        server_team.team_id = "teamA"
+            test_db.get = Mock(return_value=server_team)
+            mock_scalar = Mock()
+            mock_scalar.scalar_one_or_none.return_value = conflict_team_server
+            test_db.execute = Mock(return_value=mock_scalar)
+            test_db.rollback = Mock()
+            test_db.refresh = Mock()
 
-        conflict_team_server = types.SimpleNamespace(
-            id="3",
-            name="existing_server",
-            is_active=True,
-            visibility="team",
-            team_id="teamA"
-        )
+            test_user_email = "user@example.com"
 
-        test_db.get = Mock(return_value=server_team)
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = conflict_team_server
-        test_db.execute = Mock(return_value=mock_scalar)
-        test_db.rollback = Mock()
-        test_db.refresh = Mock()
+            with pytest.raises(ServerNameConflictError) as exc:
+                await server_service.update_server(
+                    test_db,
+                    "2",
+                    ServerUpdate(name="existing_server", visibility="team", team_id="teamA"),
+                    test_user_email,
+                )
+            assert "Team Server already exists with name" in str(exc.value)
+            test_db.rollback.assert_called()
 
-        test_user_email = "user@example.com"
+            # --- PUBLIC: restrict globally (should raise ServerNameConflictError) --- #
+            server_public = mock_server
+            server_public.id = "4"
+            server_public.name = "other_server"
+            server_public.visibility = "public"
+            server_public.team_id = None
 
-        with pytest.raises(ServerNameConflictError) as exc:
-            await server_service.update_server(
-                test_db,
-                "2",
-                ServerUpdate(name="existing_server", visibility="team", team_id="teamA"),
-                test_user_email,
+            conflict_public_server = types.SimpleNamespace(
+                id="5",
+                name="existing_server",
+                is_active=True,
+                visibility="public",
+                team_id=None
             )
-        assert "Team Server already exists with name" in str(exc.value)
-        test_db.rollback.assert_called()
 
-        # --- PUBLIC: restrict globally (should raise ServerNameConflictError) --- #
-        server_public = mock_server
-        server_public.id = "4"
-        server_public.name = "other_server"
-        server_public.visibility = "public"
-        server_public.team_id = None
+            test_db.get = Mock(return_value=server_public)
+            mock_scalar = Mock()
+            mock_scalar.scalar_one_or_none.return_value = conflict_public_server
+            test_db.execute = Mock(return_value=mock_scalar)
+            test_db.rollback = Mock()
+            test_db.refresh = Mock()
 
-        conflict_public_server = types.SimpleNamespace(
-            id="5",
-            name="existing_server",
-            is_active=True,
-            visibility="public",
-            team_id=None
-        )
+            test_user_email = "user@example.com"
 
-        test_db.get = Mock(return_value=server_public)
-        mock_scalar = Mock()
-        mock_scalar.scalar_one_or_none.return_value = conflict_public_server
-        test_db.execute = Mock(return_value=mock_scalar)
-        test_db.rollback = Mock()
-        test_db.refresh = Mock()
-
-        test_user_email = "user@example.com"
-
-        with pytest.raises(ServerNameConflictError) as exc:
-            await server_service.update_server(
-                test_db,
-                "4",
-                ServerUpdate(name="existing_server", visibility="public"),
-                test_user_email,
-            )
-        assert "Public Server already exists with name" in str(exc.value)
-        test_db.rollback.assert_called()
+            with pytest.raises(ServerNameConflictError) as exc:
+                await server_service.update_server(
+                    test_db,
+                    "4",
+                    ServerUpdate(name="existing_server", visibility="public"),
+                    test_user_email,
+                )
+            assert "Public Server already exists with name" in str(exc.value)
+            test_db.rollback.assert_called()
 
     # -------------------------- toggle --------------------------------- #
     @pytest.mark.asyncio
@@ -1018,6 +1028,11 @@ class TestServerService:
         existing_server.tools = []
         existing_server.resources = []
         existing_server.prompts = []
+
+        # Add ownership fields for RBAC
+        existing_server.owner_email = "user@example.com"
+        existing_server.team_id = None
+        existing_server.visibility = "public"
 
         # New UUID to update to
         new_standard_uuid = "550e8400-e29b-41d4-a716-446655440000"

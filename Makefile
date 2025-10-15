@@ -31,7 +31,7 @@ DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .p
 	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) \
 	node_modules .mutmut-cache html
 
-FILES_TO_CLEAN := .coverage coverage.xml mcp.prof mcp.pstats \
+FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-* \
 	$(PROJECT_NAME).sbom.json \
 	snakefood.dot packages.dot classes.dot \
 	$(DOCS_DIR)/pstats.png \
@@ -110,7 +110,10 @@ venv:
 	@rm -Rf "$(VENV_DIR)"
 	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
 	@python3 -m venv "$(VENV_DIR)"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm uv"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm"
+	# Eventually, we want to transition to using uv/uvx exclusively, at which point we will only need
+	# a virtual environment if the user has not installed uv into their account.
+	@/bin/bash -c "type uv || ( source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv )"
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
 .PHONY: activate
@@ -119,20 +122,20 @@ activate:
 
 .PHONY: install
 install: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install ."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install ."
 
 .PHONY: install-db
 install-db: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install .[redis,postgres]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install .[redis,postgres]"
 
 .PHONY: install-dev
 install-dev: venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install .[dev]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
 
 .PHONY: update
 update:
 	@echo "⬆️   Updating installed dependencies..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m uv pip install -U .[dev]"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -U --group dev ."
 
 # help: check-env            - Verify all required env vars in .env are present
 .PHONY: check-env check-env-dev
@@ -236,18 +239,14 @@ certs-all: certs certs-jwt       ## Generate both TLS certificates and JWT RSA k
 .PHONY: clean
 clean:
 	@echo "🧹  Cleaning workspace..."
-	@bash -eu -o pipefail -c '\
-		# Remove matching directories \
-		for dir in $(DIRS_TO_CLEAN); do \
-			find . -type d -name "$$dir" -exec rm -rf {} +; \
-		done; \
-		# Remove listed files \
-		rm -f $(FILES_TO_CLEAN); \
-		# Delete Python bytecode \
-		find . -name "*.py[cod]" -delete; \
-		# Delete coverage annotated files \
-		find . -name "*.py,cover" -delete; \
-	'
+	@set +e; \
+	for dir in $(DIRS_TO_CLEAN); do \
+		find . -type d -name "$$dir" -prune -exec rm -rf {} +; \
+	done; \
+	set -e
+	@rm -f $(FILES_TO_CLEAN)
+	@find . -name "*.py[cod]" -delete
+	@find . -name "*.py,cover" -delete
 	@echo "✅  Clean complete."
 
 
@@ -280,10 +279,9 @@ test:
 	@echo "🧪 Running tests..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q pytest pytest-asyncio pytest-cov && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		python3 -m pytest --maxfail=0 --disable-warnings -v --ignore=tests/fuzz"
+		uv run pytest --maxfail=0 --disable-warnings -v --ignore=tests/fuzz"
 
 coverage:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
@@ -360,6 +358,97 @@ doctest-check:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pytest --doctest-modules mcpgateway/ --tb=no -q && \
 		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)"
+
+
+# =============================================================================
+# 📊 LOAD TESTING - Database population and performance testing
+# =============================================================================
+# help: 📊 LOAD TESTING
+# help: generate-small       - Generate small load test data (100 users, ~74K records, <1 min)
+# help: generate-medium      - Generate medium load test data (10K users, ~70M records, ~10 min)
+# help: generate-large       - Generate large load test data (100K users, ~700M records, ~1-2 hours)
+# help: generate-massive     - Generate massive load test data (1M users, billions of records, ~10-20 hours)
+# help: generate-clean       - Clean all generated load test data and reports
+# help: generate-report      - Display most recent load test report
+
+.PHONY: generate-small generate-medium generate-large generate-massive generate-clean generate-report
+
+generate-small:                            ## Generate small load test dataset (100 users)
+	@echo "📊 Generating small load test data..."
+	@echo "   Target: 100 users, ~74K records"
+	@echo "   Time: <1 minute"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.load.generate --profile small"
+	@echo ""
+	@echo "✅ Small load test data generated!"
+	@echo "📄 Report: reports/small_load_report.json"
+
+generate-medium:                           ## Generate medium load test dataset (10K users)
+	@echo "📊 Generating medium load test data..."
+	@echo "   Target: 10K users, ~70M records"
+	@echo "   Time: ~10 minutes"
+	@echo "   ⚠️  Recommended: Use PostgreSQL or MySQL for better performance"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.load.generate --profile medium"
+	@echo ""
+	@echo "✅ Medium load test data generated!"
+	@echo "📄 Report: reports/medium_load_report.json"
+
+generate-large:                            ## Generate large load test dataset (100K users)
+	@echo "📊 Generating large load test data..."
+	@echo "   Target: 100K users, ~700M records"
+	@echo "   Time: ~1-2 hours"
+	@echo "   ⚠️  REQUIRED: PostgreSQL or MySQL"
+	@echo "   ⚠️  Recommended: 16GB+ RAM, SSD storage"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python -m tests.load.generate --profile large"
+	@echo ""
+	@echo "✅ Large load test data generated!"
+	@echo "📄 Report: reports/large_load_report.json"
+
+generate-massive:                          ## Generate massive load test dataset (1M users)
+	@echo "📊 Generating massive load test data..."
+	@echo "   Target: 1M users, billions of records"
+	@echo "   Time: ~10-20 hours"
+	@echo "   ⚠️  REQUIRED: PostgreSQL or MySQL with high-performance config"
+	@echo "   ⚠️  REQUIRED: 32GB+ RAM, SSD storage, multi-core CPU"
+	@echo ""
+	@read -p "This will take 10-20 hours. Continue? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		test -d "$(VENV_DIR)" || $(MAKE) venv; \
+		/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+			python -m tests.load.generate --profile massive"; \
+		echo ""; \
+		echo "✅ Massive load test data generated!"; \
+		echo "📄 Report: reports/massive_load_report.json"; \
+	else \
+		echo "❌ Cancelled"; \
+		exit 1; \
+	fi
+
+generate-clean:                            ## Clean all generated load test data
+	@echo "🧹 Cleaning load test data..."
+	@rm -f reports/*_load_report.json
+	@echo "✅ Load test reports cleaned!"
+	@echo ""
+	@echo "⚠️  Note: This does NOT clean the database itself."
+	@echo "   To clean database, use: make clean-db"
+
+generate-report:                           ## Display most recent load test report
+	@echo "📊 Most Recent Load Test Reports:"
+	@echo ""
+	@for report in reports/*_load_report.json; do \
+		if [ -f "$$report" ]; then \
+			echo "📄 $$report:"; \
+			jq -r '"  Profile: \(.profile)\n  Duration: \(.duration_seconds)s\n  Records: \(.total_generated | tonumber | tostring) total\n  Rate: \(.records_per_second | floor | tostring) records/sec\n  Timestamp: \(.timestamp)"' "$$report" 2>/dev/null || \
+			cat "$$report" | head -20; \
+			echo ""; \
+		fi; \
+	done || echo "❌ No reports found. Run 'make generate-small' first."
 
 # =============================================================================
 # 🧬 MUTATION TESTING
@@ -738,8 +827,6 @@ lint-smart:
 				$(MAKE) --no-print-directory lint-target TARGET="$$actual_target"; \
 			fi ;; \
 	esac
-
-	fi
 
 ## --------------------------------------------------------------------------- ##
 ##  Individual targets (alphabetical, updated to use TARGET)
@@ -2748,7 +2835,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 # OCI image tag to preload into the cluster.
 # - By default we point to the *local* image built via `make docker-prod`, e.g.
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
-#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.7.0).
+#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.8.0).
 TAG              ?= latest         # override with TAG=<ver>
 IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 
@@ -3383,7 +3470,7 @@ devpi-unconfigure-pip:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Version helper (defaults to the version in pyproject.toml)
-#      override on the CLI:  make VER=0.7.0 devpi-delete
+#      override on the CLI:  make VER=0.8.0 devpi-delete
 # ─────────────────────────────────────────────────────────────────────────────
 VER ?= $(shell python3 -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
@@ -3817,9 +3904,12 @@ security-all:
 semgrep:                            ## 🔍 Security patterns & anti-patterns
 	@echo "🔍  semgrep - scanning for security patterns..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	# Notice the use of uvx below -- semgrep is not in the project dependencies because it introduces a
+	# resolution conflict with other packages.
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pip install -q semgrep && \
-		$(VENV_DIR)/bin/semgrep --config=auto $(TARGET) --exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 || true"
+		uvx semgrep --config=auto $(TARGET) \
+			--exclude-rule python.lang.compatibility.python37.python37-compatibility-importlib2 \
+			|| true"
 
 dodgy:                              ## 🔐 Suspicious code patterns
 	@echo "🔐  dodgy - scanning for hardcoded secrets..."
@@ -4577,7 +4667,7 @@ MIGRATION_TEST_DIR := tests/migration
 MIGRATION_REPORTS_DIR := $(MIGRATION_TEST_DIR)/reports
 
 # Get supported versions from version config (n-2 policy)
-MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.7.0 latest")
+MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
         migration-setup migration-cleanup migration-debug migration-status

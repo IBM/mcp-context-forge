@@ -9,6 +9,7 @@ PACKAGE_NAME = opapluginfilter
 PROJECT_NAME = opapluginfilter
 TARGET ?= opapluginfilter
 OPASERVER_VERSION ?= 1.8.0
+POLICY_PATH = "./opaserver/rego/policy.rego"
 
 # Virtual-environment variables
 VENVS_DIR ?= $(HOME)/.venv
@@ -404,7 +405,11 @@ lock:
 
 .PHONY: test
 test:
+	opa run --server $(POLICY_PATH) &
+	echo "Local OPA server started for testing $(POLICY_PATH)";
 	pytest tests
+	pkill opa
+	echo "Local OPA server killed after testing"; \
 
 .PHONY: serve
 serve:

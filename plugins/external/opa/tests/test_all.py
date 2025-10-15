@@ -8,7 +8,7 @@ import asyncio
 import pytest
 
 # First-Party
-from mcpgateway.models import Message, Role, TextContent
+from mcpgateway.models import Message, Role, TextContent, ResourceContent
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginManager,
@@ -17,6 +17,8 @@ from mcpgateway.plugins.framework import (
     PromptResult,
     ToolPostInvokePayload,
     ToolPreInvokePayload,
+    ResourcePreFetchPayload,
+    ResourcePostFetchPayload
 )
 
 
@@ -71,5 +73,31 @@ async def test_tool_post_hook(plugin_manager: PluginManager):
     payload = ToolPostInvokePayload(name="test_tool", result={"output0": "output value"})
     global_context = GlobalContext(request_id="1")
     result, _ = await plugin_manager.tool_post_invoke(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+
+@pytest.mark.asyncio
+async def test_resource_pre_hook(plugin_manager: PluginManager):
+    """Test tool post hook across all registered plugins."""
+    # Customize payload for testing
+    payload = ResourcePreFetchPayload(uri="https://test_resource.com", metadata={})
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, _ = await plugin_manager.tool_post_invoke(payload, global_context)
+    # Assert expected behaviors
+    assert result.continue_processing
+
+
+@pytest.mark.asyncio
+async def test_resource_post_hook(plugin_manager: PluginManager):
+    """Test tool post hook across all registered plugins."""
+    # Customize payload for testing
+    content = ResourceContent(
+            type="resource",
+            uri="test://resource",
+            text="test://test_resource.com",
+        )
+    payload = ResourcePostFetchPayload(uri="https://example.com", content=content)
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, _ = await plugin_manager.resource_post_fetch(payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing

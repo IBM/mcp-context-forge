@@ -59,6 +59,7 @@ make serve-http
 Create a new DOT graph file with specified type and attributes.
 
 **Parameters:**
+
 - `file_path` (required): Path where the graph file will be saved
 - `graph_type`: "graph", "digraph", "strict graph", or "strict digraph" (default: "digraph")
 - `graph_name`: Name of the graph (default: "G")
@@ -68,6 +69,7 @@ Create a new DOT graph file with specified type and attributes.
 Render DOT graph to image with layout and format options.
 
 **Parameters:**
+
 - `input_file` (required): Path to DOT file
 - `output_file` (required): Path for output image
 - `format`: Output format (default: "png")
@@ -78,6 +80,7 @@ Render DOT graph to image with layout and format options.
 Add nodes to graphs with labels and attributes.
 
 **Parameters:**
+
 - `file_path` (required): Path to DOT file
 - `node_id` (required): Unique node identifier
 - `label`: Node label (default: same as node_id)
@@ -87,6 +90,7 @@ Add nodes to graphs with labels and attributes.
 Add edges between nodes with labels and attributes.
 
 **Parameters:**
+
 - `file_path` (required): Path to DOT file
 - `from_node` (required): Source node ID
 - `to_node` (required): Target node ID
@@ -97,6 +101,7 @@ Add edges between nodes with labels and attributes.
 Set graph, node, or edge attributes.
 
 **Parameters:**
+
 - `file_path` (required): Path to DOT file
 - `target_type` (required): "graph", "node", or "edge"
 - `target_id`: Specific node/edge ID (use "*" for defaults)
@@ -106,6 +111,7 @@ Set graph, node, or edge attributes.
 Analyze graph structure and calculate metrics.
 
 **Parameters:**
+
 - `file_path` (required): Path to DOT file
 - `include_structure`: Include structural analysis (default: true)
 - `include_metrics`: Include graph metrics (default: true)
@@ -114,6 +120,7 @@ Analyze graph structure and calculate metrics.
 Validate DOT file syntax.
 
 **Parameters:**
+
 - `file_path` (required): Path to DOT file
 
 ### list_layouts

@@ -45,6 +45,7 @@ make fuzz-report         # Generate reports
 Tests core validation logic by generating inputs that satisfy certain properties and verifying invariants hold.
 
 **Test Modules:**
+
 - `tests/fuzz/test_jsonrpc_fuzz.py` - JSON-RPC validation (16 tests)
 - `tests/fuzz/test_jsonpath_fuzz.py` - JSONPath processing (16 tests)
 - `tests/fuzz/test_schema_validation_fuzz.py` - Pydantic schemas (19 tests)
@@ -78,6 +79,7 @@ HYPOTHESIS_PROFILE=thorough # 1000 examples (comprehensive)
 Uses libfuzzer to instrument code and guide input generation toward unexplored code paths.
 
 **Fuzzer Scripts:**
+
 - `tests/fuzz/fuzzers/fuzz_jsonpath.py` - JSONPath expression fuzzing
 - `tests/fuzz/fuzzers/fuzz_jsonrpc.py` - JSON-RPC message fuzzing
 - `tests/fuzz/fuzzers/fuzz_config_parser.py` - Configuration parsing fuzzing
@@ -108,6 +110,7 @@ python tests/fuzz/fuzzers/fuzz_jsonpath.py -runs=10000 -max_total_time=300
 Tests API endpoints by generating requests based on OpenAPI schema definitions.
 
 **Features:**
+
 - Validates API contracts automatically
 - Tests authentication flows
 - Verifies response schemas
@@ -133,6 +136,7 @@ schemathesis run http://localhost:4444/openapi.json \
 Tests resistance to common security vulnerabilities and attack patterns.
 
 **Test Categories:**
+
 - **SQL Injection**: Tests input sanitization in database queries
 - **XSS Prevention**: Validates output encoding and CSP headers
 - **Path Traversal**: Tests file access controls
@@ -247,6 +251,7 @@ make fuzz-restler-auto
 ```
 
 Notes:
+
 - If Docker is not present, `fuzz-restler-auto` will print a friendly message and exit successfully (use `make fuzz-restler` for manual steps). This behavior avoids CI failures on runners without Docker.
 - Artifacts are written under `reports/restler/`.
 
@@ -262,6 +267,7 @@ curl -sSf http://localhost:4444/openapi.json -o reports/restler/openapi.json
 ```
 
 Notes:
+
 - Ensure the server exposes `http://localhost:4444/openapi.json`.
 - For authenticated specs, supply tokens/headers to RESTler as needed.
 - Increase `--time_budget` for deeper exploration in nightly runs.
@@ -289,6 +295,7 @@ Hypothesis provides detailed statistics about test execution:
 ### Bug Discovery
 
 When fuzzing finds issues, it provides:
+
 - **Minimal failing example**: Simplified input that reproduces the bug
 - **Seed for reproduction**: Run with `--hypothesis-seed=X` to reproduce
 - **Call stack**: Exact location where the failure occurred
@@ -415,6 +422,7 @@ st.text().filter(lambda x: '$' in x)
 ### Common Edge Cases to Test
 
 **JSON-RPC Validation:**
+
 - Empty objects: `{}`
 - Non-objects: `null`, `[]`, `"string"`, `123`
 - Missing required fields
@@ -422,12 +430,14 @@ st.text().filter(lambda x: '$' in x)
 - Very large payloads
 
 **JSONPath Processing:**
+
 - Invalid expressions: `$..`, `$[`, `$.`
 - Very long expressions
 - Unicode characters
 - Special characters that break parsing
 
 **API Endpoints:**
+
 - Malformed JSON payloads
 - Missing authentication headers
 - Invalid content types
@@ -459,11 +469,13 @@ FailedHealthCheck: filtering out a lot of inputs
 ### Performance Tuning
 
 **Slow Tests:**
+
 - Reduce `max_examples` for development
 - Use `HYPOTHESIS_PROFILE=ci` for faster execution
 - Add `@settings(timeout=timedelta(seconds=10))` for time limits
 
 **Memory Issues:**
+
 - Limit recursive data structure depth
 - Use `max_leaves` parameter in recursive strategies
 - Monitor corpus size growth
@@ -495,6 +507,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
+
     - cron: '0 2 * * *'  # Nightly
 
 jobs:
@@ -503,10 +516,12 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - run: make fuzz-quick
 
   fuzz-extended:
@@ -514,10 +529,12 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
     steps:
+
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - run: make fuzz-extended
       - run: make fuzz-report
       - uses: actions/upload-artifact@v4
@@ -533,8 +550,10 @@ Add fuzzing to pre-commit pipeline:
 ```yaml
 # .pre-commit-config.yaml
 repos:
+
   - repo: local
     hooks:
+
       - id: fuzz-quick
         name: Quick Fuzz Testing
         entry: make fuzz-quick
@@ -577,6 +596,7 @@ Our fuzzing implementation has already discovered several real bugs:
 **Root Cause**: Function assumes input is always a dictionary and calls `.get()` method.
 
 **Examples that crash:**
+
 - `json.loads("null")` → `None` → `None.get("jsonrpc")` crashes
 - `json.loads("0")` → `0` → `0.get("jsonrpc")` crashes
 - `json.loads("[]")` → `[]` → `[].get("jsonrpc")` crashes
@@ -588,6 +608,7 @@ Our fuzzing implementation has already discovered several real bugs:
 **Issue**: Pydantic schemas accept broader input types than expected.
 
 **Examples:**
+
 - `AuthenticationValues(auth_type="")` accepts empty strings
 - `ToolCreate(input_schema=None)` allows None values
 - Various unicode and special character handling inconsistencies
@@ -682,12 +703,14 @@ def test_performance_regression(self, input_text):
 The `make fuzz-report` command generates comprehensive reports:
 
 **JSON Report** (`reports/fuzz-report.json`):
+
 - Machine-readable results for CI integration
 - Tool execution statistics
 - Failure counts and error categorization
 - Corpus and coverage metrics
 
 **Markdown Report** (`reports/fuzz-report.md`):
+
 - Human-readable executive summary
 - Tool-by-tool breakdown
 - Recommendations for action

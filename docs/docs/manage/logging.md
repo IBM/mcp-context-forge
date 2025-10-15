@@ -137,11 +137,13 @@ logs/
 ```
 
 **Configuration Options:**
+
 - `LOG_MAX_SIZE_MB=10` - Rotate when file reaches 10MB
 - `LOG_BACKUP_COUNT=3` - Keep 3 backup files (plus current file = 4 total)
 - `LOG_BACKUP_COUNT=0` - No backup files (only current file kept)
 
 **Without Rotation:**
+
 - When `LOG_ROTATION_ENABLED=false`, files grow indefinitely
 - Use external log management tools for cleanup if needed
 

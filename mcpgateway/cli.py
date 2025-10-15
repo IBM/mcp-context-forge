@@ -183,6 +183,65 @@ def _handle_config_schema(output: Optional[str] = None) -> None:
         print(data)
 
 
+def _handle_support_bundle(
+    output_dir: Optional[str] = None,
+    log_lines: int = 1000,
+    include_logs: bool = True,
+    include_env: bool = True,
+    include_system: bool = True,
+) -> None:
+    """
+    Generate a support bundle containing diagnostics and logs.
+
+    Creates a ZIP file with version info, system diagnostics, configuration,
+    and logs - all automatically sanitized to remove sensitive data like
+    passwords, tokens, and API keys.
+
+    Args:
+        output_dir (Optional[str]): Directory for bundle output (default: /tmp)
+        log_lines (int): Number of log lines to include (default: 1000, 0 = all)
+        include_logs (bool): Include log files (default: True)
+        include_env (bool): Include environment config (default: True)
+        include_system (bool): Include system info (default: True)
+
+    Raises:
+        SystemExit: If bundle generation fails
+
+    Examples:
+        >>> # Generate bundle with default settings
+        >>> _handle_support_bundle()  # doctest: +SKIP
+        ✅ Support bundle created: /tmp/mcpgateway-support-2025-01-09-120000.zip
+
+        >>> # Generate bundle with custom settings
+        >>> _handle_support_bundle(output_dir="/tmp", log_lines=500)  # doctest: +SKIP
+        ✅ Support bundle created: /tmp/mcpgateway-support-2025-01-09-120000.zip
+    """
+    # First-Party
+    from mcpgateway.services.support_bundle_service import SupportBundleConfig, SupportBundleService  # pylint: disable=import-outside-toplevel
+
+    try:
+        config = SupportBundleConfig(
+            include_logs=include_logs,
+            include_env=include_env,
+            include_system_info=include_system,
+            log_tail_lines=log_lines,
+            output_dir=Path(output_dir) if output_dir else None,
+        )
+
+        service = SupportBundleService()
+        bundle_path = service.generate_bundle(config)
+
+        print(f"✅ Support bundle created: {bundle_path}")
+        print(f"📦 Bundle size: {bundle_path.stat().st_size / 1024:.2f} KB")
+        print()
+        print("⚠️  Security Notice:")
+        print("   The bundle has been sanitized, but please review before sharing.")
+        print("   Sensitive data (passwords, tokens, secrets) have been redacted.")
+    except Exception as exc:
+        print(f"❌ Failed to create support bundle: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 # ---------------------------------------------------------------------------
 # Public entry-point
 # ---------------------------------------------------------------------------
@@ -205,10 +264,17 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
         mcpgateway --workers 4
         mcpgateway --validate-config [path]
         mcpgateway --config-schema [output]
+        mcpgateway --support-bundle [options]
 
     Flags:
-        --validate-config [path]   Validate .env file (default: .env)
-        --config-schema [output]   Print or write JSON schema for Settings
+        --validate-config [path]           Validate .env file (default: .env)
+        --config-schema [output]           Print or write JSON schema for Settings
+        --support-bundle                   Generate support bundle for troubleshooting
+            --output-dir [path]            Output directory (default: /tmp)
+            --log-lines [n]                Number of log lines (default: 1000, 0 = all)
+            --no-logs                      Exclude log files
+            --no-env                       Exclude environment config
+            --no-system                    Exclude system info
     """
 
     # Check for export/import commands first
@@ -237,6 +303,44 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
         if cmd == "--config-schema":
             output = sys.argv[2] if len(sys.argv) > 2 else None
             _handle_config_schema(output)
+            return
+
+        if cmd == "--support-bundle":
+            # Parse support bundle options
+            output_dir = None
+            log_lines = 1000
+            include_logs = True
+            include_env = True
+            include_system = True
+
+            i = 2
+            while i < len(sys.argv):
+                arg = sys.argv[i]
+                if arg == "--output-dir" and i + 1 < len(sys.argv):
+                    output_dir = sys.argv[i + 1]
+                    i += 2
+                elif arg == "--log-lines" and i + 1 < len(sys.argv):
+                    log_lines = int(sys.argv[i + 1])
+                    i += 2
+                elif arg == "--no-logs":
+                    include_logs = False
+                    i += 1
+                elif arg == "--no-env":
+                    include_env = False
+                    i += 1
+                elif arg == "--no-system":
+                    include_system = False
+                    i += 1
+                else:
+                    i += 1
+
+            _handle_support_bundle(
+                output_dir=output_dir,
+                log_lines=log_lines,
+                include_logs=include_logs,
+                include_env=include_env,
+                include_system=include_system,
+            )
             return
 
     # Discard the program name and inspect the rest.

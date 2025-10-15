@@ -191,6 +191,9 @@ class LoggingService:
             >>> service = LoggingService()
             >>> asyncio.run(service.initialize())
         """
+        # Update service log level from settings BEFORE configuring loggers
+        self._level = settings.log_level
+
         root_logger = logging.getLogger()
         self._loggers[""] = root_logger
 

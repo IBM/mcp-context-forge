@@ -402,6 +402,7 @@ class A2AAgentService:
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        user_email: Optional[str] = None,
     ) -> A2AAgentRead:
         """Update an existing A2A agent.
 
@@ -413,12 +414,14 @@ class A2AAgentService:
             modified_from_ip: IP address of modifier.
             modified_via: Modification method.
             modified_user_agent: User agent of modification request.
+            user_email: Email of user performing update (for ownership check).
 
         Returns:
             Updated agent data.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
+            PermissionError: If user doesn't own the agent.
             A2AAgentNameConflictError: If name conflicts with another agent.
             A2AAgentError: For other errors during update.
             IntegrityError: If a database integrity error occurs.
@@ -430,6 +433,14 @@ class A2AAgentService:
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, agent):
+                    raise PermissionError("Only the owner can update this agent")
             # Check for name conflict if name is being updated
             if agent_data.name and agent_data.name != agent.name:
                 visibility = agent_data.visibility or agent.visibility
@@ -445,7 +456,6 @@ class A2AAgentService:
                     existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
                     if existing_agent:
                         raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
-
             # Update fields
             update_data = agent_data.model_dump(exclude_unset=True)
             for field, value in update_data.items():
@@ -469,6 +479,9 @@ class A2AAgentService:
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
             return self._db_to_schema(agent)
+        except PermissionError:
+            db.rollback()
+            raise
         except A2AAgentNameConflictError as ie:
             db.rollback()
             raise ie
@@ -482,8 +495,8 @@ class A2AAgentService:
         except Exception as e:
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
-
-    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None) -> A2AAgentRead:
+        
+    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
         """Toggle the activation status of an A2A agent.
 
         Args:
@@ -491,18 +504,28 @@ class A2AAgentService:
             agent_id: Agent ID.
             activate: True to activate, False to deactivate.
             reachable: Optional reachability status.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             Updated agent data.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
+            PermissionError: If user doesn't own the agent.
         """
         query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
         agent = db.execute(query).scalar_one_or_none()
 
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+        if user_email:
+            # First-Party
+            from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+            permission_service = PermissionService(db)
+            if not await permission_service.check_resource_ownership(user_email, agent):
+                raise PermissionError("Only the owner can activate the Agent" if activate else "Only the owner can deactivate the Agent")
 
         agent.enabled = activate
         if reachable is not None:
@@ -515,27 +538,42 @@ class A2AAgentService:
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
         return self._db_to_schema(agent)
 
-    async def delete_agent(self, db: Session, agent_id: str) -> None:
+    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
         """Delete an A2A agent.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
+            user_email: Email of user performing delete (for ownership check).
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
+            PermissionError: If user doesn't own the agent.
         """
-        query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
-        agent = db.execute(query).scalar_one_or_none()
+        try:
+            query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
+            agent = db.execute(query).scalar_one_or_none()
 
-        if not agent:
-            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+            if not agent:
+                raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        agent_name = agent.name
-        db.delete(agent)
-        db.commit()
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
-        logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, agent):
+                    raise PermissionError("Only the owner can delete this agent")
+
+            agent_name = agent.name
+            db.delete(agent)
+            db.commit()
+
+            logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
+        except PermissionError:
+            db.rollback()
+            raise
 
     async def invoke_agent(self, db: Session, agent_name: str, parameters: Dict[str, Any], interaction_type: str = "query") -> Dict[str, Any]:
         """Invoke an A2A agent.

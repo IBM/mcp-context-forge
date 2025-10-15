@@ -65,6 +65,7 @@ from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
@@ -99,7 +100,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -883,7 +884,6 @@ app.add_middleware(
     expose_headers=["Content-Length", "X-Request-ID"],
 )
 
-
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
@@ -902,6 +902,9 @@ app.add_middleware(DocsAuthMiddleware)
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+# Add request logging middleware if enabled
+if settings.log_requests:
+    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -1492,6 +1495,8 @@ async def update_server(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerNameConflictError as e:
@@ -1530,8 +1535,11 @@ async def toggle_server_status(
         HTTPException: If the server is not found or there is an error.
     """
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is toggling server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.toggle_server_status(db, server_id, activate)
+        return await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerError as e:
@@ -1557,11 +1565,14 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depe
     """
     try:
         logger.debug(f"User {user} is deleting server with ID {server_id}")
-        await server_service.delete_server(db, server_id)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await server_service.delete_server(db, server_id, user_email=user_email)
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerError as e:
@@ -1922,6 +1933,7 @@ async def update_a2a_agent(
 
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -1930,7 +1942,10 @@ async def update_a2a_agent(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentNameConflictError as e:
@@ -1969,10 +1984,13 @@ async def toggle_a2a_agent_status(
         HTTPException: If the agent is not found or there is an error.
     """
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.toggle_agent_status(db, agent_id, activate)
+        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
@@ -2000,11 +2018,14 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=De
         logger.debug(f"User {user} is deleting A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        await a2a_service.delete_agent(db, agent_id)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
         return {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
@@ -2257,6 +2278,7 @@ async def update_tool(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
 
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await tool_service.update_tool(
             db,
             tool_id,
@@ -2265,20 +2287,23 @@ async def update_tool(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
     except Exception as ex:
+        if isinstance(ex, PermissionError):
+            raise HTTPException(status_code=403, detail=str(ex))
         if isinstance(ex, ToolNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
         if isinstance(ex, ValidationError):
-            logger.error(f"Validation error while creating tool: {ex}")
+            logger.error(f"Validation error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
         if isinstance(ex, IntegrityError):
-            logger.error(f"Integrity error while creating tool: {ex}")
+            logger.error(f"Integrity error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
         if isinstance(ex, ToolError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
-        logger.error(f"Unexpected error while creating tool: {ex}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the tool")
+        logger.error(f"Unexpected error while updating tool: {ex}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the tool")
 
 
 @tool_router.delete("/{tool_id}")
@@ -2300,8 +2325,13 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
     """
     try:
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
-        await tool_service.delete_tool(db, tool_id)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email)
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ToolNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2331,12 +2361,15 @@ async def toggle_tool_status(
     """
     try:
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
             "tool": tool.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2392,12 +2425,15 @@ async def toggle_resource_status(
     """
     logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
-        resource = await resource_service.toggle_resource_status(db, resource_id, activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
             "resource": resource.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2618,6 +2654,7 @@ async def update_resource(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         result = await resource_service.update_resource(
             db,
             resource_id,
@@ -2626,7 +2663,10 @@ async def update_resource(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:
@@ -2659,10 +2699,13 @@ async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=
         HTTPException: If the resource is not found or deletion fails.
     """
     try:
-        logger.debug(f"User {user} is deleting resource with ID {resource_id}")
-        await resource_service.delete_resource(db, resource_id)
+        logger.debug(f"User {user} is deleting resource with id {resource_id}")
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await resource_service.delete_resource(db, resource_id, user_email=user_email)
         await invalidate_resource_cache(resource_id)
         return {"status": "success", "message": f"Resource {resource_id} deleted"}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ResourceError as e:
@@ -2714,12 +2757,15 @@ async def toggle_prompt_status(
     """
     logger.debug(f"User: {user} requested toggle for prompt {prompt_id}, activate={activate}")
     try:
-        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
             "prompt": prompt.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2954,6 +3000,7 @@ async def update_prompt(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await prompt_service.update_prompt(
             db,
             prompt_id,
@@ -2962,8 +3009,11 @@ async def update_prompt(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
     except Exception as e:
+        if isinstance(e, PermissionError):
+            raise HTTPException(status_code=403, detail=str(e))
         if isinstance(e, PromptNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, ValidationError):
@@ -3002,9 +3052,12 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
     """
     logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
-        await prompt_service.delete_prompt(db, prompt_id)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
         return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
+        if isinstance(e, PermissionError):
+            raise HTTPException(status_code=403, detail=str(e))
         if isinstance(e, PromptNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, PromptError):
@@ -3046,16 +3099,20 @@ async def toggle_gateway_status(
     """
     logger.debug(f"User '{user}' requested toggle for gateway {gateway_id}, activate={activate}")
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         gateway = await gateway_service.toggle_gateway_status(
             db,
             gateway_id,
             activate,
+            user_email=user_email,
         )
         return {
             "status": "success",
             "message": f"Gateway {gateway_id} {'activated' if activate else 'deactivated'}",
             "gateway": gateway.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -3200,6 +3257,7 @@ async def update_gateway(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await gateway_service.update_gateway(
             db,
             gateway_id,
@@ -3208,8 +3266,11 @@ async def update_gateway(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
     except Exception as ex:
+        if isinstance(ex, PermissionError):
+            return JSONResponse(content={"message": str(ex)}, status_code=403)
         if isinstance(ex, GatewayNotFoundError):
             return JSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
         if isinstance(ex, GatewayConnectionError):
@@ -3242,10 +3303,21 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
 
     Returns:
         Status message.
+
+    Raises:
+        HTTPException: If permission denied (403), gateway not found (404), or other gateway error (400).
     """
     logger.debug(f"User '{user}' requested deletion of gateway {gateway_id}")
-    await gateway_service.delete_gateway(db, gateway_id)
-    return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
+    try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except GatewayError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 ##############
@@ -3411,11 +3483,19 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             request_id = params.get("requestId", None)
             if not uri:
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
-            result = await resource_service.read_resource(db, uri, request_id=request_id, user=get_user_email(user))
-            if hasattr(result, "model_dump"):
-                result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
-            else:
-                result = {"contents": [result]}
+            # Get user email for OAuth token selection
+            user_email = get_user_email(user)
+            try:
+                result = await resource_service.read_resource(db, uri, request_id=request_id, user=user_email)
+                if hasattr(result, "model_dump"):
+                    result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
+                else:
+                    result = {"contents": [result]}
+            except ValueError:
+                # Resource has no local content, forward to upstream MCP server
+                result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
+                if hasattr(result, "model_dump"):
+                    result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "prompts/list":
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
@@ -4333,6 +4413,17 @@ try:
     logger.info("Reverse proxy router included")
 except ImportError:
     logger.debug("Reverse proxy router not available")
+
+# Include LLMChat router
+if settings.llmchat_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.llmchat_router import llmchat_router
+
+        app.include_router(llmchat_router)
+        logger.info("LLM Chat router included")
+    except ImportError:
+        logger.debug("LLM Chat router not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled

@@ -8,7 +8,7 @@ Authors: Manav Gupta
 
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.
 """
-
+import sys
 import asyncio
 import pytest
 import tempfile
@@ -242,21 +242,29 @@ sys.stdout.flush()
         assert endpoint._proc is None  # Process object should be cleaned up
         # Pump task might still exist but should be finished/cancelled
         if endpoint._pump_task is not None:
+            # Wait a bit for the task to complete if it's still running
+            for _ in range(10):  # Try up to 10 times (1 second total)
+                if endpoint._pump_task.done():
+                    break
+                await asyncio.sleep(0.1)
             assert endpoint._pump_task.done()  # Task should be finished
 
     @pytest.mark.asyncio
     async def test_multiple_env_vars(self, test_script):
         """Test with multiple environment variables."""
         pubsub = _PubSub()
-        env_vars = {
+
+        env_vars = os.environ.copy()
+        env_vars.update({
             "GITHUB_TOKEN": "github-token-123",
             "TENANT_ID": "acme-corp",
             "API_KEY": "api-key-456",
             "ENVIRONMENT": "production",
             "DEBUG": "false",
-        }
+        })
 
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"{sys.executable} {test_script}", pubsub, env_vars)
+
         await endpoint.start()
 
         try:

@@ -233,6 +233,12 @@ mypy.ini
 *.sqlite3
 mcp.db
 db.sqlite3
+# Explicit database file patterns in application directories
+mcpgateway/*.db
+mcpgateway/*.sqlite
+mcpgateway/*.sqlite3
+mcpgateway/mcp.db
+mcpgateway/test_migration.db
 
 # Logs
 *.log
@@ -326,6 +332,9 @@ temp/
 #----------------------------------------------------------------------
 *.md
 !README.md
+
+# Application configuration files (explicitly include)
+!mcp-catalog.yml
 LICENSE
 CHANGELOG
 AUTHORS

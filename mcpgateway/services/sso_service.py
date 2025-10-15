@@ -590,6 +590,67 @@ class SSOService:
                 "provider": "okta",
             }
 
+        # Handle Keycloak provider with role mapping
+        if provider.id == "keycloak":
+            metadata = provider.metadata or {}
+            username_claim = metadata.get("username_claim", "preferred_username")
+            email_claim = metadata.get("email_claim", "email")
+            groups_claim = metadata.get("groups_claim", "groups")
+
+            groups = []
+
+            # Extract realm roles
+            if metadata.get("map_realm_roles"):
+                realm_access = user_data.get("realm_access", {})
+                realm_roles = realm_access.get("roles", [])
+                groups.extend(realm_roles)
+
+            # Extract client roles
+            if metadata.get("map_client_roles"):
+                resource_access = user_data.get("resource_access", {})
+                for client, access in resource_access.items():
+                    client_roles = access.get("roles", [])
+                    # Prefix with client name to avoid conflicts
+                    groups.extend([f"{client}:{role}" for role in client_roles])
+
+            # Extract groups from custom claim
+            if groups_claim in user_data:
+                custom_groups = user_data.get(groups_claim, [])
+                if isinstance(custom_groups, list):
+                    groups.extend(custom_groups)
+
+            return {
+                "email": user_data.get(email_claim),
+                "full_name": user_data.get("name"),
+                "avatar_url": user_data.get("picture"),
+                "provider_id": user_data.get("sub"),
+                "username": user_data.get(username_claim) or user_data.get(email_claim, "").split("@")[0],
+                "provider": "keycloak",
+                "groups": list(set(groups)),  # Deduplicate
+            }
+
+        # Handle Microsoft Entra ID provider
+        if provider.id == "entra":
+            # Microsoft's userinfo endpoint often omits the email claim
+            # Fallback: preferred_username (UPN) or upn claim
+            email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn")
+
+            # Extract username from email/UPN
+            username = None
+            if user_data.get("preferred_username"):
+                username = user_data.get("preferred_username")
+            elif email:
+                username = email.split("@")[0]
+
+            return {
+                "email": email,
+                "full_name": user_data.get("name") or email,  # Fallback to email if name missing
+                "avatar_url": user_data.get("picture"),
+                "provider_id": user_data.get("sub") or user_data.get("oid"),
+                "username": username,
+                "provider": "entra",
+            }
+
         # Generic OIDC format for all other providers
         return {
             "email": user_data.get("email"),

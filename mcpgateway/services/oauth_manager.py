@@ -592,7 +592,7 @@ class OAuthManager:
                 app_user_email=app_user_email,  # User from state
                 access_token=token_response["access_token"],
                 refresh_token=token_response.get("refresh_token"),
-                expires_in=token_response.get("expires_in", 3600),
+                expires_in=token_response.get("expires_in", self.settings.oauth_default_timeout),
                 scopes=token_response.get("scope", "").split(),
             )
 

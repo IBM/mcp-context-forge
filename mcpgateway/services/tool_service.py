@@ -226,7 +226,7 @@ class ToolService:
         await self._http_client.aclose()
         logger.info("Tool service shutdown complete")
 
-    async def get_top_tools(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+    async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
         Queries the database to get tools with their metrics, ordered by the number of executions
@@ -235,7 +235,7 @@ class ToolService:
 
         Args:
             db (Session): Database session for querying tool metrics.
-            limit (int): Maximum number of tools to return. Defaults to 5.
+            limit (Optional[int]): Maximum number of tools to return. Defaults to 5. If None, returns all tools.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -246,7 +246,7 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        results = (
+        query = (
             db.query(
                 DbTool.id,
                 DbTool.name,
@@ -264,9 +264,12 @@ class ToolService:
             .outerjoin(ToolMetric)
             .group_by(DbTool.id, DbTool.name)
             .order_by(desc("execution_count"))
-            .limit(limit)
-            .all()
         )
+
+        if limit is not None:
+            query = query.limit(limit)
+
+        results = query.all()
 
         return build_top_performers(results)
 
@@ -701,16 +704,18 @@ class ToolService:
         tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
         return self._convert_tool_to_read(tool)
 
-    async def delete_tool(self, db: Session, tool_id: str) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None) -> None:
         """
         Delete a tool by its ID.
 
         Args:
             db (Session): The SQLAlchemy database session.
             tool_id (str): The unique identifier of the tool.
+            user_email (Optional[str]): Email of user performing delete (for ownership check).
 
         Raises:
             ToolNotFoundError: If the tool is not found.
+            PermissionError: If user doesn't own the tool.
             ToolError: For other deletion errors.
 
         Examples:
@@ -730,16 +735,29 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, tool):
+                    raise PermissionError("Only the owner can delete this tool")
+
             tool_info = {"id": tool.id, "name": tool.name}
             db.delete(tool)
             db.commit()
             await self._notify_tool_deleted(tool_info)
             logger.info(f"Permanently deleted tool: {tool_info['name']}")
+        except PermissionError:
+            db.rollback()
+            raise
         except Exception as e:
             db.rollback()
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
         """
         Toggle the activation status of a tool.
 
@@ -748,6 +766,7 @@ class ToolService:
             tool_id (str): The unique identifier of the tool.
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             ToolRead: The updated tool object.
@@ -755,6 +774,7 @@ class ToolService:
         Raises:
             ToolNotFoundError: If the tool is not found.
             ToolError: For other errors.
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -779,6 +799,14 @@ class ToolService:
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, tool):
+                    raise PermissionError("Only the owner can activate the Tool" if activate else "Only the owner can deactivate the Tool")
+
             is_activated = is_reachable = False
             if tool.enabled != activate:
                 tool.enabled = activate
@@ -799,6 +827,8 @@ class ToolService:
                     await self._notify_tool_deactivated(tool)
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
             return self._convert_tool_to_read(tool)
+        except PermissionError as e:
+            raise e
         except Exception as e:
             db.rollback()
             raise ToolError(f"Failed to toggle tool status: {str(e)}")
@@ -1128,6 +1158,7 @@ class ToolService:
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        user_email: Optional[str] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -1140,12 +1171,14 @@ class ToolService:
             modified_from_ip (Optional[str]): IP address of modifier.
             modified_via (Optional[str]): Modification method (ui, api).
             modified_user_agent (Optional[str]): User agent of modification request.
+            user_email (Optional[str]): Email of user performing update (for ownership check).
 
         Returns:
             The updated ToolRead object.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
+            PermissionError: If user doesn't own the tool.
             IntegrityError: If there is a database integrity error.
             ToolNameConflictError: If a tool with the same name already exists.
             ToolError: For other update errors.
@@ -1172,6 +1205,15 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, tool):
+                    raise PermissionError("Only the owner can update this tool")
 
             # Check for name change and ensure uniqueness
             if tool_update.name and tool_update.name != tool.name:
@@ -1246,13 +1288,19 @@ class ToolService:
             await self._notify_tool_updated(tool)
             logger.info(f"Updated tool: {tool.name}")
             return self._convert_tool_to_read(tool)
+        except PermissionError:
+            db.rollback()
+            raise
         except IntegrityError as ie:
+            db.rollback()
             logger.error(f"IntegrityError during tool update: {ie}")
             raise ie
         except ToolNotFoundError as tnfe:
+            db.rollback()
             logger.error(f"Tool not found during update: {tnfe}")
             raise tnfe
         except ToolNameConflictError as tnce:
+            db.rollback()
             logger.error(f"Tool name conflict during update: {tnce}")
             raise tnce
         except Exception as ex:

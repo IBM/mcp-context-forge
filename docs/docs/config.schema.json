@@ -15,6 +15,8 @@
       "default": 4444,
       "env": "PORT",
       "exclusiveMinimum": 0,
+      "maximum": 65535,
+      "minimum": 1,
       "title": "Port",
       "type": "integer"
     },
@@ -29,13 +31,13 @@
       "type": "string"
     },
     "templates_dir": {
-      "default": "/home/veeresh/ibm_mcp/mcp-context-forge/mcpgateway/templates",
+      "default": "/home/cmihai/github/mcp-context-forge/mcpgateway/templates",
       "format": "path",
       "title": "Templates Dir",
       "type": "string"
     },
     "static_dir": {
-      "default": "/home/veeresh/ibm_mcp/mcp-context-forge/mcpgateway/static",
+      "default": "/home/cmihai/github/mcp-context-forge/mcpgateway/static",
       "format": "path",
       "title": "Static Dir",
       "type": "string"
@@ -66,6 +68,7 @@
       "type": "string"
     },
     "jwt_secret_key": {
+      "default": "my-test-key",
       "env": "JWT_SECRET_KEY",
       "format": "password",
       "title": "Jwt Secret Key",
@@ -273,6 +276,255 @@
       "description": "Okta issuer URL",
       "title": "Sso Okta Issuer"
     },
+    "sso_keycloak_enabled": {
+      "default": false,
+      "description": "Enable Keycloak OIDC authentication",
+      "title": "Sso Keycloak Enabled",
+      "type": "boolean"
+    },
+    "sso_keycloak_base_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak base URL (e.g., https://keycloak.example.com)",
+      "title": "Sso Keycloak Base Url"
+    },
+    "sso_keycloak_realm": {
+      "default": "master",
+      "description": "Keycloak realm name",
+      "title": "Sso Keycloak Realm",
+      "type": "string"
+    },
+    "sso_keycloak_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak client ID",
+      "title": "Sso Keycloak Client Id"
+    },
+    "sso_keycloak_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak client secret",
+      "title": "Sso Keycloak Client Secret"
+    },
+    "sso_keycloak_map_realm_roles": {
+      "default": true,
+      "description": "Map Keycloak realm roles to gateway teams",
+      "title": "Sso Keycloak Map Realm Roles",
+      "type": "boolean"
+    },
+    "sso_keycloak_map_client_roles": {
+      "default": false,
+      "description": "Map Keycloak client roles to gateway RBAC",
+      "title": "Sso Keycloak Map Client Roles",
+      "type": "boolean"
+    },
+    "sso_keycloak_username_claim": {
+      "default": "preferred_username",
+      "description": "JWT claim for username",
+      "title": "Sso Keycloak Username Claim",
+      "type": "string"
+    },
+    "sso_keycloak_email_claim": {
+      "default": "email",
+      "description": "JWT claim for email",
+      "title": "Sso Keycloak Email Claim",
+      "type": "string"
+    },
+    "sso_keycloak_groups_claim": {
+      "default": "groups",
+      "description": "JWT claim for groups/roles",
+      "title": "Sso Keycloak Groups Claim",
+      "type": "string"
+    },
+    "sso_entra_enabled": {
+      "default": false,
+      "description": "Enable Microsoft Entra ID OIDC authentication",
+      "title": "Sso Entra Enabled",
+      "type": "boolean"
+    },
+    "sso_entra_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client ID",
+      "title": "Sso Entra Client Id"
+    },
+    "sso_entra_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client secret",
+      "title": "Sso Entra Client Secret"
+    },
+    "sso_entra_tenant_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID tenant ID",
+      "title": "Sso Entra Tenant Id"
+    },
+    "sso_generic_enabled": {
+      "default": false,
+      "description": "Enable generic OIDC provider (Keycloak, Auth0, etc.)",
+      "title": "Sso Generic Enabled",
+      "type": "boolean"
+    },
+    "sso_generic_provider_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Provider ID (e.g., 'keycloak', 'auth0', 'authentik')",
+      "title": "Sso Generic Provider Id"
+    },
+    "sso_generic_display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Display name shown on login page",
+      "title": "Sso Generic Display Name"
+    },
+    "sso_generic_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client ID",
+      "title": "Sso Generic Client Id"
+    },
+    "sso_generic_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client secret",
+      "title": "Sso Generic Client Secret"
+    },
+    "sso_generic_authorization_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Authorization endpoint URL",
+      "title": "Sso Generic Authorization Url"
+    },
+    "sso_generic_token_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Token endpoint URL",
+      "title": "Sso Generic Token Url"
+    },
+    "sso_generic_userinfo_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Userinfo endpoint URL",
+      "title": "Sso Generic Userinfo Url"
+    },
+    "sso_generic_issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC issuer URL",
+      "title": "Sso Generic Issuer"
+    },
+    "sso_generic_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "openid profile email",
+      "description": "OAuth scopes (space-separated)",
+      "title": "Sso Generic Scope"
+    },
     "sso_auto_create_users": {
       "default": true,
       "description": "Automatically create users from SSO providers",
@@ -342,9 +594,12 @@
       "type": "string"
     },
     "auth_encryption_secret": {
-      "default": "my-test-salt",
+      "default": "**********",
+      "env": "AUTH_ENCRYPTION_SECRET",
+      "format": "password",
       "title": "Auth Encryption Secret",
-      "type": "string"
+      "type": "string",
+      "writeOnly": true
     },
     "oauth_request_timeout": {
       "default": 30,
@@ -357,6 +612,73 @@
       "description": "Maximum retries for OAuth token requests",
       "title": "Oauth Max Retries",
       "type": "integer"
+    },
+    "oauth_default_timeout": {
+      "default": 3600,
+      "description": "Default OAuth token timeout in seconds",
+      "title": "Oauth Default Timeout",
+      "type": "integer"
+    },
+    "dcr_enabled": {
+      "default": true,
+      "description": "Enable Dynamic Client Registration (RFC 7591) - gateway acts as DCR client",
+      "title": "Dcr Enabled",
+      "type": "boolean"
+    },
+    "dcr_auto_register_on_missing_credentials": {
+      "default": true,
+      "description": "Automatically register with AS when gateway has issuer but no client_id",
+      "title": "Dcr Auto Register On Missing Credentials",
+      "type": "boolean"
+    },
+    "dcr_default_scopes": {
+      "default": [
+        "mcp:read"
+      ],
+      "description": "Default MCP scopes to request during DCR",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dcr Default Scopes",
+      "type": "array"
+    },
+    "dcr_allowed_issuers": {
+      "description": "Optional allowlist of issuer URLs for DCR (empty = allow any)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dcr Allowed Issuers",
+      "type": "array"
+    },
+    "dcr_token_endpoint_auth_method": {
+      "default": "client_secret_basic",
+      "description": "Token endpoint auth method for DCR (client_secret_basic or client_secret_post)",
+      "title": "Dcr Token Endpoint Auth Method",
+      "type": "string"
+    },
+    "dcr_metadata_cache_ttl": {
+      "default": 3600,
+      "description": "AS metadata cache TTL in seconds (RFC 8414 discovery)",
+      "title": "Dcr Metadata Cache Ttl",
+      "type": "integer"
+    },
+    "dcr_client_name_template": {
+      "default": "MCP Gateway ({gateway_name})",
+      "description": "Template for client_name in DCR requests",
+      "title": "Dcr Client Name Template",
+      "type": "string"
+    },
+    "oauth_discovery_enabled": {
+      "default": true,
+      "description": "Enable OAuth AS metadata discovery (RFC 8414)",
+      "title": "Oauth Discovery Enabled",
+      "type": "boolean"
+    },
+    "oauth_preferred_code_challenge_method": {
+      "default": "S256",
+      "description": "Preferred PKCE code challenge method (S256 or plain)",
+      "title": "Oauth Preferred Code Challenge Method",
+      "type": "string"
     },
     "email_auth_enabled": {
       "default": true,
@@ -534,6 +856,36 @@
       "title": "Mcpgateway A2A Metrics Enabled",
       "type": "boolean"
     },
+    "mcpgateway_catalog_enabled": {
+      "default": true,
+      "description": "Enable MCP server catalog feature",
+      "title": "Mcpgateway Catalog Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_catalog_file": {
+      "default": "mcp-catalog.yml",
+      "description": "Path to catalog configuration file",
+      "title": "Mcpgateway Catalog File",
+      "type": "string"
+    },
+    "mcpgateway_catalog_auto_health_check": {
+      "default": true,
+      "description": "Automatically health check catalog servers",
+      "title": "Mcpgateway Catalog Auto Health Check",
+      "type": "boolean"
+    },
+    "mcpgateway_catalog_cache_ttl": {
+      "default": 3600,
+      "description": "Catalog cache TTL in seconds",
+      "title": "Mcpgateway Catalog Cache Ttl",
+      "type": "integer"
+    },
+    "mcpgateway_catalog_page_size": {
+      "default": 100,
+      "description": "Number of catalog servers per page",
+      "title": "Mcpgateway Catalog Page Size",
+      "type": "integer"
+    },
     "skip_ssl_verify": {
       "default": false,
       "title": "Skip Ssl Verify",
@@ -546,11 +898,17 @@
     },
     "environment": {
       "default": "development",
+      "enum": [
+        "development",
+        "staging",
+        "production"
+      ],
       "env": "ENVIRONMENT",
       "title": "Environment",
       "type": "string"
     },
     "app_domain": {
+      "default": "http://localhost:4444",
       "env": "APP_DOMAIN",
       "format": "uri",
       "maxLength": 2083,
@@ -632,8 +990,8 @@
     },
     "allowed_origins": {
       "default": [
-        "http://localhost:4444",
-        "http://localhost"
+        "http://localhost",
+        "http://localhost:4444"
       ],
       "items": {
         "type": "string"
@@ -657,6 +1015,12 @@
       "title": "Require Strong Secrets",
       "type": "boolean"
     },
+    "llmchat_enabled": {
+      "default": false,
+      "description": "Enable LLM Chat feature",
+      "title": "Llmchat Enabled",
+      "type": "boolean"
+    },
     "retry_max_attempts": {
       "default": 3,
       "title": "Retry Max Attempts",
@@ -678,7 +1042,7 @@
       "type": "number"
     },
     "log_level": {
-      "default": "INFO",
+      "default": "ERROR",
       "enum": [
         "DEBUG",
         "INFO",
@@ -686,6 +1050,7 @@
         "ERROR",
         "CRITICAL"
       ],
+      "env": "LOG_LEVEL",
       "title": "Log Level",
       "type": "string"
     },
@@ -788,23 +1153,15 @@
       "type": "boolean"
     },
     "federation_peers": {
-      "anyOf": [
-        {
-          "items": {
-            "format": "uri",
-            "maxLength": 2083,
-            "minLength": 1,
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
       "env": "FEDERATION_PEERS",
-      "title": "Federation Peers"
+      "items": {
+        "format": "uri",
+        "maxLength": 2083,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Federation Peers",
+      "type": "array"
     },
     "federation_timeout": {
       "default": 120,
@@ -852,14 +1209,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "text/plain",
-        "application/json",
-        "image/jpeg",
-        "image/png",
-        "text/markdown",
-        "application/xml",
         "image/gif",
-        "text/html"
+        "application/xml",
+        "text/plain",
+        "text/html",
+        "application/json",
+        "text/markdown",
+        "image/jpeg",
+        "image/png"
       ],
       "items": {
         "type": "string"
@@ -1344,6 +1701,12 @@
       "title": "Enable Header Passthrough",
       "type": "boolean"
     },
+    "enable_overwrite_base_headers": {
+      "default": false,
+      "description": "Enable overwriting of base headers",
+      "title": "Enable Overwrite Base Headers",
+      "type": "boolean"
+    },
     "default_passthrough_headers": {
       "items": {
         "type": "string"
@@ -1357,10 +1720,6 @@
       "type": "string"
     }
   },
-  "required": [
-    "jwt_secret_key",
-    "app_domain"
-  ],
   "title": "Settings",
   "type": "object"
 }

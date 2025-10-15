@@ -142,6 +142,32 @@ LOG_FOLDER=logs
 
 ## Common Development Tasks
 
+### Generating Support Bundles
+```bash
+# Generate a support bundle for troubleshooting
+mcpgateway --support-bundle --output-dir /tmp --log-lines 1000
+
+# Customize what's included
+mcpgateway --support-bundle --no-logs --log-lines 500
+
+# Alternative: Use the service directly
+python -c "from mcpgateway.services.support_bundle_service import create_support_bundle; print(create_support_bundle())"
+```
+
+The support bundle includes:
+- Version and system information
+- Configuration (with secrets automatically redacted)
+- Application logs (sanitized)
+- Platform details
+- Service status
+- Database and cache information
+
+**Security**: All sensitive data (passwords, tokens, API keys, secrets) are automatically sanitized before inclusion in the bundle.
+
+**API Endpoint**: `GET /admin/support-bundle/generate?log_lines=1000`
+
+**Admin UI**: Available in the Diagnostics tab with a "Download Support Bundle" button
+
 ### Authentication & Tokens
 ```bash
 # Generate JWT bearer token

@@ -25,8 +25,8 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
+    #image: ghcr.io/ibm/mcp-context-forge:0.8.0 # Use the release MCP Context Forge image
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
-    #image: ghcr.io/ibm/mcp-context-forge:0.6.0 # Use the release MCP Context Forge image
     build:
       context: .
       dockerfile: Containerfile     # Same one the Makefile builds
@@ -67,9 +67,22 @@ services:
       - ENVIRONMENT=development
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
+      - SECURE_COOKIES=false
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
+      # Uncomment to enable plugins
+      - PLUGINS_ENABLED=true
+      # Uncomment to enable catalog
+      - MCPGATEWAY_CATALOG_ENABLED=true
+      - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
+      # Authentication configuration
+      - AUTH_REQUIRED=true
+      - MCP_CLIENT_AUTH_ENABLED=true
+      - TRUST_PROXY_AUTH=false
+      # Logging configuration
+      - LOG_LEVEL=ERROR  # Default to ERROR for production performance
+      - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
 
       # Phoenix Observability Integration (uncomment when using Phoenix)
       # - PHOENIX_ENDPOINT=${PHOENIX_ENDPOINT:-http://phoenix:6006}
@@ -96,6 +109,7 @@ services:
       start_period: 30s
 
     # volumes:
+    #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
     #   - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # For JWT asymmetric keys:
@@ -108,7 +122,7 @@ services:
 ###############################################################################
 
   postgres:              # Official image - easy defaults
-    image: postgres:17
+    image: postgres:18
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
@@ -161,7 +175,7 @@ services:
   #   networks: [mcpnet]
 
   # migration:
-  #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Use the release MCP Context Forge image
+  #   #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
   #   image: mcpgateway/mcpgateway:latest # Use the local latest image. Run `make docker-prod` to build it.
   #   build:
   #     context: .

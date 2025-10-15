@@ -11,11 +11,13 @@ This document outlines the design for integrating OAuth 2.0 authentication into 
 ## Motivation
 
 Current limitations:
+
 - Personal Access Tokens (PATs) provide broad access with security risks
 - Manual token management across multiple services
 - No native support for delegated authorization with scoped permissions
 
 OAuth 2.0 provides:
+
 - Standardized authentication flows
 - Scoped access control
 - Temporary access without storing user credentials
@@ -351,7 +353,9 @@ sequenceDiagram
 ```env
 # OAuth Configuration
 OAUTH_REQUEST_TIMEOUT=30        # OAuth request timeout in seconds
-OAUTH_MAX_RETRIES=3            # Max retries for token requests
+OAUTH_MAX_RETRIES=3             # Max retries for token requests
+OAUTH_DEFAULT_TIMEOUT=3600      # Default OAuth token timeout in seconds
+
 
 # Encryption
 AUTH_ENCRYPTION_SECRET=your-secret-key  # For encrypting client secrets

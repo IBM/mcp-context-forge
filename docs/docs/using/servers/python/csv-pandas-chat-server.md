@@ -64,6 +64,7 @@ make serve-http
 Chat with CSV data using natural language queries.
 
 **Parameters:**
+
 - `query` (required): Natural language question about the data
 - `csv_content`: Raw CSV content as string
 - `file_path`: Path to local CSV file
@@ -77,6 +78,7 @@ Chat with CSV data using natural language queries.
 Get comprehensive information about CSV data structure.
 
 **Parameters:**
+
 - `csv_content`: Raw CSV content as string
 - `file_path`: Path to local CSV file
 - `file_url`: URL to CSV file
@@ -87,6 +89,7 @@ Get comprehensive information about CSV data structure.
 Perform automated analysis (basic, detailed, statistical).
 
 **Parameters:**
+
 - `csv_content`: Raw CSV content as string
 - `file_path`: Path to local CSV file
 - `file_url`: URL to CSV file

@@ -7,19 +7,20 @@
 
     ```bash
     # Using pipx - pip install pipx
-    pipx run mcp-contextforge-gateway
+    pipx run --spec mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 
-    # Or uvx - pip install uv (default: admin/changeme)
+    # Or uvx - pip install uv (default login: admin@example.com/changeme)
     uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
     ```
 
     OCI image (Docker/Podman) - shares host network so localhost works:
 
     ```bash
-    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:0.7.0
+    podman run --network=host -p 4444:4444 ghcr.io/ibm/mcp-context-forge:0.8.0
     ```
 
 ???+ example "🗂️ What URLs are available for the admin interface and API docs?"
+
     - Admin UI → <http://localhost:4444/admin>
     - Swagger → <http://localhost:4444/docs>
     - ReDoc → <http://localhost:4444/redoc>
@@ -32,6 +33,7 @@
     MCP is an open-source protocol released by Anthropic in Nov 2024 that lets language models invoke external tools via a typed JSON-RPC envelope. Community folks call it "USB-C for AI"-one connector for many models.
 
 ???+ info "🌍 Who supports MCP and what's the ecosystem like?"
+
     - Supported by GitHub & Microsoft Copilot, AWS Bedrock, Google Cloud Vertex AI, IBM watsonx, AgentBee, LangChain, CrewAI and 15,000+ community servers.
     - Contracts enforced via JSON Schema.
     - Multiple transports (STDIO, SSE, HTTP) - still converging.
@@ -64,6 +66,7 @@
     ```
 
 ???+ example "🪛 What are some advanced environment variables I can configure?"
+
     - Basic: `HOST`, `PORT`, `APP_ROOT_PATH`
     - Auth: `AUTH_REQUIRED`, `BASIC_AUTH_*`, `JWT_SECRET_KEY`
     - Logging: `LOG_LEVEL`, `LOG_FORMAT`, `LOG_TO_FILE`, `LOG_FILE`, `LOG_FOLDER`, `LOG_ROTATION_ENABLED`, `LOG_MAX_SIZE_MB`, `LOG_BACKUP_COUNT`
@@ -99,6 +102,7 @@
 ## 💾 Databases & Persistence
 
 ???+ info "🗄️ What databases are supported for persistence?"
+
     - SQLite (default) - used for development / small deployments.
     - PostgreSQL / MySQL / MariaDB via `DATABASE_URL`.
     - Redis (optional) for caching and federation.
@@ -108,7 +112,7 @@
     Include a persistent volume with your container or Kubernetes deployment. Ex:
 
     ```bash
-    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:0.7.0
+    docker run -v $(pwd)/data:/app ghcr.io/ibm/mcp-context-forge:0.8.0
     ```
 
     For production use, we recommend PostgreSQL. A Docker Compose target with PostgreSQL and Redis is provided.
@@ -142,6 +146,7 @@
     See the [Bulk Import guide](../manage/bulk-import.md) for details on format and error handling.
 
 ???+ example "🛡️ How do I enable TLS and configure CORS?"
+
     - Use `make podman-run-ssl` for self-signed certs or drop your own certificate under `certs`.
     - Set `ALLOWED_ORIGINS` or `CORS_ENABLED` for CORS headers.
 
@@ -159,6 +164,7 @@
     ```
 
     The gateway will:
+
     1. Use the `Authorization` header for gateway authentication
     2. Rename `X-Upstream-Authorization` to `Authorization` when forwarding to the upstream MCP server
     3. This solves the header conflict and allows different auth tokens for gateway vs upstream
@@ -192,14 +198,16 @@
 ## 🏎️ Performance Tuning & Scaling
 
 ???+ example "⚙️ What environment variables affect performance?"
+
     - `TOOL_CONCURRENT_LIMIT`
     - `TOOL_RATE_LIMIT`
     - `WEBSOCKET_PING_INTERVAL`
     - `SSE_RETRY_TIMEOUT`
 
 ???+ example "🧵 How do I scale the number of worker processes?"
-    - `GUNICORN_WORKERS` (for Gunicorn)
-    - `UVICORN_WORKERS` (for Uvicorn)
+
+    - Run `mcpgateway --workers 4` (Uvicorn CLI flag)
+    - Set `GUNICORN_WORKERS` when using the bundled Gunicorn scripts
 
 ???+ example "📊 How can I benchmark performance?"
     Use `hey` against `/rpc` with sample payloads from `tests/hey`.
@@ -221,6 +229,7 @@
     See the Observability docs for backend-specific setup. Admin UI also shows tool/server/prompt stats. A Prometheus `/metrics` endpoint may be added later.
 
 ???+ example "📜 What log formats are supported?"
+
     - `LOG_FORMAT=json` or `text`
     - Adjust with `LOG_LEVEL`
 
@@ -245,9 +254,20 @@
 
 ???+ example "🦜 How do I use MCP Gateway with LangChain?"
     ```python
-    from langchain.tools import MCPTool
-    tool = MCPTool(endpoint="http://localhost:4444/rpc",
-                   token=os.environ["MCPGATEWAY_BEARER_TOKEN"])
+    import os
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langgraph.prebuilt import create_react_agent
+
+    client = MultiServerMCPClient(
+        {
+            "gateway": {
+                "url": "http://localhost:4444/mcp",
+                "transport": "streamable_http",
+                "headers": {"Authorization": f"Bearer {os.environ['MCPGATEWAY_BEARER_TOKEN']}"}
+            }
+        }
+    )
+    agent = create_react_agent(tools=client.get_tools(), llm=your_language_model)
     ```
 
 ???+ example "🦾 How do I connect GitHub's mcp-server-git via Translate Bridge?"
@@ -269,7 +289,7 @@
     AUTO_CREATE_PERSONAL_TEAMS=true
     ```
 
-    Upgrading from v0.7.0? Follow [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
+    Upgrading from earlier releases? Follow [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
 
 ???+ info "🔁 Does basic auth still work?"
     Yes. Email auth is recommended for multi‑tenancy; basic auth remains available. Use `AUTH_REQUIRED` to enforce authentication.
@@ -282,20 +302,20 @@
 ## 🔐 SSO & Team Mapping
 
 ???+ example "👥 Can I auto‑assign users to teams via SSO?"
-    Yes. Use provider‑specific mappings to assign users on first login:
+    Yes. Add **Team Mapping** rules to each SSO provider (Admin UI → Manage → SSO → Provider → Team Mapping). Example JSON:
 
-    ```bash
-    # GitHub
-    GITHUB_ORG_TEAM_MAPPING={"your-org": "team-id"}
-
-    # Google Groups
-    GOOGLE_GROUPS_MAPPING={"group@yourcompany.com": "team-id"}
-
-    # Okta
-    OKTA_GROUP_MAPPING={"MCP Gateway Users": "team-id"}
+    ```json
+    {
+      "team_mapping": {
+        "your-org": {
+          "team_id": "team-uuid",
+          "role": "member"
+        }
+      }
+    }
     ```
 
-    See the SSO guides under Manage › SSO for details.
+    You can manage the same payload via the Admin API (`/auth/sso/admin/providers/{id}`) — see the SSO guides under Manage › SSO.
 
 ---
 
@@ -332,6 +352,7 @@
 ## 🗺️ Roadmap
 
 ???+ info "🧭 What features are planned for future versions?"
+
     - 🔐 OAuth2 client-credentials upstream auth with full spec compliance
     - [🌙 Dark-mode UI](https://github.com/IBM/mcp-context-forge/issues/26)
     - [🧾 Add "Version and Environment Info" tab to Admin UI](https://github.com/IBM/mcp-context-forge/issues/25)
@@ -364,6 +385,7 @@
     Use [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues) and [CONTRIBUTING.md](https://github.com/IBM/mcp-context-forge/blob/main/CONTRIBUTING.md).
 
 ???+ tip "🧑🎓 What code style and CI tools are used?"
+
     - Pre-commit: `ruff`, `black`, `mypy`, `isort`
     - Run `make lint` before PRs
 

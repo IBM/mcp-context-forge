@@ -29,7 +29,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -2954,7 +2954,7 @@ class TokenUsageLog(Base):
     __tablename__ = "token_usage_logs"
 
     # Primary key
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     # Token reference
     token_jti: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
@@ -3022,7 +3022,8 @@ class SSOProvider(Base):
     """SSO identity provider configuration for OAuth2/OIDC authentication.
 
     Stores configuration and credentials for external identity providers
-    like GitHub, Google, IBM Security Verify, and Okta.
+    like GitHub, Google, IBM Security Verify, Okta, Microsoft Entra ID,
+    and any generic OIDC-compliant provider (Keycloak, Auth0, Authentik, etc.).
 
     Attributes:
         id (str): Unique provider ID (e.g., 'github', 'google', 'ibm_verify')
@@ -3060,7 +3061,7 @@ class SSOProvider(Base):
     __tablename__ = "sso_providers"
 
     # Provider identification
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta, keycloak, entra, or any custom ID
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(20), nullable=False)  # oauth2, oidc

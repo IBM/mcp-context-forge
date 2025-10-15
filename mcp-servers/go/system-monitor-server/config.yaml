@@ -1,0 +1,60 @@
+# System Monitor Server Configuration
+# This file contains configuration for the system monitoring MCP server
+
+monitoring:
+  update_interval: "5s"
+  history_retention: "24h"
+  max_processes: 1000
+  process_update_freq: "1s"
+
+alerts:
+  cpu_threshold: 80.0      # percent
+  memory_threshold: 85.0   # percent
+  disk_threshold: 90.0     # percent
+  enabled: true
+
+health_checks:
+  - name: "web_server"
+    type: "http"
+    target: "http://localhost:8080/health"
+    interval: "30s"
+    timeout: "5s"
+
+  - name: "database"
+    type: "port"
+    target: "localhost:5432"
+    interval: "60s"
+    timeout: "5s"
+
+log_monitoring:
+  max_file_size: "100MB"
+  max_tail_lines: 1000
+  # SECURITY: Only allow reading from /var/log by default
+  # Add additional paths as needed for your environment
+  # NEVER use /tmp (too permissive) or relative paths
+  allowed_paths:
+    - "/var/log"
+    # Uncomment and customize paths as needed:
+    # - "/opt/myapp/logs"
+    # - "/home/user/application/logs"
+  follow_timeout: "30s"
+
+security:
+  # SECURITY: Root path restricts ALL file access within this directory (chroot-like)
+  # When set, all file operations are confined to this root directory
+  # Leave empty ("") to disable root restriction (not recommended for production)
+  # Example: "/opt/monitoring-root" - all paths must be within this directory
+  root_path: ""  # Empty = no root restriction
+
+  # SECURITY: Only allow reading from /var/log by default
+  # Customize this list for your specific monitoring needs
+  # Always use absolute paths, never use /tmp or relative paths
+  # If root_path is set, these paths must be relative to the root
+  allowed_paths:
+    - "/var/log"
+    # Uncomment and customize paths as needed:
+    # - "/opt/myapp/logs"
+    # - "/home/user/application/logs"
+  max_file_size: 104857600  # 100MB in bytes
+  rate_limit_rps: 10
+  enable_audit_log: true

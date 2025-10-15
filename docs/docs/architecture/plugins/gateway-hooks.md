@@ -116,6 +116,7 @@ class ServerPostOperationPayload(BaseModel):
 | `team_id` | `str` | Team performing operation | `"team-456"` |
 
 **Return Type (`ServerPreOperationResult`)**:
+
 - Extends `PluginResult[ServerPreOperationPayload]`
 - Can modify all payload attributes before server creation
 - Can block server registration with violation
@@ -287,10 +288,12 @@ async def server_pre_register(self, payload: ServerPreRegisterPayload,
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
+
 - Same fields as pre-register hook, plus database timestamps
 - Contains complete audit trail including `created_at` and `updated_at` timestamps
 
 **Return Type (`ServerPostOperationResult`)**:
+
 - Extends `PluginResult[ServerPostOperationPayload]`
 - Cannot modify server data (read-only post-operation hook)
 - Can trigger additional actions or external integrations
@@ -467,11 +470,13 @@ async def server_post_register(self, payload: ServerPostOperationPayload,
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
+
 - Same fields as register hooks, **plus**:
 - `server_id` - ID of server being updated
 - `original_server_info` - Server state before the update
 
 **Return Type (`ServerPreOperationResult`)**:
+
 - Extends `PluginResult[ServerPreOperationPayload]`
 - Can modify server update data before application
 - Can block server updates with violation
@@ -562,12 +567,14 @@ async def server_pre_update(self, payload: ServerPreOperationPayload,
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
+
 - Same fields as register hooks, **plus**:
 - `server_id` - ID of server that was updated
 - `original_server_info` - Server state before the update
 - `updated_at` - Database timestamp of the update
 
 **Return Type (`ServerPostOperationResult`)**:
+
 - Extends `PluginResult[ServerPostOperationPayload]`
 - Cannot modify server data (read-only post-operation hook)
 - Can trigger cache invalidation, notifications, and integrations
@@ -646,11 +653,13 @@ async def server_post_update(self, payload: ServerPostOperationPayload,
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
+
 - Same fields as other operations, **plus**:
 - `server_id` - ID of server being deleted
 - `original_server_info` - Complete server state before deletion (same as `payload.server_info`)
 
 **Return Type (`ServerPreOperationResult`)**:
+
 - Extends `PluginResult[ServerPreOperationPayload]`
 - Can modify deletion behavior (e.g., soft delete vs hard delete)
 - Can block server deletion with violation
@@ -779,12 +788,14 @@ async def server_pre_delete(self, payload: ServerPreOperationPayload,
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
+
 - Same fields as other operations, **plus**:
 - `server_id` - ID of server that was deleted
 - `original_server_info` - Complete server state before deletion
 - Database timestamps reflect the deletion operation
 
 **Return Type (`ServerPostOperationResult`)**:
+
 - Extends `PluginResult[ServerPostOperationPayload]`
 - Cannot modify server data (server is already deleted)
 - Can trigger cleanup, notifications, and external integrations
@@ -884,15 +895,18 @@ async def server_post_delete(self, payload: ServerPostOperationPayload,
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
+
 - Same fields as other operations, **plus**:
 - `server_id` - ID of server whose status is changing
 - `original_server_info` - Server state before status change (with current `is_active` value)
 
 **Special Context Fields for Status Change:**
+
 - `payload.server_info.is_active` - Target status (true = activating, false = deactivating)
 - `context.server_audit_info.original_server_info.is_active` - Current status
 
 **Return Type (`ServerPreOperationResult`)**:
+
 - Extends `PluginResult[ServerPreOperationPayload]`
 - Can modify status change behavior or add metadata
 - Can block status changes with violation
@@ -1035,12 +1049,14 @@ async def server_pre_status_change(self, payload: ServerPreOperationPayload,
 | `headers` | `HttpHeaderPayload` |  | HTTP headers for passthrough | `{"Authorization": "Bearer token123"}` |
 
 **Context Information (`ServerAuditInfo`)** - Available in `context.server_audit_info`:
+
 - Same fields as other operations, **plus**:
 - `server_id` - ID of server whose status changed
 - `original_server_info` - Server state before status change
 - Database timestamps reflect the status change operation
 
 **Return Type (`ServerPostOperationResult`)**:
+
 - Extends `PluginResult[ServerPostOperationPayload]`
 - Cannot modify server data (status change is complete)
 - Can trigger monitoring setup/teardown, notifications, and resource adjustments
@@ -1226,6 +1242,7 @@ class GatewayPostOperationPayload(BaseModel):
 | **Purpose** | Gateway validation, policy enforcement, configuration | Validate and transform gateway registration data |
 
 **Context Information (`GatewayAuditInfo`)** - Available in `context.gateway_audit_info`:
+
 - Operation metadata and user information
 - For register operations: `gateway_id` and `original_gateway_info` are None
 
@@ -1326,6 +1343,7 @@ async def gateway_post_register(self, payload: GatewayPostOperationPayload,
 | **Purpose** | Validation, federation impact assessment | Validate gateway updates and assess federation implications |
 
 **Context Information (`GatewayAuditInfo`)** - Available in `context.gateway_audit_info`:
+
 - Same fields as register hooks, **plus**:
 - `gateway_id` - ID of gateway being updated
 - `original_gateway_info` - Gateway state before the update
@@ -1665,6 +1683,7 @@ The gateway administrative hooks are organized into the following categories:
 | Entity Registration | <1ms | Minimal | <5ms per hook |
 
 **Best Practices**:
+
 - Keep administrative hooks lightweight and fast
 - Use async operations for external integrations
 - Implement proper timeout handling for elicitations

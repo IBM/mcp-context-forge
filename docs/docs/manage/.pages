@@ -22,7 +22,10 @@ nav:
   - sso-github-tutorial.md
   - sso-google-tutorial.md
   - sso-ibm-tutorial.md
+  - sso-microsoft-entra-id-tutorial.md
+  - sso-keycloak-tutorial.md
   - sso-okta-tutorial.md
+  - sso-generic-oidc-tutorial.md
   - rbac.md
   - teams.md
   - ui-customization.md

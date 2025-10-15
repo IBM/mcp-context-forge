@@ -154,7 +154,7 @@ class ResourceService:
         self._event_subscribers.clear()
         logger.info("Resource service shutdown complete")
 
-    async def get_top_resources(self, db: Session, limit: int = 5) -> List[TopPerformer]:
+    async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing resources based on execution count.
 
         Queries the database to get resources with their metrics, ordered by the number of executions
@@ -163,7 +163,7 @@ class ResourceService:
 
         Args:
             db (Session): Database session for querying resource metrics.
-            limit (int): Maximum number of resources to return. Defaults to 5.
+            limit (Optional[int]): Maximum number of resources to return. Defaults to 5. If None, returns all resources.
 
         Returns:
             List[TopPerformer]: A list of TopPerformer objects, each containing:
@@ -174,7 +174,7 @@ class ResourceService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        results = (
+        query = (
             db.query(
                 DbResource.id,
                 DbResource.uri.label("name"),  # Using URI as the name field for TopPerformer
@@ -192,9 +192,12 @@ class ResourceService:
             .outerjoin(ResourceMetric)
             .group_by(DbResource.id, DbResource.uri)
             .order_by(desc("execution_count"))
-            .limit(limit)
-            .all()
         )
+
+        if limit is not None:
+            query = query.limit(limit)
+
+        results = query.all()
 
         return build_top_performers(results)
 
@@ -808,7 +811,7 @@ class ResourceService:
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
 
-    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool) -> ResourceRead:
+    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
         """
         Toggle the activation status of a resource.
 
@@ -816,6 +819,7 @@ class ResourceService:
             db: Database session
             resource_id: Resource ID
             activate: True to activate, False to deactivate
+            user_email: Optional[str] The email of the user to check if the user has permission to modify.
 
         Returns:
             The updated ResourceRead object
@@ -823,6 +827,7 @@ class ResourceService:
         Raises:
             ResourceNotFoundError: If the resource is not found
             ResourceError: For other errors
+            PermissionError: If user doesn't own the agent.
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -847,6 +852,14 @@ class ResourceService:
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, resource):
+                    raise PermissionError("Only the owner can activate the Resource" if activate else "Only the owner can deactivate the Resource")
+
             # Update status if it's different
             if resource.is_active != activate:
                 resource.is_active = activate
@@ -864,7 +877,8 @@ class ResourceService:
 
             resource.team = self._get_team_name(db, resource.team_id)
             return self._convert_resource_to_read(resource)
-
+        except PermissionError as e:
+            raise e
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to toggle resource status: {str(e)}")
@@ -959,6 +973,7 @@ class ResourceService:
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        user_email: Optional[str] = None,
     ) -> ResourceRead:
         """
         Update a resource.
@@ -971,6 +986,7 @@ class ResourceService:
             modified_from_ip: IP address where the modification request originated
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
+            user_email: Email of user performing update (for ownership check)
 
         Returns:
             The updated ResourceRead object
@@ -978,6 +994,7 @@ class ResourceService:
         Raises:
             ResourceNotFoundError: If the resource is not found
             ResourceURIConflictError: If a resource with the same URI already exists.
+            PermissionError: If user doesn't own the resource
             ResourceError: For other update errors
             IntegrityError: If a database integrity error occurs.
             Exception: For unexpected errors
@@ -1019,6 +1036,15 @@ class ResourceService:
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, resource):
+                    raise PermissionError("Only the owner can update this resource")
 
             # Update fields if provided
             if resource_update.uri is not None:
@@ -1071,6 +1097,9 @@ class ResourceService:
 
             logger.info(f"Updated resource: {resource.uri}")
             return self._convert_resource_to_read(resource)
+        except PermissionError:
+            db.rollback()
+            raise
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
@@ -1084,16 +1113,18 @@ class ResourceService:
                 raise e
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
-    async def delete_resource(self, db: Session, resource_id: str) -> None:
+    async def delete_resource(self, db: Session, resource_id: str, user_email: Optional[str] = None) -> None:
         """
         Delete a resource.
 
         Args:
             db: Database session
             resource_id: Resource ID
+            user_email: Email of user performing delete (for ownership check)
 
         Raises:
             ResourceNotFoundError: If the resource is not found
+            PermissionError: If user doesn't own the resource
             ResourceError: For other deletion errors
 
         Example:
@@ -1118,6 +1149,15 @@ class ResourceService:
                 db.rollback()
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
+            # Check ownership if user_email provided
+            if user_email:
+                # First-Party
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+                permission_service = PermissionService(db)
+                if not await permission_service.check_resource_ownership(user_email, resource):
+                    raise PermissionError("Only the owner can delete this resource")
+
             # Store resource info for notification before deletion.
             resource_info = {
                 "id": resource.id,
@@ -1137,6 +1177,9 @@ class ResourceService:
 
             logger.info(f"Permanently deleted resource: {resource.uri}")
 
+        except PermissionError:
+            db.rollback()
+            raise
         except ResourceNotFoundError:
             # ResourceNotFoundError is re-raised to be handled in the endpoint.
             raise

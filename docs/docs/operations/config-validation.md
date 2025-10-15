@@ -46,6 +46,7 @@ make check-env
 ```
 
 The validator checks for:
+
 - **Type validation**: Ensures values match expected types (integers, URLs, enums)
 - **Security warnings**: Detects weak passwords, default secrets, insecure configurations
 - **Range validation**: Verifies ports, timeouts, and limits are within valid ranges

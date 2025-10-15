@@ -10,9 +10,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 
 ## 🚀 Overview & Goals
 
-**ContextForge MCP Gateway** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server or REST API-exposing a unified endpoint for all your AI clients.
-
-**⚠️ Caution**: The current release (0.7.0) is considered alpha / early beta. It is not production-ready and should only be used for local development, testing, or experimentation. Features, APIs, and behaviors are subject to change without notice. **Do not** deploy in production environments without thorough security review, validation and additional security mechanisms.  Many of the features required for secure, large-scale, or multi-tenant production deployments are still on the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) - which is itself evolving.
+**ContextForge MCP Gateway** is a gateway, registry, and proxy that sits in front of any [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server, A2A servers or REST API-exposing a unified endpoint for all your AI clients. See the the [project roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/) - which is itself evolving.
 
 It currently supports:
 
@@ -29,7 +27,7 @@ It currently supports:
 
 For a list of upcoming features, check out the [ContextForge MCP Gateway Roadmap](https://ibm.github.io/mcp-context-forge/architecture/roadmap/)
 
-> Note on Multi‑Tenancy (v0.7.0): A comprehensive multi‑tenant architecture with email authentication, teams, RBAC, and resource visibility is landing in v0.7.0. See the [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md) for details.
+> Note on Multi‑Tenancy (v0.8.0): A comprehensive multi‑tenant architecture with email authentication, teams, RBAC, and resource visibility is landing in v0.8.0. See the [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.8.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md) for details.
 
 **⚠️ Important**: MCP Gateway is not a standalone product - it is an open source component with **NO OFFICIAL SUPPORT** from IBM or its affiliates that can be integrated into your own solution architecture. If you choose to use it, you are responsible for evaluating its fit, securing the deployment, and managing its lifecycle. See [SECURITY.md](https://github.com/IBM/mcp-context-forge/blob/main/SECURITY.md) for more details.
 
@@ -370,13 +368,13 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.7.0
+  ghcr.io/ibm/mcp-context-forge:0.8.0
 
 # Tail logs (Ctrl+C to quit)
 docker logs -f mcpgateway
 
 # Generating an API key
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.7.0 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.8.0 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
 ```
 
@@ -407,7 +405,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-  ghcr.io/ibm/mcp-context-forge:0.7.0
+  ghcr.io/ibm/mcp-context-forge:0.8.0
 ```
 
 SQLite now lives on the host at `./data/mcp.db`.
@@ -434,7 +432,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -v $(pwd)/data:/data \
-  ghcr.io/ibm/mcp-context-forge:0.7.0
+  ghcr.io/ibm/mcp-context-forge:0.8.0
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
@@ -450,7 +448,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.7.0
+  ghcr.io/ibm/mcp-context-forge:0.8.0
 ```
 
 #### 2 - Persist SQLite
@@ -469,7 +467,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.7.0
+  ghcr.io/ibm/mcp-context-forge:0.8.0
 ```
 
 #### 3 - Host networking (rootless)
@@ -487,7 +485,7 @@ podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.7.0
+  ghcr.io/ibm/mcp-context-forge:0.8.0
 ```
 
 ---
@@ -496,7 +494,7 @@ podman run -d --name mcpgateway \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `v0.7.0`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `v0.8.0`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -542,7 +540,7 @@ docker run --rm -i \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.7.0 \
+  ghcr.io/ibm/mcp-context-forge:0.8.0 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -590,7 +588,7 @@ python3 -m mcpgateway.wrapper
 <summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.7.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.8.0"}}}
 
 # When there's no tools
 {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
@@ -624,7 +622,7 @@ docker run -i --rm \
   -e MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_AUTH=${MCP_AUTH} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.7.0 \
+  ghcr.io/ibm/mcp-context-forge:0.8.0 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -923,12 +921,12 @@ A `make compose-up` target is provided along with a [docker-compose.yml](https:/
 
 ---
 
-## 🔄 Upgrading to v0.7.0
+## 🔄 Upgrading to v0.8.0
 
-> **⚠️ CRITICAL**: Version 0.7.0 introduces comprehensive multi-tenancy and requires database migration.
+> **⚠️ CRITICAL**: Version 0.8.0 introduces comprehensive multi-tenancy and requires database migration.
 
 ### Backup Your Data First
-Before upgrading to v0.7.0, **always** backup your database, environment configuration, and export your settings:
+Before upgrading to v0.8.0, **always** backup your database, environment configuration, and export your settings:
 
 ```bash
 # Backup database (SQLite example)
@@ -949,6 +947,7 @@ curl -u admin:changeme "http://localhost:4444/admin/export/configuration" \
 
 ### If Migration Fails
 If the database migration fails or you encounter issues:
+
 1. **Restore database backup**: `cp mcp.db.backup.YYYYMMDD_HHMMSS mcp.db`
 2. **Restore .env backup**: `cp .env.bak .env`
 3. **Delete corrupted database**: `rm mcp.db` (if migration partially completed)
@@ -956,7 +955,8 @@ If the database migration fails or you encounter issues:
 
 ### Complete Migration Guide
 For detailed upgrade instructions, troubleshooting, and rollback procedures, see:
-- **📖 [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md)** - Complete step-by-step upgrade guide
+
+- **📖 [MIGRATION-0.8.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.8.0.md)** - Complete step-by-step upgrade guide
 - **🏗️ [Multi-tenancy Architecture](https://ibm.github.io/mcp-context-forge/architecture/multitenancy/)** - Understanding the new system
 
 ---
@@ -1005,6 +1005,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
+| `OAUTH_DEFAULT_TIMEOUT`         | Default OAuth token timeout in seconds                                     | `3600`                 | int > 0     |
 
 > 🔐 `BASIC_AUTH_USER`/`PASSWORD` are used for:
 >
@@ -1058,6 +1059,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 > 🎛️ **Admin UI**: Dedicated tab for agent management with test functionality
 
 **A2A Configuration Effects:**
+
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
@@ -1200,6 +1202,7 @@ MCP Gateway provides flexible logging with **stdout/stderr output by default** a
 | `LOG_BUFFER_SIZE_MB`    | Size of in-memory log buffer (MB)  | `1.0`             | float > 0                  |
 
 **Logging Behavior:**
+
 - **Default**: Logs only to **stdout/stderr** with human-readable text format
 - **File Logging**: When `LOG_TO_FILE=true`, logs to **both** file (JSON format) and console (text format)
 - **Log Rotation**: When `LOG_ROTATION_ENABLED=true`, files rotate at `LOG_MAX_SIZE_MB` with `LOG_BACKUP_COUNT` backup files (e.g., `.log.1`, `.log.2`)
@@ -1229,6 +1232,7 @@ LOG_FILE=gateway.log
 ```
 
 **Default Behavior:**
+
 - Logs are written **only to stdout/stderr** in human-readable text format
 - File logging is **disabled by default** (no files created)
 - Set `LOG_TO_FILE=true` to enable optional file logging with JSON format
@@ -1241,7 +1245,7 @@ MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed t
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `true`                | `true`, `false`                           |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `0.7.0`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `0.8.0`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -2042,6 +2046,7 @@ make doctest-check   # Check coverage percentage
 ```
 
 **Coverage Status:**
+
 - ✅ **Transport Modules**: 100% (base, stdio, SSE, WebSocket, streamable HTTP)
 - ✅ **Utility Functions**: 100% (slug generation, JWT tokens, validation)
 - ✅ **Configuration**: 100% (settings, environment variables)
@@ -2049,6 +2054,7 @@ make doctest-check   # Check coverage percentage
 - 🔄 **Complex Classes**: ~40% (in progress)
 
 **Benefits:**
+
 - All documented examples are automatically tested
 - Documentation stays accurate and up-to-date
 - Developers can run examples directly from docstrings
@@ -2444,6 +2450,7 @@ devpi-web            - Open devpi web interface
 If the gateway fails on macOS with `sqlite3.OperationalError: disk I/O error` (works on Linux/Docker), it's usually a filesystem/locking quirk rather than a schema bug.
 
 Quick placement guidance (macOS):
+
 - Avoid cloning/running the repo under `~/Documents` or `~/Desktop` if iCloud "Desktop & Documents" sync is enabled.
 - A simple, safe choice is a project folder directly under your home directory:
   - `mkdir -p "$HOME/mcp-context-forge" && cd "$HOME/mcp-context-forge"`
@@ -2470,10 +2477,11 @@ Quick placement guidance (macOS):
   - `export CACHE_TYPE=none`
 
 If the error persists, update SQLite and ensure Python links against it:
+
 - `brew install sqlite3 && brew link --force sqlite3`
 - `brew install python3 && /opt/homebrew/bin/python3 -c 'import sqlite3; print(sqlite3.sqlite_version)'`
 
-See the full migration guide's "SQLite Troubleshooting Guide" for deeper steps (WAL cleanup, integrity check, recovery): [MIGRATION-0.7.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md).
+See the full migration guide's "SQLite Troubleshooting Guide" for deeper steps (WAL cleanup, integrity check, recovery): [MIGRATION-0.8.0.md](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.8.0.md).
 
 </details>
 

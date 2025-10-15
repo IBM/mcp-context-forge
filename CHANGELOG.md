@@ -4,6 +4,202 @@
 
 ---
 
+## [0.8.0] - 2025-10-07 - Advanced OAuth, Plugin Ecosystem & MCP Registry
+
+### Overview
+
+This release focuses on **Advanced OAuth Integration, Plugin Ecosystem & MCP Registry** with **50+ issues resolved** and **47 PRs merged**, bringing significant improvements across authentication, plugin framework, and developer experience:
+
+- **🔐 Advanced OAuth Features** - Password Grant Flow, Dynamic Client Registration (DCR), PKCE support, token refresh
+- **🔌 Plugin Ecosystem Expansion** - 15+ new plugins, plugin management UI/API, comprehensive plugin documentation
+- **📦 MCP Server Registry** - Local catalog of MCP servers, improved server discovery and registration
+- **🏢 Enhanced Multi-Tenancy** - Team-level API token scoping, team columns in admin UI
+- **🔒 Policy & Security** - OPA policy engine enhancements, content moderation, secure cookie warnings
+- **🛠️ Developer Experience** - Dynamic environment variables for STDIO servers, improved OAuth2 gateway editing
+
+### Added
+
+#### **🔐 Advanced OAuth & Authentication** (#1168, #1158)
+* **OAuth Password Grant Flow** - Complete implementation of OAuth 2.0 Password Grant Flow for programmatic authentication
+* **OAuth Dynamic Client Registration (DCR)** - Support for OAuth DCR with PKCE (Proof Key for Code Exchange)
+* **Token Refresh Support** (#1023, #1078) - Multi-tenancy support with user-specific token handling and refresh mechanisms
+* **Secure Cookie Warnings** (#1181, #1048) - Clear warnings for HTTP development environments requiring `SECURE_COOKIES=false`
+* **OAuth Token Management** (#1097, #1119, #1112) - Fixed OAuth state signatures, tool refresh, and server test/ping functionality
+
+#### **🔌 Plugin Framework & Ecosystem** (#1130, #1147, #1139, #1118)
+* **Plugin Management API & UI** (#1129, #1130) - Complete plugin management interface in Admin Dashboard
+* **Plugin Framework Specification** (#1118) - Comprehensive specification document for plugin development
+* **Enhanced Plugin Documentation** (#1147) - Updated plugin usage guides and built-in plugin documentation
+* **Plugin Design Consolidation** (#1139) - Revised and consolidated plugin specification and design docs
+
+#### **🔌 New Built-in Plugins**
+* **Content Moderation Plugin** (#1114) - IBM-supported content moderation with AI-powered filtering
+* **Webhook Notification Plugin** (#1113) - Event-driven webhook notifications for gateway events
+* **Circuit Breaker Plugin** (#1070, #1150) - Fault tolerance with automatic circuit breaking
+* **Response Cache by Prompt** (#1071) - Intelligent caching based on prompt patterns
+* **License Header Injector** (#1072) - Automated license header management
+* **Privacy Notice Injector** (#1073) - Privacy notice injection for compliance
+* **Citation Validator** (#1069) - Validate and track citations in responses
+* **Robots License Guard** (#1066) - License compliance enforcement
+* **AI Artifacts Normalizer** (#1067) - Standardize AI-generated artifacts
+* **Code Formatter** (#1068) - Automatic code formatting in responses
+* **Safe HTML Sanitizer** (#1063) - XSS prevention and HTML sanitization
+* **Harmful Content Detector** (#1064) - Detect and filter harmful content
+* **SQL Sanitizer** (#1065) - SQL injection prevention
+* **Summarizer Plugin** (#1076) - Automatic response summarization
+* **ClamAV External Plugin** (#1077) - Virus scanning integration
+* **Timezone Translator** (#1074) - Automatic timezone conversion
+* **Watchdog Plugin** (#1075) - System monitoring and health checks
+
+#### **📦 MCP Server Registry & Catalog** (#1132, #1170, #295)
+* **Local MCP Server Catalog** (#1132) - Local catalog of MCP servers for registry and marketplace
+* **MCP Server Catalog Improvements** (#1170) - Enhanced server discovery and registration
+* **Catalog Search** (#1144) - Improved search functionality for MCP server catalog
+* **Catalog UX Updates** (#1153, #1152) - Enhanced user experience for catalog browsing
+
+#### **🏢 Multi-Tenancy Enhancements** (#1177, #1107)
+* **Team-Level API Token Scoping** (#1176, #1177) - Public-only token support with team-level scoping
+* **Team Columns in Admin UI** (#1035, #1107) - Team visibility across all admin tables (Tools, Gateway Server, Virtual Servers, Prompts, Resources)
+
+#### **🔒 Policy & Security Features** (#1145, #1102, #1106)
+* **Customizable OPA Policy Path** (#1145) - Enable customization of OPA policy file path
+* **OPA Policy Input Mapping** (#1102) - Enhanced OPA policy input data mapping support
+* **Multi-arch OPA Support** (#1106) - Multi-architecture support for OPA policy server
+
+#### **🛠️ Developer Experience** (#1162, #1155, #1154, #1165)
+* **Dynamic Environment Variables for STDIO** (#1162, #1081) - Dynamic environment variable injection for STDIO MCP servers
+* **Configuration Tab** (#1155, #1154) - New configuration management tab in Admin UI
+* **Scale Documentation** (#1165) - Comprehensive scaling and performance documentation
+
+### Fixed
+
+#### **🐛 Critical Bug Fixes**
+* **Gateway Addition from UI** (#1173) - Fixed gateway addition failures from Admin UI
+* **Role Assignment Failure** (#1175) - Fixed role assignment during bootstrap due to FK constraint
+* **A2A Tool Call** (#1163) - Fixed A2A agent tool invocation issues
+* **Global Tools for A2A Agents** (#1123, #841) - Fixed Global Tools not being listed for A2A Agents
+* **Login Issues** (#1101, #1117, #1048) - Resolved login problems in 0.7.0 with HTTP/HTTPS configurations
+
+#### **🔧 OAuth & Authentication Fixes**
+* **OAuth2 Gateway Editing** (#1146, #1025) - Preserve tools/resources/prompts when editing OAuth2 gateways without URL change
+* **OAuth Client Auth** (#1096) - Fixed MCP_CLIENT_AUTH_ENABLED not taking effect in v0.7.0
+* **Header Propagation** (#1134, #1046, #1115, #1104, #1142) - Fixed pass-through headers, X-Upstream-Authorization, and X-Vault-Headers handling
+* **Gateway Update** (#1039, #1120) - Fixed gateway update failures and auth value DB constraints
+
+#### **🖥️ UI/UX Fixes**
+* **Header-Modal Overlap** (#1179, #1178) - Fixed header overlapping with modals in UI
+* **Resource Filter** (#1131) - Fixed resource filtering issues
+* **README Updates** (#1169, #1159) - Corrected minor quirks in main README.md
+* **Project Name Normalization** (#1157) - Normalized project name across documentation
+
+#### **📊 Metrics & Monitoring**
+* **Metrics Recording** (#1127, #1103) - Added metrics recording for prompts, resources, and servers; fixed metrics collection
+* **A2A Endpoint Error** (#1128, #1125) - Fixed GET /a2a/ returning 500 due to datatype mismatch
+
+#### **🔌 Plugin Fixes**
+* **Plugin Linting** (#1151) - Fixed lint issues across all plugins
+* **Circuit Breaker Plugin** (#1150) - Removed unused variables in circuit breaker plugin
+* **PII Filter Dead Code** (#1149) - Removed dead code from PII filter plugin
+
+#### **🔐 Security & Encoding Fixes**
+* **SecretStr Encoding** (#1133) - Fixed encode method in SecretStr implementation
+* **Tool Limit Removal** (#1141) - Temporarily removed limit for tools until pagination is properly implemented
+* **Team Request UI** (#1022) - Fixed "Join Request" button showing no pending requests
+
+### Changed
+
+#### **📦 Configuration & Validation** (#1110)
+* **Pydantic v2 Config Validation** (#285, #1110) - Complete migration to Pydantic v2 configuration validation
+* **Plugin Configuration** - Enhanced plugin configuration with enable/disable flags and better validation
+
+#### **🔄 Infrastructure Updates**
+* **Multi-Arch Support** - Expanded multi-architecture support for OPA and other components
+* **Helm Chart Improvements** (#1105) - Fixed "Too many redirects" issue in Helm deployments
+
+### Security
+
+* OAuth DCR with PKCE support for enhanced authentication security
+* Content moderation plugin with AI-powered threat detection
+* Enhanced policy enforcement with customizable OPA integration
+* Secure cookie warnings for development environments
+* SQL and HTML sanitization plugins for injection prevention
+* Multi-layer security with circuit breaker and watchdog plugins
+
+### Infrastructure
+
+* Multi-architecture support for OPA policy server
+* Enhanced plugin framework with management API/UI
+* Local MCP server catalog for better registry management
+* Dynamic environment variable support for STDIO servers
+
+### Documentation
+
+* Comprehensive plugin framework specification
+* Updated plugin usage and development guides
+* Scale and performance documentation
+* OAuth integration tutorials (Password Grant, DCR, PKCE)
+* MCP server catalog documentation
+
+### Issues Closed
+
+**OAuth & Authentication:**
+- Closes #1048 - Login issue with HTTP requiring SECURE_COOKIES=false
+- Closes #1101, #1117 - Login not working with 0.7.0 version
+- Closes #1109 - OAuth2 Integration fails with Keycloak
+- Closes #1023 - MCP gateway ping fails due to missing refresh token
+- Closes #1078 - OAuth Token Multi-Tenancy Support
+- Closes #1096 - MCP_CLIENT_AUTH_ENABLED not effective in v0.7.0
+
+**Multi-Tenancy & Teams:**
+- Closes #1176 - Team-Level Scoping for API Tokens
+- Closes #1035 - Add "Team" Column to All Admin UI Tables
+- Closes #1022 - "Join Request" button shows no pending request
+
+**A2A (Agent-to-Agent) Integration:**
+- Closes #298 - A2A Initial Support - Add A2A Servers as Tools
+- Closes #841 - Global Tools not listed for A2A Agents
+- Closes #1125 - GET /a2a/ returns 500 due to datatype mismatch
+
+**Plugins & Framework:**
+- Closes #1129 - Plugin Management API and UI to Admin Dashboard
+- Closes #1076 - Summarizer Plugin
+- Closes #1077 - ClamAV External Plugin
+- Closes #1074 - Timezone Translator Plugin
+- Closes #1075 - Watchdog Plugin
+- Closes #1071 - Response Cache by Prompt Plugin
+- Closes #1072 - License Header Injector Plugin
+- Closes #1073 - Privacy Notice Injector Plugin
+- Closes #1069 - Citation Validator Plugin
+- Closes #1070 - Circuit Breaker Plugin
+- Closes #1066 - Robots License Guard Plugin
+- Closes #1067 - AI Artifacts Normalizer Plugin
+- Closes #1068 - Code Formatter Plugin
+- Closes #1063 - Safe HTML Sanitizer Plugin
+- Closes #1064 - Harmful Content Detector Plugin
+- Closes #1065 - SQL Sanitizer Plugin
+
+**MCP Server Catalog:**
+- Closes #295 - Local Catalog of MCP servers
+- Closes #1143 - Adding any server in MCP Registry fails
+- Closes #1061, #1062, #1058, #1059, #1060 - Python MCP Server Samples
+- Closes #1055, #1056, #1057, #1053, #1054, #1045, #1052 - Additional Python MCP Server Samples
+- Closes #1043 - Pandoc MCP server in Go
+
+**Bug Fixes:**
+- Closes #1178 - Header overlaps with modals
+- Closes #1025 - OAuth2 gateway edit requires tool fetch
+- Closes #1046 - Pass-through headers not functioning
+- Closes #1039 - Update Gateway fails
+- Closes #1104 - X-Upstream-Authorization Header not working
+- Closes #1105 - Too many redirects in Helm deployment
+- Closes #1081 - STDIO transport support
+
+**Documentation & Infrastructure:**
+- Closes #1159 - Minor quirks in main README.md
+- Closes #1037 - Fix Mend Configuration File
+
+---
+
 ## [0.7.0] - 2025-09-16 - Enterprise Multi-Tenancy, RBAC, Teams, SSO
 
 ### Overview

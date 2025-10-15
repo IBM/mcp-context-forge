@@ -26,12 +26,14 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 ### 1.3 Configure Application Settings
 
 **General Settings**:
+
 - **Application name**: `MCP Gateway`
 - **Description**: `Model Context Protocol Gateway SSO Authentication`
 - **Application URL**: Your gateway's public URL
   - Example: `https://gateway.yourcompany.com`
 
 **Sign-on Settings**:
+
 - **Application type**: `Web`
 - **Grant types**: Select `Authorization Code`
 - **Redirect URIs**: **Critical - must be exact**
@@ -41,11 +43,13 @@ This tutorial walks you through setting up IBM Security Verify (formerly IBM Clo
 ### 1.4 Configure Advanced Settings
 
 **Token Settings**:
+
 - **Access token lifetime**: 3600 seconds (1 hour)
 - **Refresh token lifetime**: 86400 seconds (24 hours)
 - **ID token lifetime**: 3600 seconds (1 hour)
 
 **Scopes**:
+
 - Select `openid` (required)
 - Select `profile` (recommended)
 - Select `email` (required)
