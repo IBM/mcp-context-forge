@@ -213,7 +213,9 @@ class TokenCatalogService:
         """
         self.db = db
 
-    async def _generate_token(self, user_email: str, jti:str, team_id: Optional[str] = None, expires_at: Optional[datetime] = None, scope: Optional["TokenScope"] = None, user: Optional[object] = None) -> str:
+    async def _generate_token(
+        self, user_email: str, jti: str, team_id: Optional[str] = None, expires_at: Optional[datetime] = None, scope: Optional["TokenScope"] = None, user: Optional[object] = None
+    ) -> str:
         """Generate a JWT token for API access.
 
         This internal method creates a properly formatted JWT token with all
