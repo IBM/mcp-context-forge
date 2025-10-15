@@ -4901,7 +4901,7 @@ async def admin_tools_partial_html(
             continue
 
     # Serialize tools
-    data = [tool.model_dump(by_alias=True) for tool in tools_pydantic]
+    data = jsonable_encoder(tools_pydantic)
 
     # Build pagination metadata
     pagination = PaginationMeta(
