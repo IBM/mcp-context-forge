@@ -66,7 +66,7 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
         httponly=True,  # Prevents JavaScript access
         secure=use_secure,  # HTTPS only in production
         samesite=settings.cookie_samesite,  # CSRF protection
-        path="/",  # Cookie scope
+        path=settings.app_root_path or "/",  # Cookie scope
     )
 
 
@@ -92,7 +92,13 @@ def clear_auth_cookie(response: Response) -> None:
     # Use same security settings as when setting the cookie
     use_secure = (settings.environment == "production") or settings.secure_cookies
 
-    response.delete_cookie(key="jwt_token", path="/", secure=use_secure, httponly=True, samesite=settings.cookie_samesite)
+    response.delete_cookie(
+        key="jwt_token",
+        path=settings.app_root_path or "/",
+        secure=use_secure,
+        httponly=True,
+        samesite=settings.cookie_samesite,
+    )
 
 
 def set_session_cookie(response: Response, session_id: str, max_age: int = 3600) -> None:
@@ -123,7 +129,7 @@ def set_session_cookie(response: Response, session_id: str, max_age: int = 3600)
         httponly=True,
         secure=use_secure,
         samesite=settings.cookie_samesite,
-        path="/",
+        path=settings.app_root_path or "/",
     )
 
 
@@ -144,4 +150,10 @@ def clear_session_cookie(response: Response) -> None:
     """
     use_secure = (settings.environment == "production") or settings.secure_cookies
 
-    response.delete_cookie(key="session_id", path="/", secure=use_secure, httponly=True, samesite=settings.cookie_samesite)
+    response.delete_cookie(
+        key="session_id",
+        path=settings.app_root_path or "/",
+        secure=use_secure,
+        httponly=True,
+        samesite=settings.cookie_samesite,
+    )

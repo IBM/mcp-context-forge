@@ -2445,7 +2445,7 @@ async def admin_ui(
                 secure=getattr(settings, "secure_cookies", False),
                 samesite=getattr(settings, "cookie_samesite", "lax"),
                 max_age=settings.token_expiry * 60,  # Convert minutes to seconds
-                path="/",  # Make cookie available for all paths
+                path=settings.app_root_path or "/",  # Make cookie available for all paths
             )
             LOGGER.debug(f"Set comprehensive JWT token cookie for user: {admin_email}")
         except Exception as e:
@@ -2648,7 +2648,7 @@ async def admin_logout(request: Request) -> RedirectResponse:
     response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
     # Clear JWT token cookie
-    response.delete_cookie("jwt_token", path="/", secure=True, httponly=True, samesite="lax")
+    response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
 
     return response
 
