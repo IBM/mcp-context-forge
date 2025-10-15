@@ -132,7 +132,7 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
         >>> payload2 = PromptPrehookPayload(prompt_id="id2", args={})
         >>> pre_prompt_matches(payload2, [cond], ctx)
         False
-        """
+    """
     current_result = True
     for index, condition in enumerate(conditions):
         if not matches(condition, context):

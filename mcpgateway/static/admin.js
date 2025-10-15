@@ -3406,7 +3406,9 @@ async function editPrompt(promptId) {
         if (editForm) {
             editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}/edit`;
             // Add or update hidden team_id input if present in URL
-            const teamId = new URL(window.location.href).searchParams.get("team_id");
+            const teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
             if (teamId) {
                 let teamInput = safeGetElement("edit-prompt-team-id");
                 if (!teamInput) {
