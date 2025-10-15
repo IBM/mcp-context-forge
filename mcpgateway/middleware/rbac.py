@@ -23,9 +23,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
