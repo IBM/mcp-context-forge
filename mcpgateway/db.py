@@ -1570,6 +1570,7 @@ class Tool(Base):
     request_type: Mapped[str] = mapped_column(String(20), default="SSE")
     headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    output_schema: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
