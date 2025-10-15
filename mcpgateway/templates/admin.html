@@ -11484,7 +11484,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         if (!banner) return;
 
         const adminEmail = (banner.getAttribute('data-admin-email') || 'admin@example.com').toLowerCase();
-        const defaultPassword = (banner.getAttribute('data-default-password') || 'changeme').toLowerCase();
         const userMgmtLink = document.getElementById('user-mgmt-link');
         const userMgmtHref = banner.getAttribute('data-user-mgmt-href');
         if (userMgmtLink && userMgmtHref) userMgmtLink.href = userMgmtHref;
@@ -11505,10 +11504,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           return '';
         }
 
-        function isDefaultPasswordInSession() {
-          return getCookie('pwd_is_default') === 'true';
-        }
-
+        
         // Infer provider from either server-provided value or JWT cookie
         function inferAuthProvider() {
           try {
@@ -11578,11 +11574,28 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           provider === 'sso' ||
           ['google', 'okta', 'github', 'ibm', 'verify', 'oidc', 'oauth', 'saml'].some(p => provider.includes(p));
 
+
+        // let currentPassword = '';
+        // try {
+        //   const token = getCookie('jwt_token');
+        //   if (token) {
+        //     const payload = JSON.parse(atob(token.split('.')[1]));
+        //     currentPassword = (payload.password || '').toLowerCase();
+        //   }
+        // } catch {
+        //   currentPassword = '';
+        // }
+
+        // Fallback: check if backend sets pwd_is_default cookie
+        const pwdIsDefault = getCookie('pwd_is_default') === 'true';
+
+
         // Show banner only if the logged-in user is the platform admin AND the session is NOT SSO
         const shouldShow =
           !!currentUserEmail &&
           currentUserEmail === adminEmail &&
-          !isSSO;
+          !isSSO &&
+          pwdIsDefault;
 
         if (shouldShow) {
           banner.classList.remove('hidden');

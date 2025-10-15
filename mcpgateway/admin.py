@@ -2505,53 +2505,52 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             root_path = request.scope.get("root_path", "")
             return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
 
-        # Authenticate using the email auth service
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.email_auth_service import EmailAuthService
 
         auth_service = EmailAuthService(db)
 
-        try:
-            # Authenticate user
-            LOGGER.debug(f"Attempting authentication for {email}")
-            user = await auth_service.authenticate_user(email, password)
-            LOGGER.debug(f"Authentication result: {user}")
+        LOGGER.debug(f"Attempting authentication for {email}")
+        user = await auth_service.authenticate_user(email, password)
+        LOGGER.debug(f"Authentication result: {user}")
 
-            if not user:
-                LOGGER.warning(f"Authentication failed for {email} - user is None")
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
-
-            # Create JWT token with proper audience and issuer claims
-            # First-Party
-            from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
-
-            token, _ = await create_access_token(user)  # expires_seconds not needed here
-
-            # Create redirect response
-            root_path = request.scope.get("root_path", "")
-            response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
-
-            # Set JWT token as secure cookie
-            # First-Party
-            from mcpgateway.utils.security_cookies import set_auth_cookie  # pylint: disable=import-outside-toplevel
-
-            set_auth_cookie(response, token, remember_me=False)
-
-            LOGGER.info(f"Admin user {email} logged in successfully")
-            return response
-
-        except Exception as e:
-            LOGGER.warning(f"Login failed for {email}: {e}")
-
-            if settings.secure_cookies and settings.environment == "development":
-                LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
-
+        if not user:
             root_path = request.scope.get("root_path", "")
             return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
+        # First-Party
+        from mcpgateway.routers.email_auth import create_access_token
+
+        token, _ = await create_access_token(user)
+
+        root_path = request.scope.get("root_path", "")
+        response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+        # First-Party
+        from mcpgateway.utils.security_cookies import set_auth_cookie
+
+        set_auth_cookie(response, token, remember_me=False)
+
+        # ✅ Set or clear the security reminder cookie
+        if email.lower() == "admin@example.com" and password == "changeme":
+            response.set_cookie(
+                key="pwd_is_default",
+                value="true",
+                max_age=3600 * 24,  # 1 day
+                httponly=False,  # JS needs to read it
+                secure=False,  # set True for HTTPS environments
+                samesite="Lax",
+            )
+            LOGGER.debug("Set cookie: pwd_is_default=true for admin@example.com")
+        else:
+            response.delete_cookie("pwd_is_default")
+            LOGGER.debug("Cleared cookie: pwd_is_default")
+
+        LOGGER.info(f"Admin user {email} logged in successfully")
+        return response
+
     except Exception as e:
-        LOGGER.error(f"Login handler error: {e}")
+        LOGGER.exception(f"Login handler error: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
 
