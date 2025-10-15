@@ -1003,13 +1003,15 @@ class PromptService:
         Delete a prompt template by its ID.
 
         Args:
-            db (Session): Database session
-            prompt_id (str): ID of the prompt to delete
-            user_email: Email of user performing delete (for ownership check)
+            db (Session): Database session.
+            prompt_id (str): ID of the prompt to delete.
+            user_email (Optional[str]): Email of user performing delete (for ownership check).
+
         Raises:
-            PromptNotFoundError: If the prompt is not found
-            PermissionError: If user doesn't own the prompt
-            PromptError: For other deletion errors
+            PromptNotFoundError: If the prompt is not found.
+            PermissionError: If user doesn't own the prompt.
+            PromptError: For other deletion errors.
+            Exception: For unexpected errors.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -1031,7 +1033,7 @@ class PromptService:
             prompt = db.get(DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
-               
+
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
@@ -1051,6 +1053,8 @@ class PromptService:
             raise
         except Exception as e:
             db.rollback()
+            if isinstance(e, PromptNotFoundError):
+                raise e
             raise PromptError(f"Failed to delete prompt: {str(e)}")
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:

@@ -495,7 +495,7 @@ class A2AAgentService:
         except Exception as e:
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
-        
+
     async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
         """Toggle the activation status of an A2A agent.
 
