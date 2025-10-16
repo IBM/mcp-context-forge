@@ -87,6 +87,7 @@ def mock_tool():
     tool.request_type = "SSE"
     tool.headers = {"Content-Type": "application/json"}
     tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}}
+    tool.output_schema = None
     tool.jsonpath_filter = ""
     tool.created_at = "2023-01-01T00:00:00"
     tool.updated_at = "2023-01-01T00:00:00"

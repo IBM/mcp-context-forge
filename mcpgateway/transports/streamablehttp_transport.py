@@ -418,7 +418,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools = await tool_service.list_server_tools(db, server_id, _request_headers=request_headers)
-                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, annotations=tool.annotations) for tool in tools]
+                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
             return []
@@ -426,7 +426,7 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 tools = await tool_service.list_tools(db, False, None, None, request_headers)
-                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, annotations=tool.annotations) for tool in tools]
+                return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
             return []

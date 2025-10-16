@@ -596,6 +596,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     request_type=tool.request_type,
                     headers=tool.headers,
                     input_schema=tool.input_schema,
+                    output_schema=tool.output_schema,
                     annotations=tool.annotations,
                     jsonpath_filter=tool.jsonpath_filter,
                     auth_type=auth_type,
