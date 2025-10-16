@@ -157,6 +157,7 @@ class OPAPluginFilter(Plugin):
         policy = None
         policy_endpoint = None
         policy_input_data_map = {}
+        policy_modality = None
         hook_name = None
 
         if policy_apply_config:
@@ -293,14 +294,15 @@ class OPAPluginFilter(Plugin):
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.prompts:
             opa_post_prompt_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
-            if opa_post_prompt_input:
-                result = dict.fromkeys(opa_post_prompt_input["policy_modality"], [])
+            policy_modality = opa_post_prompt_input.get("policy_modality") if opa_post_prompt_input else None
+            if opa_post_prompt_input and policy_modality:
+                result = dict.fromkeys(policy_modality, [])
 
-            if hasattr(payload.result, "messages") and isinstance(payload.result.messages, list):
-                for message in payload.result.messages:
-                    if hasattr(message, "content"):
-                        for key in opa_post_prompt_input["policy_modality"]:
-                            self._extract_payload_key(message.content, key, result)
+                if hasattr(payload.result, "messages") and isinstance(payload.result.messages, list):
+                    for message in payload.result.messages:
+                        if hasattr(message, "content"):
+                            for key in policy_modality:
+                                self._extract_payload_key(message.content, key, result)
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_prompt_input["policy_context"], request_ip="none", headers={}, mode="output")
                 decision, decision_context = self._evaluate_opa_policy(
@@ -374,13 +376,14 @@ class OPAPluginFilter(Plugin):
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.tools:
             opa_post_tool_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
-            if opa_post_tool_input:
-                result = dict.fromkeys(opa_post_tool_input["policy_modality"], [])
+            policy_modality = opa_post_tool_input.get("policy_modality") if opa_post_tool_input else None
+            if opa_post_tool_input and policy_modality:
+                result = dict.fromkeys(policy_modality, [])
 
-            if isinstance(payload.result, dict):
-                content = payload.result["content"] if "content" in payload.result else payload.result
-                for key in opa_post_tool_input["policy_modality"]:
-                    self._extract_payload_key(content, key, result)
+                if isinstance(payload.result, dict):
+                    content = payload.result["content"] if "content" in payload.result else payload.result
+                    for key in policy_modality:
+                        self._extract_payload_key(content, key, result)
 
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_tool_input["policy_context"], request_ip="none", headers={}, mode="output")
                 decision, decision_context = self._evaluate_opa_policy(
@@ -466,21 +469,23 @@ class OPAPluginFilter(Plugin):
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.resources:
             opa_post_resource_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
-            if not all(v is None for v in opa_post_resource_input.values()):
-                result = dict.fromkeys(opa_post_resource_input["policy_modality"], [])
-                for key in opa_post_resource_input["policy_modality"]:
+            policy_modality = opa_post_resource_input.get("policy_modality") if opa_post_resource_input else None
+            if not all(v is None for v in opa_post_resource_input.values()) and policy_modality:
+                result = dict.fromkeys(policy_modality, [])
+                for key in policy_modality:
                     if hasattr(payload.content, key):
                         self._extract_payload_key(payload.content, key, result)
-                    opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_resource_input["policy_context"], request_ip="none", headers={}, mode="output")
-                    decision, decision_context = self._evaluate_opa_policy(
-                        url=opa_post_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_resource_input["policy_input_data_map"]
+
+                opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_resource_input["policy_context"], request_ip="none", headers={}, mode="output")
+                decision, decision_context = self._evaluate_opa_policy(
+                    url=opa_post_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_resource_input["policy_input_data_map"]
+                )
+                if not decision:
+                    violation = PluginViolation(
+                        reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
+                        description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
+                        code=OPACodes.DENIAL_CODE,
+                        details=decision_context,
                     )
-                    if not decision:
-                        violation = PluginViolation(
-                            reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
-                            description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
-                            code=OPACodes.DENIAL_CODE,
-                            details=decision_context,
-                        )
-                        return ResourcePostFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
+                    return ResourcePostFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
         return ResourcePostFetchResult(continue_processing=True)

@@ -179,9 +179,10 @@ class SummarizerPlugin(Plugin):
         if not hasattr(content, "text") or not isinstance(content.text, str) or not content.text:
             return ResourcePostFetchResult(continue_processing=True)
         # Optional gating by URI prefix
-        if self._cfg.resource_uri_prefixes:
+        uri_prefixes = self._cfg.resource_uri_prefixes
+        if uri_prefixes is not None:
             uri = payload.uri or ""
-            if not any(uri.startswith(p) for p in self._cfg.resource_uri_prefixes):
+            if not any(uri.startswith(p) for p in uri_prefixes):
                 return ResourcePostFetchResult(continue_processing=True)
         text = content.text
         if len(text) < self._cfg.threshold_chars:

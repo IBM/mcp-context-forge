@@ -211,10 +211,9 @@ async def test_llmguardplugin_invalid_config():
         hooks=["prompt_pre_fetch"],
         config=config_input_filter,
     )
-    try:
+    with pytest.raises(Exception) as exc_info:
         LLMGuardPlugin(config)
-    except Exception as e:
-        assert e.error.message == "Invalid configuration for plugin initilialization"
+    assert "Invalid configuration for plugin initilialization" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

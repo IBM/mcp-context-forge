@@ -127,8 +127,10 @@ class RateLimiterPlugin(Plugin):
         ok_t, meta_t = _allow(f"tenant:{tenant}", self._cfg.by_tenant)
         ok_tool = True
         meta_tool: dict[str, Any] | None = None
-        if self._cfg.by_tool and tool in self._cfg.by_tool:
-            ok_tool, meta_tool = _allow(f"tool:{tool}", self._cfg.by_tool[tool])
+        by_tool_config = self._cfg.by_tool
+        if hasattr(by_tool_config, '__contains__'):
+            if tool in by_tool_config:  # pylint: disable=unsupported-membership-test
+                ok_tool, meta_tool = _allow(f"tool:{tool}", by_tool_config[tool])
         meta.update({"by_user": meta_u, "by_tenant": meta_t})
         if meta_tool is not None:
             meta["by_tool"] = meta_tool
