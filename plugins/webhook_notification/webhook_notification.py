@@ -291,7 +291,7 @@ class WebhookNotificationPlugin(Plugin):
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Async context manager exit - cleanup HTTP client."""
         if hasattr(self, "_client"):
             await self._client.aclose()
