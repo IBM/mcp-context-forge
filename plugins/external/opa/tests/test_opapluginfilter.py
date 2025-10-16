@@ -10,31 +10,27 @@ and started once, and further used by all test cases for policy evaluations.
 """
 
 # Standard
-import time
-import subprocess
 
 # Third-Party
+from opapluginfilter.plugin import OPAPluginFilter
 import pytest
-import requests
 
 # First-Party
-from mcpgateway.models import ResourceContent
+from mcpgateway.models import Message, ResourceContent, Role, TextContent
 from mcpgateway.plugins.framework import (
+    GlobalContext,
     PluginConfig,
     PluginContext,
-    GlobalContext,
-    PromptResult,
     PromptPosthookPayload,
     PromptPrehookPayload,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
+    PromptResult,
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
 )
-from opapluginfilter.plugin import OPAPluginFilter
-from mcpgateway.models import Message, Role, TextContent
-
 from mcpgateway.services.logging_service import LoggingService
+
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
@@ -43,18 +39,18 @@ logger = logging_service.get_logger(__name__)
 # Test for when opaplugin is not applied to tools
 async def test_pre_tool_invoke_opapluginfilter():
     """Test that validates opa plugin applied on pre tool invocation is working successfully. Evaluates for both malign and benign cases"""
-    config =  {
-        "tools" : [
-            {"tool_name" : "fast-time-git-status",
-            "extensions" : {
-                "policy" : "example",
-                "policy_endpoints" : [
-                    "allow_tool_pre_invoke",
-                ],
-                "policy_modality" : [
-                    "text"
-                ]
-            }}
+    config = {
+        "tools": [
+            {
+                "tool_name": "fast-time-git-status",
+                "extensions": {
+                    "policy": "example",
+                    "policy_endpoints": [
+                        "allow_tool_pre_invoke",
+                    ],
+                    "policy_modality": ["text"],
+                },
+            }
         ]
     }
     config = PluginConfig(name="test", kind="opapluginfilter.OPAPluginFilter", hooks=["tool_pre_invoke"], config={"opa_base_url": "http://127.0.0.1:8181/v1/data/"}, applied_to=config)
@@ -72,22 +68,23 @@ async def test_pre_tool_invoke_opapluginfilter():
     result = await plugin.tool_pre_invoke(payload, context)
     assert not result.continue_processing
 
+
 @pytest.mark.asyncio
 # Test for when opaplugin is not applied to tools
 async def test_post_tool_invoke_opapluginfilter():
     """Test that validates opa plugin applied on post tool invocation is working successfully. Evaluates for both malign and benign cases"""
-    config =  {
-        "tools" : [
-            {"tool_name" : "fast-time-git-status",
-            "extensions" : {
-                "policy" : "example",
-                "policy_endpoints" : [
-                    "allow_tool_post_invoke",
-                ],
-                "policy_modality" : [
-                    "text"
-                ]
-            }}
+    config = {
+        "tools": [
+            {
+                "tool_name": "fast-time-git-status",
+                "extensions": {
+                    "policy": "example",
+                    "policy_endpoints": [
+                        "allow_tool_post_invoke",
+                    ],
+                    "policy_modality": ["text"],
+                },
+            }
         ]
     }
     config = PluginConfig(name="test", kind="opapluginfilter.OPAPluginFilter", hooks=["tool_post_invoke"], config={"opa_base_url": "http://127.0.0.1:8181/v1/data/"}, applied_to=config)
@@ -106,23 +103,22 @@ async def test_post_tool_invoke_opapluginfilter():
     assert not result.continue_processing
 
 
-
 @pytest.mark.asyncio
 # Test for when opaplugin is not applied to prompts
 async def test_pre_prompt_fetch_opapluginfilter():
     """Test that validates opa plugin applied on pre prompt fetch is working successfully. Evaluates for both malign and benign cases"""
-    config =  {
-        "prompts" : [
-            {"prompt_name" : "test_prompt",
-            "extensions" : {
-                "policy" : "example",
-                "policy_endpoints" : [
-                    "allow_prompt_pre_fetch",
-                ],
-                "policy_modality" : [
-                    "text"
-                ]
-            }}
+    config = {
+        "prompts": [
+            {
+                "prompt_name": "test_prompt",
+                "extensions": {
+                    "policy": "example",
+                    "policy_endpoints": [
+                        "allow_prompt_pre_fetch",
+                    ],
+                    "policy_modality": ["text"],
+                },
+            }
         ]
     }
     config = PluginConfig(name="test", kind="opapluginfilter.OPAPluginFilter", hooks=["prompt_pre_fetch"], config={"opa_base_url": "http://127.0.0.1:8181/v1/data/"}, applied_to=config)
@@ -141,23 +137,22 @@ async def test_pre_prompt_fetch_opapluginfilter():
     assert not result.continue_processing
 
 
-
 @pytest.mark.asyncio
 # Test for when opaplugin is not applied to prompts
 async def test_post_prompt_fetch_opapluginfilter():
     """Test that validates opa plugin applied on post prompt fetch is working successfully. Evaluates for both malign and benign cases"""
-    config =  {
-        "prompts" : [
-            {"prompt_name" : "test_prompt",
-            "extensions" : {
-                "policy" : "example",
-                "policy_endpoints" : [
-                    "allow_prompt_post_fetch",
-                ],
-                "policy_modality" : [
-                    "text"
-                ]
-            }}
+    config = {
+        "prompts": [
+            {
+                "prompt_name": "test_prompt",
+                "extensions": {
+                    "policy": "example",
+                    "policy_endpoints": [
+                        "allow_prompt_post_fetch",
+                    ],
+                    "policy_modality": ["text"],
+                },
+            }
         ]
     }
     config = PluginConfig(name="test", kind="opapluginfilter.OPAPluginFilter", hooks=["prompt_post_fetch"], config={"opa_base_url": "http://127.0.0.1:8181/v1/data/"}, applied_to=config)
@@ -179,22 +174,23 @@ async def test_post_prompt_fetch_opapluginfilter():
     result = await plugin.prompt_post_fetch(payload, context)
     assert not result.continue_processing
 
+
 @pytest.mark.asyncio
 # Test for when opaplugin is not applied to resources
 async def test_pre_resource_fetch_opapluginfilter():
     """Test that validates opa plugin applied on resource pre fetch is working successfully. Evaluates for both malign and benign cases"""
-    config =  {
-        "resources" : [
-            {"resource_uri" : "https://example.com",
-            "extensions" : {
-                "policy" : "example",
-                "policy_endpoints" : [
-                    "allow_resource_pre_fetch",
-                ],
-                "policy_modality" : [
-                    "text"
-                ]
-            }}
+    config = {
+        "resources": [
+            {
+                "resource_uri": "https://example.com",
+                "extensions": {
+                    "policy": "example",
+                    "policy_endpoints": [
+                        "allow_resource_pre_fetch",
+                    ],
+                    "policy_modality": ["text"],
+                },
+            }
         ]
     }
     config = PluginConfig(name="test", kind="opapluginfilter.OPAPluginFilter", hooks=["resource_pre_fetch"], config={"opa_base_url": "http://127.0.0.1:8181/v1/data/"}, applied_to=config)
@@ -213,23 +209,22 @@ async def test_pre_resource_fetch_opapluginfilter():
     assert not result.continue_processing
 
 
-
 @pytest.mark.asyncio
 # Test for when opaplugin is not applied to resources
 async def test_post_resource_fetch_opapluginfilter():
     """Test that validates opa plugin applied on resource post fetch is working successfully. Evaluates for both malign and benign cases"""
-    config =  {
-        "resources" : [
-            {"resource_uri" : "https://example.com",
-            "extensions" : {
-                "policy" : "example",
-                "policy_endpoints" : [
-                    "allow_resource_post_fetch",
-                ],
-                "policy_modality" : [
-                    "text"
-                ]
-            }}
+    config = {
+        "resources": [
+            {
+                "resource_uri": "https://example.com",
+                "extensions": {
+                    "policy": "example",
+                    "policy_endpoints": [
+                        "allow_resource_post_fetch",
+                    ],
+                    "policy_modality": ["text"],
+                },
+            }
         ]
     }
     config = PluginConfig(name="test", kind="opapluginfilter.OPAPluginFilter", hooks=["prompt_post_fetch"], config={"opa_base_url": "http://127.0.0.1:8181/v1/data/"}, applied_to=config)
@@ -237,10 +232,10 @@ async def test_post_resource_fetch_opapluginfilter():
 
     # Benign payload (allowed by OPA (rego) policy)
     content = ResourceContent(
-            type="resource",
-            uri="test://abc",
-            text="abc",
-        )
+        type="resource",
+        uri="test://abc",
+        text="abc",
+    )
     payload = ResourcePostFetchPayload(uri="https://example.com/docs", content=content)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.resource_post_fetch(payload, context)
@@ -248,31 +243,32 @@ async def test_post_resource_fetch_opapluginfilter():
 
     # Malign payload (denied by OPA (rego) policy)
     content = ResourceContent(
-            type="resource",
-            uri="test://large",
-            text="test://abc@example.com",
-        )
+        type="resource",
+        uri="test://large",
+        text="test://abc@example.com",
+    )
     payload = ResourcePostFetchPayload(uri="https://example.com", content=content)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.resource_post_fetch(payload, context)
     assert not result.continue_processing
 
+
 @pytest.mark.asyncio
 # Test for when opaplugin is not applied to resources
 async def test_opapluginfilter_backward_compatibility():
     """Test that validates opa plugin applied on resource post fetch is working successfully. Evaluates for both malign and benign cases"""
-    config =  {
-        "tools" : [
-            {"tool_name" : "fast-time-git-status",
-            "extensions" : {
-                "policy" : "example",
-                "policy_endpoints" : [
-                    "allow",
-                ],
-                "policy_modality" : [
-                    "text"
-                ]
-            }}
+    config = {
+        "tools": [
+            {
+                "tool_name": "fast-time-git-status",
+                "extensions": {
+                    "policy": "example",
+                    "policy_endpoints": [
+                        "allow",
+                    ],
+                    "policy_modality": ["text"],
+                },
+            }
         ]
     }
     config = PluginConfig(name="test", kind="opapluginfilter.OPAPluginFilter", hooks=["tool_pre_invoke"], config={"opa_base_url": "http://127.0.0.1:8181/v1/data/"}, applied_to=config)
