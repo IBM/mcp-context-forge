@@ -192,7 +192,7 @@ class LoggingService:
         self._level = LogLevel.INFO
         self._subscribers: List[asyncio.Queue[_LogMessage]] = []
         self._loggers: Dict[str, logging.Logger] = {}
-        self._storage: LogStorageService| None = None  # Will be initialized if admin UI is enabled
+        self._storage: LogStorageService | None = None  # Will be initialized if admin UI is enabled
 
     async def initialize(self) -> None:
         """Initialize logging service.
