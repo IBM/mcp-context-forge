@@ -11,27 +11,29 @@ It supports RFC 5424 severity levels, log level management, and log event subscr
 
 # Standard
 import asyncio
+from asyncio.events import AbstractEventLoop
 from datetime import datetime, timezone
 import logging
 from logging.handlers import RotatingFileHandler
 import os
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, TextIO, TypedDict, NotRequired
 
 # Third-Party
-from pythonjsonlogger import jsonlogger  # You may need to install python-json-logger package
+from pythonjsonlogger import json as jsonlogger  # You may need to install python-json-logger package
 
-try:
-    # Optional import; only used for filtering a known benign upstream error
-    # Third-Party
-    from anyio import ClosedResourceError as AnyioClosedResourceError  # type: ignore  # pylint: disable=invalid-name
-except Exception:  # pragma: no cover - environment without anyio
-    AnyioClosedResourceError = None  # pylint: disable=invalid-name  # fallback if anyio is not present
-
-# First-Party
 from mcpgateway.config import settings
 from mcpgateway.models import LogLevel
 from mcpgateway.services.log_storage_service import LogStorageService
 
+AnyioClosedResourceError: Optional[type]
+try:
+    # Optional import; only used for filtering a known benign upstream error
+    # Third-Party
+    from anyio import ClosedResourceError as AnyioClosedResourceError
+except Exception:  # pragma: no cover - environment without anyio
+    AnyioClosedResourceError = None
+
+# First-Party
 # Create a text formatter
 text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
@@ -43,7 +45,7 @@ json_formatter = jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(
 
 # Global handlers will be created lazily
 _file_handler: Optional[logging.Handler] = None
-_text_handler: Optional[logging.StreamHandler] = None
+_text_handler: Optional[logging.StreamHandler[TextIO]] = None
 
 
 def _get_file_handler() -> logging.Handler:
@@ -79,7 +81,7 @@ def _get_file_handler() -> logging.Handler:
     return _file_handler
 
 
-def _get_text_handler() -> logging.StreamHandler:
+def _get_text_handler() -> logging.StreamHandler[TextIO]:
     """Get or create the text handler.
 
     Returns:
@@ -95,7 +97,7 @@ def _get_text_handler() -> logging.StreamHandler:
 class StorageHandler(logging.Handler):
     """Custom logging handler that stores logs in LogStorageService."""
 
-    def __init__(self, storage_service):
+    def __init__(self, storage_service: LogStorageService):
         """Initialize the storage handler.
 
         Args:
@@ -103,9 +105,9 @@ class StorageHandler(logging.Handler):
         """
         super().__init__()
         self.storage = storage_service
-        self.loop = None
+        self.loop: AbstractEventLoop | None = None
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord) -> None:
         """Emit a log record to storage.
 
         Args:
@@ -165,6 +167,16 @@ class StorageHandler(logging.Handler):
             pass  # nosec B110 - Intentional to prevent logging recursion
 
 
+class _LogMessageData(TypedDict):
+    level: LogLevel
+    data: Any
+    timestamp: str
+    logger: NotRequired[str]
+
+class _LogMessage(TypedDict):
+    type: str
+    data: _LogMessageData
+
 class LoggingService:
     """MCP logging service.
 
@@ -178,9 +190,9 @@ class LoggingService:
     def __init__(self) -> None:
         """Initialize logging service."""
         self._level = LogLevel.INFO
-        self._subscribers: List[asyncio.Queue] = []
+        self._subscribers: List[asyncio.Queue[_LogMessage]] = []
         self._loggers: Dict[str, logging.Logger] = {}
-        self._storage = None  # Will be initialized if admin UI is enabled
+        self._storage: LogStorageService| None = None  # Will be initialized if admin UI is enabled
 
     async def initialize(self) -> None:
         """Initialize logging service.
@@ -192,7 +204,7 @@ class LoggingService:
             >>> asyncio.run(service.initialize())
         """
         # Update service log level from settings BEFORE configuring loggers
-        self._level = settings.log_level
+        self._level = logging.getLevelName(settings.log_level)
 
         root_logger = logging.getLogger()
         self._loggers[""] = root_logger
@@ -426,7 +438,7 @@ class LoggingService:
             return
 
         # Format notification message
-        message = {
+        message: _LogMessage = {
             "type": "log",
             "data": {
                 "level": level,
@@ -477,7 +489,7 @@ class LoggingService:
             except Exception as e:
                 logger.error(f"Failed to notify subscriber: {e}")
 
-    async def subscribe(self) -> AsyncGenerator[Dict[str, Any], None]:
+    async def subscribe(self) -> AsyncGenerator[_LogMessage, None]:
         """Subscribe to log messages.
 
         Returns a generator yielding log message events.
@@ -488,7 +500,7 @@ class LoggingService:
         Examples:
             This example was removed to prevent the test runner from hanging on async generator consumption.
         """
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue[_LogMessage] = asyncio.Queue()
         self._subscribers.append(queue)
         try:
             while True:
