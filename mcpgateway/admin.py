@@ -4942,6 +4942,7 @@ async def admin_add_tool(
       - integrationType (mapped to integration_type; defaults to "MCP")
       - headers (JSON string)
       - input_schema (JSON string)
+      - output_schema (JSON string, optional)
       - jsonpath_filter (optional)
       - auth_type (optional)
       - auth_username (optional)
@@ -5077,6 +5078,7 @@ async def admin_add_tool(
     # Safely parse potential JSON strings from form
     headers_raw = form.get("headers")
     input_schema_raw = form.get("input_schema")
+    output_schema_raw = form.get("output_schema")
     annotations_raw = form.get("annotations")
     tool_data: dict[str, Any] = {
         "name": form.get("name"),
@@ -5087,6 +5089,7 @@ async def admin_add_tool(
         "integration_type": integration_type,
         "headers": json.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
         "input_schema": json.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
+        "output_schema": json.loads(output_schema_raw if isinstance(output_schema_raw, str) and output_schema_raw else "{}"),
         "annotations": json.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth_type": form.get("auth_type", ""),
@@ -5159,6 +5162,7 @@ async def admin_edit_tool(
       - integrationType (to be mapped to integration_type)
       - headers (as a JSON string)
       - input_schema (as a JSON string)
+      - output_schema (as a JSON string, optional)
       - jsonpathFilter (optional)
       - auth_type (optional, string: "basic", "bearer", or empty)
       - auth_username (optional, for basic auth)
@@ -5334,6 +5338,7 @@ async def admin_edit_tool(
 
     headers_raw2 = form.get("headers")
     input_schema_raw2 = form.get("input_schema")
+    output_schema_raw2 = form.get("output_schema")
     annotations_raw2 = form.get("annotations")
 
     tool_data: dict[str, Any] = {
@@ -5344,6 +5349,7 @@ async def admin_edit_tool(
         "description": form.get("description"),
         "headers": json.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
         "input_schema": json.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
+        "output_schema": json.loads(output_schema_raw2 if isinstance(output_schema_raw2, str) and output_schema_raw2 else "{}"),
         "annotations": json.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth_type": form.get("auth_type", ""),
