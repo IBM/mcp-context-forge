@@ -2183,6 +2183,10 @@ async function editTool(toolId) {
             JSON.stringify(tool.inputSchema || {}),
             "Schema",
         );
+        const outputSchemaValidation = validateJson(
+            JSON.stringify(tool.outputSchema || {}),
+            "Output Schema",
+        );
         const annotationsValidation = validateJson(
             JSON.stringify(tool.annotations || {}),
             "Annotations",
@@ -2190,6 +2194,7 @@ async function editTool(toolId) {
 
         const headersField = safeGetElement("edit-tool-headers");
         const schemaField = safeGetElement("edit-tool-schema");
+        const outputSchemaField = safeGetElement("edit-tool-output-schema");
         const annotationsField = safeGetElement("edit-tool-annotations");
 
         if (headersField && headersValidation.valid) {
@@ -2201,6 +2206,13 @@ async function editTool(toolId) {
         }
         if (schemaField && schemaValidation.valid) {
             schemaField.value = JSON.stringify(schemaValidation.value, null, 2);
+        }
+        if (outputSchemaField && outputSchemaValidation.valid) {
+            outputSchemaField.value = JSON.stringify(
+                outputSchemaValidation.value,
+                null,
+                2,
+            );
         }
         if (annotationsField && annotationsValidation.valid) {
             annotationsField.value = JSON.stringify(
@@ -2222,6 +2234,12 @@ async function editTool(toolId) {
                 JSON.stringify(schemaValidation.value, null, 2),
             );
             window.editToolSchemaEditor.refresh();
+        }
+        if (window.editToolOutputSchemaEditor && outputSchemaValidation.valid) {
+            window.editToolOutputSchemaEditor.setValue(
+                JSON.stringify(outputSchemaValidation.value, null, 2),
+            );
+            window.editToolOutputSchemaEditor.refresh();
         }
 
         // Prefill integration type from DB and set request types accordingly
@@ -7328,6 +7346,10 @@ async function viewTool(toolId) {
               <strong class="text-gray-700 dark:text-gray-300">Input Schema:</strong>
               <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-schema overflow-x-auto"></pre>
             </div>
+            <div>
+              <strong class="text-gray-700 dark:text-gray-300">Output Schema:</strong>
+              <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-output-schema overflow-x-auto"></pre>
+            </div>
           </div>
 
           <!-- Metrics Section -->
@@ -7465,6 +7487,10 @@ async function viewTool(toolId) {
             setTextSafely(
                 ".tool-schema",
                 JSON.stringify(tool.inputSchema || {}, null, 2),
+            );
+            setTextSafely(
+                ".tool-output-schema",
+                JSON.stringify(tool.outputSchema || {}, null, 2),
             );
 
             // Set auth fields safely
