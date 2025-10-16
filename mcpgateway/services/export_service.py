@@ -294,6 +294,7 @@ class ExportService:
                 "description": tool.description,
                 "headers": tool.headers or {},
                 "input_schema": tool.input_schema or {"type": "object", "properties": {}},
+                "output_schema": tool.output_schema,
                 "annotations": tool.annotations or {},
                 "jsonpath_filter": tool.jsonpath_filter,
                 "tags": tool.tags or [],

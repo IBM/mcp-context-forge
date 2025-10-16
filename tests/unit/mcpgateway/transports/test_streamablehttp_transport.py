@@ -257,6 +257,7 @@ async def test_list_tools_with_server_id(monkeypatch):
     mock_tool.name = "t"
     mock_tool.description = "desc"
     mock_tool.input_schema = {"type": "object"}
+    mock_tool.output_schema = None
     mock_tool.annotations = {}
 
     @asynccontextmanager
@@ -285,6 +286,7 @@ async def test_list_tools_no_server_id(monkeypatch):
     mock_tool.name = "t"
     mock_tool.description = "desc"
     mock_tool.input_schema = {"type": "object"}
+    mock_tool.output_schema = None
     mock_tool.annotations = {}
 
     @asynccontextmanager

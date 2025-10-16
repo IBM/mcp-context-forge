@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """add_output_schema_to_tools
 
 Revision ID: 9aaa90ad26d9

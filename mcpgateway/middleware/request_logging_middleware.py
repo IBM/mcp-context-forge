@@ -42,7 +42,7 @@ def mask_sensitive_data(data):
     """
     if isinstance(data, dict):
         return {k: ("******" if k.lower() in SENSITIVE_KEYS else mask_sensitive_data(v)) for k, v in data.items()}
-    elif isinstance(data, list):
+    if isinstance(data, list):
         return [mask_sensitive_data(i) for i in data]
     return data
 
@@ -64,7 +64,7 @@ def mask_jwt_in_cookies(cookie_header):
     for cookie in cookie_header.split(";"):
         cookie = cookie.strip()
         if "=" in cookie:
-            name, value = cookie.split("=", 1)
+            name, _ = cookie.split("=", 1)
             name = name.strip()
             # Mask JWT tokens and other sensitive cookies
             if any(sensitive in name.lower() for sensitive in ["jwt", "token", "auth", "session"]):
