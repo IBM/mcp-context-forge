@@ -428,8 +428,8 @@ class LogStorageService:
             >>> stats['unique_requests']
             0
         """
-        level_counts: dict[LogLevel, int] = {}
-        entity_counts: dict[str, int] = {}
+        level_counts: Dict[LogLevel, int] = {}
+        entity_counts: Dict[str, int] = {}
 
         for log in self._buffer:
             # Count by level
