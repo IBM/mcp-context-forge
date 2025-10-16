@@ -407,7 +407,7 @@ class ToolCreate(BaseModel):
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
-    output_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool output", alias="outputSchema")
+    output_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool output", alias="outputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
         description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
@@ -1035,7 +1035,7 @@ class ToolRead(BaseModelWithConfigDict):
     integration_type: str
     headers: Optional[Dict[str, str]]
     input_schema: Dict[str, Any]
-    output_schema: Optional[Dict[str, Any]]
+    output_schema: Optional[Dict[str, Any]] = Field(None)
     annotations: Optional[Dict[str, Any]]
     jsonpath_filter: Optional[str]
     auth: Optional[AuthenticationValues]

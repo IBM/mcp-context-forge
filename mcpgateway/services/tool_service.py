@@ -467,6 +467,7 @@ class ToolService:
                 request_type=tool.request_type,
                 headers=tool.headers,
                 input_schema=tool.input_schema,
+                output_schema=tool.output_schema,
                 annotations=tool.annotations,
                 jsonpath_filter=tool.jsonpath_filter,
                 auth_type=auth_type,
@@ -1247,6 +1248,8 @@ class ToolService:
                 tool.headers = tool_update.headers
             if tool_update.input_schema is not None:
                 tool.input_schema = tool_update.input_schema
+            if tool_update.output_schema is not None:
+                tool.output_schema = tool_update.output_schema
             if tool_update.annotations is not None:
                 tool.annotations = tool_update.annotations
             if tool_update.jsonpath_filter is not None:
