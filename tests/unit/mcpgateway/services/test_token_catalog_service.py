@@ -237,8 +237,8 @@ class TestTokenCatalogService:
         """Test _generate_token method with basic parameters."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_123"
-
-            token = await token_service._generate_token("user@example.com")
+            jti=str(uuid.uuid4())
+            token = await token_service._generate_token("user@example.com",jti)
 
             assert token == "jwt_token_123"
             mock_create_jwt.assert_called_once()
@@ -253,8 +253,8 @@ class TestTokenCatalogService:
         """Test _generate_token method with team_id."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_team"
-
-            token = await token_service._generate_token("user@example.com", team_id="team-123")
+            jti=str(uuid.uuid4())
+            token = await token_service._generate_token("user@example.com", jti=jti, team_id="team-123")
 
             assert token == "jwt_token_team"
             call_args = mock_create_jwt.call_args[0][0]
@@ -267,8 +267,9 @@ class TestTokenCatalogService:
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_exp"
             expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+            jti=str(uuid.uuid4())
 
-            token = await token_service._generate_token("user@example.com", expires_at=expires_at)
+            token = await token_service._generate_token("user@example.com", jti=jti, expires_at=expires_at)
 
             assert token == "jwt_token_exp"
             call_args = mock_create_jwt.call_args[0][0]
@@ -280,8 +281,9 @@ class TestTokenCatalogService:
         """Test _generate_token method with TokenScope."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_scoped"
+            jti=str(uuid.uuid4())
 
-            token = await token_service._generate_token("user@example.com", scope=token_scope)
+            token = await token_service._generate_token("user@example.com", jti=jti, scope=token_scope)
 
             assert token == "jwt_token_scoped"
             call_args = mock_create_jwt.call_args[0][0]
@@ -295,8 +297,9 @@ class TestTokenCatalogService:
         mock_user.is_admin = True
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_admin"
+            jti=str(uuid.uuid4())
 
-            token = await token_service._generate_token("admin@example.com", user=mock_user)
+            token = await token_service._generate_token("admin@example.com", jti=jti, user=mock_user)
 
             assert token == "jwt_token_admin"
             call_args = mock_create_jwt.call_args[0][0]
@@ -918,7 +921,9 @@ class TestTokenCatalogServiceEdgeCases:
 
             with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create:
                 mock_create.return_value = "jwt"
-                await token_service._generate_token("user@example.com")
+                jti=str(uuid.uuid4())
+
+                await token_service._generate_token("user@example.com", jti=jti)
 
                 call_args = mock_create.call_args[0][0]
                 assert call_args["iss"] == "test-issuer"

@@ -213,7 +213,9 @@ class TokenCatalogService:
         """
         self.db = db
 
-    async def _generate_token(self, user_email: str, team_id: Optional[str] = None, expires_at: Optional[datetime] = None, scope: Optional["TokenScope"] = None, user: Optional[object] = None) -> str:
+    async def _generate_token(
+        self, user_email: str, jti: str, team_id: Optional[str] = None, expires_at: Optional[datetime] = None, scope: Optional["TokenScope"] = None, user: Optional[object] = None
+    ) -> str:
         """Generate a JWT token for API access.
 
         This internal method creates a properly formatted JWT token with all
@@ -222,6 +224,7 @@ class TokenCatalogService:
 
         Args:
             user_email: User's email address for the token subject
+            jti: JWT ID for token uniqueness
             team_id: Optional team ID for team-scoped tokens
             expires_at: Optional expiration datetime
             scope: Optional token scope information for access control
@@ -242,7 +245,7 @@ class TokenCatalogService:
             "iss": settings.jwt_issuer,  # Issuer
             "aud": settings.jwt_audience,  # Audience
             "iat": int(now.timestamp()),  # Issued at
-            "jti": str(uuid.uuid4()),  # JWT ID for uniqueness
+            "jti": jti,  # JWT ID for uniqueness
             "user": {"email": user_email, "full_name": "API Token User", "is_admin": user.is_admin if user else False, "auth_provider": "api_token"},  # Use actual admin status if user provided
             "teams": [team_id] if team_id else [],
             "namespaces": [f"user:{user_email}", "public"] + ([f"team:{team_id}"] if team_id else []),
@@ -383,8 +386,9 @@ class TokenCatalogService:
         if expires_in_days:
             expires_at = utc_now() + timedelta(days=expires_in_days)
 
+        jti = str(uuid.uuid4())  # Unique JWT ID
         # Generate JWT token with all necessary claims
-        raw_token = await self._generate_token(user_email=user_email, team_id=team_id, expires_at=expires_at, scope=scope, user=user)  # Pass user object to include admin status
+        raw_token = await self._generate_token(user_email=user_email, jti=jti, team_id=team_id, expires_at=expires_at, scope=scope, user=user)  # Pass user object to include admin status
 
         # Hash token for secure storage
         token_hash = self._hash_token(raw_token)
@@ -395,6 +399,7 @@ class TokenCatalogService:
             user_email=user_email,
             team_id=team_id,  # Store team association
             name=name,
+            jti=jti,
             description=description,
             token_hash=token_hash,  # Store hash, not raw token
             expires_at=expires_at,
