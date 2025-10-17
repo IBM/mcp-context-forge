@@ -68,11 +68,13 @@ class WebSocketTransport(Transport):
         True
     """
 
-    def __init__(self, websocket: WebSocket):
-        """Initialize WebSocket transport.
+    def __init__(self, websocket: WebSocket, pooled: bool = False, pool_key: str = None):
+        """Initialize WebSocket transport with pooling support.
 
         Args:
             websocket: FastAPI WebSocket connection
+            pooled: Whether this transport is part of a session pool
+            pool_key: Pool key if part of a session pool
 
         Examples:
             >>> # Test initialization with mock WebSocket
@@ -86,10 +88,29 @@ class WebSocketTransport(Transport):
             >>> transport._ping_task is None
             True
         """
+        super().__init__()  # Initialize base class (sets session_id)
         self._websocket = websocket
         self._connected = False
         self._ping_task: Optional[asyncio.Task] = None
+        self._pooled = pooled
+        self._pool_key = pool_key
+        self._last_activity = time.time()
 
+    async def validate_session(self) -> bool:
+        """Validate that the session is still valid for reuse."""
+        if not self._connected:
+            return False
+            
+        # Check if the ping task is still running (connection alive)
+        if self._ping_task and self._ping_task.done():
+            return False
+            
+        # Check idle time
+        if (time.time() - self._last_activity) > settings.session_pool_max_idle_time:
+            return False
+            
+        return True
+    
     async def connect(self) -> None:
         """Set up WebSocket connection.
 
