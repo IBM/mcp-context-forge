@@ -18,19 +18,22 @@ Features:
 - Query parameter parsing and validation
 
 Examples:
+    >>> import asyncio
     >>> from mcpgateway.utils.pagination import paginate_query
     >>> from sqlalchemy import select
     >>> from mcpgateway.db import Tool
     >>>
     >>> # Simple offset pagination
     >>> query = select(Tool)
-    >>> result = await paginate_query(
-    ...     db=db,
-    ...     query=query,
-    ...     page=1,
-    ...     per_page=50,
-    ...     base_url="/admin/tools"
-    ... )
+    >>> async def _run():
+    ...     return await paginate_query(
+    ...         db=db,
+    ...         query=query,
+    ...         page=1,
+    ...         per_page=50,
+    ...         base_url="/admin/tools"
+    ...     )
+    >>> result = asyncio.run(_run())
     >>> result['pagination']['page']
     1
 """
@@ -210,16 +213,19 @@ async def offset_paginate(
         Dictionary with 'data', 'pagination', and 'links' keys
 
     Examples:
+        >>> import asyncio
         >>> from sqlalchemy import select
         >>> from mcpgateway.db import Tool
         >>> query = select(Tool)
-        >>> result = await offset_paginate(
-        ...     db=db,
-        ...     query=query,
-        ...     page=1,
-        ...     per_page=50,
-        ...     base_url="/admin/tools"
-        ... )
+        >>> async def _run():
+        ...     return await offset_paginate(
+        ...         db=db,
+        ...         query=query,
+        ...         page=1,
+        ...         per_page=50,
+        ...         base_url="/admin/tools"
+        ...     )
+        >>> result = asyncio.run(_run())
         >>> result['pagination']['page']
         1
     """
@@ -305,15 +311,18 @@ async def cursor_paginate(
         Dictionary with 'data', 'pagination', and 'links' keys
 
     Examples:
+        >>> import asyncio
         >>> from mcpgateway.db import Tool
         >>> query = select(Tool)
-        >>> result = await cursor_paginate(
-        ...     db=db,
-        ...     query=query,
-        ...     cursor=None,
-        ...     per_page=50,
-        ...     base_url="/admin/tools"
-        ... )
+        >>> async def _run():
+        ...     return await cursor_paginate(
+        ...         db=db,
+        ...         query=query,
+        ...         cursor=None,
+        ...         per_page=50,
+        ...         base_url="/admin/tools"
+        ...     )
+        >>> result = asyncio.run(_run())
         >>> result['pagination']['has_next'] in [True, False]
         True
     """
@@ -422,14 +431,17 @@ async def paginate_query(
         Dictionary with 'data', 'pagination', and 'links' keys
 
     Examples:
+        >>> import asyncio
         >>> from mcpgateway.db import Tool
         >>> query = select(Tool)
-        >>> result = await paginate_query(
-        ...     db=db,
-        ...     query=query,
-        ...     page=1,
-        ...     base_url="/admin/tools"
-        ... )
+        >>> async def _run():
+        ...     return await paginate_query(
+        ...         db=db,                           # provide an AsyncSession + async query path
+        ...         query=query,
+        ...         page=1,
+        ...         base_url="/admin/tools"
+        ...     )
+        >>> result = asyncio.run(_run())
         >>> 'pagination' in result
         True
         >>> 'data' in result
