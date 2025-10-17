@@ -25,13 +25,13 @@ from mcpgateway.config import settings
 from mcpgateway.models import LogLevel
 from mcpgateway.services.log_storage_service import LogStorageService
 
-AnyioClosedResourceError: Optional[type]
+AnyioClosedResourceError: Optional[type]  # pylint: disable=invalid-name
 try:
     # Optional import; only used for filtering a known benign upstream error
     # Third-Party
-    from anyio import ClosedResourceError as AnyioClosedResourceError
+    from anyio import ClosedResourceError as AnyioClosedResourceError  # pylint: disable=invalid-name
 except Exception:  # pragma: no cover - environment without anyio
-    AnyioClosedResourceError = None
+    AnyioClosedResourceError = None  # pylint: disable=invalid-name
 
 # First-Party
 # Create a text formatter
