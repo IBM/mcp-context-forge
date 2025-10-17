@@ -10,66 +10,6 @@
     - query_params: optional dict of additional query parameters
 -->
 
-<script>
-// Debug logging for HTMX swaps
-document.body.addEventListener('htmx:beforeRequest', (e) => {
-  if (e.detail.target.id === 'tools-table' || e.detail.target.id === 'tools-table-body') {
-    console.log('🌐 HTMX beforeRequest:', {
-      targetId: e.detail.target.id,
-      url: e.detail.requestConfig.path
-    });
-  }
-});
-
-document.body.addEventListener('htmx:afterSwap', (e) => {
-  if (e.detail.target.id === 'tools-table' || e.detail.target.id === 'tools-table-body') {
-    console.log('✅ HTMX afterSwap for table:', {
-      targetId: e.detail.target.id,
-      hasHeaders: e.detail.target.querySelectorAll('thead').length,
-      bodyCount: e.detail.target.querySelectorAll('tbody').length
-    });
-  }
-  if (e.detail.target.id === 'tools-pagination-controls') {
-    console.log('✅ HTMX afterSwap for controls (OOB)');
-  }
-  // Log ALL afterSwap events to debug
-  console.log('HTMX afterSwap event:', {
-    targetId: e.detail.target.id,
-    targetTag: e.detail.target.tagName,
-    elt: e.detail.elt?.id || e.detail.elt?.tagName
-  });
-});
-
-document.body.addEventListener('htmx:afterSettle', (e) => {
-  if (e.detail.target.id === 'tools-table' || e.detail.target.id === 'tools-table-body') {
-    console.log('🏁 HTMX afterSettle for table:', e.detail.target.id);
-  }
-});
-
-document.body.addEventListener('htmx:responseError', (e) => {
-  console.error('❌ HTMX responseError:', {
-    targetId: e.detail.target.id,
-    status: e.detail.xhr.status,
-    statusText: e.detail.xhr.statusText,
-    response: e.detail.xhr.responseText?.substring(0, 500)
-  });
-});
-
-document.body.addEventListener('htmx:sendError', (e) => {
-  console.error('❌ HTMX sendError:', {
-    targetId: e.detail.target.id,
-    error: e.detail.error
-  });
-});
-
-document.body.addEventListener('htmx:swapError', (e) => {
-  console.error('❌ HTMX swapError:', {
-    targetId: e.detail.target.id,
-    error: e.detail.error
-  });
-});
-</script>
-
 <div x-data="{
   currentPage: {{ pagination.page }},
   perPage: {{ pagination.per_page }},
@@ -109,9 +49,7 @@ document.body.addEventListener('htmx:swapError', (e) => {
   },
 
   // Load page via HTMX
-  loadPage(page) {
-    console.log('loadPage called:', { page, perPage: this.perPage, target: this.targetSelector });
-    
+  loadPage(page) {    
     const url = new URL('{{ base_url }}', window.location.origin);
     url.searchParams.set('page', page);
     url.searchParams.set('per_page', this.perPage);
@@ -122,8 +60,6 @@ document.body.addEventListener('htmx:swapError', (e) => {
     url.searchParams.set('{{ key }}', '{{ value }}');
     {% endfor %}
     {% endif %}
-
-    console.log('HTMX request URL:', url.toString());
     
     // Trigger HTMX request - use innerHTML so we only replace tbody content (rows)
     // The OOB swap will handle the pagination controls separately
