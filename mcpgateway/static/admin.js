@@ -7,7 +7,10 @@ function handleAddPassthrough() {
     }
 
     // Toggle visibility
-    if (passthroughContainer.style.display === "none" || passthroughContainer.style.display === "") {
+    if (
+        passthroughContainer.style.display === "none" ||
+        passthroughContainer.style.display === ""
+    ) {
         passthroughContainer.style.display = "block";
         // Add fields only if not already present
         if (!document.getElementById("query-mapping-field")) {
@@ -9181,12 +9184,12 @@ function setupFormHandlers() {
     if (paramButton) {
         paramButton.addEventListener("click", handleAddParameter);
     }
-    
+
     const passthroughButton = safeGetElement("add-passthrough-btn");
     if (passthroughButton) {
         passthroughButton.addEventListener("click", handleAddPassthrough);
     }
-    
+
     const serverForm = safeGetElement("add-server-form");
     if (serverForm) {
         serverForm.addEventListener("submit", handleServerFormSubmit);
