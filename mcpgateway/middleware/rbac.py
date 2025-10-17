@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.permission_service import PermissionService
 
@@ -115,7 +116,7 @@ async def get_current_user_with_permissions(
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
-            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": "/admin/login"})
+            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
 
     try:
@@ -142,7 +143,7 @@ async def get_current_user_with_permissions(
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
-            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": "/admin/login"})
+            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
 
