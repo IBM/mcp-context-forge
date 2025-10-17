@@ -10,7 +10,7 @@ Tests for the MCP Gateway WebSocket transport implementation.
 # Standard
 import asyncio
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import Mock, AsyncMock, patch
 
 # Third-Party
 from fastapi import WebSocket, WebSocketDisconnect
@@ -23,7 +23,7 @@ from mcpgateway.transports.websocket_transport import WebSocketTransport
 @pytest.fixture
 def mock_websocket():
     """Create a mock WebSocket."""
-    mock = AsyncMock(spec=WebSocket)
+    mock = Mock(spec=WebSocket)
     mock.accept = AsyncMock()
     mock.send_json = AsyncMock()
     mock.send_bytes = AsyncMock()
@@ -147,7 +147,7 @@ class TestWebSocketTransport:
         # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
-        mock_ws = AsyncMock()
+        mock_ws = Mock(spec=WebSocket)
         mock_ws.receive_bytes.return_value = b"pong"
         mock_ws.send_bytes = AsyncMock()
         transport = WebSocketTransport(mock_ws)
@@ -173,7 +173,7 @@ class TestWebSocketTransport:
         # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
-        mock_ws = AsyncMock()
+        mock_ws = Mock(spec=WebSocket)
         mock_ws.receive_bytes.return_value = b"notpong"
         mock_ws.send_bytes = AsyncMock()
         transport = WebSocketTransport(mock_ws)
@@ -199,7 +199,7 @@ class TestWebSocketTransport:
         # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
-        mock_ws = AsyncMock()
+        mock_ws = Mock(spec=WebSocket)
         mock_ws.send_bytes = AsyncMock()
         transport = WebSocketTransport(mock_ws)
         transport._connected = True
@@ -213,7 +213,7 @@ class TestWebSocketTransport:
 
         monkeypatch.setattr("asyncio.wait_for", fake_wait_for)
 
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("WARNING"), pytest.warns(RuntimeWarning):
             await transport._ping_loop()
             assert "Ping timeout" in caplog.text
 
@@ -223,7 +223,7 @@ class TestWebSocketTransport:
         # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
-        mock_ws = AsyncMock()
+        mock_ws = Mock(spec=WebSocket)
         mock_ws.send_bytes.side_effect = Exception("fail!")
         transport = WebSocketTransport(mock_ws)
         transport._connected = True
@@ -236,33 +236,30 @@ class TestWebSocketTransport:
             assert "Ping loop error: fail!" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_ping_loop_calls_disconnect(self, monkeypatch):
+    @patch("asyncio.sleep")
+    async def test_ping_loop_calls_disconnect(self, mock_sleep):
         """Test _ping_loop always calls disconnect in finally."""
         # First-Party
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
-        mock_ws = AsyncMock()
-        transport = WebSocketTransport(mock_ws)
-        transport._connected = True
-
-        monkeypatch.setattr("mcpgateway.transports.websocket_transport.settings.websocket_ping_interval", 0.01)
-        monkeypatch.setattr("asyncio.sleep", AsyncMock())
-        called = {}
-
-        async def fake_disconnect():
-            called["disconnect"] = True
-
-        transport.disconnect = fake_disconnect
-
+        mock_ws = Mock(spec=WebSocket)
         # Stop after one iteration
         async def fake_receive_bytes():
             transport._connected = False
             return b"pong"
-
         mock_ws.receive_bytes.side_effect = fake_receive_bytes
 
-        await transport._ping_loop()
-        assert called.get("disconnect")
+        transport = WebSocketTransport(mock_ws)
+        transport._connected = True
+
+        with (patch.object(transport, 'disconnect') as disconnect_mock):
+            assert await transport.is_connected()
+            await transport._ping_loop()
+            assert disconnect_mock.call_count == 1
+
+        assert mock_ws.send_bytes.call_count == 1
+        assert mock_ws.receive_bytes.call_count == 1
+        assert mock_sleep.call_count == 1
 
     @pytest.mark.asyncio
     async def test_send_message_raises_on_send_error(self, websocket_transport, mock_websocket, caplog):
