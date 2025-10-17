@@ -35,6 +35,17 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 
 class OpenAIConfig(BaseModel):
+    """Configuration for OpenAI summarization provider.
+
+    Attributes:
+        api_base: Base URL for OpenAI API.
+        api_key_env: Environment variable containing API key.
+        model: OpenAI model to use.
+        temperature: Sampling temperature.
+        max_tokens: Maximum tokens in summary.
+        use_responses_api: Whether to use Responses API format.
+    """
+
     api_base: str = "https://api.openai.com/v1"
     api_key_env: str = "OPENAI_API_KEY"
     model: str = "gpt-4o-mini"
@@ -44,6 +55,16 @@ class OpenAIConfig(BaseModel):
 
 
 class AnthropicConfig(BaseModel):
+    """Configuration for Anthropic summarization provider.
+
+    Attributes:
+        api_base: Base URL for Anthropic API.
+        api_key_env: Environment variable containing API key.
+        model: Anthropic model to use.
+        max_tokens: Maximum tokens in summary.
+        temperature: Sampling temperature.
+    """
+
     api_base: str = "https://api.anthropic.com/v1"
     api_key_env: str = "ANTHROPIC_API_KEY"
     model: str = "claude-3-5-sonnet-latest"
@@ -52,6 +73,21 @@ class AnthropicConfig(BaseModel):
 
 
 class SummarizerConfig(BaseModel):
+    """Configuration for summarizer plugin.
+
+    Attributes:
+        provider: LLM provider to use (openai or anthropic).
+        openai: OpenAI-specific configuration.
+        anthropic: Anthropic-specific configuration.
+        prompt_template: Template for summarization prompt.
+        include_bullets: Whether to request bullet points in summary.
+        language: Target language for summary (None for autodetect).
+        threshold_chars: Minimum content length to trigger summarization.
+        hard_truncate_chars: Maximum input characters before truncation.
+        tool_allowlist: Optional list of tools to apply summarization to.
+        resource_uri_prefixes: Optional URI prefixes to filter resources.
+    """
+
     provider: str = "openai"  # openai | anthropic
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
@@ -68,6 +104,19 @@ class SummarizerConfig(BaseModel):
 
 
 async def _summarize_openai(cfg: OpenAIConfig, system_prompt: str, user_text: str) -> str:
+    """Summarize text using OpenAI API.
+
+    Args:
+        cfg: OpenAI configuration.
+        system_prompt: System prompt for the model.
+        user_text: Text to summarize.
+
+    Returns:
+        Summarized text.
+
+    Raises:
+        RuntimeError: If API key is missing or response parsing fails.
+    """
     # Standard
     import os
 
@@ -112,6 +161,19 @@ async def _summarize_openai(cfg: OpenAIConfig, system_prompt: str, user_text: st
 
 
 async def _summarize_anthropic(cfg: AnthropicConfig, system_prompt: str, user_text: str) -> str:
+    """Summarize text using Anthropic API.
+
+    Args:
+        cfg: Anthropic configuration.
+        system_prompt: System prompt for the model.
+        user_text: Text to summarize.
+
+    Returns:
+        Summarized text.
+
+    Raises:
+        RuntimeError: If API key is missing or response parsing fails.
+    """
     # Standard
     import os
 
@@ -147,6 +209,15 @@ async def _summarize_anthropic(cfg: AnthropicConfig, system_prompt: str, user_te
 
 
 def _build_prompt(base: SummarizerConfig, text: str) -> tuple[str, str]:
+    """Build system and user prompts for summarization.
+
+    Args:
+        base: Summarizer configuration.
+        text: Text to summarize.
+
+    Returns:
+        Tuple of (system_prompt, user_text).
+    """
     bullets = "Provide a bullet list when helpful." if base.include_bullets else ""
     lang = f"Write in {base.language}." if base.language else ""
     sys = base.prompt_template.format(max_tokens=base.openai.max_tokens)
@@ -156,6 +227,18 @@ def _build_prompt(base: SummarizerConfig, text: str) -> tuple[str, str]:
 
 
 async def _summarize_text(cfg: SummarizerConfig, text: str) -> str:
+    """Summarize text using the configured provider.
+
+    Args:
+        cfg: Summarizer configuration.
+        text: Text to summarize.
+
+    Returns:
+        Summarized text.
+
+    Raises:
+        RuntimeError: If provider is unsupported or API call fails.
+    """
     system_prompt, user_text = _build_prompt(cfg, text)
     if cfg.provider == "openai":
         return await _summarize_openai(cfg.openai, system_prompt, user_text)
@@ -165,23 +248,48 @@ async def _summarize_text(cfg: SummarizerConfig, text: str) -> str:
 
 
 def _maybe_get_text_from_result(result: Any) -> Optional[str]:
+    """Extract text from a tool result if it's a string.
+
+    Args:
+        result: Tool invocation result.
+
+    Returns:
+        Text content if result is a string, None otherwise.
+    """
     # Only support plain string outputs by default.
     return result if isinstance(result, str) else None
 
 
 class SummarizerPlugin(Plugin):
+    """Plugin to summarize long text content using LLM providers."""
+
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the summarizer plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = SummarizerConfig(**(config.config or {}))
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Summarize resource text content if it exceeds threshold.
+
+        Args:
+            payload: Resource fetch result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with summarized content or original if below threshold.
+        """
         content = payload.content
         if not hasattr(content, "text") or not isinstance(content.text, str) or not content.text:
             return ResourcePostFetchResult(continue_processing=True)
         # Optional gating by URI prefix
-        if self._cfg.resource_uri_prefixes:
+        uri_prefixes = self._cfg.resource_uri_prefixes
+        if uri_prefixes is not None:
             uri = payload.uri or ""
-            if not any(uri.startswith(p) for p in self._cfg.resource_uri_prefixes):
+            if not any(uri.startswith(p) for p in uri_prefixes):
                 return ResourcePostFetchResult(continue_processing=True)
         text = content.text
         if len(text) < self._cfg.threshold_chars:
@@ -196,6 +304,15 @@ class SummarizerPlugin(Plugin):
         return ResourcePostFetchResult(modified_payload=new_payload, metadata={"summarized": True})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Summarize tool result text if it exceeds threshold.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with summarized content or original if below threshold.
+        """
         # Optional gating by tool name
         if self._cfg.tool_allowlist and payload.name not in set(self._cfg.tool_allowlist):
             return ToolPostInvokeResult(continue_processing=True)

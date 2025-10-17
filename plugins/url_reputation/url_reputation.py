@@ -30,6 +30,13 @@ from mcpgateway.plugins.framework import (
 
 
 class URLReputationConfig(BaseModel):
+    """Configuration for URL reputation checks.
+
+    Attributes:
+        blocked_domains: List of blocked domain names.
+        blocked_patterns: List of blocked URL patterns.
+    """
+
     blocked_domains: List[str] = Field(default_factory=list)
     blocked_patterns: List[str] = Field(default_factory=list)
 
@@ -38,10 +45,24 @@ class URLReputationPlugin(Plugin):
     """Static allow/deny URL reputation checks."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the URL reputation plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = URLReputationConfig(**(config.config or {}))
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
+        """Check URL against blocked domains and patterns before fetch.
+
+        Args:
+            payload: Resource pre-fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result indicating whether URL is allowed or blocked.
+        """
         parsed = urlparse(payload.uri)
         host = parsed.hostname or ""
         # Domain check

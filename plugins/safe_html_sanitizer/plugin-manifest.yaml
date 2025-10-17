@@ -1,5 +1,5 @@
 description: "Sanitizes HTML to remove XSS vectors (dangerous tags, event handlers, bad URL schemes); optional text conversion."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["security", "html", "xss", "sanitize"]
 available_hooks:

@@ -1,5 +1,5 @@
 description: "Honors robots/noai and license meta from HTML; blocks or annotates per policy."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["compliance", "robots", "license"]
 available_hooks:

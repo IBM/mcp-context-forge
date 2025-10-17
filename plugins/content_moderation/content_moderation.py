@@ -178,6 +178,11 @@ class ContentModerationPlugin(Plugin):
     """Plugin for advanced content moderation using multiple AI providers."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the content moderation plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = ContentModerationConfig(**(config.config or {}))
         self._client = httpx.AsyncClient()
@@ -674,7 +679,7 @@ Respond with JSON format:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Async context manager exit - cleanup HTTP client."""
         if hasattr(self, "_client"):
             await self._client.aclose()

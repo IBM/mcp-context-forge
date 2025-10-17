@@ -27,7 +27,7 @@ plugins:
     kind: "plugins.regex_filter.search_replace.SearchReplacePlugin"
     description: "Performs text transformations using regex patterns"
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["transformer", "regex", "text-processing"]
     mode: "enforce"  # enforce | permissive | disabled

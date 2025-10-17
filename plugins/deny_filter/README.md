@@ -21,7 +21,7 @@ plugins:
     kind: "plugins.deny_filter.deny.DenyListPlugin"
     description: "A plugin that implements a deny list filter."
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
     mode: "enforce"  # enforce | permissive | disabled

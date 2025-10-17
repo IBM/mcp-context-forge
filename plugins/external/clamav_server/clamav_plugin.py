@@ -52,12 +52,18 @@ EICAR_SIGNATURES = (
 
 
 def _has_eicar(data: bytes) -> bool:
+    """ Has Eicar implementation."""
+
     blob = data.decode("latin1", errors="ignore")
     return any(sig in blob for sig in EICAR_SIGNATURES)
 
 
 class ClamAVConfig:
+    """ClamAVConfig implementation."""
+
     def __init__(self, cfg: dict[str, Any] | None) -> None:
+        """Initialize the instance."""
+
         c = cfg or {}
         self.mode: str = c.get("mode", "eicar_only")  # eicar_only|clamd_tcp|clamd_unix
         self.host: str | None = c.get("clamd_host")
@@ -69,6 +75,8 @@ class ClamAVConfig:
 
 
 def _clamd_instream_scan_tcp(host: str, port: int, data: bytes, timeout: float) -> str:
+    """ Clamd Instream Scan Tcp implementation."""
+
     # Minimal INSTREAM protocol: https://linux.die.net/man/8/clamd
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
@@ -91,6 +99,8 @@ def _clamd_instream_scan_tcp(host: str, port: int, data: bytes, timeout: float) 
 
 
 def _clamd_instream_scan_unix(path: str, data: bytes, timeout: float) -> str:
+    """ Clamd Instream Scan Unix implementation."""
+
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     s.connect(path)
@@ -113,17 +123,23 @@ class ClamAVRemotePlugin(Plugin):
     """External ClamAV plugin for scanning resources and content."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the instance."""
+
         super().__init__(config)
         self._cfg = ClamAVConfig(config.config)
         self._stats: dict[str, int] = {"attempted": 0, "infected": 0, "blocked": 0, "errors": 0}
 
     def _bump(self, key: str) -> None:
+        """ Bump implementation."""
+
         try:
             self._stats[key] = int(self._stats.get(key, 0)) + 1
         except Exception:
             pass
 
     def _scan_bytes(self, data: bytes) -> tuple[bool, str]:
+        """ Scan Bytes implementation."""
+
         if len(data) > self._cfg.max_bytes:
             return False, "SKIPPED: too large"
 
@@ -148,6 +164,15 @@ class ClamAVRemotePlugin(Plugin):
         return False, "SKIPPED: clamd not configured"
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
+        """Scan local file content with ClamAV before fetching.
+
+        Args:
+            payload: Resource pre-fetch payload containing URI.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if malware detected, or allowing with scan metadata.
+        """
         uri = payload.uri
         if uri.startswith("file://"):
             path = uri[len("file://") :]
@@ -178,6 +203,15 @@ class ClamAVRemotePlugin(Plugin):
         return ResourcePreFetchResult(continue_processing=True)
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Scan resource text content with ClamAV after fetching.
+
+        Args:
+            payload: Resource post-fetch payload containing content.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if malware detected, or allowing with scan metadata.
+        """
         text = getattr(payload.content, "text", None)
         if isinstance(text, str) and text:
             data = text.encode("utf-8", errors="ignore")
@@ -201,6 +235,15 @@ class ClamAVRemotePlugin(Plugin):
         return ResourcePostFetchResult(continue_processing=True)
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
+        """Scan prompt message text with ClamAV after fetching.
+
+        Args:
+            payload: Prompt post-fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if malware detected, or allowing with scan metadata.
+        """
         # Scan rendered prompt messages text
         try:
             for m in payload.result.messages:
@@ -229,8 +272,19 @@ class ClamAVRemotePlugin(Plugin):
             return PromptPosthookResult(metadata={"clamav": {"error": str(exc)}})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Scan tool output strings with ClamAV after invocation.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if malware detected, or allowing with scan metadata.
+        """
         # Recursively scan string values in tool outputs
         def iter_strings(obj):
+            """Iter Strings implementation."""
+
             if isinstance(obj, str):
                 yield obj
             elif isinstance(obj, dict):

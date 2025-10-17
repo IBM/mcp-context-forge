@@ -30,12 +30,30 @@ from mcpgateway.plugins.framework import (
 
 
 class PrivacyNoticeConfig(BaseModel):
+    """Configuration for privacy notice injection.
+
+    Attributes:
+        notice_text: Text of the privacy notice to inject.
+        placement: Where to inject notice (prepend, append, separate_message).
+        marker: Deduplication marker to prevent duplicate injections.
+    """
+
     notice_text: str = "Privacy notice: Do not include PII, secrets, or confidential information in prompts or outputs."
     placement: str = "append"  # prepend | append | separate_message
     marker: str = "[PRIVACY]"  # used to dedupe
 
 
 def _inject_text(existing: str, notice: str, placement: str) -> str:
+    """Inject notice text into existing text based on placement.
+
+    Args:
+        existing: Existing text content.
+        notice: Notice text to inject.
+        placement: Injection placement (prepend or append).
+
+    Returns:
+        Text with notice injected.
+    """
     if placement == "prepend":
         return f"{notice}\n\n{existing}" if existing else notice
     if placement == "append":
@@ -47,10 +65,24 @@ class PrivacyNoticeInjectorPlugin(Plugin):
     """Inject a privacy notice into prompt messages."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the privacy notice injector plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = PrivacyNoticeConfig(**(config.config or {}))
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
+        """Inject privacy notice into prompt messages.
+
+        Args:
+            payload: Prompt result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with injected privacy notice if applicable.
+        """
         result = payload.result
         if not result or not result.messages:
             return PromptPosthookResult(continue_processing=True)

@@ -43,6 +43,8 @@ logger = logging_service.get_logger(__name__)
 
 
 class CaseStrategy(str, Enum):
+    """Casing strategy for text normalization."""
+
     NONE = "none"
     LOWER = "lower"
     UPPER = "upper"
@@ -50,6 +52,8 @@ class CaseStrategy(str, Enum):
 
 
 class UnicodeForm(str, Enum):
+    """Unicode normalization forms."""
+
     NFC = "NFC"
     NFD = "NFD"
     NFKC = "NFKC"
@@ -121,6 +125,8 @@ class ArgumentNormalizerConfig(BaseModel):
 
 @dataclass
 class EffectiveCfg:
+    """Effective configuration after merging base config with field-specific overrides."""
+
     enable_unicode: bool
     unicode_form: str
     remove_control_chars: bool
@@ -213,6 +219,15 @@ _DATE_NUMERIC_RE = re.compile(r"\b(\d{1,4})[\-/.](\d{1,2})[\-/.](\d{1,4})\b")
 
 
 def _normalize_unicode(text: str, eff: EffectiveCfg) -> str:
+    """Normalize unicode form and remove control characters.
+
+    Args:
+        text: Input text to normalize.
+        eff: Effective configuration.
+
+    Returns:
+        Text with unicode normalization applied.
+    """
     if not eff.enable_unicode:
         return text
     try:
@@ -225,6 +240,15 @@ def _normalize_unicode(text: str, eff: EffectiveCfg) -> str:
 
 
 def _normalize_whitespace(text: str, eff: EffectiveCfg) -> str:
+    """Normalize whitespace including trimming, collapsing, and newline normalization.
+
+    Args:
+        text: Input text to normalize.
+        eff: Effective configuration.
+
+    Returns:
+        Text with whitespace normalized.
+    """
     if not eff.enable_whitespace:
         return text
     if eff.normalize_newlines:
@@ -240,6 +264,15 @@ def _normalize_whitespace(text: str, eff: EffectiveCfg) -> str:
 
 
 def _normalize_casing(text: str, eff: EffectiveCfg) -> str:
+    """Apply casing strategy to text.
+
+    Args:
+        text: Input text to normalize.
+        eff: Effective configuration.
+
+    Returns:
+        Text with casing strategy applied.
+    """
     if not eff.enable_casing or eff.case_strategy == CaseStrategy.NONE:
         return text
     if eff.case_strategy == CaseStrategy.LOWER:
@@ -252,10 +285,27 @@ def _normalize_casing(text: str, eff: EffectiveCfg) -> str:
 
 
 def _normalize_dates(text: str, eff: EffectiveCfg) -> str:
+    """Normalize date formats to ISO 8601 (YYYY-MM-DD).
+
+    Args:
+        text: Input text potentially containing dates.
+        eff: Effective configuration.
+
+    Returns:
+        Text with dates normalized to ISO format.
+    """
     if not eff.enable_dates:
         return text
 
     def convert(m: re.Match[str]) -> str:
+        """Convert matched date to ISO format.
+
+        Args:
+            m: Regex match object for date pattern.
+
+        Returns:
+            ISO formatted date string or original text if conversion fails.
+        """
         a, b, c = m.group(1), m.group(2), m.group(3)
         # Identify positions based on year_first/day_first
         try:
@@ -316,10 +366,27 @@ def _normalize_dates(text: str, eff: EffectiveCfg) -> str:
 
 
 def _normalize_numbers(text: str, eff: EffectiveCfg) -> str:
+    """Normalize number formats to canonical form with dot decimal separator.
+
+    Args:
+        text: Input text potentially containing numbers.
+        eff: Effective configuration.
+
+    Returns:
+        Text with numbers normalized to canonical format.
+    """
     if not eff.enable_numbers:
         return text
 
     def fix_numeric(token: str) -> str:
+        """Fix a numeric token by removing thousands separators and normalizing decimal.
+
+        Args:
+            token: Numeric token to normalize.
+
+        Returns:
+            Normalized numeric string.
+        """
         # Infer decimal separator
         dec = eff.decimal_detection
         if dec == "auto":
@@ -354,6 +421,14 @@ def _normalize_numbers(text: str, eff: EffectiveCfg) -> str:
                 return token.replace(".", "").replace(" ", "").replace("'", "")
 
     def repl(m: re.Match[str]) -> str:
+        """Replace matched numeric token with normalized version.
+
+        Args:
+            m: Regex match object for numeric pattern.
+
+        Returns:
+            Normalized numeric string or original text if normalization fails.
+        """
         token = m.group(0)
         try:
             return fix_numeric(token)
@@ -408,6 +483,17 @@ def _normalize_text(text: str, eff: EffectiveCfg) -> str:
 
 
 def _normalize_value(value: Any, base_cfg: ArgumentNormalizerConfig, path: str, modified_flag: Dict[str, bool]) -> Any:
+    """Recursively normalize a value (string, dict, or list).
+
+    Args:
+        value: Value to normalize.
+        base_cfg: Base configuration for normalization.
+        path: Field path for applying overrides.
+        modified_flag: Dictionary to track if any modifications were made.
+
+    Returns:
+        Normalized value.
+    """
     eff = _merge_overrides(base_cfg, path)
     if isinstance(value, str):
         new_val = _normalize_text(value, eff)
@@ -433,10 +519,24 @@ class ArgumentNormalizerPlugin(Plugin):
     """Argument Normalizer plugin for prompts and tools."""
 
     def __init__(self, config: PluginConfig):
+        """Initialize the argument normalizer plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self.cfg = ArgumentNormalizerConfig.model_validate(self._config.config)
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        """Normalize prompt arguments before fetching.
+
+        Args:
+            payload: Prompt request payload containing arguments.
+            context: Plugin execution context.
+
+        Returns:
+            Result with modified payload if arguments were normalized.
+        """
         if not payload.args:
             return PromptPrehookResult()
 
@@ -455,6 +555,15 @@ class ArgumentNormalizerPlugin(Plugin):
         return PromptPrehookResult()
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Normalize tool arguments before invocation.
+
+        Args:
+            payload: Tool invocation payload containing arguments.
+            context: Plugin execution context.
+
+        Returns:
+            Result with modified payload if arguments were normalized.
+        """
         if payload.args is None:
             return ToolPreInvokeResult()
 
@@ -471,4 +580,5 @@ class ArgumentNormalizerPlugin(Plugin):
         return ToolPreInvokeResult()
 
     async def shutdown(self) -> None:
+        """Shutdown the plugin and clean up resources."""
         logger.info("ArgumentNormalizer plugin shutting down")

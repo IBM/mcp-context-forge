@@ -87,6 +87,20 @@ BIDI_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\u200e\u200f\u202a-\u202e\u2066
 
 
 class SafeHTMLConfig(BaseModel):
+    """Configuration for HTML sanitization.
+
+    Attributes:
+        allowed_tags: List of permitted HTML tags.
+        allowed_attrs: Map of tag names to allowed attributes.
+        remove_comments: Whether to remove HTML comments.
+        drop_unknown_tags: Whether to remove unknown tags.
+        strip_event_handlers: Whether to remove event handler attributes.
+        sanitize_css: Whether to remove style attributes.
+        allow_data_images: Whether to allow data: image URIs.
+        remove_bidi_controls: Whether to remove bidirectional control characters.
+        to_text: Whether to convert sanitized HTML to plain text.
+    """
+
     allowed_tags: List[str] = Field(default_factory=lambda: list(DEFAULT_ALLOWED_TAGS))
     allowed_attrs: Dict[str, List[str]] = Field(default_factory=lambda: dict(DEFAULT_ALLOWED_ATTRS))
     remove_comments: bool = True
@@ -99,13 +113,32 @@ class SafeHTMLConfig(BaseModel):
 
 
 class _Sanitizer(HTMLParser):
+    """HTML parser that sanitizes content by removing dangerous elements.
+
+    Attributes:
+        cfg: Sanitization configuration.
+        out: List of output HTML fragments.
+        skip_stack: Stack tracking nested dangerous tags to skip.
+    """
+
     def __init__(self, cfg: SafeHTMLConfig) -> None:
+        """Initialize the sanitizer.
+
+        Args:
+            cfg: Sanitization configuration.
+        """
         super().__init__(convert_charrefs=True)
         self.cfg = cfg
         self.out: List[str] = []
         self.skip_stack: List[str] = []  # dangerous tag depth stack
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        """Handle HTML start tags with sanitization.
+
+        Args:
+            tag: Tag name.
+            attrs: List of attribute name-value pairs.
+        """
         if tag.lower() in DANGEROUS_TAGS:
             self.skip_stack.append(tag.lower())
             return
@@ -165,6 +198,12 @@ class _Sanitizer(HTMLParser):
         self.out.append(f"<{tag_l}{attr_str}>")
 
     def handle_startendtag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
+        """Handle self-closing HTML tags.
+
+        Args:
+            tag: Tag name.
+            attrs: List of attribute name-value pairs.
+        """
         # Treat as start + end for void tags
         self.handle_starttag(tag, attrs)
         # If we emitted, last char is '>' and tag is allowed; we can self-close by replacing last '>' with '/>'
@@ -172,6 +211,11 @@ class _Sanitizer(HTMLParser):
             self.out[-1] = self.out[-1][:-1] + " />"
 
     def handle_endtag(self, tag: str) -> None:
+        """Handle HTML end tags.
+
+        Args:
+            tag: Tag name.
+        """
         t = tag.lower()
         if t in DANGEROUS_TAGS:
             if self.skip_stack and self.skip_stack[-1] == t:
@@ -184,6 +228,11 @@ class _Sanitizer(HTMLParser):
         self.out.append(f"</{t}>")
 
     def handle_data(self, data: str) -> None:
+        """Handle text data between HTML tags.
+
+        Args:
+            data: Text content.
+        """
         if self.skip_stack:
             return
         text = data
@@ -192,15 +241,33 @@ class _Sanitizer(HTMLParser):
         self.out.append(html.escape(text))
 
     def handle_comment(self, data: str) -> None:
+        """Handle HTML comments.
+
+        Args:
+            data: Comment content.
+        """
         if self.cfg.remove_comments:
             return
         self.out.append(f"<!--{data}-->")
 
     def get_html(self) -> str:
+        """Get the sanitized HTML output.
+
+        Returns:
+            Sanitized HTML string.
+        """
         return "".join(self.out)
 
 
 def _to_text(html_str: str) -> str:
+    """Convert HTML to plain text.
+
+    Args:
+        html_str: HTML string to convert.
+
+    Returns:
+        Plain text with basic formatting preserved.
+    """
     # Very simple, retain line breaks around common block tags
     block_break = re.sub(r"</(p|div|h[1-6]|li|tr|table|blockquote)>", "\n", html_str, flags=re.IGNORECASE)
     # Strip the remaining tags
@@ -210,11 +277,27 @@ def _to_text(html_str: str) -> str:
 
 
 class SafeHTMLSanitizerPlugin(Plugin):
+    """Sanitizes HTML content to remove XSS vectors and dangerous elements."""
+
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the safe HTML sanitizer plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = SafeHTMLConfig(**(config.config or {}))
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Sanitize HTML content after resource fetch.
+
+        Args:
+            payload: Resource post-fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with sanitized HTML content.
+        """
         content = payload.content
         if not hasattr(content, "text") or not isinstance(content.text, str) or not content.text:
             return ResourcePostFetchResult(continue_processing=True)

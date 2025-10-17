@@ -40,6 +40,16 @@ META_PATTERN = re.compile(
 
 
 class RobotsLicenseConfig(BaseModel):
+    """Configuration for robots and license guard plugin.
+
+    Attributes:
+        user_agent: User-Agent string to use in requests.
+        respect_noai_meta: Whether to respect noai/robots meta tags.
+        block_on_violation: Whether to block on policy violations.
+        license_required: Whether license metadata is required.
+        allow_overrides: URI substrings that bypass checks.
+    """
+
     user_agent: str = "MCP-Context-Forge/1.0"
     respect_noai_meta: bool = True
     block_on_violation: bool = True
@@ -48,10 +58,27 @@ class RobotsLicenseConfig(BaseModel):
 
 
 def _has_override(uri: str, overrides: list[str]) -> bool:
+    """Check if URI contains any override token.
+
+    Args:
+        uri: Resource URI to check.
+        overrides: List of override tokens.
+
+    Returns:
+        True if URI contains any override token.
+    """
     return any(token in uri for token in overrides)
 
 
 def _parse_meta(text: str) -> dict[str, str]:
+    """Parse HTML meta tags for robots and license information.
+
+    Args:
+        text: HTML text to parse.
+
+    Returns:
+        Dictionary mapping meta tag names to their content.
+    """
     found: dict[str, str] = {}
     for m in META_PATTERN.finditer(text):
         name = m.group("name").lower()
@@ -61,11 +88,27 @@ def _parse_meta(text: str) -> dict[str, str]:
 
 
 class RobotsLicenseGuardPlugin(Plugin):
+    """Honors robots/noai/license meta tags in fetched HTML content."""
+
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the robots license guard plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = RobotsLicenseConfig(**(config.config or {}))
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
+        """Add User-Agent header before resource fetch.
+
+        Args:
+            payload: Resource fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with modified payload containing User-Agent header.
+        """
         # Annotate user-agent hint in metadata for downstream fetcher
         md = dict(payload.metadata or {})
         headers = {**md.get("headers", {}), "User-Agent": self._cfg.user_agent}
@@ -74,6 +117,15 @@ class RobotsLicenseGuardPlugin(Plugin):
         return ResourcePreFetchResult(modified_payload=new_payload)
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Check fetched content for robots/noai/license meta tags.
+
+        Args:
+            payload: Resource post-fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result indicating whether content violates robots/license policies.
+        """
         content = payload.content
         if not hasattr(content, "text") or not isinstance(content.text, str) or not content.text:
             return ResourcePostFetchResult(continue_processing=True)

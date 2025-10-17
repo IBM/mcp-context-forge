@@ -48,6 +48,16 @@ PATTERNS = {
 
 
 class SecretsDetectionConfig(BaseModel):
+    """Configuration for secrets detection.
+
+    Attributes:
+        enabled: Map of pattern names to whether they are enabled.
+        redact: Whether to redact detected secrets.
+        redaction_text: Text to replace secrets with when redacting.
+        block_on_detection: Whether to block when secrets are detected.
+        min_findings_to_block: Minimum number of findings required to block.
+    """
+
     enabled: Dict[str, bool] = {k: True for k in PATTERNS.keys()}
     redact: bool = False
     redaction_text: str = "***REDACTED***"
@@ -56,8 +66,25 @@ class SecretsDetectionConfig(BaseModel):
 
 
 def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
+    """Iterate over all string values in nested data structure.
+
+    Args:
+        value: Value to iterate (can be dict, list, str, or other).
+
+    Yields:
+        Tuples of (path, text) for each string found.
+    """
     # Yields pairs of (path, text)
     def walk(obj: Any, path: str):
+        """Recursively walk nested structure yielding string paths.
+
+        Args:
+            obj: Object to walk (can be str, dict, list, or other).
+            path: Current path string.
+
+        Yields:
+            Tuples of (path, text) for each string found.
+        """
         if isinstance(obj, str):
             yield path, obj
         elif isinstance(obj, dict):
@@ -71,6 +98,15 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
 
 
 def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
+    """Detect secrets in text using configured patterns.
+
+    Args:
+        text: Text to scan for secrets.
+        cfg: Secrets detection configuration.
+
+    Returns:
+        List of findings with type and match preview.
+    """
     findings: list[dict[str, Any]] = []
     for name, pat in PATTERNS.items():
         if not cfg.enabled.get(name, True):
@@ -81,6 +117,15 @@ def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
 
 
 def _scan_container(container: Any, cfg: SecretsDetectionConfig) -> Tuple[int, Any, list[dict[str, Any]]]:
+    """Recursively scan container for secrets and optionally redact.
+
+    Args:
+        container: Container to scan (str, dict, list, or other).
+        cfg: Secrets detection configuration.
+
+    Returns:
+        Tuple of (count, redacted_container, all_findings).
+    """
     total = 0
     redacted = container
     all_findings: list[dict[str, Any]] = []
@@ -117,10 +162,24 @@ class SecretsDetectionPlugin(Plugin):
     """Detect and optionally redact secrets in inputs/outputs."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the secrets detection plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = SecretsDetectionConfig(**(config.config or {}))
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        """Detect secrets in prompt arguments.
+
+        Args:
+            payload: Prompt payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result indicating secrets found or content redacted.
+        """
         count, new_args, findings = _scan_container(payload.args or {}, self._cfg)
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
             return PromptPrehookResult(
@@ -137,6 +196,15 @@ class SecretsDetectionPlugin(Plugin):
         return PromptPrehookResult(metadata={"secrets_findings": findings, "count": count} if count else {})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Detect secrets in tool results.
+
+        Args:
+            payload: Tool result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result indicating secrets found or content redacted.
+        """
         count, new_result, findings = _scan_container(payload.result, self._cfg)
         if count >= self._cfg.min_findings_to_block and self._cfg.block_on_detection:
             return ToolPostInvokeResult(
@@ -153,6 +221,15 @@ class SecretsDetectionPlugin(Plugin):
         return ToolPostInvokeResult(metadata={"secrets_findings": findings, "count": count} if count else {})
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Detect secrets in fetched resource content.
+
+        Args:
+            payload: Resource post-fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result indicating secrets found or content redacted.
+        """
         content = payload.content
         # Only scan textual content
         if hasattr(content, "text") and isinstance(content.text, str):

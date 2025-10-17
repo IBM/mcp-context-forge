@@ -39,6 +39,19 @@ from mcpgateway.plugins.framework import (
 
 
 class CodeFormatterConfig(BaseModel):
+    """Configuration for code formatting.
+
+    Attributes:
+        languages: List of supported language identifiers.
+        tab_width: Number of spaces per tab character.
+        trim_trailing: Whether to trim trailing whitespace.
+        ensure_newline: Whether to ensure single trailing newline.
+        dedent_code: Whether to dedent code blocks.
+        format_json: Whether to pretty-print JSON.
+        format_code_fences: Whether to format Markdown code fences.
+        max_size_kb: Maximum file size in KB to format.
+    """
+
     languages: list[str] = [
         "plaintext",
         "python",
@@ -58,6 +71,15 @@ class CodeFormatterConfig(BaseModel):
 
 
 def _normalize_text(text: str, cfg: CodeFormatterConfig) -> str:
+    """Normalize text formatting according to configuration.
+
+    Args:
+        text: Text content to normalize.
+        cfg: Code formatter configuration.
+
+    Returns:
+        Normalized text.
+    """
     # Optionally dedent
     if cfg.dedent_code:
         text = dedent(text)
@@ -78,6 +100,14 @@ def _normalize_text(text: str, cfg: CodeFormatterConfig) -> str:
 
 
 def _try_format_json(text: str) -> Optional[str]:
+    """Attempt to parse and pretty-print JSON.
+
+    Args:
+        text: Text content that may be JSON.
+
+    Returns:
+        Pretty-printed JSON string or None if parsing fails.
+    """
     # Standard
     import json
 
@@ -89,6 +119,16 @@ def _try_format_json(text: str) -> Optional[str]:
 
 
 def _format_by_language(result: Any, cfg: CodeFormatterConfig, language: str | None = None) -> Any:
+    """Format content based on language and configuration.
+
+    Args:
+        result: Content to format.
+        cfg: Code formatter configuration.
+        language: Optional language identifier.
+
+    Returns:
+        Formatted content or original if not applicable.
+    """
     if not isinstance(result, str):
         return result
     # Size guard
@@ -109,10 +149,24 @@ class CodeFormatterPlugin(Plugin):
     """Lightweight formatter for post-invoke and resource content."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the code formatter plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = CodeFormatterConfig(**(config.config or {}))
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Format tool result after invocation.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with formatted content if applicable.
+        """
         value = payload.result
         # Heuristics: allow explicit language hint via metadata or args
         language = None
@@ -125,6 +179,15 @@ class CodeFormatterPlugin(Plugin):
         return ToolPostInvokeResult(modified_payload=ToolPostInvokePayload(name=payload.name, result=formatted))
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Format resource content after fetch.
+
+        Args:
+            payload: Resource fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with formatted content if applicable.
+        """
         content = payload.content
         # Only format textual resource content
         language = None

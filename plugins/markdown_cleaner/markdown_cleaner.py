@@ -30,6 +30,14 @@ from mcpgateway.plugins.framework import (
 
 
 def _clean_md(text: str) -> str:
+    """Clean and normalize Markdown formatting.
+
+    Args:
+        text: Markdown text to clean.
+
+    Returns:
+        Cleaned Markdown text.
+    """
     # Normalize CRLF
     text = re.sub(r"\r\n?|\u2028|\u2029", "\n", text)
     # Ensure space after heading hashes
@@ -47,9 +55,23 @@ class MarkdownCleanerPlugin(Plugin):
     """Clean Markdown in prompts and resources."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the Markdown cleaner plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
+        """Clean Markdown in prompt messages.
+
+        Args:
+            payload: Prompt result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with cleaned Markdown if applicable.
+        """
         pr: PromptResult = payload.result
         changed = False
         new_msgs: list[Message] = []
@@ -68,6 +90,15 @@ class MarkdownCleanerPlugin(Plugin):
         return PromptPosthookResult(continue_processing=True)
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Clean Markdown in resource content.
+
+        Args:
+            payload: Resource fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with cleaned Markdown if applicable.
+        """
         content: Any = payload.content
         if isinstance(content, ResourceContent) and content.text:
             clean = _clean_md(content.text)

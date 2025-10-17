@@ -10,12 +10,12 @@ This module loads configurations for plugins and applies hooks on pre/post reque
 
 # Standard
 from enum import Enum
-from typing import Any, Union, TypeAlias
+from typing import Any, TypeAlias
 from urllib.parse import urlparse
 
 # Third-Party
+from opapluginfilter.schema import BaseOPAInputKeys, OPAConfig, OPAInput
 import requests
-
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -27,43 +27,40 @@ from mcpgateway.plugins.framework import (
     PromptPosthookResult,
     PromptPrehookPayload,
     PromptPrehookResult,
+    ResourcePostFetchPayload,
+    ResourcePostFetchResult,
+    ResourcePreFetchPayload,
+    ResourcePreFetchResult,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
-    ResourcePostFetchPayload,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
-    ResourcePostFetchResult
 )
 from mcpgateway.plugins.framework.models import AppliedTo
 from mcpgateway.services.logging_service import LoggingService
-from opapluginfilter.schema import BaseOPAInputKeys, OPAConfig, OPAInput
-
 
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
-class OPACodes(str,Enum):
+class OPACodes(str, Enum):
+    """OPACodes implementation."""
+
     ALLOW_CODE = "ALLOW"
     DENIAL_CODE = "DENY"
     AUDIT_CODE = "AUDIT"
     REQUIRES_HUMAN_APPROVAL_CODE = "REQUIRES_APPROVAL"
 
-class OPAResponseTemplates(str,Enum):
+
+class OPAResponseTemplates(str, Enum):
+    """OPAResponseTemplates implementation."""
+
     OPA_REASON = "OPA policy denied for {hook_type}"
     OPA_DESC = "{hook_type} not allowed"
 
-HookPayload: TypeAlias = (
-    ToolPreInvokePayload |
-    ToolPostInvokePayload |
-    PromptPosthookPayload |
-    PromptPrehookPayload |
-    ResourcePreFetchPayload |
-    ResourcePostFetchPayload
-)
+
+HookPayload: TypeAlias = ToolPreInvokePayload | ToolPostInvokePayload | PromptPosthookPayload | PromptPrehookPayload | ResourcePreFetchPayload | ResourcePostFetchPayload
 
 
 class OPAPluginFilter(Plugin):
@@ -117,6 +114,8 @@ class OPAPluginFilter(Plugin):
         """
 
         def _key(k: str, m: str) -> str:
+            """ Key implementation."""
+
             return f"{k}.{m}" if k.split(".")[0] == "context" else k
 
         payload = {"input": {m: self._get_nested_value(input.model_dump()["input"], _key(k, m)) for k, m in policy_input_data_map.items()}} if policy_input_data_map else input.model_dump()
@@ -140,7 +139,7 @@ class OPAPluginFilter(Plugin):
             logger.debug(f"OPA error: {rsp}")
         return True, None
 
-    def _preprocess_opa(self,policy_apply_config:AppliedTo = None ,payload: HookPayload = None, context : PluginContext = None,hook_type : str = None) -> dict:
+    def _preprocess_opa(self, policy_apply_config: AppliedTo = None, payload: HookPayload = None, context: PluginContext = None, hook_type: str = None) -> dict:
         """Function to preprocess input for OPA server based on the type of hook it's invoked on.
 
         Args:
@@ -153,14 +152,9 @@ class OPAPluginFilter(Plugin):
             dict: if a valid policy_apply_config, payload and hook_type, otherwise returns dictionary with none values
 
         """
-        result = {
-            "opa_server_url" : None,
-            "policy_context" : None,
-            "policy_input_data_map" : None,
-            "policy_modality" : None
-        }
+        result = {"opa_server_url": None, "policy_context": None, "policy_input_data_map": None, "policy_modality": None}
 
-        if not(policy_apply_config and payload and hook_type):
+        if not (policy_apply_config and payload and hook_type):
             logger.error(f"Unspecified required: {policy_apply_config} and payload: {payload} and hook_type: {hook_type}")
             return result
 
@@ -169,14 +163,15 @@ class OPAPluginFilter(Plugin):
         policy = None
         policy_endpoint = None
         policy_input_data_map = {}
+        policy_modality = None
         hook_name = None
 
         if policy_apply_config:
             if "tool" in hook_type and policy_apply_config.tools:
                 hook_info = policy_apply_config.tools
-            elif "prompt" in hook_type and  policy_apply_config.prompts:
+            elif "prompt" in hook_type and policy_apply_config.prompts:
                 hook_info = policy_apply_config.prompts
-            elif "resource" in hook_type and  policy_apply_config.resources:
+            elif "resource" in hook_type and policy_apply_config.resources:
                 hook_info = policy_apply_config.resources
             else:
                 logger.error("The hooks should belong to either of the following: tool, prompts and resources")
@@ -207,7 +202,7 @@ class OPAPluginFilter(Plugin):
                         policy_input_data_map = hook.extensions.get("policy_input_data_map", {})
                         policy_modality = hook.extensions.get("policy_modality", ["text"])
                         if policy_endpoints:
-                            policy_endpoint = next((endpoint for endpoint in policy_endpoints if hook_type in endpoint),"allow")
+                            policy_endpoint = next((endpoint for endpoint in policy_endpoints if hook_type in endpoint), "allow")
 
         if not policy_endpoint:
             logger.debug(f"Unconfigured endpoint for policy {hook_type} {hook_name} invocation")
@@ -219,7 +214,7 @@ class OPAPluginFilter(Plugin):
         result["policy_modality"] = policy_modality
         return result
 
-    def _extract_payload_key(self, content: Any = None, key: str = None, result: dict[str,list] = None) -> None:
+    def _extract_payload_key(self, content: Any = None, key: str = None, result: dict[str, list] = None) -> None:
         """Function to extract values of passed in key in the payload recursively based on if the content is of type list, dict
         str or pydantic structure. The value is inplace updated in result.
 
@@ -232,20 +227,19 @@ class OPAPluginFilter(Plugin):
             None
 
         """
-        if isinstance(content,list):
+        if isinstance(content, list):
             for element in content:
-                if isinstance(element,dict) and key in element:
-                    self._extract_payload_key(element,key,result)
-        elif isinstance(content,dict):
-            if key in content or hasattr(content,key):
+                if isinstance(element, dict) and key in element:
+                    self._extract_payload_key(element, key, result)
+        elif isinstance(content, dict):
+            if key in content or hasattr(content, key):
                 result[key].append(content[key])
-        elif isinstance(content,str):
+        elif isinstance(content, str):
             result[key].append(content)
-        elif hasattr(content,key):
-            result[key].append(getattr(content,key))
+        elif hasattr(content, key):
+            result[key].append(getattr(content, key))
         else:
             logger.error(f"Can't handle content of {type(content)}")
-
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """OPA Plugin hook run before a prompt is fetched. This hook takes in payload and context and further evaluates rego
@@ -268,18 +262,20 @@ class OPAPluginFilter(Plugin):
 
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.prompts:
-            opa_pre_prompt_input = self._preprocess_opa(policy_apply_config,payload,context,hook_type)
+            opa_pre_prompt_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
             if not all(v is None for v in opa_pre_prompt_input.values()):
                 opa_input = BaseOPAInputKeys(kind="post_tool", user="none", payload=payload.model_dump(), context=opa_pre_prompt_input["policy_context"], request_ip="none", headers={}, mode="input")
-                decision, decision_context = self._evaluate_opa_policy(url=opa_pre_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_prompt_input["policy_input_data_map"])
+                decision, decision_context = self._evaluate_opa_policy(
+                    url=opa_pre_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_prompt_input["policy_input_data_map"]
+                )
                 if not decision:
-                        violation = PluginViolation(
-                            reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
-                            description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
-                            code=OPACodes.DENIAL_CODE,
-                            details=decision_context,
-                        )
-                        return PromptPrehookResult(modified_payload=payload, violation=violation, continue_processing=False)
+                    violation = PluginViolation(
+                        reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
+                        description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
+                        code=OPACodes.DENIAL_CODE,
+                        details=decision_context,
+                    )
+                    return PromptPrehookResult(modified_payload=payload, violation=violation, continue_processing=False)
         return PromptPrehookResult(continue_processing=True)
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
@@ -303,26 +299,29 @@ class OPAPluginFilter(Plugin):
 
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.prompts:
-            opa_post_prompt_input = self._preprocess_opa(policy_apply_config,payload,context,hook_type)
-            if opa_post_prompt_input:
-                result = dict.fromkeys(opa_post_prompt_input["policy_modality"],[])
+            opa_post_prompt_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
+            policy_modality = opa_post_prompt_input.get("policy_modality") if opa_post_prompt_input else None
+            if opa_post_prompt_input and policy_modality:
+                result = dict.fromkeys(policy_modality, [])
 
-            if hasattr(payload.result,"messages") and isinstance(payload.result.messages,list):
-                for message in payload.result.messages:
-                    if hasattr(message,"content"):
-                        for key in opa_post_prompt_input["policy_modality"]:
-                            self._extract_payload_key(message.content,key,result)
+                if hasattr(payload.result, "messages") and isinstance(payload.result.messages, list):
+                    for message in payload.result.messages:
+                        if hasattr(message, "content"):
+                            for key in policy_modality:
+                                self._extract_payload_key(message.content, key, result)
 
-                opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_prompt_input["policy_context"], request_ip="none", headers={},mode="output")
-                decision, decision_context = self._evaluate_opa_policy(url=opa_post_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_prompt_input["policy_input_data_map"])
+                opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_prompt_input["policy_context"], request_ip="none", headers={}, mode="output")
+                decision, decision_context = self._evaluate_opa_policy(
+                    url=opa_post_prompt_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_prompt_input["policy_input_data_map"]
+                )
                 if not decision:
-                        violation = PluginViolation(
-                            reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
-                            description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
-                            code=OPACodes.DENIAL_CODE,
-                            details=decision_context,
-                        )
-                        return PromptPosthookResult(modified_payload=payload, violation=violation, continue_processing=False)
+                    violation = PluginViolation(
+                        reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
+                        description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
+                        code=OPACodes.DENIAL_CODE,
+                        details=decision_context,
+                    )
+                    return PromptPosthookResult(modified_payload=payload, violation=violation, continue_processing=False)
         return PromptPosthookResult(continue_processing=True)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -346,20 +345,21 @@ class OPAPluginFilter(Plugin):
 
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.tools:
-            opa_pre_tool_input = self._preprocess_opa(policy_apply_config,payload,context,hook_type)
+            opa_pre_tool_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
             if opa_pre_tool_input:
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_tool_input["policy_context"], request_ip="none", headers={}, mode="input")
-                decision, decision_context = self._evaluate_opa_policy(url=opa_pre_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_tool_input["policy_input_data_map"])
+                decision, decision_context = self._evaluate_opa_policy(
+                    url=opa_pre_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_tool_input["policy_input_data_map"]
+                )
                 if not decision:
-                        violation = PluginViolation(
-                            reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
-                            description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
-                            code=OPACodes.DENIAL_CODE,
-                            details=decision_context,
-                        )
-                        return ToolPreInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
+                    violation = PluginViolation(
+                        reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
+                        description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
+                        code=OPACodes.DENIAL_CODE,
+                        details=decision_context,
+                    )
+                    return ToolPreInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
         return ToolPreInvokeResult(continue_processing=True)
-
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked. This hook takes in payload and context and further evaluates rego
@@ -381,25 +381,28 @@ class OPAPluginFilter(Plugin):
             return ToolPostInvokeResult()
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.tools:
-            opa_post_tool_input = self._preprocess_opa(policy_apply_config,payload,context,hook_type)
-            if opa_post_tool_input:
-                result = dict.fromkeys(opa_post_tool_input["policy_modality"],[])
+            opa_post_tool_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
+            policy_modality = opa_post_tool_input.get("policy_modality") if opa_post_tool_input else None
+            if opa_post_tool_input and policy_modality:
+                result = dict.fromkeys(policy_modality, [])
 
-            if isinstance(payload.result,dict):
-                content = payload.result["content"] if "content" in payload.result else payload.result
-                for key in opa_post_tool_input["policy_modality"]:
-                        self._extract_payload_key(content,key,result)
+                if isinstance(payload.result, dict):
+                    content = payload.result["content"] if "content" in payload.result else payload.result
+                    for key in policy_modality:
+                        self._extract_payload_key(content, key, result)
 
-                opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_tool_input["policy_context"], request_ip="none", headers={},mode="output")
-                decision, decision_context = self._evaluate_opa_policy(url=opa_post_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_tool_input["policy_input_data_map"])
+                opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_tool_input["policy_context"], request_ip="none", headers={}, mode="output")
+                decision, decision_context = self._evaluate_opa_policy(
+                    url=opa_post_tool_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_tool_input["policy_input_data_map"]
+                )
                 if not decision:
-                        violation = PluginViolation(
-                            reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
-                            description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
-                            code=OPACodes.DENIAL_CODE,
-                            details=decision_context,
-                        )
-                        return ToolPostInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
+                    violation = PluginViolation(
+                        reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
+                        description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
+                        code=OPACodes.DENIAL_CODE,
+                        details=decision_context,
+                    )
+                    return ToolPostInvokeResult(modified_payload=payload, violation=violation, continue_processing=False)
         return ToolPostInvokeResult(continue_processing=True)
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
@@ -434,18 +437,20 @@ class OPAPluginFilter(Plugin):
 
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.resources:
-            opa_pre_resource_input = self._preprocess_opa(policy_apply_config,payload,context,hook_type)
+            opa_pre_resource_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
             if not all(v is None for v in opa_pre_resource_input.values()):
                 opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=payload.model_dump(), context=opa_pre_resource_input["policy_context"], request_ip="none", headers={}, mode="input")
-                decision, decision_context = self._evaluate_opa_policy(url=opa_pre_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_resource_input["policy_input_data_map"])
+                decision, decision_context = self._evaluate_opa_policy(
+                    url=opa_pre_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_pre_resource_input["policy_input_data_map"]
+                )
                 if not decision:
-                        violation = PluginViolation(
-                            reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
-                            description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
-                            code=OPACodes.DENIAL_CODE,
-                            details=decision_context,
-                        )
-                        return ResourcePreFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
+                    violation = PluginViolation(
+                        reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
+                        description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
+                        code=OPACodes.DENIAL_CODE,
+                        details=decision_context,
+                    )
+                    return ResourcePreFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
         return ResourcePreFetchResult(continue_processing=True)
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
@@ -469,20 +474,24 @@ class OPAPluginFilter(Plugin):
 
         policy_apply_config = self._config.applied_to
         if policy_apply_config and policy_apply_config.resources:
-            opa_post_resource_input = self._preprocess_opa(policy_apply_config,payload,context,hook_type)
-            if not all(v is None for v in opa_post_resource_input.values()):
-                result = dict.fromkeys(opa_post_resource_input["policy_modality"],[])
-                for key in opa_post_resource_input["policy_modality"]:
-                    if hasattr(payload.content,key):
-                        self._extract_payload_key(payload.content,key,result)
-                    opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_resource_input["policy_context"], request_ip="none", headers={},mode="output")
-                    decision, decision_context = self._evaluate_opa_policy(url=opa_post_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_resource_input["policy_input_data_map"])
-                    if not decision:
-                            violation = PluginViolation(
-                                reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
-                                description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
-                                code=OPACodes.DENIAL_CODE,
-                                details=decision_context,
-                            )
-                            return ResourcePostFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
+            opa_post_resource_input = self._preprocess_opa(policy_apply_config, payload, context, hook_type)
+            policy_modality = opa_post_resource_input.get("policy_modality") if opa_post_resource_input else None
+            if not all(v is None for v in opa_post_resource_input.values()) and policy_modality:
+                result = dict.fromkeys(policy_modality, [])
+                for key in policy_modality:
+                    if hasattr(payload.content, key):
+                        self._extract_payload_key(payload.content, key, result)
+
+                opa_input = BaseOPAInputKeys(kind=hook_type, user="none", payload=result, context=opa_post_resource_input["policy_context"], request_ip="none", headers={}, mode="output")
+                decision, decision_context = self._evaluate_opa_policy(
+                    url=opa_post_resource_input["opa_server_url"], input=OPAInput(input=opa_input), policy_input_data_map=opa_post_resource_input["policy_input_data_map"]
+                )
+                if not decision:
+                    violation = PluginViolation(
+                        reason=OPAResponseTemplates.OPA_REASON.format(hook_type=hook_type),
+                        description=OPAResponseTemplates.OPA_DESC.format(hook_type=hook_type),
+                        code=OPACodes.DENIAL_CODE,
+                        details=decision_context,
+                    )
+                    return ResourcePostFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
         return ResourcePostFetchResult(continue_processing=True)
