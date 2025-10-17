@@ -11,16 +11,17 @@ It supports RFC 5424 severity levels, log level management, and log event subscr
 
 # Standard
 import asyncio
-import logging
-import os
 from asyncio.events import AbstractEventLoop
 from datetime import datetime, timezone
+import logging
 from logging.handlers import RotatingFileHandler
+import os
 from typing import Any, AsyncGenerator, Dict, List, NotRequired, Optional, TextIO, TypedDict
 
 # Third-Party
 from pythonjsonlogger import json as jsonlogger  # You may need to install python-json-logger package
 
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.models import LogLevel
 from mcpgateway.services.log_storage_service import LogStorageService
