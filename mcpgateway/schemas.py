@@ -5338,6 +5338,7 @@ class PluginSummary(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Plugin tags for categorization")
     status: str = Field(..., description="Plugin status: enabled or disabled")
     config_summary: Dict[str, Any] = Field(default_factory=dict, description="Summary of plugin configuration")
+    implementation: Optional[str] = Field(None, description="Implementation type (e.g., 'Rust', 'Python')")
 
 
 class PluginDetail(PluginSummary):

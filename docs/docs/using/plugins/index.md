@@ -42,9 +42,13 @@ The plugin framework implements a **hybrid architecture** supporting both native
 ### Native Plugins
 - **In-Process Execution:** Written in Python, run directly within the gateway process
 - **High Performance:** Sub-millisecond latency, no network overhead
+- **Rust Acceleration:** Select plugins available with 5-10x Rust speedup ([learn more](rust-plugins.md))
 - **Direct Access:** Full access to gateway internals and context
 - **Use Cases:** PII filtering, regex transformations, input validation, simple business rules
 - **Examples:** `PIIFilterPlugin`, `SearchReplacePlugin`, `DenyListPlugin`
+
+!!! tip "Rust-Accelerated Plugins"
+    The PII Filter plugin is available with an optional Rust implementation that provides 5-10x performance improvements. Install with `pip install mcpgateway[rust]` for automatic acceleration. See the [Rust Plugins Guide](rust-plugins.md) for details.
 
 ### External Service Plugins
 - **MCP Integration:** External plugins communicate via MCP using STDIO or Streamable HTTP

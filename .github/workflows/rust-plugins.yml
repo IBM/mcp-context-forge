@@ -1,0 +1,371 @@
+name: Rust Plugins CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "plugins_rust/**"
+      - "plugins/pii_filter/**"
+      - ".github/workflows/rust-plugins.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "plugins_rust/**"
+      - "plugins/pii_filter/**"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # Rust unit tests and linting
+  rust-tests:
+    name: Rust Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: plugins_rust/target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        working-directory: plugins_rust
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        working-directory: plugins_rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: plugins_rust
+        run: cargo test --verbose
+
+      - name: Run Rust integration tests
+        working-directory: plugins_rust
+        run: cargo test --test integration --verbose
+
+  # Build wheels for multiple platforms (native builds)
+  build-wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build wheels
+        working-directory: plugins_rust
+        run: maturin build --release --out dist
+
+      - name: Upload wheels as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: plugins_rust/dist/*.whl
+
+  # Build wheels for multiple Linux architectures using QEMU
+  build-wheels-linux-multiarch:
+    name: Build wheels for Linux ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+          - s390x-unknown-linux-gnu
+          - powerpc64le-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build wheel for ${{ matrix.target }}
+        working-directory: plugins_rust
+        run: |
+          # Use maturin with explicit target
+          maturin build --release --target ${{ matrix.target }} --out dist --compatibility manylinux2014
+
+      - name: Upload wheels as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: plugins_rust/dist/*.whl
+
+  # Python integration tests with Rust extensions
+  python-integration:
+    name: Python Integration Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    needs: build-wheels
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest pytest-cov
+
+      - name: Build and install Rust extension
+        working-directory: plugins_rust
+        run: maturin develop --release
+
+      - name: Install Python plugin dependencies
+        run: |
+          pip install pydantic
+
+      - name: Run Python unit tests (Rust)
+        run: pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
+
+      - name: Run differential tests
+        run: pytest tests/differential/test_pii_filter_differential.py -v
+
+  # Benchmarks
+  benchmarks:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    needs: build-wheels
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pydantic
+
+      - name: Build and install Rust extension
+        working-directory: plugins_rust
+        run: maturin develop --release
+
+      - name: Run Rust benchmarks
+        working-directory: plugins_rust
+        run: |
+          cargo install cargo-criterion || true
+          cargo criterion --message-format=json > benchmark-results.json || true
+
+      - name: Run Python comparison benchmarks
+        run: |
+          python benchmarks/compare_pii_filter.py --output benchmark-comparison.json
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            plugins_rust/benchmark-results.json
+            benchmark-comparison.json
+
+  # Security audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+
+      - name: Run security audit
+        working-directory: plugins_rust
+        run: cargo audit
+
+  # Coverage report
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Install coverage tools
+        run: |
+          pip install maturin pytest pytest-cov pydantic
+          cargo install cargo-tarpaulin
+
+      - name: Build Rust extension
+        working-directory: plugins_rust
+        run: maturin develop --release
+
+      - name: Run Python tests with coverage
+        run: |
+          pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py \
+                 tests/differential/test_pii_filter_differential.py \
+                 --cov=plugins.pii_filter \
+                 --cov-report=xml \
+                 --cov-report=html
+
+      - name: Run Rust coverage
+        working-directory: plugins_rust
+        run: cargo tarpaulin --out Xml --output-dir coverage
+
+      - name: Upload Python coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          flags: python
+          name: python-coverage
+
+      - name: Upload Rust coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./plugins_rust/coverage/cobertura.xml
+          flags: rust
+          name: rust-coverage
+
+  # Build documentation
+  documentation:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust docs
+        working-directory: plugins_rust
+        run: cargo doc --no-deps --document-private-items
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-docs
+          path: plugins_rust/target/doc
+
+  # Release build (only on tags)
+  release:
+    name: Release Build
+    runs-on: ${{ matrix.os }}
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [rust-tests, python-integration]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build release wheels
+        working-directory: plugins_rust
+        run: maturin build --release --out dist
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-wheels-${{ matrix.os }}
+          path: plugins_rust/dist/*.whl
+
+      - name: Publish to PyPI (if tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        working-directory: plugins_rust
+        run: maturin publish --username __token__ --password $MATURIN_PYPI_TOKEN

@@ -176,6 +176,10 @@ docs/_build/
 # PyBuilder
 target/
 
+# Rust plugin benchmarks
+plugins_rust/benchmarks/results/*.json
+plugins_rust/benchmarks/results/*.csv
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

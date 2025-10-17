@@ -16,6 +16,9 @@ SHELL := /bin/bash
 # Read values from .env.make
 -include .env.make
 
+# Rust build configuration (set to 0 to disable Rust builds)
+ENABLE_RUST_BUILD ?= 1
+
 # Project variables
 PROJECT_NAME      = mcpgateway
 DOCS_DIR          = docs
@@ -131,6 +134,8 @@ install-db: venv
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
+	@echo "🦀 Building Rust plugins..."
+	@$(MAKE) rust-dev || echo "⚠️  Rust plugins not available (optional)"
 
 .PHONY: update
 update:
@@ -358,6 +363,217 @@ doctest-check:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		python3 -m pytest --doctest-modules mcpgateway/ --tb=no -q && \
 		echo '✅ All doctests passing' || (echo '❌ Doctest failures detected' && exit 1)"
+
+
+# =============================================================================
+# 🦀 RUST PLUGINS - High-performance plugin implementations
+# =============================================================================
+# help: 🦀 RUST PLUGINS
+# help: rust-build          - Build Rust plugins in release mode (native)
+# help: rust-dev            - Build and install Rust plugins in development mode
+# help: rust-test           - Run Rust plugin tests
+# help: rust-test-all       - Run all Rust and Python integration tests
+# help: rust-bench          - Run Rust plugin benchmarks
+# help: rust-bench-compare  - Compare Rust vs Python performance
+# help: rust-check          - Run all Rust checks (format, lint, test)
+# help: rust-clean          - Clean Rust build artifacts
+# help: rust-verify         - Verify Rust plugin installation
+# help:
+# help: 🦀 RUST CROSS-COMPILATION
+# help: rust-check-maturin       - Check/install maturin (auto-runs before builds)
+# help: rust-install-deps        - Install all Rust build dependencies
+# help: rust-install-targets     - Install all Rust cross-compilation targets
+# help: rust-build-x86_64        - Build for Linux x86_64
+# help: rust-build-aarch64       - Build for Linux arm64/aarch64
+# help: rust-build-armv7         - Build for Linux armv7 (32-bit ARM)
+# help: rust-build-s390x         - Build for Linux s390x (IBM mainframe)
+# help: rust-build-ppc64le       - Build for Linux ppc64le (IBM POWER)
+# help: rust-build-all-linux     - Build for all Linux architectures
+# help: rust-build-all-platforms - Build for all platforms (Linux, macOS, Windows)
+# help: rust-cross               - Install targets + build all Linux (convenience)
+# help: rust-cross-install-build - Install targets + build all platforms (one command)
+
+.PHONY: rust-build rust-dev rust-test rust-test-all rust-bench rust-bench-compare rust-check rust-clean rust-verify
+.PHONY: rust-check-maturin rust-install-deps rust-install-targets
+.PHONY: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le
+.PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+
+rust-build: rust-check-maturin          ## Build Rust plugins (release)
+	@echo "🦀 Building Rust plugins..."
+	@cd plugins_rust && $(MAKE) build
+
+rust-dev:                               ## Build and install Rust plugins (development mode)
+	@echo "🦀 Building Rust plugins in development mode..."
+	@cd plugins_rust && $(MAKE) dev
+
+rust-test:                              ## Run Rust plugin tests
+	@echo "🦀 Running Rust tests..."
+	@cd plugins_rust && $(MAKE) test
+
+rust-test-integration:                  ## Run Rust integration tests
+	@echo "🦀 Running Rust integration tests..."
+	@cd plugins_rust && $(MAKE) test-integration
+
+rust-test-python:                       ## Run Python tests for Rust plugins
+	@echo "🐍 Running Python tests for Rust plugins..."
+	@cd plugins_rust && $(MAKE) test-python
+
+rust-test-differential:                 ## Run differential tests (Rust vs Python)
+	@echo "⚖️  Running differential tests..."
+	@cd plugins_rust && $(MAKE) test-differential
+
+rust-test-all:                          ## Run all Rust and Python integration tests
+	@echo "🧪 Running all Rust plugin tests..."
+	@cd plugins_rust && $(MAKE) test-all
+
+rust-bench:                             ## Run Rust benchmarks
+	@echo "📊 Running Rust benchmarks..."
+	@cd plugins_rust && $(MAKE) bench
+
+rust-bench-compare:                     ## Compare Rust vs Python performance
+	@echo "⚖️  Comparing Rust vs Python performance..."
+	@cd plugins_rust && $(MAKE) bench-compare
+
+rust-bench-all:                         ## Run all benchmarks
+	@echo "📊 Running all benchmarks..."
+	@cd plugins_rust && $(MAKE) bench-all
+
+rust-check:                             ## Run all Rust checks (format, lint, test)
+	@echo "✅ Running Rust checks..."
+	@cd plugins_rust && $(MAKE) check
+
+rust-fmt:                               ## Format Rust code
+	@echo "📝 Formatting Rust code..."
+	@cd plugins_rust && $(MAKE) fmt
+
+rust-clippy:                            ## Run Rust linter
+	@echo "📎 Running clippy..."
+	@cd plugins_rust && $(MAKE) clippy
+
+rust-audit:                             ## Run security audit
+	@echo "🔒 Running security audit..."
+	@cd plugins_rust && $(MAKE) audit
+
+rust-doc:                               ## Build Rust documentation
+	@echo "📚 Building Rust documentation..."
+	@cd plugins_rust && $(MAKE) doc
+
+rust-doc-open:                          ## Build and open Rust documentation
+	@echo "📚 Opening Rust documentation..."
+	@cd plugins_rust && $(MAKE) doc-open
+
+rust-coverage:                          ## Generate Rust coverage report
+	@echo "📊 Generating Rust coverage..."
+	@cd plugins_rust && $(MAKE) coverage
+
+rust-clean:                             ## Clean Rust build artifacts
+	@echo "🧹 Cleaning Rust build artifacts..."
+	@cd plugins_rust && $(MAKE) clean
+
+rust-verify:                            ## Verify Rust plugin installation
+	@echo "✅ Verifying Rust plugin installation..."
+	@cd plugins_rust && $(MAKE) verify
+
+rust-info:                              ## Show Rust build information
+	@cd plugins_rust && $(MAKE) info
+
+# Cross-compilation targets
+rust-check-maturin:                     ## Check if maturin is installed, install if needed
+	@if ! command -v maturin >/dev/null 2>&1; then \
+		echo "📦 maturin not found, installing..."; \
+		if command -v uv >/dev/null 2>&1; then \
+			echo "   Using uv to install maturin..."; \
+			uv tool install maturin; \
+		elif [ -d "$(VENV_DIR)" ]; then \
+			echo "   Using venv pip to install maturin..."; \
+			$(VENV_DIR)/bin/pip install maturin; \
+		else \
+			echo "   Using system pip to install maturin..."; \
+			pip install maturin; \
+		fi; \
+		echo "✅ maturin installed"; \
+	else \
+		echo "✅ maturin already installed"; \
+	fi
+
+rust-install-targets:                   ## Install all Rust cross-compilation targets
+	@echo "🦀 Installing Rust cross-compilation targets..."
+	rustup target add x86_64-unknown-linux-gnu
+	rustup target add aarch64-unknown-linux-gnu
+	rustup target add armv7-unknown-linux-gnueabihf
+	rustup target add s390x-unknown-linux-gnu
+	rustup target add powerpc64le-unknown-linux-gnu
+	rustup target add x86_64-apple-darwin
+	rustup target add aarch64-apple-darwin
+	rustup target add x86_64-pc-windows-gnu
+	@echo "✅ All Rust targets installed"
+
+rust-install-deps: rust-check-maturin rust-install-targets  ## Install all Rust build dependencies
+	@echo "🦀 Installing Rust build dependencies..."
+	@if ! command -v cross >/dev/null 2>&1; then \
+		echo "📦 Installing cross (cross-compilation tool)..."; \
+		cargo install cross --git https://github.com/cross-rs/cross; \
+	else \
+		echo "✅ cross already installed"; \
+	fi
+	@echo "✅ All Rust dependencies installed"
+
+rust-build-x86_64: rust-check-maturin   ## Build Rust wheels for x86_64 (native)
+	@echo "🦀 Building for x86_64..."
+	@cd plugins_rust && maturin build --release --target x86_64-unknown-linux-gnu --compatibility linux
+
+rust-build-aarch64: rust-check-maturin  ## Build Rust wheels for arm64/aarch64
+	@echo "🦀 Building for aarch64 (arm64)..."
+	@cd plugins_rust && maturin build --release --target aarch64-unknown-linux-gnu --compatibility linux
+
+rust-build-armv7: rust-check-maturin    ## Build Rust wheels for armv7 (32-bit ARM)
+	@echo "🦀 Building for armv7..."
+	@cd plugins_rust && maturin build --release --target armv7-unknown-linux-gnueabihf --compatibility linux
+
+rust-build-s390x: rust-check-maturin    ## Build Rust wheels for s390x (IBM mainframe)
+	@echo "🦀 Building for s390x..."
+	@cd plugins_rust && maturin build --release --target s390x-unknown-linux-gnu --compatibility linux
+
+rust-build-ppc64le: rust-check-maturin  ## Build Rust wheels for ppc64le (IBM POWER)
+	@echo "🦀 Building for ppc64le..."
+	@cd plugins_rust && maturin build --release --target powerpc64le-unknown-linux-gnu --compatibility linux
+
+rust-build-macos: rust-check-maturin    ## Build Rust wheels for macOS (universal2)
+	@echo "🦀 Building for macOS universal2..."
+	@cd plugins_rust && maturin build --release
+
+rust-build-windows: rust-check-maturin  ## Build Rust wheels for Windows x86_64
+	@echo "🦀 Building for Windows x86_64..."
+	@cd plugins_rust && maturin build --release --target x86_64-pc-windows-gnu --compatibility windows
+
+rust-build-all-linux:                   ## Build Rust wheels for all Linux architectures
+	@echo "🦀 Building for all Linux targets..."
+	@$(MAKE) rust-build-x86_64
+	@$(MAKE) rust-build-aarch64
+	@$(MAKE) rust-build-armv7
+	@$(MAKE) rust-build-s390x
+	@$(MAKE) rust-build-ppc64le
+	@echo "✅ All Linux wheels built"
+	@ls -lh plugins_rust/target/wheels/
+
+rust-build-all-platforms:               ## Build Rust wheels for all platforms (Linux, macOS, Windows)
+	@echo "🦀 Building for all platforms..."
+	@$(MAKE) rust-build-all-linux
+	@$(MAKE) rust-build-macos
+	@$(MAKE) rust-build-windows
+	@echo "✅ All platform wheels built"
+	@ls -lh plugins_rust/target/wheels/
+
+rust-cross-install-build:               ## Install targets and build all platforms (one command)
+	@$(MAKE) rust-install-targets
+	@$(MAKE) rust-build-all-platforms
+
+# Convenience targets
+rust: rust-dev rust-verify              ## Build and verify Rust plugins (quick start)
+
+rust-full: rust-check rust-dev rust-test-all rust-bench-compare  ## Full Rust workflow (checks, build, test, benchmark)
+
+rust-cross: rust-install-targets rust-build-all-linux  ## Install targets and cross-compile for all Linux architectures
 
 
 # =============================================================================
@@ -1840,29 +2056,47 @@ containerfile-update:
 # 📦 PACKAGING & PUBLISHING
 # =============================================================================
 # help: 📦 PACKAGING & PUBLISHING
-# help: dist                 - Clean-build wheel *and* sdist into ./dist
-# help: wheel                - Build wheel only
-# help: sdist                - Build source distribution only
+# help: dist                 - Clean-build wheel *and* sdist into ./dist (includes Rust)
+# help: wheel                - Build wheel only (Python + Rust)
+# help: sdist                - Build source distribution only (Python)
+# help: dist-collect         - Copy Rust wheels from plugins_rust/target/wheels to ./dist
+# help: dist-all             - Build everything and collect all wheels in ./dist
 # help: verify               - Build + twine + check-manifest + pyroma (no upload)
 # help: publish              - Verify, then upload to PyPI (needs TWINE_* creds)
 # =============================================================================
-.PHONY: dist wheel sdist verify publish publish-testpypi
+.PHONY: dist wheel sdist verify publish publish-testpypi dist-all dist-collect
 
-dist: clean                  ## Build wheel + sdist into ./dist
+dist: clean                  ## Build wheel + sdist into ./dist (optionally includes Rust plugins)
 	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@echo "📦 Building Python package..."
 	@/bin/bash -eu -c "\
 	    source $(VENV_DIR)/bin/activate && \
 	    python3 -m pip install --quiet --upgrade pip build && \
 	    python3 -m build"
-	@echo '🛠  Wheel & sdist written to ./dist'
+	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+		echo "🦀 Building Rust plugins..."; \
+		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
+		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+	else \
+		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
+	fi
+	@echo '🛠  Python wheel & sdist written to ./dist'
+	@echo ''
+	@echo '💡 To publish both Python and Rust packages:'
+	@echo '   make publish         # Publish Python package'
+	@echo '   make rust-publish    # Publish Rust wheels (if configured)'
 
-wheel:                       ## Build wheel only
+wheel:                       ## Build wheel only (Python + Rust)
 	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
+	@echo "📦 Building Python wheel..."
 	@/bin/bash -eu -c "\
 	    source $(VENV_DIR)/bin/activate && \
 	    python3 -m pip install --quiet --upgrade pip build && \
 	    python3 -m build -w"
-	@echo '🛠  Wheel written to ./dist'
+	@echo "🦀 Building Rust wheels..."
+	@$(MAKE) rust-build
+	@echo '🛠  Python wheel written to ./dist'
+	@echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'
 
 sdist:                       ## Build source distribution only
 	@test -d "$(VENV_DIR)" || $(MAKE) --no-print-directory venv
@@ -1871,6 +2105,20 @@ sdist:                       ## Build source distribution only
 	    python3 -m pip install --quiet --upgrade pip build && \
 	    python3 -m build -s"
 	@echo '🛠  Source distribution written to ./dist'
+
+dist-collect:                ## Collect all wheels (Python + Rust) into ./dist
+	@echo "📦 Collecting all wheels into ./dist..."
+	@mkdir -p dist
+	@if [ -d "plugins_rust/target/wheels" ]; then \
+		cp -v plugins_rust/target/wheels/*.whl dist/ 2>/dev/null || true; \
+	fi
+	@echo "✅ All wheels collected in ./dist:"
+	@ls -lh dist/*.whl 2>/dev/null || echo "No wheels found"
+
+dist-all: dist dist-collect  ## Build everything and collect all wheels in ./dist
+	@echo ""
+	@echo "✅ Complete distribution ready in ./dist:"
+	@ls -lh dist/
 
 verify: dist               ## Build, run metadata & manifest checks
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \

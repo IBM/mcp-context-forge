@@ -39,8 +39,12 @@ jobs:
         run: make venv
 
       # 4️⃣  Invoke the Makefile 'dist' target (creates ./dist/*.whl & *.tar.gz)
+      # Note: Rust builds are disabled by default in CI (ENABLE_RUST_BUILD=0)
+      # To enable: set ENABLE_RUST_BUILD=1 and add Rust toolchain setup
       - name: Build distributions
-        run: make dist                 # Uses the Makefile's `dist` rule
+        run: make dist
+        env:
+          ENABLE_RUST_BUILD: 0         # Disable Rust builds in CI (no Rust toolchain installed)
 
       # 5️⃣  Install package quality tools
       - name: Install package linters
