@@ -15,6 +15,7 @@ from datetime import datetime
 import json
 from typing import Any, AsyncGenerator, Dict
 import uuid
+import time
 
 # Third-Party
 from fastapi import Request
@@ -78,11 +79,13 @@ class SSETransport(Transport):
         True
     """
 
-    def __init__(self, base_url: str = None):
-        """Initialize SSE transport.
+    def __init__(self, base_url: str = None, pooled: bool = False, pool_key: str = None):
+        """Initialize SSE transport with pooling support.
 
         Args:
             base_url: Base URL for client message endpoints
+            pooled: Whether this transport is part of a session pool
+            pool_key: Pool key if part of a session pool
 
         Examples:
             >>> # Test default initialization
@@ -107,13 +110,32 @@ class SSETransport(Transport):
             >>> transport1.session_id != transport2.session_id
             True
         """
+        super().__init__()  # Initialize base class (sets session_id)
         self._base_url = base_url or f"http://{settings.host}:{settings.port}"
         self._connected = False
         self._message_queue = asyncio.Queue()
         self._client_gone = asyncio.Event()
-        self._session_id = str(uuid.uuid4())
+        self._pooled = pooled
+        self._pool_key = pool_key
+        self._intialization_complete = False
+        self._last_activity = time.time()
 
-        logger.info(f"Creating SSE transport with base_url={self._base_url}, session_id={self._session_id}")
+        logger.info(f"Creating SSE transport with base_url={self._base_url}, session_id={self._session_id}, pooled={pooled}")
+
+    async def validate_session(self) -> bool:
+        """Validate that the session is still valid for reuse."""
+        if not self._connected:
+            return False
+        
+        # Check if the client is still connected
+        if self._client_gone.is_set():
+            return False
+            
+        # Check idle time
+        if (time.time() - self._last_activity) > settings.session_pool_max_idle_time:
+            return False
+            
+        return True
 
     async def connect(self) -> None:
         """Set up SSE connection.
