@@ -422,6 +422,7 @@ async def paginate_query(
         Dictionary with 'data', 'pagination', and 'links' keys
 
     Examples:
+        >>> from mcpgateway.db import Tool
         >>> query = select(Tool)
         >>> result = await paginate_query(
         ...     db=db,
