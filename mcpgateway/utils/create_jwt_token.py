@@ -125,7 +125,10 @@ def _create_jwt_token(
     if "username" in payload and "sub" not in payload:
         payload["sub"] = payload["username"]
 
-    if expires_in_minutes > 0:
+    payload_exp = payload.get("exp", 0)
+    if payload_exp > 0:
+        pass  # The token already has a valid expiration time
+    elif expires_in_minutes > 0:
         expire = now + _dt.timedelta(minutes=expires_in_minutes)
         payload["exp"] = int(expire.timestamp())
     else:
