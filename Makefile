@@ -2044,7 +2044,7 @@ endif
 # =============================================================================
 
 # Auto-detect container runtime if not specified - DEFAULT TO DOCKER
-CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
+CONTAINER_RUNTIME = $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
 
 # Alternative: Always default to docker unless explicitly overridden
 # CONTAINER_RUNTIME ?= docker
@@ -2328,14 +2328,14 @@ container-build-multi:
 		fi; \
 		docker buildx use $(PROJECT_NAME)-builder; \
 		docker buildx build \
-			--platform=linux/amd64,linux/arm64 \
+			--platform=linux/amd64,linux/arm64,linux/s390x \
 			-f $(CONTAINER_FILE) \
 			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 			--push \
 			.; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
-		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64 \
+		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
