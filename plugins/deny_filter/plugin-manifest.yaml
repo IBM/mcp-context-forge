@@ -1,5 +1,5 @@
 description: "Deny list plugin manifest."
-author: "MCP Context Forge Team"
+author: "ContextForge"
 version: "0.1.0"
 available_hooks:
   - "prompt_pre_hook"

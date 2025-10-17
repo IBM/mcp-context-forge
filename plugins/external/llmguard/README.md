@@ -124,7 +124,7 @@ plugins:
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
     description: "A plugin for running input through llmguard scanners "
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["plugin", "transformer", "llmguard", "regex", "pre-post"]
     mode: "enforce"  # enforce | permissive | disabled
@@ -174,7 +174,7 @@ plugins:
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
     description: "A plugin for running input through llmguard scanners "
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "pre", "filters"]
     mode: "enforce"  # enforce | permissive | disabled
@@ -298,7 +298,7 @@ The LLMGuardPlugin could be configured in the following ways:
         kind: "llmguardplugin.plugin.LLMGuardPlugin"
         description: "A plugin for running input and output through llmguard scanners "
         version: "0.1"
-        author: "MCP Context Forge Team"
+        author: "ContextForge"
         hooks: ["prompt_pre_fetch","prompt_post_fetch"]
         tags: ["plugin", "transformer", "llmguard", "pre-post"]
         mode: "enforce"  # enforce | permissive | disabled
@@ -358,7 +358,7 @@ plugins:
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
     description: "A plugin for running input through llmguard scanners "
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "pre", "sanitizers"]
     mode: "enforce"  # enforce | permissive | disabled
@@ -381,7 +381,7 @@ plugins:
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
     description: "A plugin for running input through llmguard scanners "
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_post_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "post", "sanitizers"]
     mode: "enforce"  # enforce | permissive | disabled
@@ -403,7 +403,7 @@ plugins:
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
     description: "A plugin for running input through llmguard scanners "
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "pre", "filters"]
     mode: "enforce"  # enforce | permissive | disabled
@@ -427,7 +427,7 @@ plugins:
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
     description: "A plugin for running input through llmguard scanners "
     version: "0.1"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_post_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "post", "filters"]
     mode: "enforce"  # enforce | permissive | disabled

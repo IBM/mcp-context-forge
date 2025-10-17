@@ -1,6 +1,6 @@
-# MCP Context Forge Plugin Framework
+# ContextForge Plugin Framework
 
-The MCP Context Forge Plugin Framework provides a powerful, production-ready system for AI safety middleware, content security, policy enforcement, and operational excellence. Plugins run as middleware components that can intercept and transform requests and responses at various points in the gateway lifecycle.
+The ContextForge Plugin Framework provides a powerful, production-ready system for AI safety middleware, content security, policy enforcement, and operational excellence. Plugins run as middleware components that can intercept and transform requests and responses at various points in the gateway lifecycle.
 
 ## Quick Start
 
@@ -257,7 +257,7 @@ plugins:
 
 Errors inside a plugin should be raised as exceptions.  The plugin manager will catch the error, and its behavior depends on both the gateway's and plugin's configuration as follows:
 
-1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of the MCP Context Forge regardless of the plugin mode.
+1. if `plugin_settings.fail_on_plugin_error` in the plugin `config.yaml` is set to `true` the exception is bubbled up as a PluginError and the error is passed to the client of ContextForge regardless of the plugin mode.
 2. if `plugin_settings.fail_on_plugin_error` is set to false the error is handled based off of the plugin mode in the plugin's config as follows:
   * if `mode` is `enforce`, both violations and errors are bubbled up as exceptions and the execution is blocked.
   * if `mode` is `enforce_ignore_error`, violations are bubbled up as exceptions and execution is blocked, but errors are logged and execution continues.

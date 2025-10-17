@@ -28,6 +28,15 @@ from mcpgateway.plugins.framework import (
 
 
 class RetryPolicyConfig(BaseModel):
+    """Configuration for retry policy.
+
+    Attributes:
+        max_retries: Maximum number of retry attempts.
+        backoff_base_ms: Base backoff duration in milliseconds.
+        max_backoff_ms: Maximum backoff duration in milliseconds.
+        retry_on_status: HTTP status codes that trigger retries.
+    """
+
     max_retries: int = Field(default=2, ge=0)
     backoff_base_ms: int = Field(default=200, ge=0)
     max_backoff_ms: int = Field(default=5000, ge=0)
@@ -38,10 +47,24 @@ class RetryWithBackoffPlugin(Plugin):
     """Attach retry/backoff policy in metadata for observability/orchestration."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the retry with backoff plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = RetryPolicyConfig(**(config.config or {}))
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Attach retry policy metadata after tool invocation.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with retry policy metadata.
+        """
         return ToolPostInvokeResult(
             metadata={
                 "retry_policy": {
@@ -53,6 +76,15 @@ class RetryWithBackoffPlugin(Plugin):
         )
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Attach retry policy metadata after resource fetch.
+
+        Args:
+            payload: Resource fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with retry policy metadata.
+        """
         return ResourcePostFetchResult(
             metadata={
                 "retry_policy": {

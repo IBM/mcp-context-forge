@@ -1,5 +1,5 @@
 description: "Detects risky SQL patterns and sanitizes/blocks (comments strip, DELETE/UPDATE w/o WHERE, dangerous statements, interpolation)"
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["security", "sql", "validation"]
 available_hooks:

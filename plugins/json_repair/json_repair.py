@@ -27,6 +27,14 @@ from mcpgateway.plugins.framework import (
 
 
 def _try_parse(s: str) -> bool:
+    """Check if string is valid JSON.
+
+    Args:
+        s: String to parse.
+
+    Returns:
+        True if string is valid JSON.
+    """
     try:
         json.loads(s)
         return True
@@ -35,6 +43,14 @@ def _try_parse(s: str) -> bool:
 
 
 def _repair(s: str) -> str | None:
+    """Attempt to repair invalid JSON string.
+
+    Args:
+        s: Potentially invalid JSON string.
+
+    Returns:
+        Repaired JSON string or None if unrepairable.
+    """
     t = s.strip()
     base = t
     # Replace single quotes with double quotes when it looks like JSON-ish
@@ -58,9 +74,23 @@ class JSONRepairPlugin(Plugin):
     """Repair JSON-like string outputs, returning corrected string if fixable."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the JSON repair plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Repair JSON-like string results after tool invocation.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with repaired JSON if applicable.
+        """
         if isinstance(payload.result, str):
             text = payload.result
             if _try_parse(text):

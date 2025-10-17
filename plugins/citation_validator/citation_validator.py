@@ -39,6 +39,18 @@ URL_RE = re.compile(r"https?://[\w\-\._~:/%#\[\]@!\$&'\(\)\*\+,;=]+", re.IGNOREC
 
 
 class CitationConfig(BaseModel):
+    """Configuration for citation validation.
+
+    Attributes:
+        fetch_timeout: HTTP request timeout in seconds.
+        require_200: Whether to require HTTP 200 status (vs 2xx/3xx).
+        content_keywords: Optional keywords that must appear in fetched content.
+        max_links: Maximum number of links to validate.
+        block_on_all_fail: Block if all citations fail validation.
+        block_on_any_fail: Block if any citation fails validation.
+        user_agent: User-Agent header for HTTP requests.
+    """
+
     fetch_timeout: float = 6.0
     require_200: bool = True
     content_keywords: List[str] = []
@@ -49,6 +61,15 @@ class CitationConfig(BaseModel):
 
 
 async def _check_url(url: str, cfg: CitationConfig) -> Tuple[bool, int, Optional[str]]:
+    """Validate a URL by checking HTTP status and optional content keywords.
+
+    Args:
+        url: URL to validate.
+        cfg: Citation configuration.
+
+    Returns:
+        Tuple of (is_valid, http_status, response_text).
+    """
     headers = {"User-Agent": cfg.user_agent, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"}
     async with ResilientHttpClient(client_args={"headers": headers, "timeout": cfg.fetch_timeout}) as client:
         try:
@@ -73,6 +94,15 @@ async def _check_url(url: str, cfg: CitationConfig) -> Tuple[bool, int, Optional
 
 
 def _extract_links(text: str, limit: int) -> List[str]:
+    """Extract unique URLs from text up to a limit.
+
+    Args:
+        text: Text content to extract URLs from.
+        limit: Maximum number of URLs to extract.
+
+    Returns:
+        List of unique URLs in order of appearance.
+    """
     links = URL_RE.findall(text or "")
     # Keep order, dedupe
     seen = set()
@@ -87,11 +117,27 @@ def _extract_links(text: str, limit: int) -> List[str]:
 
 
 class CitationValidatorPlugin(Plugin):
+    """Validates citations by checking URL reachability and content."""
+
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the citation validator plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = CitationConfig(**(config.config or {}))
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Validate citations in resource content after fetch.
+
+        Args:
+            payload: Resource fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with validation status and metadata.
+        """
         c = payload.content
         if not hasattr(c, "text") or not isinstance(c.text, str) or not c.text:
             return ResourcePostFetchResult(continue_processing=True)
@@ -120,6 +166,15 @@ class CitationValidatorPlugin(Plugin):
         return ResourcePostFetchResult(metadata={"citation_results": results})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Validate citations in tool result after invocation.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with validation status and metadata.
+        """
         text = payload.result if isinstance(payload.result, str) else None
         if not text:
             return ToolPostInvokeResult(continue_processing=True)

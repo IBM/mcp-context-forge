@@ -178,6 +178,11 @@ class ContentModerationPlugin(Plugin):
     """Plugin for advanced content moderation using multiple AI providers."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the content moderation plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = ContentModerationConfig(**(config.config or {}))
         self._client = httpx.AsyncClient()

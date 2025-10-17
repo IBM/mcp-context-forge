@@ -1,5 +1,5 @@
 description: "Detects likely credentials/secrets in inputs and outputs; optional redaction and blocking."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["security", "secrets", "dlp"]
 available_hooks:

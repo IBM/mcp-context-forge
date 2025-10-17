@@ -1,5 +1,5 @@
 description: "Detects harmful content (self-harm, violence, hate) via lexicons; blocks or annotates."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["safety", "moderation"]
 available_hooks:

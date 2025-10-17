@@ -36,6 +36,8 @@ class LLMGuardBase:
     """
 
     def __init__(self, config: Optional[dict[str, Any]]) -> None:
+        """Initialize the instance."""
+
         self.lgconfig = LLMGuardConfig.model_validate(config)
         self.scanners = {"input": {"sanitizers": [], "filters": []}, "output": {"sanitizers": [], "filters": []}}
         self.__init_scanners()

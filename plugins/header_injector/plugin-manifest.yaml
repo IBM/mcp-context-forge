@@ -1,5 +1,5 @@
 description: "Injects custom HTTP headers for resource fetch requests via payload metadata."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["enhancement", "headers", "network"]
 available_hooks:

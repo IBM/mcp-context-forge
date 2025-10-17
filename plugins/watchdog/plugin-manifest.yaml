@@ -1,5 +1,5 @@
 description: "Enforces max runtime for tools; warn or block on threshold."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["reliability", "latency", "slo"]
 available_hooks:

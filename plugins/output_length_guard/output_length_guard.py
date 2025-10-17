@@ -52,14 +52,37 @@ class OutputLengthGuardConfig(BaseModel):
     ellipsis: str = Field(default="…", description="Suffix appended on truncation. Use empty string to disable.")
 
     def is_blocking(self) -> bool:
+        """Check if strategy is set to blocking mode.
+
+        Returns:
+            True if strategy is block.
+        """
         return self.strategy.lower() == "block"
 
 
 def _length(value: str) -> int:
+    """Get length of string value.
+
+    Args:
+        value: String to measure.
+
+    Returns:
+        Length of string.
+    """
     return len(value)
 
 
 def _truncate(value: str, max_chars: int, ellipsis: str) -> str:
+    """Truncate string to maximum length with ellipsis.
+
+    Args:
+        value: String to truncate.
+        max_chars: Maximum number of characters.
+        ellipsis: Ellipsis string to append.
+
+    Returns:
+        Truncated string.
+    """
     if max_chars is None:
         return value
     if max_chars <= 0:
@@ -79,14 +102,36 @@ class OutputLengthGuardPlugin(Plugin):
     """Guard tool outputs by length with block or truncate strategies."""
 
     def __init__(self, config: PluginConfig):
+        """Initialize the output length guard plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = OutputLengthGuardConfig(**(config.config or {}))
 
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:  # noqa: D401
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Guard tool output by length with block or truncate strategies.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with length enforcement applied.
+        """
         cfg = self._cfg
 
         # Helper to evaluate and possibly modify a single string
         def handle_text(text: str) -> tuple[str, dict[str, Any], Optional[PluginViolation]]:
+            """Handle length guard for a single text string.
+
+            Args:
+                text: Text to check and possibly modify.
+
+            Returns:
+                Tuple of (modified_text, metadata, violation).
+            """
             length = _length(text)
             meta = {"original_length": length}
 

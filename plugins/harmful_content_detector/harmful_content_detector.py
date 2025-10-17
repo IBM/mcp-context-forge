@@ -53,6 +53,15 @@ DEFAULT_LEXICONS: Dict[str, List[str]] = {
 
 
 class HarmfulContentConfig(BaseModel):
+    """Configuration for the harmful content detector plugin.
+
+    Attributes:
+        categories: Dictionary mapping category names to regex patterns.
+        block_on: List of categories that should trigger blocking.
+        redact: Whether to redact harmful content.
+        redaction_text: Text to use for redaction.
+    """
+
     categories: Dict[str, List[str]] = DEFAULT_LEXICONS
     block_on: List[str] = ["self_harm", "violence", "hate"]
     redact: bool = False
@@ -60,6 +69,15 @@ class HarmfulContentConfig(BaseModel):
 
 
 def _scan_text(text: str, cfg: HarmfulContentConfig) -> List[Tuple[str, str]]:
+    """Scan text for harmful content patterns.
+
+    Args:
+        text: The text to scan.
+        cfg: Configuration containing category patterns.
+
+    Returns:
+        List of tuples containing (category, matched_pattern) for each finding.
+    """
     findings: List[Tuple[str, str]] = []
     t = text.lower()
     for cat, pats in cfg.categories.items():
@@ -70,7 +88,24 @@ def _scan_text(text: str, cfg: HarmfulContentConfig) -> List[Tuple[str, str]]:
 
 
 def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
+    """Recursively extract all strings from a nested data structure.
+
+    Args:
+        value: The value to extract strings from (can be dict, list, str, or other).
+
+    Yields:
+        Tuples of (path, string_value) for each string found in the structure.
+    """
     def walk(obj: Any, path: str):
+        """Recursively walk the data structure.
+
+        Args:
+            obj: The object to walk.
+            path: The current path in dot notation.
+
+        Yields:
+            Tuples of (path, string_value).
+        """
         if isinstance(obj, str):
             yield path, obj
         elif isinstance(obj, dict):
@@ -84,11 +119,30 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
 
 
 class HarmfulContentDetectorPlugin(Plugin):
+    """Detects harmful content in prompts and tool outputs using keyword lexicons.
+
+    This plugin scans for self-harm, violence, and hate categories.
+    """
+
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the harmful content detector plugin.
+
+        Args:
+            config: Plugin configuration containing harmful content detection settings.
+        """
         super().__init__(config)
         self._cfg = HarmfulContentConfig(**(config.config or {}))
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+        """Scan prompt arguments for harmful content before fetching.
+
+        Args:
+            payload: The prompt pre-fetch payload containing arguments.
+            context: Plugin execution context.
+
+        Returns:
+            PromptPrehookResult indicating whether to continue or block due to harmful content.
+        """
         findings: List[Tuple[str, str]] = []
         for _, s in _iter_strings(payload.args or {}):
             findings.extend(_scan_text(s, self._cfg))
@@ -106,6 +160,15 @@ class HarmfulContentDetectorPlugin(Plugin):
         return PromptPrehookResult(metadata={"harmful_categories": cats} if cats else {})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Scan tool output for harmful content after invocation.
+
+        Args:
+            payload: The tool post-invoke payload containing the result.
+            context: Plugin execution context.
+
+        Returns:
+            ToolPostInvokeResult indicating whether to continue or block due to harmful content.
+        """
         text = payload.result
         if isinstance(text, dict) or isinstance(text, list):
             findings: List[Tuple[str, str]] = []

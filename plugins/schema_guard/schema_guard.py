@@ -32,12 +32,29 @@ from mcpgateway.plugins.framework import (
 
 
 class SchemaGuardConfig(BaseModel):
+    """Configuration for schema validation guard.
+
+    Attributes:
+        arg_schemas: Map of tool names to argument schemas.
+        result_schemas: Map of tool names to result schemas.
+        block_on_violation: Whether to block on validation failures.
+    """
+
     arg_schemas: Optional[Dict[str, Dict[str, Any]]] = None
     result_schemas: Optional[Dict[str, Dict[str, Any]]] = None
     block_on_violation: bool = True
 
 
 def _is_type(value: Any, typ: str) -> bool:
+    """Check if value matches the specified type.
+
+    Args:
+        value: Value to check.
+        typ: Type name (object, string, number, integer, boolean, array).
+
+    Returns:
+        True if value matches the type.
+    """
     match typ:
         case "object":
             return isinstance(value, dict)
@@ -55,6 +72,15 @@ def _is_type(value: Any, typ: str) -> bool:
 
 
 def _validate(data: Any, schema: Dict[str, Any]) -> list[str]:
+    """Validate data against a schema.
+
+    Args:
+        data: Data to validate.
+        schema: JSONSchema-like validation schema.
+
+    Returns:
+        List of validation error messages.
+    """
     errors: list[str] = []
     s_type = schema.get("type")
     if s_type and not _is_type(data, s_type):
@@ -81,10 +107,24 @@ class SchemaGuardPlugin(Plugin):
     """Validate tool args and results using a simple schema subset."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the schema guard plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = SchemaGuardConfig(**(config.config or {}))
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Validate tool arguments before invocation.
+
+        Args:
+            payload: Tool invocation payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result indicating whether arguments pass schema validation.
+        """
         schema = (self._cfg.arg_schemas or {}).get(payload.name)
         if not schema:
             return ToolPreInvokeResult(continue_processing=True)
@@ -102,6 +142,15 @@ class SchemaGuardPlugin(Plugin):
         return ToolPreInvokeResult(metadata={"schema_errors": errors})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Validate tool result after invocation.
+
+        Args:
+            payload: Tool result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result indicating whether tool result passes schema validation.
+        """
         schema = (self._cfg.result_schemas or {}).get(payload.name)
         if not schema:
             return ToolPostInvokeResult(continue_processing=True)

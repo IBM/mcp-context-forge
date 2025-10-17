@@ -1,5 +1,5 @@
 description: "Validates citations/links by checking reachability and optional content keywords."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["validation", "links", "citation"]
 available_hooks:

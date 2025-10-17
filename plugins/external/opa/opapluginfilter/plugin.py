@@ -45,6 +45,8 @@ logger = logging_service.get_logger(__name__)
 
 
 class OPACodes(str, Enum):
+    """OPACodes implementation."""
+
     ALLOW_CODE = "ALLOW"
     DENIAL_CODE = "DENY"
     AUDIT_CODE = "AUDIT"
@@ -52,6 +54,8 @@ class OPACodes(str, Enum):
 
 
 class OPAResponseTemplates(str, Enum):
+    """OPAResponseTemplates implementation."""
+
     OPA_REASON = "OPA policy denied for {hook_type}"
     OPA_DESC = "{hook_type} not allowed"
 
@@ -110,6 +114,8 @@ class OPAPluginFilter(Plugin):
         """
 
         def _key(k: str, m: str) -> str:
+            """ Key implementation."""
+
             return f"{k}.{m}" if k.split(".")[0] == "context" else k
 
         payload = {"input": {m: self._get_nested_value(input.model_dump()["input"], _key(k, m)) for k, m in policy_input_data_map.items()}} if policy_input_data_map else input.model_dump()

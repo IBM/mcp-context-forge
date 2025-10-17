@@ -29,6 +29,14 @@ from mcpgateway.plugins.framework import (
 
 
 def _strip_tags(text: str) -> str:
+    """Convert HTML to Markdown by stripping tags and converting common elements.
+
+    Args:
+        text: HTML text to convert.
+
+    Returns:
+        Markdown-formatted text.
+    """
     # Remove script/style blocks
     text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.IGNORECASE)
     text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.IGNORECASE)
@@ -48,6 +56,14 @@ def _strip_tags(text: str) -> str:
 
     # Fallback: any <pre>...</pre> to fenced code (strip inner tags)
     def _pre_fallback(m):
+        """Convert pre tag match to fenced code block.
+
+        Args:
+            m: Regex match object.
+
+        Returns:
+            Fenced code block string.
+        """
         inner = m.group(1)
         inner = re.sub(r"<[^>]+>", "", inner)
         return f"```\n{html.unescape(inner)}\n```\n"
@@ -73,9 +89,23 @@ class HTMLToMarkdownPlugin(Plugin):
     """Transform HTML ResourceContent to Markdown in `text` field."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the HTML to Markdown plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
 
-    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:  # noqa: D401
+    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
+        """Convert HTML resource content to Markdown.
+
+        Args:
+            payload: Resource fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with Markdown content if applicable.
+        """
         content: Any = payload.content
         if isinstance(content, ResourceContent):
             mime = (content.mime_type or "").lower()
