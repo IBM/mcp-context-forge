@@ -116,9 +116,12 @@ Plugins: How They Work in MCP Context Forge
      - name: "MyFilter"
        kind: "external"
        priority: 10
-       mcp:
-         proto: STREAMABLEHTTP
-         url: http://localhost:8000/mcp
+      mcp:
+        proto: STREAMABLEHTTP
+        url: http://localhost:8000/mcp
+        # tls:
+        #   ca_bundle: /app/certs/plugins/ca.crt
+        #   client_cert: /app/certs/plugins/gateway-client.pem
      ```
   - STDIO alternative:
      ```yaml
@@ -129,7 +132,7 @@ Plugins: How They Work in MCP Context Forge
          proto: STDIO
          script: path/to/server.py
      ```
-- Enable framework in gateway: `.env` must set `PLUGINS_ENABLED=true` and optionally `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
+- Enable framework in gateway: `.env` must set `PLUGINS_ENABLED=true` and optionally `PLUGIN_CONFIG_FILE=plugins/config.yaml`. To reuse a gateway-wide mTLS client certificate for multiple external plugins, set `PLUGINS_MTLS_CA_BUNDLE`, `PLUGINS_MTLS_CLIENT_CERT`, and related `PLUGINS_MTLS_*` variables. Individual plugin `tls` blocks override these defaults.
 
 **Built‑in Plugins (Examples)**
 - `ArgumentNormalizer` (`plugins/argument_normalizer/argument_normalizer.py`)

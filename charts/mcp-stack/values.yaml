@@ -283,6 +283,12 @@ mcpContextForge:
     # ─ Plugin Configuration ─
     PLUGINS_ENABLED: "false"         # enable the plugin framework
     PLUGIN_CONFIG_FILE: "plugins/config.yaml" # path to main plugin configuration file
+    PLUGINS_MTLS_CA_BUNDLE: ""               # default CA bundle for external plugins (optional)
+    PLUGINS_MTLS_CLIENT_CERT: ""             # gateway client certificate for plugin mTLS
+    PLUGINS_MTLS_CLIENT_KEY: ""              # gateway client key for plugin mTLS (optional)
+    PLUGINS_MTLS_CLIENT_KEY_PASSWORD: ""     # password for the plugin client key (optional)
+    PLUGINS_MTLS_VERIFY: "true"              # verify remote plugin certificates
+    PLUGINS_MTLS_CHECK_HOSTNAME: "true"      # enforce hostname verification when verifying certs
     PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
     PLUGINS_CLI_MARKUP_MODE: ""      # set markup mode for plugins CLI
 
