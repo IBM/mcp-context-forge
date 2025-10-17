@@ -422,21 +422,17 @@ class ToolCreate(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
-    
+
     # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
     query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
     header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
-    timeout_ms: Optional[int] = Field(
-        default=None,
-        description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)"
-    )
+    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
-
 
     @field_validator("tags")
     @classmethod
@@ -768,7 +764,7 @@ class ToolCreate(BaseModel):
         if integration_type == "A2A" and not allow_auto:
             raise ValueError("Cannot manually create A2A tools. Add A2A agents via the A2A interface - tools will be auto-created when agents are associated with servers.")
         return values
-    
+
     @model_validator(mode="before")
     @classmethod
     def enforce_passthrough_fields_for_rest(cls, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -888,29 +884,29 @@ class ToolCreate(BaseModel):
     @field_validator("allowlist")
     @classmethod
     def validate_allowlist(cls, v):
-            """
-            Validate that allowlist is a list and each entry is a valid host or scheme string.
+        """
+        Validate that allowlist is a list and each entry is a valid host or scheme string.
 
-            Args:
-                v (List[str]): The allowlist to validate.
+        Args:
+            v (List[str]): The allowlist to validate.
 
-            Returns:
-                List[str]: The validated allowlist.
+        Returns:
+            List[str]: The validated allowlist.
 
-            Raises:
-                ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
-            """
-            if v is None:
-                return None
-            if not isinstance(v, list):
-                raise ValueError("allowlist must be a list of host/scheme strings")
-            hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
-            for host in v:
-                if not isinstance(host, str):
-                    raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
-                if not hostname_regex.match(host):
-                    raise ValueError(f"Invalid host/scheme in allowlist: {host}")
-            return v
+        Raises:
+            ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
+        """
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError("allowlist must be a list of host/scheme strings")
+        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        for host in v:
+            if not isinstance(host, str):
+                raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
+            if not hostname_regex.match(host):
+                raise ValueError(f"Invalid host/scheme in allowlist: {host}")
+        return v
 
     @field_validator("plugin_chain_pre", "plugin_chain_post")
     @classmethod
@@ -935,6 +931,19 @@ class ToolCreate(BaseModel):
                 raise ValueError(f"Unknown plugin: {plugin}")
         return v
 
+    @model_validator(mode="after")
+    def handle_timeout_ms_defaults(self):
+        """Handle timeout_ms defaults based on integration_type and expose_passthrough.
+
+        Returns:
+            self: The validated model instance with timeout_ms potentially set to default.
+        """
+        # If timeout_ms is None and we have REST with passthrough, set default
+        if self.timeout_ms is None and self.integration_type == "REST" and getattr(self, "expose_passthrough", True):
+            self.timeout_ms = 20000
+        return self
+
+
 class ToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
 
@@ -958,15 +967,12 @@ class ToolUpdate(BaseModelWithConfigDict):
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
-     # Passthrough REST fields
+    # Passthrough REST fields
     base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
     query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
     header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
-    timeout_ms: Optional[int] = Field(
-        default=None,
-        description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)"
-    )
+    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
@@ -1206,6 +1212,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         if integration_type == "A2A":
             raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
         return values
+
     @model_validator(mode="before")
     @classmethod
     def extract_base_url_and_path_template(cls, values: dict) -> dict:
@@ -1299,29 +1306,30 @@ class ToolUpdate(BaseModelWithConfigDict):
     @field_validator("allowlist")
     @classmethod
     def validate_allowlist(cls, v):
-            """
-            Validate that allowlist is a list and each entry is a valid host or scheme string.
+        """
+        Validate that allowlist is a list and each entry is a valid host or scheme string.
 
-            Args:
-                v (List[str]): The allowlist to validate.
+        Args:
+            v (List[str]): The allowlist to validate.
 
-            Returns:
-                List[str]: The validated allowlist.
+        Returns:
+            List[str]: The validated allowlist.
 
-            Raises:
-                ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
-            """
-            if v is None:
-                return None
-            if not isinstance(v, list):
-                raise ValueError("allowlist must be a list of host/scheme strings")
-            hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
-            for host in v:
-                if not isinstance(host, str):
-                    raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
-                if not hostname_regex.match(host):
-                    raise ValueError(f"Invalid host/scheme in allowlist: {host}")
-            return v
+        Raises:
+            ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
+        """
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError("allowlist must be a list of host/scheme strings")
+        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        for host in v:
+            if not isinstance(host, str):
+                raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
+            if not hostname_regex.match(host):
+                raise ValueError(f"Invalid host/scheme in allowlist: {host}")
+        return v
+
     @field_validator("plugin_chain_pre", "plugin_chain_post")
     @classmethod
     def validate_plugin_chain(cls, v):

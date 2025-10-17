@@ -1603,7 +1603,7 @@ class Tool(Base):
     custom_name_slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-     # Passthrough REST fields
+    # Passthrough REST fields
     base_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     path_template: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     query_mapping: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
@@ -1613,7 +1613,6 @@ class Tool(Base):
     allowlist: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     plugin_chain_pre: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     plugin_chain_post: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
-
 
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
