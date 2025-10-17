@@ -4817,6 +4817,7 @@ async def admin_tools_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
+    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -4831,13 +4832,14 @@ async def admin_tools_partial_html(
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
+        render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
         HTMLResponse with tools table rows and pagination controls.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page})")
+    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render})")
 
     # Get paginated data from the JSON endpoint logic
     user_email = get_user_email(user)
@@ -4923,6 +4925,21 @@ async def admin_tools_partial_html(
         query_params={"include_inactive": "true"} if include_inactive else {},
     )
 
+    # If render=controls, return only pagination controls
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#tools-table-body",
+                "hx_indicator": "#tools-loading",
+                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
     # Render template with paginated data
     return request.app.state.templates.TemplateResponse(
         "tools_partial.html",
@@ -4931,7 +4948,7 @@ async def admin_tools_partial_html(
             "data": data,
             "pagination": pagination.model_dump(),
             "links": links.model_dump() if links else None,
-            "root_path": settings.app_root_path,
+            "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
         },
     )

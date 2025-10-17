@@ -9015,14 +9015,16 @@ function initializeToolSelects() {
 }
 
 function initializeEventListeners() {
-    console.log("Setting up event listeners...");
+    console.log("🎯 Setting up event listeners...");
 
     setupTabNavigation();
     setupHTMXHooks();
+    console.log("✅ HTMX hooks registered");
     setupAuthenticationToggles();
     setupFormHandlers();
     setupSchemaModeHandlers();
     setupIntegrationTypeHandlers();
+    console.log("✅ All event listeners initialized");
 }
 
 function setupTabNavigation() {
@@ -9060,15 +9062,42 @@ function setupTabNavigation() {
 }
 
 function setupHTMXHooks() {
+    console.log("🔧 Setting up HTMX hooks...");
+    
+    // Test if HTMX is loaded
+    if (typeof htmx === 'undefined') {
+        console.error("❌ HTMX is not loaded!");
+        return;
+    }
+    console.log("✅ HTMX is loaded, version:", htmx.version || "unknown");
+    
+    // NOTE: htmx:afterSwap events do NOT fire for programmatic htmx.ajax() calls
+    // Pagination is now handled in the Alpine.js loadPage() function
+    // This hook is kept for declarative HTMX attributes (hx-get, hx-post, etc.)
+    
+    // Listen for our custom refreshControls event globally to debug
+    document.addEventListener("refreshControls", (event) => {
+        console.log("🎧 Global listener caught refreshControls event:", event);
+    });
+    
     document.body.addEventListener("htmx:beforeRequest", (event) => {
+        console.log("🌐 HTMX beforeRequest:", event.detail);
         if (event.detail.elt.id === "tab-version-info") {
             console.log("HTMX: Sending request for version info partial");
+        }
+        if (event.detail.elt.id === "tools-pagination-controls") {
+            console.log("🔄 HTMX: Pagination controls requesting update");
         }
     });
 
     document.body.addEventListener("htmx:afterSwap", (event) => {
+        console.log("✅ HTMX afterSwap:", event.detail);
+        // This fires for declarative HTMX attributes only, not htmx.ajax()
         if (event.detail.target.id === "version-info-panel") {
             console.log("HTMX: Content swapped into version-info-panel");
+        }
+        if (event.detail.target.id === "tools-pagination-controls") {
+            console.log("✅ HTMX: Pagination controls updated!");
         }
     });
 }

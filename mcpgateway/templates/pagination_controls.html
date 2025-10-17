@@ -10,6 +10,61 @@
     - query_params: optional dict of additional query parameters
 -->
 
+<script>
+// Debug logging for HTMX swaps
+document.body.addEventListener('htmx:beforeRequest', (e) => {
+  if (e.detail.target.id === 'tools-table-body') {
+    console.log('🌐 HTMX beforeRequest for tbody:', e.detail.requestConfig.path);
+  }
+});
+
+document.body.addEventListener('htmx:afterSwap', (e) => {
+  if (e.detail.target.id === 'tools-table-body') {
+    console.log('✅ HTMX afterSwap for tbody');
+    console.log('  - Target innerHTML length:', e.detail.target.innerHTML.length);
+    console.log('  - Rows count:', e.detail.target.querySelectorAll('tr').length);
+  }
+  if (e.detail.target.id === 'tools-pagination-controls') {
+    console.log('✅ HTMX afterSwap for controls (OOB)');
+  }
+  // Log ALL afterSwap events to debug
+  console.log('HTMX afterSwap event:', {
+    targetId: e.detail.target.id,
+    targetTag: e.detail.target.tagName,
+    elt: e.detail.elt?.id || e.detail.elt?.tagName
+  });
+});
+
+document.body.addEventListener('htmx:afterSettle', (e) => {
+  if (e.detail.target.id === 'tools-table-body') {
+    console.log('🏁 HTMX afterSettle for tbody');
+  }
+});
+
+document.body.addEventListener('htmx:responseError', (e) => {
+  console.error('❌ HTMX responseError:', {
+    targetId: e.detail.target.id,
+    status: e.detail.xhr.status,
+    statusText: e.detail.xhr.statusText,
+    response: e.detail.xhr.responseText?.substring(0, 500)
+  });
+});
+
+document.body.addEventListener('htmx:sendError', (e) => {
+  console.error('❌ HTMX sendError:', {
+    targetId: e.detail.target.id,
+    error: e.detail.error
+  });
+});
+
+document.body.addEventListener('htmx:swapError', (e) => {
+  console.error('❌ HTMX swapError:', {
+    targetId: e.detail.target.id,
+    error: e.detail.error
+  });
+});
+</script>
+
 <div x-data="{
   currentPage: {{ pagination.page }},
   perPage: {{ pagination.per_page }},
@@ -50,6 +105,8 @@
 
   // Load page via HTMX
   loadPage(page) {
+    console.log('loadPage called:', { page, perPage: this.perPage, target: this.targetSelector });
+    
     const url = new URL('{{ base_url }}', window.location.origin);
     url.searchParams.set('page', page);
     url.searchParams.set('per_page', this.perPage);
@@ -61,7 +118,10 @@
     {% endfor %}
     {% endif %}
 
-    // Trigger HTMX request
+    console.log('HTMX request URL:', url.toString());
+    
+    // Trigger HTMX request - use innerHTML so we only replace tbody content (rows)
+    // The OOB swap will handle the pagination controls separately
     htmx.ajax('GET', url.toString(), {
       target: this.targetSelector,
       swap: 'innerHTML',
