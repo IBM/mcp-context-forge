@@ -121,6 +121,11 @@ class WebhookNotificationPlugin(Plugin):
     """Plugin for sending webhook notifications on events and violations."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the webhook notification plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = WebhookNotificationConfig(**(config.config or {}))
         self._client = httpx.AsyncClient()
@@ -291,7 +296,7 @@ class WebhookNotificationPlugin(Plugin):
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Async context manager exit - cleanup HTTP client."""
         if hasattr(self, "_client"):
             await self._client.aclose()

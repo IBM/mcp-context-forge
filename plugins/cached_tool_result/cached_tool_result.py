@@ -36,6 +36,14 @@ from mcpgateway.plugins.framework import (
 
 
 class CacheConfig(BaseModel):
+    """Configuration for cached tool result plugin.
+
+    Attributes:
+        cacheable_tools: List of tool names that should be cached.
+        ttl: Time-to-live in seconds for cached results.
+        key_fields: Optional mapping of tool names to specific argument fields to use for cache keys.
+    """
+
     cacheable_tools: List[str] = Field(default_factory=list)
     ttl: int = 300
     key_fields: Optional[Dict[str, List[str]]] = None  # {tool: [fields...]}
@@ -43,6 +51,13 @@ class CacheConfig(BaseModel):
 
 @dataclass
 class _Entry:
+    """Cache entry containing a value and expiration timestamp.
+
+    Attributes:
+        value: Cached tool result.
+        expires_at: Unix timestamp when the cached value expires.
+    """
+
     value: Any
     expires_at: float
 
@@ -51,6 +66,16 @@ _CACHE: Dict[str, _Entry] = {}
 
 
 def _make_key(tool: str, args: dict | None, fields: Optional[List[str]]) -> str:
+    """Generate a cache key hash from tool name and selected argument fields.
+
+    Args:
+        tool: Tool name.
+        args: Tool arguments dictionary.
+        fields: Optional list of specific argument fields to include in the key.
+
+    Returns:
+        SHA256 hex digest cache key.
+    """
     base = {"tool": tool, "args": {}}
     if args:
         if fields:
@@ -65,10 +90,24 @@ class CachedToolResultPlugin(Plugin):
     """Cache idempotent tool results (write-through)."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the cached tool result plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = CacheConfig(**(config.config or {}))
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Check cache before tool invocation and store cache key in context.
+
+        Args:
+            payload: Tool invocation payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with cache hit/miss metadata.
+        """
         tool = payload.name
         if tool not in self._cfg.cacheable_tools:
             return ToolPreInvokeResult(continue_processing=True)
@@ -85,6 +124,15 @@ class CachedToolResultPlugin(Plugin):
         return ToolPreInvokeResult(metadata={"cache_hit": False, "key": key})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Store tool result in cache after invocation.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with cache storage metadata.
+        """
         tool = payload.name
         # Persist only for configured tools
         if tool not in self._cfg.cacheable_tools:

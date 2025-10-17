@@ -1,5 +1,5 @@
 description: "Formats code/text outputs with lightweight normalization (indentation, trailing whitespace, newline, optional JSON pretty-print)"
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["format", "enhancement", "postprocess"]
 available_hooks:

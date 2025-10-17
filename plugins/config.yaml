@@ -172,7 +172,7 @@ plugins:
     kind: "plugins.safe_html_sanitizer.safe_html_sanitizer.SafeHTMLSanitizerPlugin"
     description: "Sanitize HTML to remove XSS vectors; optional text conversion"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["resource_post_fetch"]
     tags: ["security", "html", "xss", "sanitize"]
     mode: "disabled"
@@ -380,7 +380,7 @@ plugins:
     kind: "plugins.code_safety_linter.code_safety_linter.CodeSafetyLinterPlugin"
     description: "Detect unsafe code patterns in outputs"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_post_invoke"]
     tags: ["security", "code"]
     mode: "disabled"
@@ -399,7 +399,7 @@ plugins:
     kind: "plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin"
     description: "Guards tool outputs by enforcing min/max length; block or truncate"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_post_invoke"]
     tags: ["guard", "length", "outputs", "truncate", "block"]
     mode: "disabled"  # use "enforce" with strategy: block for strict behavior
@@ -416,7 +416,7 @@ plugins:
     kind: "plugins.summarizer.summarizer.SummarizerPlugin"
     description: "Summarize long text content using an LLM"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["resource_post_fetch", "tool_post_invoke"]
     tags: ["summarize", "llm", "content"]
     mode: "disabled"
@@ -479,7 +479,7 @@ plugins:
     kind: "plugins.circuit_breaker.circuit_breaker.CircuitBreakerPlugin"
     description: "Trip per-tool breaker on high error rates; cooldown blocks"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["reliability", "sre"]
     #mode: "enforce_ignore_error"
@@ -499,7 +499,7 @@ plugins:
     kind: "plugins.watchdog.watchdog.WatchdogPlugin"
     description: "Enforce max runtime per tool; warn or block"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["latency", "slo"]
     #mode: "enforce_ignore_error"
@@ -516,7 +516,7 @@ plugins:
     kind: "plugins.robots_license_guard.robots_license_guard.RobotsLicenseGuardPlugin"
     description: "Honor robots/noai and license meta from HTML content"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["resource_pre_fetch", "resource_post_fetch"]
     tags: ["compliance", "robots", "license"]
     mode: "disabled"
@@ -534,7 +534,7 @@ plugins:
     kind: "plugins.harmful_content_detector.harmful_content_detector.HarmfulContentDetectorPlugin"
     description: "Detect self-harm, violence, hate categories"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_post_invoke"]
     tags: ["safety", "moderation"]
     mode: "disabled"
@@ -552,7 +552,7 @@ plugins:
     kind: "plugins.timezone_translator.timezone_translator.TimezoneTranslatorPlugin"
     description: "Convert ISO-like timestamps between server and user timezones"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["localization", "timezone"]
     #mode: "permissive"
@@ -570,7 +570,7 @@ plugins:
   #   kind: "plugins.ai_artifacts_normalizer.ai_artifacts_normalizer.AIArtifactsNormalizerPlugin"
   #   description: "Normalize AI artifacts: smart quotes, ligatures, dashes, ellipses; remove bidi/zero-width; collapse spacing"
   #   version: "0.1.0"
-  #   author: "MCP Context Forge Team"
+  #   author: "ContextForge"
   #   hooks: ["prompt_pre_fetch", "resource_post_fetch", "tool_post_invoke"]
   #   tags: ["normalize", "unicode", "safety"]
   #   mode: "permissive"
@@ -589,7 +589,7 @@ plugins:
     kind: "plugins.sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin"
     description: "Detects risky SQL and optionally strips comments or blocks"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
     tags: ["security", "sql", "validation"]
     # mode: "enforce"
@@ -610,7 +610,7 @@ plugins:
     kind: "plugins.secrets_detection.secrets_detection.SecretsDetectionPlugin"
     description: "Detects keys/tokens/secrets in inputs/outputs; optional redaction/blocking"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_pre_fetch", "tool_post_invoke", "resource_post_fetch"]
     tags: ["security", "secrets", "dlp"]
     # mode: "enforce"
@@ -637,7 +637,7 @@ plugins:
     kind: "plugins.header_injector.header_injector.HeaderInjectorPlugin"
     description: "Injects configured HTTP headers into resource fetch metadata"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["resource_pre_fetch"]
     tags: ["headers", "network", "enhancement"]
     # mode: "permissive"
@@ -654,7 +654,7 @@ plugins:
     kind: "plugins.privacy_notice_injector.privacy_notice_injector.PrivacyNoticeInjectorPlugin"
     description: "Injects a configurable privacy notice into rendered prompts"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["prompt_post_fetch"]
     tags: ["compliance", "notice", "prompt"]
     # mode: "permissive"
@@ -671,7 +671,7 @@ plugins:
     kind: "plugins.response_cache_by_prompt.response_cache_by_prompt.ResponseCacheByPromptPlugin"
     description: "Advisory cache via cosine similarity over configured fields"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["performance", "cache", "similarity"]
     # mode: "permissive"
@@ -690,7 +690,7 @@ plugins:
     kind: "plugins.code_formatter.code_formatter.CodeFormatterPlugin"
     description: "Formats code/text outputs (indentation, trailing whitespace, newline, JSON pretty-print)"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_post_invoke", "resource_post_fetch"]
     tags: ["format", "enhancement", "postprocess"]
     # mode: "permissive"
@@ -712,7 +712,7 @@ plugins:
     kind: "plugins.license_header_injector.license_header_injector.LicenseHeaderInjectorPlugin"
     description: "Injects a license header using language-appropriate comments"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["tool_post_invoke", "resource_post_fetch"]
     tags: ["compliance", "license", "format"]
     # mode: "permissive"
@@ -731,7 +731,7 @@ plugins:
     kind: "plugins.citation_validator.citation_validator.CitationValidatorPlugin"
     description: "Validates citations/links by checking status and keywords"
     version: "0.1.0"
-    author: "MCP Context Forge Team"
+    author: "ContextForge"
     hooks: ["resource_post_fetch", "tool_post_invoke"]
     tags: ["citation", "links", "validation"]
     # mode: "permissive"

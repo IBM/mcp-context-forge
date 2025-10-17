@@ -1,5 +1,5 @@
 description: "Converts ISO-like timestamps between server and user timezones."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["localization", "timezone"]
 available_hooks:

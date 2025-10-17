@@ -36,6 +36,8 @@ class LLMGuardBase:
     """
 
     def __init__(self, config: Optional[dict[str, Any]]) -> None:
+        """Initialize the instance."""
+
         self.lgconfig = LLMGuardConfig.model_validate(config)
         self.scanners = {"input": {"sanitizers": [], "filters": []}, "output": {"sanitizers": [], "filters": []}}
         self.__init_scanners()
@@ -162,8 +164,8 @@ class LLMGuardBase:
                         self.vault_ttl = self.lgconfig.input.sanitizers[sanitizer_name]["vault_ttl"]
                     self.lgconfig.input.sanitizers[sanitizer_name]["vault"] = vault
                     anonymizer_config = {k: v for k, v in self.lgconfig.input.sanitizers[sanitizer_name].items() if k not in ["vault_ttl", "vault_leak_detection"]}
-                    logger.info(f"Anonymizer config { anonymizer_config}")
-                    logger.info(f"sanitizer config { self.lgconfig.input.sanitizers[sanitizer_name]}")
+                    logger.info(f"Anonymizer config {anonymizer_config}")
+                    logger.info(f"sanitizer config {self.lgconfig.input.sanitizers[sanitizer_name]}")
                     self.scanners["input"]["sanitizers"].append(input_scanners.get_scanner_by_name(sanitizer_name, anonymizer_config))
                 else:
                     self.scanners["input"]["sanitizers"].append(input_scanners.get_scanner_by_name(sanitizer_name, self.lgconfig.input.sanitizers[sanitizer_name]))

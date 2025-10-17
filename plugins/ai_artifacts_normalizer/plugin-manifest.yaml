@@ -1,5 +1,5 @@
 description: "Normalizes AI artifacts: smart quotes, ligatures, dashes, ellipses; removes bidi/zero-width; collapses spacing."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["normalize", "unicode", "safety"]
 available_hooks:

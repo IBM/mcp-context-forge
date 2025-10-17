@@ -30,11 +30,24 @@ from mcpgateway.plugins.framework import (
 
 
 class SearchReplace(BaseModel):
+    """Search and replace pattern configuration.
+
+    Attributes:
+        search: Regular expression pattern to search for.
+        replace: Replacement text.
+    """
+
     search: str
     replace: str
 
 
 class SearchReplaceConfig(BaseModel):
+    """Configuration for search and replace plugin.
+
+    Attributes:
+        words: List of search and replace patterns to apply.
+    """
+
     words: list[SearchReplace]
 
 
@@ -42,6 +55,11 @@ class SearchReplacePlugin(Plugin):
     """Example search replace plugin."""
 
     def __init__(self, config: PluginConfig):
+        """Initialize the search and replace plugin.
+
+        Args:
+            config: Plugin configuration containing search/replace patterns.
+        """
         super().__init__(config)
         self._srconfig = SearchReplaceConfig.model_validate(self._config.config)
         self.__patterns = []

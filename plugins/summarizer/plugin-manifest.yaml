@@ -1,5 +1,5 @@
 description: "Summarizes long text using configurable LLM provider (OpenAI)."
-author: "MCP Context Forge"
+author: "ContextForge"
 version: "0.1.0"
 tags: ["summarize", "llm", "content"]
 available_hooks:
