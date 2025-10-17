@@ -212,6 +212,22 @@
           },
           "additionalProperties": false
         },
+        
+        "pluginConfig": {
+          "type": "object",
+          "description": "Content of the plugin file",
+          "properties": {
+            "enabled": {
+                "type": "boolean",
+                "description": "Enable pluginConfig loading for ingress",
+                "default": false
+            },
+            "plugins": {
+              "type": "string",
+              "description": "contents of plugin file"
+            }
+          }
+        },
         "env": {
           "type": "object",
           "description": "Environment configuration",
