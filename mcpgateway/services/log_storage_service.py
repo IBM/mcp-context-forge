@@ -11,15 +11,16 @@ supporting filtering, pagination, and real-time streaming.
 
 # Standard
 import asyncio
+import sys
+import uuid
 from collections import deque
 from datetime import datetime, timezone
-import sys
 from typing import Any, AsyncGenerator, Deque, Dict, List, Optional, TypedDict
-import uuid
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.models import LogLevel
+
 
 class LogEntryDict(TypedDict, total=False):
     """TypedDict for LogEntry serialization."""
@@ -34,6 +35,7 @@ class LogEntryDict(TypedDict, total=False):
     logger: Optional[str]
     data: Optional[Dict[str, Any]]
     request_id: Optional[str]
+
 
 class LogEntry:
     """Simple log entry for in-memory storage.
@@ -135,11 +137,13 @@ class LogEntry:
             "request_id": self.request_id,
         }
 
+
 class LogStorageMessage(TypedDict):
     """TypedDict for messages sent to subscribers."""
 
     type: str
     data: LogEntryDict
+
 
 class LogStorageService:
     """Service for storing and retrieving log entries in memory.
@@ -295,7 +299,7 @@ class LogStorageService:
         limit: int = 100,
         offset: int = 0,
         order: str = "desc",
-                       ) -> List[LogEntryDict]:
+    ) -> List[LogEntryDict]:
         """Get filtered log entries.
 
         Args:
