@@ -13,16 +13,21 @@
 <script>
 // Debug logging for HTMX swaps
 document.body.addEventListener('htmx:beforeRequest', (e) => {
-  if (e.detail.target.id === 'tools-table-body') {
-    console.log('🌐 HTMX beforeRequest for tbody:', e.detail.requestConfig.path);
+  if (e.detail.target.id === 'tools-table' || e.detail.target.id === 'tools-table-body') {
+    console.log('🌐 HTMX beforeRequest:', {
+      targetId: e.detail.target.id,
+      url: e.detail.requestConfig.path
+    });
   }
 });
 
 document.body.addEventListener('htmx:afterSwap', (e) => {
-  if (e.detail.target.id === 'tools-table-body') {
-    console.log('✅ HTMX afterSwap for tbody');
-    console.log('  - Target innerHTML length:', e.detail.target.innerHTML.length);
-    console.log('  - Rows count:', e.detail.target.querySelectorAll('tr').length);
+  if (e.detail.target.id === 'tools-table' || e.detail.target.id === 'tools-table-body') {
+    console.log('✅ HTMX afterSwap for table:', {
+      targetId: e.detail.target.id,
+      hasHeaders: e.detail.target.querySelectorAll('thead').length,
+      bodyCount: e.detail.target.querySelectorAll('tbody').length
+    });
   }
   if (e.detail.target.id === 'tools-pagination-controls') {
     console.log('✅ HTMX afterSwap for controls (OOB)');
@@ -36,8 +41,8 @@ document.body.addEventListener('htmx:afterSwap', (e) => {
 });
 
 document.body.addEventListener('htmx:afterSettle', (e) => {
-  if (e.detail.target.id === 'tools-table-body') {
-    console.log('🏁 HTMX afterSettle for tbody');
+  if (e.detail.target.id === 'tools-table' || e.detail.target.id === 'tools-table-body') {
+    console.log('🏁 HTMX afterSettle for table:', e.detail.target.id);
   }
 });
 
@@ -72,7 +77,7 @@ document.body.addEventListener('htmx:swapError', (e) => {
   totalPages: {{ pagination.total_pages }},
   hasNext: {{ 'true' if pagination.has_next else 'false' }},
   hasPrev: {{ 'true' if pagination.has_prev else 'false' }},
-  targetSelector: '{{ hx_target|default("#tools-table-body") }}',
+  targetSelector: '{{ hx_target|default("#tools-table") }}',
 
   // Navigate to specific page
   goToPage(page) {
