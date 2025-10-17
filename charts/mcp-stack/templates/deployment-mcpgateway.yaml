@@ -74,6 +74,23 @@ spec:
             - name: REDIS_PORT
               value: "{{ .Values.mcpContextForge.env.redis.port }}"
 
+            # ---------- METRICS ----------
+            {{- if .Values.mcpContextForge.metrics.enabled }}
+            - name: ENABLE_METRICS
+              value: "{{ .Values.mcpContextForge.metrics.enabled }}"
+            {{- if .Values.mcpContextForge.metrics.excludedHandlers }}
+            - name: METRICS_EXCLUDED_HANDLERS
+              value: "{{ .Values.mcpContextForge.metrics.excludedHandlers }}"
+            {{- end }}
+            {{- if .Values.mcpContextForge.metrics.customLabels }}
+            - name: METRICS_CUSTOM_LABELS
+              value: "{{ range $key, $value := .Values.mcpContextForge.metrics.customLabels }}{{ $key }}={{ $value }},{{ end }}"
+            {{- end }}
+            {{- else }}
+            - name: ENABLE_METRICS
+              value: "false"
+            {{- end }}
+
             # ---------- DERIVED URLS ----------
             # These MUST be placed *after* the concrete vars above so the
             # $(...) placeholders are expanded correctly inside the pod.
