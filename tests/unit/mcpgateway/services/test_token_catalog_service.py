@@ -922,7 +922,7 @@ class TestTokenCatalogServiceEdgeCases:
             with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create:
                 mock_create.return_value = "jwt"
                 jti=str(uuid.uuid4())
-                
+
                 await token_service._generate_token("user@example.com", jti=jti)
 
                 call_args = mock_create.call_args[0][0]
