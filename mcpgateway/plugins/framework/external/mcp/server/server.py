@@ -26,6 +26,7 @@ from mcpgateway.plugins.framework.errors import convert_exception_to_error
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.manager import DEFAULT_PLUGIN_TIMEOUT, PluginManager
 from mcpgateway.plugins.framework.models import (
+    MCPServerConfig,
     PluginContext,
     PluginErrorModel,
     PluginResult,
@@ -165,6 +166,14 @@ class ExternalPluginServer:
         return self._plugin_manager.initialized
 
     async def shutdown(self) -> None:
-        """Shutdow the plugin server."""
+        """Shutdown the plugin server."""
         if self._plugin_manager.initialized:
             await self._plugin_manager.shutdown()
+
+    def get_server_config(self) -> MCPServerConfig:
+        """Return the configuration for the plugin server.
+
+        Returns:
+            A server configuration including host, port, and TLS information.
+        """
+        return self._config.server_settings or MCPServerConfig.from_env() or MCPServerConfig()

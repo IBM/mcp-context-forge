@@ -44,7 +44,7 @@ authors = [
 ]
 
 dependencies = [
-    "chuk-mcp-runtime>=0.6.5",
+    "mcp>=1.16.0",
     "mcp-contextforge-gateway",
     "llm-guard",
 ]

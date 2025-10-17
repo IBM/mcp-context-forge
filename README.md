@@ -1739,6 +1739,12 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
 | `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
+| `PLUGINS_MTLS_CA_BUNDLE`      | (Optional) default CA bundle for external plugin mTLS | _(empty)_     | string  |
+| `PLUGINS_MTLS_CLIENT_CERT`    | (Optional) gateway client certificate for plugin mTLS | _(empty)_     | string  |
+| `PLUGINS_MTLS_CLIENT_KEY`     | (Optional) gateway client key for plugin mTLS | _(empty)_             | string  |
+| `PLUGINS_MTLS_CLIENT_KEY_PASSWORD` | (Optional) password for plugin client key | _(empty)_             | string  |
+| `PLUGINS_MTLS_VERIFY`         | (Optional) verify remote plugin certificates (`true`/`false`) | `true` | bool    |
+| `PLUGINS_MTLS_CHECK_HOSTNAME` | (Optional) enforce hostname verification for plugins | `true`      | bool    |
 | `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
 | `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
 

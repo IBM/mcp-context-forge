@@ -469,6 +469,10 @@ plugins:
   #   mcp:
   #     proto: STREAMABLEHTTP
   #     url: http://127.0.0.1:8000/mcp
+  #     # tls:
+  #     #   ca_bundle: /app/certs/plugins/ca.crt
+  #     #   client_cert: /app/certs/plugins/gateway-client.pem
+  #     #   verify: true
 
   # Circuit Breaker - trip on high error rates or consecutive failures
   - name: "CircuitBreaker"

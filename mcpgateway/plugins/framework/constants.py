@@ -32,3 +32,8 @@ IGNORE_CONFIG_EXTERNAL = "ignore_config_external"
 
 TOOL_METADATA = "tool"
 GATEWAY_METADATA = "gateway"
+
+# MCP Plugin Server Runtime constants
+MCP_SERVER_NAME = "MCP Plugin Server"
+MCP_SERVER_INSTRUCTIONS = "External plugin server for MCP Gateway"
+GET_PLUGIN_CONFIGS = "get_plugin_configs"

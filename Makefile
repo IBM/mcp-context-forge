@@ -144,12 +144,6 @@ update:
 check-env:
 	@echo "🔎  Validating .env against .env.example using Python (prod)..."
 	@python -m mcpgateway.scripts.validate_env .env.example
-	# 	@echo "🔎  Checking .env against .env.example..."
-# 	@missing=0; \
-# 	for key in $$(grep -Ev '^\s*#|^\s*$$' .env.example | cut -d= -f1); do \
-# 	  grep -q "^$$key=" .env || { echo "❌ Missing: $$key"; missing=1; }; \
-# 	done; \
-# 	if [ $$missing -eq 0 ]; then echo "✅  All environment variables are present."; fi
 
 # Validate .env in development mode (warnings do not fail)
 check-env-dev:
@@ -167,11 +161,17 @@ check-env-dev:
 # help: certs-jwt            - Generate JWT RSA keys in ./certs/jwt/ (idempotent)
 # help: certs-jwt-ecdsa      - Generate JWT ECDSA keys in ./certs/jwt/ (idempotent)
 # help: certs-all            - Generate both TLS certs and JWT keys (combo target)
+# help: certs-mcp-ca         - Generate MCP CA for plugin mTLS (./certs/mcp/ca/)
+# help: certs-mcp-gateway    - Generate gateway client certificate (./certs/mcp/gateway/)
+# help: certs-mcp-plugin     - Generate plugin server certificate (requires PLUGIN_NAME=name)
+# help: certs-mcp-all        - Generate complete MCP mTLS infrastructure (reads plugins from config.yaml)
+# help: certs-mcp-check      - Check expiry dates of MCP certificates
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl dev run certs certs-jwt certs-jwt-ecdsa certs-all
+.PHONY: serve serve-ssl dev run certs certs-jwt certs-jwt-ecdsa certs-all \
+        certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
 serve:
@@ -233,6 +233,142 @@ certs-all: certs certs-jwt       ## Generate both TLS certificates and JWT RSA k
 	@echo "📁  TLS:  ./certs/{cert,key}.pem"
 	@echo "📁  JWT:  ./certs/jwt/{private,public}.pem"
 	@echo "💡  Use JWT_ALGORITHM=RS256 with JWT_PUBLIC_KEY_PATH=certs/jwt/public.pem"
+
+## --- MCP Plugin mTLS Certificate Management ----------------------------------
+# Default validity period for MCP certificates (in days)
+MCP_CERT_DAYS ?= 825
+
+# Plugin configuration file for automatic certificate generation
+MCP_PLUGIN_CONFIG ?= plugins/external/config.yaml
+
+certs-mcp-ca:                    ## Generate CA for MCP plugin mTLS
+	@if [ -f certs/mcp/ca/ca.key ] && [ -f certs/mcp/ca/ca.crt ]; then \
+		echo "🔐  Existing MCP CA found in ./certs/mcp/ca - skipping generation."; \
+		echo "⚠️   To regenerate, delete ./certs/mcp/ca and run again."; \
+	else \
+		echo "🔐  Generating MCP Certificate Authority ($(MCP_CERT_DAYS) days validity)..."; \
+		mkdir -p certs/mcp/ca; \
+		openssl genrsa -out certs/mcp/ca/ca.key 4096; \
+		openssl req -new -x509 -key certs/mcp/ca/ca.key -out certs/mcp/ca/ca.crt \
+			-days $(MCP_CERT_DAYS) \
+			-subj "/CN=MCP-Gateway-CA/O=MCPGateway/OU=Plugins"; \
+		echo "01" > certs/mcp/ca/ca.srl; \
+		echo "✅  MCP CA created: ./certs/mcp/ca/ca.{key,crt}"; \
+	fi
+	@chmod 600 certs/mcp/ca/ca.key
+	@chmod 644 certs/mcp/ca/ca.crt
+	@echo "🔒  Permissions set: ca.key (600), ca.crt (644)"
+
+certs-mcp-gateway: certs-mcp-ca  ## Generate gateway client certificate
+	@if [ -f certs/mcp/gateway/client.key ] && [ -f certs/mcp/gateway/client.crt ]; then \
+		echo "🔐  Existing gateway client certificate found - skipping generation."; \
+	else \
+		echo "🔐  Generating gateway client certificate ($(MCP_CERT_DAYS) days)..."; \
+		mkdir -p certs/mcp/gateway; \
+		openssl genrsa -out certs/mcp/gateway/client.key 4096; \
+		openssl req -new -key certs/mcp/gateway/client.key \
+			-out certs/mcp/gateway/client.csr \
+			-subj "/CN=mcp-gateway-client/O=MCPGateway/OU=Gateway"; \
+		openssl x509 -req -in certs/mcp/gateway/client.csr \
+			-CA certs/mcp/ca/ca.crt -CAkey certs/mcp/ca/ca.key \
+			-CAcreateserial -out certs/mcp/gateway/client.crt \
+			-days $(MCP_CERT_DAYS) -sha256; \
+		rm certs/mcp/gateway/client.csr; \
+		cp certs/mcp/ca/ca.crt certs/mcp/gateway/ca.crt; \
+		echo "✅  Gateway client certificate created: ./certs/mcp/gateway/"; \
+	fi
+	@chmod 600 certs/mcp/gateway/client.key
+	@chmod 644 certs/mcp/gateway/client.crt certs/mcp/gateway/ca.crt
+	@echo "🔒  Permissions set: client.key (600), client.crt (644), ca.crt (644)"
+
+certs-mcp-plugin: certs-mcp-ca   ## Generate plugin server certificate (PLUGIN_NAME=name)
+	@if [ -z "$(PLUGIN_NAME)" ]; then \
+		echo "❌  ERROR: PLUGIN_NAME not set"; \
+		echo "💡  Usage: make certs-mcp-plugin PLUGIN_NAME=my-plugin"; \
+		exit 1; \
+	fi
+	@if [ -f certs/mcp/plugins/$(PLUGIN_NAME)/server.key ] && \
+	    [ -f certs/mcp/plugins/$(PLUGIN_NAME)/server.crt ]; then \
+		echo "🔐  Existing certificate for plugin '$(PLUGIN_NAME)' found - skipping."; \
+	else \
+		echo "🔐  Generating server certificate for plugin '$(PLUGIN_NAME)' ($(MCP_CERT_DAYS) days)..."; \
+		mkdir -p certs/mcp/plugins/$(PLUGIN_NAME); \
+		openssl genrsa -out certs/mcp/plugins/$(PLUGIN_NAME)/server.key 4096; \
+		openssl req -new -key certs/mcp/plugins/$(PLUGIN_NAME)/server.key \
+			-out certs/mcp/plugins/$(PLUGIN_NAME)/server.csr \
+			-subj "/CN=mcp-plugin-$(PLUGIN_NAME)/O=MCPGateway/OU=Plugins"; \
+		openssl x509 -req -in certs/mcp/plugins/$(PLUGIN_NAME)/server.csr \
+			-CA certs/mcp/ca/ca.crt -CAkey certs/mcp/ca/ca.key \
+			-CAcreateserial -out certs/mcp/plugins/$(PLUGIN_NAME)/server.crt \
+			-days $(MCP_CERT_DAYS) -sha256 \
+			-extfile <(printf "subjectAltName=DNS:$(PLUGIN_NAME),DNS:mcp-plugin-$(PLUGIN_NAME),DNS:localhost"); \
+		rm certs/mcp/plugins/$(PLUGIN_NAME)/server.csr; \
+		cp certs/mcp/ca/ca.crt certs/mcp/plugins/$(PLUGIN_NAME)/ca.crt; \
+		echo "✅  Plugin '$(PLUGIN_NAME)' certificate created: ./certs/mcp/plugins/$(PLUGIN_NAME)/"; \
+	fi
+	@chmod 600 certs/mcp/plugins/$(PLUGIN_NAME)/server.key
+	@chmod 644 certs/mcp/plugins/$(PLUGIN_NAME)/server.crt certs/mcp/plugins/$(PLUGIN_NAME)/ca.crt
+	@echo "🔒  Permissions set: server.key (600), server.crt (644), ca.crt (644)"
+
+certs-mcp-all: certs-mcp-ca certs-mcp-gateway  ## Generate complete mTLS infrastructure
+	@echo "🔐  Generating certificates for plugins..."
+	@# Read plugin names from config file if it exists
+	@if [ -f "$(MCP_PLUGIN_CONFIG)" ]; then \
+		echo "📋  Reading plugin names from $(MCP_PLUGIN_CONFIG)"; \
+		python3 -c "import yaml; \
+			config = yaml.safe_load(open('$(MCP_PLUGIN_CONFIG)')); \
+			plugins = [p['name'] for p in config.get('plugins', []) if p.get('kind') == 'external']; \
+			print('\n'.join(plugins))" 2>/dev/null | while read plugin_name; do \
+			if [ -n "$$plugin_name" ]; then \
+				echo "   Generating for: $$plugin_name"; \
+				$(MAKE) certs-mcp-plugin PLUGIN_NAME="$$plugin_name"; \
+			fi; \
+		done || echo "⚠️   PyYAML not installed or config parse failed, generating example plugins..."; \
+	fi
+	@# Fallback to example plugins if no config or parsing failed
+	@if [ ! -f "$(MCP_PLUGIN_CONFIG)" ] || ! python3 -c "import yaml" 2>/dev/null; then \
+		echo "🔐  Generating certificates for example plugins..."; \
+		$(MAKE) certs-mcp-plugin PLUGIN_NAME=example-plugin-a; \
+		$(MAKE) certs-mcp-plugin PLUGIN_NAME=example-plugin-b; \
+	fi
+	@echo ""
+	@echo "🎯  MCP mTLS infrastructure generated successfully!"
+	@echo "📁  Structure:"
+	@echo "    certs/mcp/ca/          - Certificate Authority"
+	@echo "    certs/mcp/gateway/     - Gateway client certificate"
+	@echo "    certs/mcp/plugins/*/   - Plugin server certificates"
+	@echo ""
+	@echo "💡  Generate additional plugin certificates with:"
+	@echo "    make certs-mcp-plugin PLUGIN_NAME=your-plugin-name"
+	@echo ""
+	@echo "💡  Certificate validity: $(MCP_CERT_DAYS) days"
+	@echo "    To change: make certs-mcp-all MCP_CERT_DAYS=365"
+
+certs-mcp-check:                 ## Check expiry dates of MCP certificates
+	@echo "🔍  Checking MCP certificate expiry dates..."
+	@echo ""
+	@if [ -f certs/mcp/ca/ca.crt ]; then \
+		echo "📋 CA Certificate:"; \
+		openssl x509 -in certs/mcp/ca/ca.crt -noout -enddate | sed 's/notAfter=/   Expires: /'; \
+		echo ""; \
+	fi
+	@if [ -f certs/mcp/gateway/client.crt ]; then \
+		echo "📋 Gateway Client Certificate:"; \
+		openssl x509 -in certs/mcp/gateway/client.crt -noout -enddate | sed 's/notAfter=/   Expires: /'; \
+		echo ""; \
+	fi
+	@if [ -d certs/mcp/plugins ]; then \
+		echo "📋 Plugin Certificates:"; \
+		for plugin_dir in certs/mcp/plugins/*; do \
+			if [ -f "$$plugin_dir/server.crt" ]; then \
+				plugin_name=$$(basename "$$plugin_dir"); \
+				expiry=$$(openssl x509 -in "$$plugin_dir/server.crt" -noout -enddate | sed 's/notAfter=//'); \
+				echo "   $$plugin_name: $$expiry"; \
+			fi; \
+		done; \
+		echo ""; \
+	fi
+	@echo "💡  To regenerate expired certificates, delete the cert directory and run make certs-mcp-all"
 
 ## --- House-keeping -----------------------------------------------------------
 # help: clean                - Remove caches, build artefacts, virtualenv, docs, certs, coverage, SBOM, database files, etc.

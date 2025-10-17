@@ -988,11 +988,35 @@ External plugins integrate with the gateway through standardized configuration:
 # resources/plugins/config.yaml (in plugin project)
 plugins:
 
-  - name: "MySecurityFilter"
-    kind: "myfilter.plugin.MySecurityFilter"
-    hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
-    mode: "enforce"
-    priority: 10
+  # TypeScript/Node.js plugin
+  - name: "OpenAIModerationTS"
+    kind: "external"
+    mcp:
+      proto: "STREAMABLEHTTP"
+      url: "http://nodejs-plugin:3000/mcp"
+      # tls:
+      #   ca_bundle: /app/certs/plugins/ca.crt
+      #   client_cert: /app/certs/plugins/gateway-client.pem
+
+  # Go plugin
+  - name: "HighPerformanceFilter"
+    kind: "external"
+    mcp:
+      proto: "STDIO"
+      script: "/opt/plugins/go-filter"
+
+  # Rust plugin
+  - name: "CryptoValidator"
+    kind: "external"
+    mcp:
+      proto: "STREAMABLEHTTP"
+      url: "http://rust-plugin:8080/mcp"
+      # tls:
+      #   verify: true
+
+Gateway-wide defaults for these TLS options can be supplied via the
+`PLUGINS_MTLS_*` environment variables when you want every external
+plugin to share the same client certificate and CA bundle.
 ```
 
 **Gateway Configuration:**

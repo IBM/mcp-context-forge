@@ -91,7 +91,6 @@ dev = [
     "black>=25.1.0",
     "bump2version>=1.0.1",
     "check-manifest>=0.50",
-    "chuk-mcp-runtime>=0.6.5",
     "code2flow>=2.5.1",
     "cookiecutter>=2.6.0",
     "coverage>=7.10.6",
@@ -208,14 +207,6 @@ aiosqlite = [
 # Async PostgreSQL driver (optional)
 asyncpg = [
     "asyncpg>=0.30.0",
-]
-
-# Chuck/Chuk MCP Runtime (optional) - External plugin server runtime
-# Provides MCP tool decorators, plugin hooks, and multi-transport server support
-# Used by: mcpgateway/plugins/framework/external/mcp/server/runtime.py
-# Required only if you plan to create external MCP plugin servers
-chuck = [
-    "chuk-mcp-runtime>=0.6.5",
 ]
 
 # UI Testing

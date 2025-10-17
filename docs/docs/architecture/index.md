@@ -1,13 +1,152 @@
 # Architecture Overview
 
-The **MCP Gateway** acts as a unified entry point for tools, resources, prompts, and servers, federating local and remote nodes into a coherent MCP-compliant interface.
+The **MCP Gateway** (ContextForge) is a production-grade gateway, proxy, and registry for Model Context Protocol (MCP) servers and A2A Agents. It acts as a unified entry point for tools, resources, prompts, and servers, federating local and remote nodes into a coherent MCP-compliant interface.
 
-This gateway:
+## High-Level Architecture Summary
 
-- Wraps REST/MCP tools and resources under JSON-RPC and streaming protocols
-- Offers a pluggable backend (cache, auth, storage)
-- Exposes multiple transports (HTTP, WS, SSE, StreamableHttp, stdio)
-- Automatically discovers and merges federated peers
+**MCP Gateway (ContextForge)** is a comprehensive production-grade gateway built on modern Python technologies:
+
+### Core Technology Stack
+
+**1. Python FastAPI Application with Modern Stack**
+- Built with **FastAPI** (async web framework) for high-performance REST/JSON-RPC endpoints
+- Uses **Pydantic 2.11+** for runtime validation and **Pydantic Settings** for environment-based configuration
+- Requires **Python 3.11-3.13** with full async/await support throughout
+- Deployed via **Uvicorn** (dev) or **Gunicorn** (production) ASGI servers
+
+**2. Multi-Database ORM Layer with SQLAlchemy 2.0**
+- **SQLAlchemy 2.0** ORM with async support for database operations
+- Supports **PostgreSQL** (via psycopg2), **SQLite** (default, file-based), and **MariaDB/MySQL** (via pymysql)
+- **Alembic** for schema migrations and version control
+- Connection pooling with configurable pool sizes (200 default), overflow (10), and recycling (3600s)
+
+**3. Multi-Transport Protocol Gateway**
+- Native **MCP (Model Context Protocol)** server implementation supporting protocol version 2025-03-26
+- Transport mechanisms: **HTTP/JSON-RPC**, **Server-Sent Events (SSE)** with keepalive, **WebSocket**, **stdio** (for CLI integration), and **streamable-HTTP**
+- JSON-RPC 2.0 compliant message handling with bidirectional communication
+
+**4. Federation & Registry Architecture**
+- Acts as an **MCP Registry** that federates multiple peer gateways
+- **Auto-discovery** via mDNS/Zeroconf or manual configuration
+- **Redis-backed caching and federation** for multi-cluster deployments (optional, can use memory or database caching)
+- Health checking with configurable intervals (60s default) and failure thresholds
+
+**5. Virtual Server Composition System**
+- Wraps non-MCP REST/gRPC services as **virtual MCP servers**
+- Composes tools, prompts, and resources from multiple backends into unified virtual servers
+- Supports REST-to-MCP tool adaptation with automatic JSON Schema extraction
+- Tool, resource, and prompt registries with versioning and rollback capabilities
+
+**6. Multi-Tenant RBAC & Authentication**
+- **Email-based authentication** with **Argon2id** password hashing (time_cost=3, memory_cost=65536 KiB)
+- **JWT authentication** (HS256/RS256) with configurable expiration and audience verification
+- **SSO integration**: GitHub OAuth, Google OAuth, Microsoft Entra ID, IBM Security Verify, Okta, Keycloak, generic OIDC
+- **OAuth 2.0 with Dynamic Client Registration (DCR)** per RFC 7591 and RFC 8414 discovery
+- **Teams and RBAC**: Personal teams, team invitations, role-based permissions (global/team/personal scopes)
+
+**7. Plugin Framework**
+- Extensible plugin system with pre/post request/response hooks
+- Built-in plugins: PII filter, deny filter, regex filter, resource filter
+- Plugin configuration via YAML with hot-reload support
+- CLI tools for plugin management (`mcpplugins` command)
+
+**8. Admin UI & Observability**
+- **HTMX + Alpine.js** web UI for real-time management and configuration
+- Real-time log viewer with filtering, search, and export (in-memory buffer with 1MB default size)
+- **OpenTelemetry observability** with support for Jaeger, Zipkin, Phoenix, and OTLP backends
+- Support bundle generation for troubleshooting (logs, config, system stats - auto-sanitized)
+
+**9. Agent-to-Agent (A2A) Integration**
+- Integrates external AI agents (OpenAI, Anthropic, custom) as tools within virtual servers
+- Auto-tool creation for associated A2A agents with invocation routing
+- Comprehensive metrics collection for agent interactions
+- Configurable timeouts (30s default), retries (3 max), and agent limits (100 max)
+
+**10. Security & Rate Limiting**
+- Configurable authentication schemes: Basic Auth, JWT Bearer, custom headers
+- Rate limiting with configurable tool rate limits (100 req/min default) and concurrent limits (10)
+- Security headers (HSTS, X-Frame-Options, CSP, X-Content-Type-Options, X-XSS-Protection, Referrer-Policy), CORS with domain whitelisting
+- Input validation with JSON Schema, length limits, and dangerous pattern detection
+- mTLS support for plugin client-server communication
+
+**11. Resource & Content Management**
+- URI-based resource access with MIME detection and content negotiation
+- Resource caching (1000 items, 3600s TTL) with size limits (10MB default)
+- Support for text, markdown, HTML, JSON, XML, images (PNG/JPEG/GIF)
+- **Jinja2 template rendering** for prompts with multimodal support
+
+**12. Development & Testing Infrastructure**
+- Comprehensive test suite: unit, integration, e2e, security, fuzz, Playwright UI tests
+- **VS Code Dev Container** support with pre-configured environment
+- Hot-reload development mode with debug logging
+- Extensive linting: Black, isort, Ruff, Flake8, Bandit, Pylint, mypy (strict mode)
+- Coverage tracking with HTML reports and pytest-cov integration
+
+**13. Deployment & Scalability**
+- **Docker/Podman container images** with rootless support
+- **Kubernetes-ready** with Redis-backed federation for multi-cluster deployments
+- **IBM Cloud Code Engine** deployment automation via Makefile targets
+- Environment-based configuration (`.env` files) with 100+ configurable parameters
+- Production-ready logging (JSON/text formats) with rotation support
+
+**14. Well-Known URI & Standards Compliance**
+- Implements `.well-known/mcp` endpoint for MCP discovery
+- Configurable `robots.txt`, `security.txt`, and custom well-known files
+- Standards compliance: RFC 5424 (syslog), RFC 7591 (DCR), RFC 8414 (OAuth discovery), JSON-RPC 2.0
+
+**15. MCP Server Catalog & Service Discovery**
+- **MCP Server Catalog** feature for centralized server registry
+- YAML-based catalog configuration with auto-health checking
+- Pagination support (100 items/page default) with caching (3600s TTL)
+
+### CI/CD Pipeline with GitHub Actions
+
+**16. Automated Quality Assurance & Security**
+
+The project maintains production-grade quality through comprehensive GitHub Actions workflows:
+
+**Build & Package Workflows:**
+- **Python Package Build** (`python-package.yml`): Multi-version builds (Python 3.10-3.12) with wheel/sdist creation, metadata validation (twine), manifest checking, and package quality assessment (pyroma)
+- **Docker Release** (`docker-release.yml`): Automated container image releases to GitHub Container Registry (GHCR) with semantic versioning
+
+**Testing & Coverage:**
+- **Tests & Coverage** (`pytest.yml`): Comprehensive test suite across Python 3.11-3.12 with pytest, branch coverage measurement (70% threshold), doctest validation (40% threshold), and coverage reporting
+- **Playwright UI Tests**: End-to-end browser automation testing for admin UI workflows
+
+**Security Scanning:**
+- **Bandit Security** (`bandit.yml`): Python static analysis for security vulnerabilities (MEDIUM+ severity, HIGH confidence), SARIF upload for GitHub Security tab, weekly scheduled scans
+- **CodeQL Advanced** (`codeql.yml`): Multi-language analysis (JavaScript/TypeScript, Python, GitHub Actions), security vulnerability detection, code quality checks, weekly scheduled scans (Wednesday 21:15 UTC)
+- **Dependency Review** (`dependency-review.yml`): Automated dependency vulnerability scanning on pull requests
+
+**Container Security:**
+- **Secure Docker Build** (`docker-image.yml`):
+  - Dockerfile linting with **Hadolint** (SARIF reports)
+  - Image linting with **Dockle** (SARIF reports)
+  - SBOM generation with **Syft** (SPDX format)
+  - Vulnerability scanning with **Trivy** and **Grype** (CRITICAL CVEs)
+  - Image signing and attestation with **Cosign** (keyless OIDC)
+  - BuildKit layer caching for faster rebuilds
+  - Weekly scheduled scans (Tuesday 18:17 UTC)
+
+**Code Quality & Linting:**
+- **Lint & Static Analysis** (`lint.yml`): Comprehensive multi-tool linting matrix
+  - **Syntax & Format**: yamllint, JSON validation (jq), TOML validation (tomlcheck)
+  - **Python Analysis**: Flake8, Ruff, Unimport, Vulture (dead code), Pylint (errors-only), Interrogate (100% docstring coverage), Radon (complexity metrics)
+  - **Web Assets**: HTML/CSS/JS linting (`lint-web.yml`)
+  - Each linter runs in isolated matrix jobs for fast-fail visibility
+
+**Deployment:**
+- **IBM Cloud Code Engine** (`ibm-cloud-code-engine.yml`): Automated deployment to IBM Cloud with environment configuration and health checks
+
+**Key CI/CD Features:**
+- **SARIF Integration**: All security tools upload findings to GitHub Security tab for centralized vulnerability management
+- **Artifact Management**: Build artifacts (wheels, coverage reports, SBOMs) uploaded and versioned
+- **Fail-Safe Design**: Continue-on-error for non-blocking scans with final quality gates
+- **Scheduled Scans**: Weekly security scans to catch newly disclosed CVEs
+- **Multi-Version Testing**: Matrix builds across Python 3.10-3.13 to ensure compatibility
+- **Cache Optimization**: Pip cache, BuildKit cache, and dependency caching for faster runs
+
+This architecture supports both small single-instance deployments (SQLite + memory cache) and large-scale multi-cluster deployments (PostgreSQL + Redis + federation), making it suitable for development, staging, and production environments.
 
 ## System Architecture
 
