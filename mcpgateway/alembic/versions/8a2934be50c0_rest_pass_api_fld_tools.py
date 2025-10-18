@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """rest_pass_api_fld_tools
 
 Revision ID: 8a2934be50c0
