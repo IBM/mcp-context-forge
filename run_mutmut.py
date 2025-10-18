@@ -6,7 +6,6 @@ Generates mutants and then runs them despite stats failure.
 """
 
 # Standard
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -17,6 +16,7 @@ def run_command(cmd):
     """Run a shell command and return output."""
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return result.stdout, result.stderr, result.returncode
+
 
 def main():
     # Check for command line arguments
@@ -42,9 +42,10 @@ def main():
     if "done in" in stdout:
         # Standard
         import re
-        match = re.search(r'done in (\d+)ms', stdout)
+
+        match = re.search(r"done in (\d+)ms", stdout)
         if match:
-            print(f"  Generated in {int(match.group(1))/1000:.1f} seconds")
+            print(f"  Generated in {int(match.group(1)) / 1000:.1f} seconds")
 
     # Check if mutants were generated
     if not Path("mutants").exists():
@@ -56,7 +57,7 @@ def main():
     # Get list of mutants
     print("📊 Getting list of mutants...")
     stdout, stderr, _ = run_command("mutmut results 2>&1 | grep -E 'mutmut_[0-9]+:' | cut -d: -f1")
-    all_mutants = [m.strip() for m in stdout.strip().split('\n') if m.strip()]
+    all_mutants = [m.strip() for m in stdout.strip().split("\n") if m.strip()]
 
     if not all_mutants:
         print("❌ No mutants found")
@@ -102,9 +103,9 @@ def main():
             results["error"] += 1
 
     # Print summary
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("📊 MUTATION TESTING RESULTS:")
-    print("="*50)
+    print("=" * 50)
     print(f"🎉 Killed:    {results['killed']} mutants")
     print(f"🙁 Survived:  {results['survived']} mutants")
     print(f"⏰ Timeout:   {results['timeout']} mutants")
@@ -112,7 +113,7 @@ def main():
 
     total = sum(results.values())
     if total > 0:
-        score = (results['killed'] / total) * 100
+        score = (results["killed"] / total) * 100
         print(f"\n📈 Mutation Score: {score:.1f}%")
 
         if sample_mode and len(all_mutants) > len(mutants):
@@ -127,6 +128,7 @@ def main():
             print(f"    View with: mutmut show {mutant}")
 
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

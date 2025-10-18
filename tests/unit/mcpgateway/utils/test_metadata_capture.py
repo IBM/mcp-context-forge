@@ -11,10 +11,8 @@ audit tracking of entity creation and modification operations.
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 # Third-Party
-import pytest
 
 # First-Party
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -58,10 +56,7 @@ class TestMetadataCapture:
         request = SimpleNamespace()
         request.client = SimpleNamespace()
         request.client.host = "127.0.0.1"
-        request.headers = {
-            "user-agent": "curl/7.68.0",
-            "x-forwarded-for": "203.0.113.1, 192.168.1.1, 127.0.0.1"
-        }
+        request.headers = {"user-agent": "curl/7.68.0", "x-forwarded-for": "203.0.113.1, 192.168.1.1, 127.0.0.1"}
         request.url = SimpleNamespace()
         request.url.path = "/api/tools"
 
@@ -94,12 +89,7 @@ class TestMetadataCapture:
         request.url = SimpleNamespace()
         request.url.path = "/admin/servers"
 
-        metadata = MetadataCapture.extract_creation_metadata(
-            request,
-            "admin",
-            import_batch_id="batch-123",
-            federation_source="gateway-prod"
-        )
+        metadata = MetadataCapture.extract_creation_metadata(request, "admin", import_batch_id="batch-123", federation_source="gateway-prod")
 
         assert metadata["created_by"] == "admin"
         assert metadata["created_from_ip"] == "172.16.0.5"
@@ -143,18 +133,12 @@ class TestMetadataCapture:
 
     def test_determine_source_from_context_import(self):
         """Test source determination for bulk import."""
-        source = MetadataCapture.determine_source_from_context(
-            import_batch_id="batch-456",
-            via="api"
-        )
+        source = MetadataCapture.determine_source_from_context(import_batch_id="batch-456", via="api")
         assert source == "import"
 
     def test_determine_source_from_context_federation(self):
         """Test source determination for federation."""
-        source = MetadataCapture.determine_source_from_context(
-            federation_source="gateway-east",
-            via="api"
-        )
+        source = MetadataCapture.determine_source_from_context(federation_source="gateway-east", via="api")
         assert source == "federation"
 
     def test_determine_source_from_context_normal(self):
@@ -233,12 +217,7 @@ class TestMetadataCapture:
         request.url = SimpleNamespace()
         request.url.path = "/tools"
 
-        metadata = MetadataCapture.extract_creation_metadata(
-            request,
-            "user",
-            import_batch_id=None,
-            federation_source=None
-        )
+        metadata = MetadataCapture.extract_creation_metadata(request, "user", import_batch_id=None, federation_source=None)
 
         assert metadata["created_by"] == "user"
         assert metadata["import_batch_id"] is None
@@ -290,10 +269,7 @@ class TestMetadataCapture:
         request = SimpleNamespace()
         request.client = SimpleNamespace()
         request.client.host = "127.0.0.1"
-        request.headers = {
-            "user-agent": "test",
-            "x-forwarded-for": "malformed"
-        }
+        request.headers = {"user-agent": "test", "x-forwarded-for": "malformed"}
         request.url = SimpleNamespace()
         request.url.path = "/tools"
 

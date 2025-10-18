@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/libreoffice_server/tests/test_server.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -8,8 +7,7 @@ Tests for LibreOffice MCP Server (FastMCP).
 """
 
 import pytest
-import tempfile
-from pathlib import Path
+
 from libreoffice_server.server_fastmcp import converter
 
 

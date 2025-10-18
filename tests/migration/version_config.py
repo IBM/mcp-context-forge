@@ -34,7 +34,7 @@ class VersionConfig:
         "0.4.0",  # Legacy - not tested by default
         "0.5.0",  # n-2: Current support baseline
         "0.6.0",  # n-1: Previous version
-        "latest", # n:   Current development version
+        "latest",  # n:   Current development version
     ]
 
     # Current latest numbered version (update when releasing)
@@ -42,42 +42,37 @@ class VersionConfig:
 
     # Release metadata for documentation and testing
     RELEASE_INFO = {
-        "0.2.0": {
-            "release_date": "2023-10-01",
-            "major_features": ["basic_mcp_support", "sqlite_database", "simple_auth"],
-            "breaking_changes": [],
-            "support_status": "legacy"
-        },
+        "0.2.0": {"release_date": "2023-10-01", "major_features": ["basic_mcp_support", "sqlite_database", "simple_auth"], "breaking_changes": [], "support_status": "legacy"},
         "0.3.0": {
             "release_date": "2023-11-15",
             "major_features": ["display_names", "enhanced_annotations", "improved_validation"],
             "breaking_changes": ["annotation_schema_changes"],
-            "support_status": "legacy"
+            "support_status": "legacy",
         },
         "0.4.0": {
             "release_date": "2023-12-20",
             "major_features": ["uuid_primary_keys", "slug_system", "metadata_tracking"],
             "breaking_changes": ["primary_key_migration", "slug_introduction"],
-            "support_status": "legacy"
+            "support_status": "legacy",
         },
         "0.5.0": {
             "release_date": "2024-01-25",
             "major_features": ["enhanced_status", "improved_logging", "performance_optimizations"],
             "breaking_changes": ["status_field_changes"],
-            "support_status": "supported"  # n-2
+            "support_status": "supported",  # n-2
         },
         "0.6.0": {
             "release_date": "2024-02-15",
             "major_features": ["a2a_agents", "oauth_support", "federation_features"],
             "breaking_changes": ["oauth_table_addition"],
-            "support_status": "supported"  # n-1
+            "support_status": "supported",  # n-1
         },
         "latest": {
             "release_date": datetime.now().strftime("%Y-%m-%d"),
             "major_features": ["all_features", "latest_improvements", "cutting_edge"],
             "breaking_changes": ["potential_schema_updates"],
-            "support_status": "current"     # n
-        }
+            "support_status": "current",  # n
+        },
     }
 
     @classmethod
@@ -227,11 +222,7 @@ def get_supported_versions() -> List[str]:
 
 def get_migration_pairs() -> Dict[str, List[Tuple[str, str]]]:
     """Get all migration test pairs organized by type."""
-    return {
-        "forward": VersionConfig.get_forward_migration_pairs(),
-        "reverse": VersionConfig.get_reverse_migration_pairs(),
-        "skip": VersionConfig.get_skip_version_pairs()
-    }
+    return {"forward": VersionConfig.get_forward_migration_pairs(), "reverse": VersionConfig.get_reverse_migration_pairs(), "skip": VersionConfig.get_skip_version_pairs()}
 
 
 # Example usage and documentation

@@ -96,6 +96,7 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
     Yields:
         Tuples of (path, string_value) for each string found in the structure.
     """
+
     def walk(obj: Any, path: str):
         """Recursively walk the data structure.
 

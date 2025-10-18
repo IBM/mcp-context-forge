@@ -16,7 +16,7 @@ from sqlalchemy import text
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # First-Party
-from mcpgateway.db import engine, get_db
+from mcpgateway.db import engine
 
 
 def migrate_up():
@@ -30,7 +30,7 @@ def migrate_up():
             result = conn.execute(text("PRAGMA table_info(tools)"))
             columns = [row[1] for row in result]
 
-            if 'annotations' in columns:
+            if "annotations" in columns:
                 print("Annotations column already exists, skipping migration.")
                 return
         except Exception:
@@ -52,6 +52,7 @@ def migrate_up():
             conn.rollback()
             raise
 
+
 def migrate_down():
     """Remove annotations column from tools table."""
     print("Removing annotations column from tools table...")
@@ -64,6 +65,7 @@ def migrate_down():
         except Exception as e:
             print(f"Error removing annotations column: {e}")
             raise
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "down":

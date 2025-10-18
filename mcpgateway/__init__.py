@@ -16,6 +16,8 @@ __url__ = "https://ibm.github.io/mcp-context-forge/"
 __download_url__ = "https://github.com/IBM/mcp-context-forge"
 __packages__ = ["mcpgateway"]
 
+from mcpgateway import reverse_proxy, wrapper, translate
+
 # Export main components for easier imports
 __all__ = [
     "__version__",

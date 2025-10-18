@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/latex_server/tests/test_server.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -7,9 +6,9 @@ Authors: Mihai Criveti
 Tests for LaTeX MCP Server (FastMCP).
 """
 
-import pytest
 import tempfile
 from pathlib import Path
+
 from latex_server.server_fastmcp import processor
 
 
@@ -77,9 +76,7 @@ def test_create_from_template():
         file_path = str(Path(tmpdir) / "test.tex")
 
         result = processor.create_from_template(
-            "article",
-            file_path,
-            {"title": "Test", "author": "Test Author"}
+            "article", file_path, {"title": "Test", "author": "Test Author"}
         )
 
         assert result["success"] is True

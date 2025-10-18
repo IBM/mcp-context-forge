@@ -65,7 +65,6 @@ class TestGatewayServiceExtended:
             patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
-
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
@@ -117,7 +116,6 @@ class TestGatewayServiceExtended:
             patch("mcpgateway.services.gateway_service.ClientSession") as mock_session,
             patch("mcpgateway.services.gateway_service.decode_auth") as mock_decode,
         ):
-
             # Setup mocks
             mock_decode.return_value = {"Authorization": "Bearer token"}
 
@@ -343,7 +341,7 @@ class TestGatewayServiceExtended:
             mock_settings.cache_type = "none"
 
             # Run health checks for a short time
-            health_check_task = asyncio.create_task(service._run_health_checks(service._get_db, 'user@example.com'))
+            health_check_task = asyncio.create_task(service._run_health_checks(service._get_db, "user@example.com"))
             await asyncio.sleep(0.2)
             health_check_task.cancel()
 
@@ -442,14 +440,14 @@ class TestGatewayServiceExtended:
     @pytest.mark.asyncio
     async def test_init_with_redis_enabled(self):
         """Test initialization with Redis enabled (lines 233-236)."""
-        with patch('mcpgateway.services.gateway_service.REDIS_AVAILABLE', True):
-            with patch('mcpgateway.services.gateway_service.redis') as mock_redis:
+        with patch("mcpgateway.services.gateway_service.REDIS_AVAILABLE", True):
+            with patch("mcpgateway.services.gateway_service.redis") as mock_redis:
                 mock_redis_client = MagicMock()
                 mock_redis.from_url.return_value = mock_redis_client
 
-                with patch('mcpgateway.services.gateway_service.settings') as mock_settings:
-                    mock_settings.cache_type = 'redis'
-                    mock_settings.redis_url = 'redis://localhost:6379'
+                with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+                    mock_settings.cache_type = "redis"
+                    mock_settings.redis_url = "redis://localhost:6379"
 
                     service = GatewayService()
 
@@ -461,9 +459,9 @@ class TestGatewayServiceExtended:
     @pytest.mark.asyncio
     async def test_init_with_file_cache_path_adjustment(self):
         """Test initialization with file cache and path adjustment (line 244)."""
-        with patch('mcpgateway.services.gateway_service.REDIS_AVAILABLE', False):
-            with patch('mcpgateway.services.gateway_service.settings') as mock_settings:
-                mock_settings.cache_type = 'file'
+        with patch("mcpgateway.services.gateway_service.REDIS_AVAILABLE", False):
+            with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+                mock_settings.cache_type = "file"
 
                 service = GatewayService()
 
@@ -473,9 +471,9 @@ class TestGatewayServiceExtended:
     @pytest.mark.asyncio
     async def test_init_with_no_cache(self):
         """Test initialization with cache disabled (lines 248-249)."""
-        with patch('mcpgateway.services.gateway_service.REDIS_AVAILABLE', False):
-            with patch('mcpgateway.services.gateway_service.settings') as mock_settings:
-                mock_settings.cache_type = 'none'
+        with patch("mcpgateway.services.gateway_service.REDIS_AVAILABLE", False):
+            with patch("mcpgateway.services.gateway_service.settings") as mock_settings:
+                mock_settings.cache_type = "none"
 
                 service = GatewayService()
 
@@ -487,8 +485,8 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Just test that the method exists and is callable
-        assert hasattr(service, '_validate_gateway_url')
-        assert callable(getattr(service, '_validate_gateway_url'))
+        assert hasattr(service, "_validate_gateway_url")
+        assert callable(getattr(service, "_validate_gateway_url"))
 
     @pytest.mark.asyncio
     async def test_validate_gateway_redirect_handling(self):
@@ -496,8 +494,8 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Test that method exists
-        assert hasattr(service, '_validate_gateway_url')
-        assert callable(getattr(service, '_validate_gateway_url'))
+        assert hasattr(service, "_validate_gateway_url")
+        assert callable(getattr(service, "_validate_gateway_url"))
 
     @pytest.mark.asyncio
     async def test_validate_gateway_redirect_auth_failure(self):
@@ -507,6 +505,7 @@ class TestGatewayServiceExtended:
         # Test method exists with proper signature
         # Standard
         import inspect
+
         sig = inspect.signature(service._validate_gateway_url)
         assert len(sig.parameters) >= 3  # url and other params
 
@@ -518,6 +517,7 @@ class TestGatewayServiceExtended:
         # Test method is async
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service._validate_gateway_url)
 
     @pytest.mark.asyncio
@@ -526,7 +526,7 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Verify method exists and has proper attributes
-        method = getattr(service, '_validate_gateway_url')
+        method = getattr(service, "_validate_gateway_url")
         assert method is not None
         assert callable(method)
 
@@ -536,12 +536,13 @@ class TestGatewayServiceExtended:
         service = GatewayService()
 
         # Just test that method exists and is callable
-        assert hasattr(service, 'initialize')
-        assert callable(getattr(service, 'initialize'))
+        assert hasattr(service, "initialize")
+        assert callable(getattr(service, "initialize"))
 
         # Test it's an async method
         # Standard
         import asyncio
+
         assert asyncio.iscoroutinefunction(service.initialize)
 
     @pytest.mark.asyncio
@@ -1009,8 +1010,8 @@ class TestGatewayServiceExtended:
         # existing_tool2 should be updated (some fields will change due to gateway changes)
         assert existing_tool2.description == "Updated description"
         assert existing_tool2.url == "http://new.com"  # Updated from gateway
-        assert existing_tool2.auth_type == "bearer"    # Updated from gateway
-        assert existing_tool2.visibility == "public"   # Updated from gateway
+        assert existing_tool2.auth_type == "bearer"  # Updated from gateway
+        assert existing_tool2.visibility == "public"  # Updated from gateway
 
     @pytest.mark.asyncio
     async def test_helper_methods_empty_input_lists(self):
@@ -1234,8 +1235,8 @@ class TestGatewayServiceExtended:
 
         # existing_tool1 should be updated with gateway values (even if description stays the same)
         assert existing_tool1.url == "http://new.com"  # Updated from gateway
-        assert existing_tool1.auth_type == "bearer"    # Updated from gateway
-        assert existing_tool1.visibility == "public"   # Updated from gateway
+        assert existing_tool1.auth_type == "bearer"  # Updated from gateway
+        assert existing_tool1.visibility == "public"  # Updated from gateway
 
         # existing_tool3 should be updated
         assert existing_tool3.description == "Updated description"

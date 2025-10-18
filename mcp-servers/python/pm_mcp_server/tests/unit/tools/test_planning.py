@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Module Description.
 Location: ./mcp-servers/python/pm_mcp_server/tests/unit/tools/test_planning.py
 Copyright 2025
@@ -7,6 +6,7 @@ Authors: Mihai Criveti
 
 Module documentation...
 """
+
 import pytest
 
 from pm_mcp_server.schemata import ScheduleModel, ScheduleTask, WBSNode
@@ -14,7 +14,9 @@ from pm_mcp_server.tools import planning
 
 
 def test_generate_work_breakdown_creates_nodes():
-    nodes = planning.generate_work_breakdown("Design and build the dashboard. Rollout and train users.")
+    nodes = planning.generate_work_breakdown(
+        "Design and build the dashboard. Rollout and train users."
+    )
     assert len(nodes) >= 2
     assert nodes[0].name.lower().startswith("design")
 

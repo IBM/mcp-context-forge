@@ -14,7 +14,7 @@ and error handling scenarios.
 # Standard
 from datetime import datetime, timedelta, timezone
 import hashlib
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException, status
@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user, get_db
-from mcpgateway.db import EmailApiToken, EmailUser, SessionLocal
+from mcpgateway.db import EmailApiToken, EmailUser
 
 
 class TestGetDb:
@@ -578,7 +578,12 @@ class TestGetCurrentUser:
         token_hash = hashlib.sha256(api_token_value.encode()).hexdigest()
 
         mock_api_token = EmailApiToken(
-            user_email="api_user@example.com", token_hash=token_hash, jti="permanent_jti", is_active=True, expires_at=None, last_used=datetime.now(timezone.utc)  # No expiry
+            user_email="api_user@example.com",
+            token_hash=token_hash,
+            jti="permanent_jti",
+            is_active=True,
+            expires_at=None,
+            last_used=datetime.now(timezone.utc),  # No expiry
         )
 
         mock_user = EmailUser(

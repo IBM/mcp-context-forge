@@ -7,17 +7,17 @@ Authors: Mihai Criveti
 
 Coverage-guided fuzzing for JSONPath processing using Atheris.
 """
+
 # Standard
 import json
 import os
 import sys
-from typing import Any
 
 # Third-Party
 import atheris
 
 # Ensure the project is in the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 try:
     # Third-Party
@@ -47,37 +47,20 @@ def TestOneInput(data: bytes) -> None:
 
         if choice == 0:
             # Simple object
-            test_data = {
-                "name": fdp.ConsumeUnicodeNoSurrogates(50),
-                "value": fdp.ConsumeIntInRange(0, 1000),
-                "enabled": fdp.ConsumeBool()
-            }
+            test_data = {"name": fdp.ConsumeUnicodeNoSurrogates(50), "value": fdp.ConsumeIntInRange(0, 1000), "enabled": fdp.ConsumeBool()}
         elif choice == 1:
             # Array of objects
-            test_data = {
-                "items": [
-                    {"id": i, "data": fdp.ConsumeUnicodeNoSurrogates(20)}
-                    for i in range(fdp.ConsumeIntInRange(0, 10))
-                ]
-            }
+            test_data = {"items": [{"id": i, "data": fdp.ConsumeUnicodeNoSurrogates(20)} for i in range(fdp.ConsumeIntInRange(0, 10))]}
         elif choice == 2:
             # Nested structure
-            test_data = {
-                "root": {
-                    "nested": {
-                        "deep": {
-                            "value": fdp.ConsumeUnicodeNoSurrogates(30)
-                        }
-                    }
-                }
-            }
+            test_data = {"root": {"nested": {"deep": {"value": fdp.ConsumeUnicodeNoSurrogates(30)}}}}
         elif choice == 3:
             # Mixed structure
             test_data = {
                 "string": fdp.ConsumeUnicodeNoSurrogates(40),
                 "number": fdp.ConsumeIntInRange(-1000, 1000),
                 "array": [fdp.ConsumeIntInRange(0, 100) for _ in range(fdp.ConsumeIntInRange(0, 5))],
-                "object": {"key": fdp.ConsumeUnicodeNoSurrogates(20)}
+                "object": {"key": fdp.ConsumeUnicodeNoSurrogates(20)},
             }
         else:
             # Raw data

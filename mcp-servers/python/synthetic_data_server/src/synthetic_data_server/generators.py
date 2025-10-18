@@ -37,9 +37,7 @@ class SyntheticDataGenerator:
         """Return available dataset presets."""
         return list(self.presets.values())
 
-    def generate(
-        self, request: schemas.DatasetRequest
-    ) -> tuple[str, list[dict[str, Any]], list[schemas.ColumnDefinition], schemas.DatasetSummary | None]:
+    def generate(self, request: schemas.DatasetRequest) -> tuple[str, list[dict[str, Any]], list[schemas.ColumnDefinition], schemas.DatasetSummary | None]:
         """Produce synthetic rows according to the provided request."""
 
         columns = self._resolve_columns(request)
@@ -183,7 +181,7 @@ class SyntheticDataGenerator:
         import re
 
         # Count all format placeholders (both {} and {:format})
-        pattern_regex = r'\{[^}]*\}'
+        pattern_regex = r"\{[^}]*\}"
         placeholders = re.findall(pattern_regex, column.pattern)
         placeholder_count = len(placeholders)
 
@@ -198,7 +196,7 @@ class SyntheticDataGenerator:
                 values.append(rng.choice(column.random_choices))
             elif column.sequence_start is not None:
                 # Use sequence counter
-                if not hasattr(self, '_pattern_counters'):
+                if not hasattr(self, "_pattern_counters"):
                     self._pattern_counters = {}
                 key = f"{column.pattern}_{column.name}"
                 if key not in self._pattern_counters:

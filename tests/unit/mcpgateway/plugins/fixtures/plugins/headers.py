@@ -7,6 +7,7 @@ Authors: Mihai Criveti
 
 Headers plugin.
 """
+
 import copy
 import logging
 
@@ -30,6 +31,7 @@ from mcpgateway.plugins.framework import (
 )
 
 logger = logging.getLogger("header_plugin")
+
 
 class HeadersMetaDataPlugin(Plugin):
     """A simple header plugin to read and modify headers."""
@@ -76,8 +78,8 @@ class HeadersMetaDataPlugin(Plugin):
             modified_payload.headers = HttpHeaderPayload({})
         if tool_meta.integration_type == "REST":
             assert payload.headers
-            assert 'Content-Type' in payload.headers
-            assert  payload.headers['Content-Type'] == 'application/json'
+            assert "Content-Type" in payload.headers
+            assert payload.headers["Content-Type"] == "application/json"
         elif tool_meta.integration_type == "MCP":
             assert GATEWAY_METADATA in context.global_context.metadata
             gateway_meta = context.global_context.metadata[GATEWAY_METADATA]
@@ -88,10 +90,7 @@ class HeadersMetaDataPlugin(Plugin):
         modified_payload.headers["User-Agent"] = "Mozilla/5.0"
         modified_payload.headers["Connection"] = "keep-alive"
 
-
-
-        return ToolPreInvokeResult(continue_processing = True, modified_payload = modified_payload)
-
+        return ToolPreInvokeResult(continue_processing=True, modified_payload=modified_payload)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.
@@ -116,7 +115,6 @@ class HeadersMetaDataPlugin(Plugin):
             assert gateway_meta.url.host == "example.com"
         return ToolPostInvokeResult(continue_processing=True)
 
-
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
         """Plugin hook run after a resource was fetched.
 
@@ -140,6 +138,7 @@ class HeadersMetaDataPlugin(Plugin):
             The result of the plugin's analysis, including whether the resource result should proceed.
         """
         return ResourcePreFetchResult(continue_processing=True)
+
 
 class HeadersPlugin(Plugin):
     """A simple header plugin to read and modify headers."""
@@ -181,12 +180,11 @@ class HeadersPlugin(Plugin):
             modified_payload.headers = HttpHeaderPayload({})
         else:
             assert payload.headers
-            assert 'Content-Type' in payload.headers
-            assert  payload.headers['Content-Type'] == 'application/json'
+            assert "Content-Type" in payload.headers
+            assert payload.headers["Content-Type"] == "application/json"
         modified_payload.headers["User-Agent"] = "Mozilla/5.0"
         modified_payload.headers["Connection"] = "keep-alive"
-        return ToolPreInvokeResult(continue_processing = True, modified_payload = modified_payload)
-
+        return ToolPreInvokeResult(continue_processing=True, modified_payload=modified_payload)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.

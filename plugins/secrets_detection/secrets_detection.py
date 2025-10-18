@@ -74,6 +74,7 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
     Yields:
         Tuples of (path, text) for each string found.
     """
+
     # Yields pairs of (path, text)
     def walk(obj: Any, path: str):
         """Recursively walk nested structure yielding string paths.

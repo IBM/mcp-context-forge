@@ -10,8 +10,6 @@ Unit tests for LogStorageService.
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import json
-import sys
 from unittest.mock import patch
 
 # Third-Party
@@ -25,16 +23,7 @@ from mcpgateway.services.log_storage_service import LogEntry, LogStorageService
 @pytest.mark.asyncio
 async def test_log_entry_creation():
     """Test LogEntry creation with all fields."""
-    entry = LogEntry(
-        level=LogLevel.INFO,
-        entity_type="tool",
-        entity_id="tool-1",
-        entity_name="Test Tool",
-        message="Test message",
-        logger="test.logger",
-        data={"key": "value"},
-        request_id="req-123"
-    )
+    entry = LogEntry(level=LogLevel.INFO, entity_type="tool", entity_id="tool-1", entity_name="Test Tool", message="Test message", logger="test.logger", data={"key": "value"}, request_id="req-123")
 
     assert entry.id  # Should have auto-generated UUID
     assert entry.level == LogLevel.INFO
@@ -88,10 +77,7 @@ async def test_add_log_basic():
 
         service = LogStorageService()
 
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Test log message"
-        )
+        await service.add_log(level=LogLevel.INFO, message="Test log message")
 
         assert len(service._buffer) == 1
         assert service._buffer[0].message == "Test log message"
@@ -107,13 +93,7 @@ async def test_add_log_with_entity():
 
         service = LogStorageService()
 
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Entity log",
-            entity_type="tool",
-            entity_id="tool-1",
-            entity_name="Test Tool"
-        )
+        await service.add_log(level=LogLevel.INFO, message="Entity log", entity_type="tool", entity_id="tool-1", entity_name="Test Tool")
 
         assert len(service._buffer) == 1
         assert service._buffer[0].entity_type == "tool"
@@ -133,11 +113,7 @@ async def test_add_log_with_request_id():
 
         service = LogStorageService()
 
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Request log",
-            request_id="req-123"
-        )
+        await service.add_log(level=LogLevel.INFO, message="Request log", request_id="req-123")
 
         assert len(service._buffer) == 1
         assert service._buffer[0].request_id == "req-123"
@@ -160,7 +136,7 @@ async def test_size_based_eviction():
         for i in range(100):
             await service.add_log(
                 level=LogLevel.INFO,
-                message=f"Log message {i} " + "x" * 100  # Make each log reasonably sized
+                message=f"Log message {i} " + "x" * 100,  # Make each log reasonably sized
             )
 
         # Buffer should not exceed max size
@@ -181,10 +157,7 @@ async def test_get_logs_no_filters():
 
         # Add some logs
         for i in range(5):
-            await service.add_log(
-                level=LogLevel.INFO,
-                message=f"Log {i}"
-            )
+            await service.add_log(level=LogLevel.INFO, message=f"Log {i}")
 
         result = await service.get_logs()
 
@@ -203,10 +176,7 @@ async def test_get_logs_with_limit_offset():
 
         # Add 10 logs
         for i in range(10):
-            await service.add_log(
-                level=LogLevel.INFO,
-                message=f"Log {i}"
-            )
+            await service.add_log(level=LogLevel.INFO, message=f"Log {i}")
 
         # Get first page
         result = await service.get_logs(limit=3, offset=0)
@@ -255,24 +225,9 @@ async def test_get_logs_filter_by_entity():
         service = LogStorageService()
 
         # Add logs with different entities
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Tool log",
-            entity_type="tool",
-            entity_id="tool-1"
-        )
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Resource log",
-            entity_type="resource",
-            entity_id="res-1"
-        )
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Another tool log",
-            entity_type="tool",
-            entity_id="tool-2"
-        )
+        await service.add_log(level=LogLevel.INFO, message="Tool log", entity_type="tool", entity_id="tool-1")
+        await service.add_log(level=LogLevel.INFO, message="Resource log", entity_type="resource", entity_id="res-1")
+        await service.add_log(level=LogLevel.INFO, message="Another tool log", entity_type="tool", entity_id="tool-2")
 
         # Filter by entity type
         result = await service.get_logs(entity_type="tool")
@@ -293,21 +248,9 @@ async def test_get_logs_filter_by_request_id():
         service = LogStorageService()
 
         # Add logs with different request IDs
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Request 1 log 1",
-            request_id="req-1"
-        )
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Request 2 log",
-            request_id="req-2"
-        )
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Request 1 log 2",
-            request_id="req-1"
-        )
+        await service.add_log(level=LogLevel.INFO, message="Request 1 log 1", request_id="req-1")
+        await service.add_log(level=LogLevel.INFO, message="Request 2 log", request_id="req-2")
+        await service.add_log(level=LogLevel.INFO, message="Request 1 log 2", request_id="req-1")
 
         # Filter by request ID
         result = await service.get_logs(request_id="req-1")
@@ -351,10 +294,7 @@ async def test_get_logs_time_range():
         now = datetime.now(timezone.utc)
 
         # Create log with past timestamp
-        old_entry = LogEntry(
-            level=LogLevel.INFO,
-            message="Old log"
-        )
+        old_entry = LogEntry(level=LogLevel.INFO, message="Old log")
         # Manually set old timestamp
         old_entry.timestamp = datetime(2024, 1, 1, tzinfo=timezone.utc)
         service._buffer.append(old_entry)
@@ -365,10 +305,7 @@ async def test_get_logs_time_range():
 
         # Filter by time range (should only include current log)
         future_time = datetime(2025, 12, 31, tzinfo=timezone.utc)
-        result = await service.get_logs(
-            start_time=datetime(2024, 6, 1, tzinfo=timezone.utc),
-            end_time=future_time
-        )
+        result = await service.get_logs(start_time=datetime(2024, 6, 1, tzinfo=timezone.utc), end_time=future_time)
         assert len(result) == 1
         assert result[0]["message"] == "Current log"
 
@@ -383,13 +320,7 @@ async def test_clear_logs():
 
         # Add some logs
         for i in range(5):
-            await service.add_log(
-                level=LogLevel.INFO,
-                message=f"Log {i}",
-                entity_type="tool",
-                entity_id=f"tool-{i}",
-                request_id=f"req-{i}"
-            )
+            await service.add_log(level=LogLevel.INFO, message=f"Log {i}", entity_type="tool", entity_id=f"tool-{i}", request_id=f"req-{i}")
 
         assert len(service._buffer) == 5
         assert len(service._entity_index) > 0
@@ -516,19 +447,14 @@ async def test_entity_index_cleanup():
         # Add multiple logs with the same entity to ensure we can track cleanup
         first_logs = []
         for i in range(3):
-            log = await service.add_log(
-                level=LogLevel.INFO,
-                message=f"Tool log {i}",
-                entity_type="tool",
-                entity_id="tool-1"
-            )
+            log = await service.add_log(level=LogLevel.INFO, message=f"Tool log {i}", entity_type="tool", entity_id="tool-1")
             first_logs.append(log.id)
 
         # Add many large logs without entity to force eviction
         for i in range(100):
             await service.add_log(
                 level=LogLevel.INFO,
-                message=f"Big log {i}" + "x" * 100  # Make it big enough to force eviction
+                message=f"Big log {i}" + "x" * 100,  # Make it big enough to force eviction
             )
 
         # Check that all first logs were evicted
@@ -556,19 +482,12 @@ async def test_request_index_cleanup():
         # Add multiple logs with same request ID
         first_logs = []
         for i in range(3):
-            log = await service.add_log(
-                level=LogLevel.INFO,
-                message=f"Request log {i}",
-                request_id="req-123"
-            )
+            log = await service.add_log(level=LogLevel.INFO, message=f"Request log {i}", request_id="req-123")
             first_logs.append(log.id)
 
         # Add many large logs to force eviction
         for i in range(100):
-            await service.add_log(
-                level=LogLevel.INFO,
-                message=f"Big log {i}" + "x" * 100
-            )
+            await service.add_log(level=LogLevel.INFO, message=f"Big log {i}" + "x" * 100)
 
         # Check that all first logs were evicted
         buffer_ids = {log.id for log in service._buffer}
@@ -592,10 +511,7 @@ async def test_get_logs_ascending_order():
 
         # Add some logs
         for i in range(5):
-            await service.add_log(
-                level=LogLevel.INFO,
-                message=f"Log {i}"
-            )
+            await service.add_log(level=LogLevel.INFO, message=f"Log {i}")
 
         result = await service.get_logs(order="asc")
 
@@ -616,14 +532,10 @@ async def test_get_logs_with_entity_id_no_type():
         await service.add_log(
             level=LogLevel.INFO,
             message="Log with just ID",
-            entity_id="entity-1"  # No entity_type
+            entity_id="entity-1",  # No entity_type
         )
 
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Another log",
-            entity_id="entity-2"
-        )
+        await service.add_log(level=LogLevel.INFO, message="Another log", entity_id="entity-2")
 
         # Filter by entity ID only
         result = await service.get_logs(entity_id="entity-1")
@@ -640,13 +552,7 @@ async def test_remove_from_indices_value_error():
         service = LogStorageService()
 
         # Create a log entry
-        entry = LogEntry(
-            level=LogLevel.INFO,
-            message="Test",
-            entity_type="tool",
-            entity_id="tool-1",
-            request_id="req-1"
-        )
+        entry = LogEntry(level=LogLevel.INFO, message="Test", entity_type="tool", entity_id="tool-1", request_id="req-1")
 
         # Add to indices manually
         service._entity_index["tool:tool-1"] = ["other-id"]  # Wrong ID
@@ -669,13 +575,7 @@ async def test_remove_from_indices_empty_cleanup():
         service = LogStorageService()
 
         # Create a log entry
-        entry = LogEntry(
-            level=LogLevel.INFO,
-            message="Test",
-            entity_type="tool",
-            entity_id="tool-1",
-            request_id="req-1"
-        )
+        entry = LogEntry(level=LogLevel.INFO, message="Test", entity_type="tool", entity_id="tool-1", request_id="req-1")
 
         # Add to indices with the correct ID
         service._entity_index["tool:tool-1"] = [entry.id]
@@ -726,6 +626,7 @@ async def test_notify_subscribers_dead_queue():
         # Create a mock queue that raises an exception
         # Standard
         from unittest.mock import MagicMock
+
         mock_queue = MagicMock()
         mock_queue.put_nowait.side_effect = Exception("Queue is broken")
 
@@ -750,28 +651,10 @@ async def test_get_stats_with_entities():
         service = LogStorageService()
 
         # Add logs with different entity types
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Tool log 1",
-            entity_type="tool",
-            entity_id="tool-1"
-        )
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Tool log 2",
-            entity_type="tool",
-            entity_id="tool-2"
-        )
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="Resource log",
-            entity_type="resource",
-            entity_id="res-1"
-        )
-        await service.add_log(
-            level=LogLevel.INFO,
-            message="No entity log"
-        )
+        await service.add_log(level=LogLevel.INFO, message="Tool log 1", entity_type="tool", entity_id="tool-1")
+        await service.add_log(level=LogLevel.INFO, message="Tool log 2", entity_type="tool", entity_id="tool-2")
+        await service.add_log(level=LogLevel.INFO, message="Resource log", entity_type="resource", entity_id="res-1")
+        await service.add_log(level=LogLevel.INFO, message="No entity log")
 
         stats = service.get_stats()
 
@@ -784,14 +667,7 @@ async def test_get_stats_with_entities():
 async def test_log_entry_to_dict():
     """Test LogEntry.to_dict method."""
     entry = LogEntry(
-        level=LogLevel.WARNING,
-        message="Test warning",
-        entity_type="server",
-        entity_id="server-1",
-        entity_name="Main Server",
-        logger="test.logger",
-        data={"custom": "data"},
-        request_id="req-abc"
+        level=LogLevel.WARNING, message="Test warning", entity_type="server", entity_id="server-1", entity_name="Main Server", logger="test.logger", data={"custom": "data"}, request_id="req-abc"
     )
 
     result = entry.to_dict()

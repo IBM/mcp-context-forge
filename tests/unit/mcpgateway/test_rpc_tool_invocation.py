@@ -8,7 +8,6 @@ Test RPC tool invocation after PR #746 changes.
 """
 
 # Standard
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -17,7 +16,6 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.main import app
 from mcpgateway.models import Tool
 from mcpgateway.services.tool_service import ToolService

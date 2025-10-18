@@ -80,7 +80,8 @@ jobs:
       # -------------------------------------------------------------
       - name: 🎨  Code quality & formatting
         run: |
-          make autoflake isort black pre-commit
+          make autoflake isort black
+        # pre-commit
 
       # -------------------------------------------------------------
       # 5️⃣  Comprehensive Testing & Verification

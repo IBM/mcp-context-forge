@@ -6,6 +6,7 @@ Authors: Mihai Criveti
 
 Comprehensive async performance profiler for mcpgateway.
 """
+
 # Standard
 import argparse
 import asyncio
@@ -46,7 +47,6 @@ class AsyncProfiler:
 
         stats.dump_stats(str(combined_profile_path))
 
-
     def _generate_summary_report(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate a summary report from the profiling results.
@@ -57,19 +57,14 @@ class AsyncProfiler:
         print("Generating summary report with results:", results)
         return {"results": results}
 
-
     async def profile_all_scenarios(self, scenarios: List[str], duration: int) -> Dict[str, Any]:
         """Profile all specified async scenarios."""
 
-        results: Dict[str, Union[Dict[str, Any], float]] = {
-            'scenarios': {},
-            'summary': {},
-            'timestamp': time.time()
-        }
+        results: Dict[str, Union[Dict[str, Any], float]] = {"scenarios": {}, "summary": {}, "timestamp": time.time()}
 
         # Ensure 'scenarios' and 'summary' keys are dictionaries
-        results['scenarios'] = {}
-        results['summary'] = {}
+        results["scenarios"] = {}
+        results["summary"] = {}
 
         for scenario in scenarios:
             print(f"📊 Profiling scenario: {scenario}")
@@ -77,25 +72,24 @@ class AsyncProfiler:
             profile_path = self.output_dir / f"{scenario}_profile.prof"
             profile_result = await self._profile_scenario(scenario, duration, profile_path)
 
-            results['scenarios'][scenario] = profile_result
+            results["scenarios"][scenario] = profile_result
 
         # Generate combined profile
         self._generate_combined_profile(scenarios)
 
         # Generate summary report
-        results['summary'] = self._generate_summary_report(results['scenarios'])
+        results["summary"] = self._generate_summary_report(results["scenarios"])
 
         return results
 
-    async def _profile_scenario(self, scenario: str, duration: int,
-                              output_path: Path) -> Dict[str, Any]:
+    async def _profile_scenario(self, scenario: str, duration: int, output_path: Path) -> Dict[str, Any]:
         """Profile a specific async scenario."""
 
         scenario_methods = {
-            'websocket': self._profile_websocket_operations,
-            'database': self._profile_database_operations,
-            'mcp_calls': self._profile_mcp_operations,
-            'concurrent_requests': self._profile_concurrent_requests
+            "websocket": self._profile_websocket_operations,
+            "database": self._profile_database_operations,
+            "mcp_calls": self._profile_mcp_operations,
+            "concurrent_requests": self._profile_concurrent_requests,
         }
 
         if scenario not in scenario_methods:
@@ -114,27 +108,22 @@ class AsyncProfiler:
 
         # Analyze profile
         stats = pstats.Stats(str(output_path))
-        stats.sort_stats('cumulative')
+        stats.sort_stats("cumulative")
 
         return {
-            'scenario': scenario,
-            'duration': end_time - start_time,
-            'profile_file': str(output_path),
-            'total_calls': stats.total_calls,
-            'total_time': stats.total_tt,
-            'top_functions': self._extract_top_functions(stats),
-            'async_metrics': scenario_result
+            "scenario": scenario,
+            "duration": end_time - start_time,
+            "profile_file": str(output_path),
+            "total_calls": stats.total_calls,
+            "total_time": stats.total_tt,
+            "top_functions": self._extract_top_functions(stats),
+            "async_metrics": scenario_result,
         }
 
     async def _profile_concurrent_requests(self, duration: int) -> Dict[str, Any]:
         """Profile concurrent HTTP requests."""
 
-        metrics: Dict[str, float] = {
-            'requests_made': 0,
-            'avg_response_time': 0,
-            'successful_requests': 0,
-            'failed_requests': 0
-        }
+        metrics: Dict[str, float] = {"requests_made": 0, "avg_response_time": 0, "successful_requests": 0, "failed_requests": 0}
 
         async def make_request():
             try:
@@ -145,15 +134,12 @@ class AsyncProfiler:
                         await response.text()
 
                     response_time = time.time() - start_time
-                    metrics['requests_made'] += 1
-                    metrics['successful_requests'] += 1
-                    metrics['avg_response_time'] = (
-                        (metrics['avg_response_time'] * (metrics['requests_made'] - 1) + response_time)
-                        / metrics['requests_made']
-                    )
+                    metrics["requests_made"] += 1
+                    metrics["successful_requests"] += 1
+                    metrics["avg_response_time"] = (metrics["avg_response_time"] * (metrics["requests_made"] - 1) + response_time) / metrics["requests_made"]
 
             except Exception:
-                metrics['failed_requests'] += 1
+                metrics["failed_requests"] += 1
 
         # Run concurrent requests
         tasks: List[Any] = []
@@ -177,18 +163,12 @@ class AsyncProfiler:
     async def _profile_websocket_operations(self, duration: int) -> Dict[str, Any]:
         """Profile WebSocket connection and message handling."""
 
-        metrics: Dict[str, float] = {
-            'connections_established': 0,
-            'messages_sent': 0,
-            'messages_received': 0,
-            'connection_errors': 0,
-            'avg_latency': 0
-        }
+        metrics: Dict[str, float] = {"connections_established": 0, "messages_sent": 0, "messages_received": 0, "connection_errors": 0, "avg_latency": 0}
 
         async def websocket_client():
             try:
                 async with websockets.connect("ws://localhost:4444/ws") as websocket:
-                    metrics['connections_established'] += 1
+                    metrics["connections_established"] += 1
 
                     # Send test messages
                     for i in range(10):
@@ -196,20 +176,18 @@ class AsyncProfiler:
                         start_time = time.time()
 
                         await websocket.send(message)
-                        metrics['messages_sent'] += 1
+                        metrics["messages_sent"] += 1
 
                         response = await websocket.recv()
-                        metrics['messages_received'] += 1
+                        metrics["messages_received"] += 1
 
                         latency = time.time() - start_time
-                        metrics['avg_latency'] = (
-                            (metrics['avg_latency'] * i + latency) / (i + 1)
-                        )
+                        metrics["avg_latency"] = (metrics["avg_latency"] * i + latency) / (i + 1)
 
                         await asyncio.sleep(0.1)
 
-            except Exception as e:
-                metrics['connection_errors'] += 1
+            except Exception:
+                metrics["connection_errors"] += 1
 
         # Run concurrent WebSocket clients
         tasks: List[Any] = []
@@ -233,12 +211,7 @@ class AsyncProfiler:
     async def _profile_database_operations(self, duration: int) -> Dict[str, Any]:
         """Profile database query performance."""
 
-        metrics: Dict[str, float] = {
-            'queries_executed': 0,
-            'avg_query_time': 0,
-            'connection_time': 0,
-            'errors': 0
-        }
+        metrics: Dict[str, float] = {"queries_executed": 0, "avg_query_time": 0, "connection_time": 0, "errors": 0}
 
         # Simulate database operations
         async def database_operations():
@@ -250,14 +223,11 @@ class AsyncProfiler:
                 await asyncio.sleep(0.01)  # Simulate 10ms query
 
                 query_time = time.time() - query_start
-                metrics['queries_executed'] += 1
-                metrics['avg_query_time'] = (
-                    (metrics['avg_query_time'] * (metrics['queries_executed'] - 1) + query_time)
-                    / metrics['queries_executed']
-                )
+                metrics["queries_executed"] += 1
+                metrics["avg_query_time"] = (metrics["avg_query_time"] * (metrics["queries_executed"] - 1) + query_time) / metrics["queries_executed"]
 
             except Exception:
-                metrics['errors'] += 1
+                metrics["errors"] += 1
 
         # Run database operations for specified duration
         end_time = time.time() + duration
@@ -271,41 +241,25 @@ class AsyncProfiler:
     async def _profile_mcp_operations(self, duration: int) -> Dict[str, Any]:
         """Profile MCP server communication."""
 
-        metrics: Dict[str, float] = {
-            'rpc_calls': 0,
-            'avg_rpc_time': 0,
-            'successful_calls': 0,
-            'failed_calls': 0
-        }
+        metrics: Dict[str, float] = {"rpc_calls": 0, "avg_rpc_time": 0, "successful_calls": 0, "failed_calls": 0}
 
         async def mcp_rpc_call():
             try:
                 async with aiohttp.ClientSession() as session:
-                    payload = {
-                        "jsonrpc": "2.0",
-                        "method": "tools/list",
-                        "id": 1
-                    }
+                    payload = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
 
                     start_time = time.time()
 
-                    async with session.post(
-                        "http://localhost:4444/rpc",
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=5)
-                    ) as response:
+                    async with session.post("http://localhost:4444/rpc", json=payload, timeout=aiohttp.ClientTimeout(total=5)) as response:
                         await response.json()
 
                     rpc_time = time.time() - start_time
-                    metrics['rpc_calls'] += 1
-                    metrics['successful_calls'] += 1
-                    metrics['avg_rpc_time'] = (
-                        (metrics['avg_rpc_time'] * (metrics['rpc_calls'] - 1) + rpc_time)
-                        / metrics['rpc_calls']
-                    )
+                    metrics["rpc_calls"] += 1
+                    metrics["successful_calls"] += 1
+                    metrics["avg_rpc_time"] = (metrics["avg_rpc_time"] * (metrics["rpc_calls"] - 1) + rpc_time) / metrics["rpc_calls"]
 
             except Exception:
-                metrics['failed_calls'] += 1
+                metrics["failed_calls"] += 1
 
         # Run MCP operations
         end_time = time.time() + duration
@@ -326,13 +280,9 @@ class AsyncProfiler:
         """
         top_functions: List[Dict[str, Any]] = []
         for func_stat in stats.fcn_list[:10]:  # Get top 10 functions
-            top_functions.append({
-                'function_name': func_stat[2],
-                'call_count': stats.stats[func_stat][0],
-                'total_time': stats.stats[func_stat][2],
-                'cumulative_time': stats.stats[func_stat][3]
-            })
+            top_functions.append({"function_name": func_stat[2], "call_count": stats.stats[func_stat][0], "total_time": stats.stats[func_stat][2], "cumulative_time": stats.stats[func_stat][3]})
         return top_functions
+
 
 # Main entry point for the script
 if __name__ == "__main__":

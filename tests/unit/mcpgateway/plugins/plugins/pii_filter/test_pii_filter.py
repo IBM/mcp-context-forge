@@ -190,7 +190,10 @@ class TestPIIDetector:
 
         # Test REMOVE strategy
         config = PIIFilterConfig(
-            detect_ssn=True, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.REMOVE  # Disable phone detection  # Disable bank account detection
+            detect_ssn=True,
+            detect_phone=False,
+            detect_bank_account=False,
+            default_mask_strategy=MaskingStrategy.REMOVE,  # Disable phone detection  # Disable bank account detection
         )
         detector = PIIDetector(config)
         text = "SSN: 123-45-6789"

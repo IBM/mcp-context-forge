@@ -6,6 +6,7 @@ Authors: Mihai Criveti
 
 Run async performance benchmarks and output results.
 """
+
 # Standard
 import argparse
 import asyncio
@@ -20,10 +21,7 @@ class AsyncBenchmark:
 
     def __init__(self, iterations: int):
         self.iterations = iterations
-        self.results: Dict[str, Any] = {
-            'iterations': self.iterations,
-            'benchmarks': []
-        }
+        self.results: Dict[str, Any] = {"iterations": self.iterations, "benchmarks": []}
 
     async def run_benchmarks(self) -> None:
         """Run all benchmarks."""
@@ -44,11 +42,7 @@ class AsyncBenchmark:
         total_time = end_time - start_time
         avg_time = total_time / self.iterations
 
-        self.results['benchmarks'].append({
-            'name': name,
-            'total_time': total_time,
-            'average_time': avg_time
-        })
+        self.results["benchmarks"].append({"name": name, "total_time": total_time, "average_time": avg_time})
 
     async def example_benchmark_1(self) -> None:
         """An example async benchmark function."""
@@ -61,7 +55,7 @@ class AsyncBenchmark:
     def save_results(self, output_path: Path) -> None:
         """Save benchmark results to a file."""
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(self.results, f, indent=4)
 
         print(f"Benchmark results saved to {output_path}")

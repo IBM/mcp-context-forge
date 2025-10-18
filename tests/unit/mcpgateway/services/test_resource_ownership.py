@@ -9,7 +9,7 @@ Tests ensure only resource owners can delete/edit their resources.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -140,7 +140,7 @@ class TestGatewayServiceOwnership:
         # Gateway service uses db.get() not db.execute()
         mock_db_session.get.return_value = mock_gateway
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
@@ -159,7 +159,7 @@ class TestGatewayServiceOwnership:
         # Gateway service uses db.get() not db.execute()
         mock_db_session.get.return_value = mock_gateway
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -187,7 +187,7 @@ class TestServerServiceOwnership:
 
         mock_db_session.get.return_value = mock_server
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
@@ -205,7 +205,7 @@ class TestServerServiceOwnership:
 
         mock_db_session.get.return_value = mock_server
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -233,7 +233,7 @@ class TestToolServiceOwnership:
 
         mock_db_session.get.return_value = mock_tool
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
@@ -251,7 +251,7 @@ class TestToolServiceOwnership:
 
         mock_db_session.get.return_value = mock_tool
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -290,7 +290,7 @@ class TestResourcePromptA2AOwnership:
         mock_result.scalar_one_or_none.return_value = mock_resource
         mock_db_session.execute.return_value = mock_result
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -308,7 +308,7 @@ class TestResourcePromptA2AOwnership:
         mock_result.scalar_one_or_none.return_value = mock_prompt
         mock_db_session.execute.return_value = mock_result
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -326,7 +326,7 @@ class TestResourcePromptA2AOwnership:
         mock_result.scalar_one_or_none.return_value = mock_agent
         mock_db_session.execute.return_value = mock_result
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
@@ -356,17 +356,12 @@ class TestUpdateOperationsOwnership:
 
         gateway_update = GatewayUpdate(name="Updated Name")
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
 
             with pytest.raises(PermissionError, match="Only the owner can update this gateway"):
-                await gateway_service.update_gateway(
-                    mock_db_session,
-                    "gateway-1",
-                    gateway_update,
-                    user_email="other@example.com"
-                )
+                await gateway_service.update_gateway(mock_db_session, "gateway-1", gateway_update, user_email="other@example.com")
 
 
 class TestTeamAdminSpecialCase:
@@ -389,7 +384,7 @@ class TestTeamAdminSpecialCase:
         # Gateway service uses db.get() not db.execute()
         mock_db_session.get.return_value = mock_gateway
 
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             # Team admin returns True for ownership check
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)

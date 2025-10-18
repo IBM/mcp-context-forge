@@ -9,13 +9,12 @@ Tests for token catalog service implementation.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import hashlib
 import uuid
 
 # Third-Party
 import pytest
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -237,8 +236,8 @@ class TestTokenCatalogService:
         """Test _generate_token method with basic parameters."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_123"
-            jti=str(uuid.uuid4())
-            token = await token_service._generate_token("user@example.com",jti)
+            jti = str(uuid.uuid4())
+            token = await token_service._generate_token("user@example.com", jti)
 
             assert token == "jwt_token_123"
             mock_create_jwt.assert_called_once()
@@ -253,7 +252,7 @@ class TestTokenCatalogService:
         """Test _generate_token method with team_id."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_team"
-            jti=str(uuid.uuid4())
+            jti = str(uuid.uuid4())
             token = await token_service._generate_token("user@example.com", jti=jti, team_id="team-123")
 
             assert token == "jwt_token_team"
@@ -267,7 +266,7 @@ class TestTokenCatalogService:
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_exp"
             expires_at = datetime.now(timezone.utc) + timedelta(days=7)
-            jti=str(uuid.uuid4())
+            jti = str(uuid.uuid4())
 
             token = await token_service._generate_token("user@example.com", jti=jti, expires_at=expires_at)
 
@@ -281,7 +280,7 @@ class TestTokenCatalogService:
         """Test _generate_token method with TokenScope."""
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_scoped"
-            jti=str(uuid.uuid4())
+            jti = str(uuid.uuid4())
 
             token = await token_service._generate_token("user@example.com", jti=jti, scope=token_scope)
 
@@ -297,7 +296,7 @@ class TestTokenCatalogService:
         mock_user.is_admin = True
         with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create_jwt:
             mock_create_jwt.return_value = "jwt_token_admin"
-            jti=str(uuid.uuid4())
+            jti = str(uuid.uuid4())
 
             token = await token_service._generate_token("admin@example.com", jti=jti, user=mock_user)
 
@@ -317,9 +316,7 @@ class TestTokenCatalogService:
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
             mock_gen_token.return_value = "jwt_token_new"
 
-            token, raw_token = await token_service.create_token(
-                user_email="test@example.com", name="New Token", description="Test token", expires_in_days=30, tags=["api", "test"]
-            )
+            token, raw_token = await token_service.create_token(user_email="test@example.com", name="New Token", description="Test token", expires_in_days=30, tags=["api", "test"])
 
             assert raw_token == "jwt_token_new"
             mock_db.add.assert_called_once()
@@ -528,9 +525,7 @@ class TestTokenCatalogService:
             mock_get.return_value = mock_api_token
             mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No duplicate name
 
-            updated = await token_service.update_token(
-                token_id="token-123", user_email="test@example.com", name="Updated Name", description="Updated description", tags=["new", "tags"]
-            )
+            updated = await token_service.update_token(token_id="token-123", user_email="test@example.com", name="Updated Name", description="Updated description", tags=["new", "tags"])
 
             assert updated == mock_api_token
             assert mock_api_token.name == "Updated Name"
@@ -921,7 +916,7 @@ class TestTokenCatalogServiceEdgeCases:
 
             with patch("mcpgateway.services.token_catalog_service.create_jwt_token", new_callable=AsyncMock) as mock_create:
                 mock_create.return_value = "jwt"
-                jti=str(uuid.uuid4())
+                jti = str(uuid.uuid4())
 
                 await token_service._generate_token("user@example.com", jti=jti)
 

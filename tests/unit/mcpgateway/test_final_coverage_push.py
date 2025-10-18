@@ -10,7 +10,7 @@ Final push to reach 75% coverage.
 # Standard
 import json
 import tempfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -43,7 +43,7 @@ def test_log_level_enum_comprehensive():
         (LogLevel.ERROR, "error"),
         (LogLevel.CRITICAL, "critical"),
         (LogLevel.ALERT, "alert"),
-        (LogLevel.EMERGENCY, "emergency")
+        (LogLevel.EMERGENCY, "emergency"),
     ]
 
     for level, expected_value in levels:
@@ -65,16 +65,12 @@ def test_content_types():
     assert image.mime_type == "image/png"
 
     # Test ResourceContent
-    resource = ResourceContent(
-        type="resource",
-        uri="/api/data",
-        mime_type="application/json",
-        text="Sample content"
-    )
+    resource = ResourceContent(type="resource", uri="/api/data", mime_type="application/json", text="Sample content")
     assert resource.type == "resource"
     assert resource.uri == "/api/data"
     assert resource.mime_type == "application/json"
     assert resource.text == "Sample content"
+
 
 def test_content_type_model_form_urlencoded():
     """
@@ -89,8 +85,10 @@ def test_content_type_model_form_urlencoded():
     response = client.post("/admin/tools", data=data, headers=headers)
     assert response.status_code in [200, 201, 400, 401, 415, 422]
 
+
 def test_base_model_with_config_dict():
     """Test BaseModelWithConfigDict functionality."""
+
     # Create a simple test model
     class TestModel(BaseModelWithConfigDict):
         name: str
@@ -118,13 +116,13 @@ async def test_cli_export_import_main_flows():
     from mcpgateway.cli_export_import import main_with_subcommands
 
     # Test with no subcommands (should fall back to main CLI)
-    with patch.object(sys, 'argv', ['mcpgateway', '--version']):
-        with patch('mcpgateway.cli.main') as mock_main:
+    with patch.object(sys, "argv", ["mcpgateway", "--version"]):
+        with patch("mcpgateway.cli.main") as mock_main:
             main_with_subcommands()
             mock_main.assert_called_once()
 
     # Test with export command but invalid args
-    with patch.object(sys, 'argv', ['mcpgateway', 'export', '--invalid-option']):
+    with patch.object(sys, "argv", ["mcpgateway", "export", "--invalid-option"]):
         with pytest.raises(SystemExit):
             main_with_subcommands()
 
@@ -139,39 +137,27 @@ async def test_export_command_parameter_building():
     from mcpgateway.cli_export_import import export_command
 
     # Test with all parameters set
-    args = argparse.Namespace(
-        types="tools,gateways",
-        exclude_types="servers",
-        tags="production,api",
-        include_inactive=True,
-        include_dependencies=False,
-        output="test-output.json",
-        verbose=True
-    )
+    args = argparse.Namespace(types="tools,gateways", exclude_types="servers", tags="production,api", include_inactive=True, include_dependencies=False, output="test-output.json", verbose=True)
 
     # Mock the API call to just capture parameters
-    with patch('mcpgateway.cli_export_import.make_authenticated_request') as mock_request:
-        mock_request.return_value = {
-            "version": "2025-03-26",
-            "entities": {"tools": []},
-            "metadata": {"entity_counts": {"tools": 0}}
-        }
+    with patch("mcpgateway.cli_export_import.make_authenticated_request") as mock_request:
+        mock_request.return_value = {"version": "2025-03-26", "entities": {"tools": []}, "metadata": {"entity_counts": {"tools": 0}}}
 
-        with patch('mcpgateway.cli_export_import.Path.mkdir'):
-            with patch('builtins.open', create=True):
-                with patch('json.dump'):
+        with patch("mcpgateway.cli_export_import.Path.mkdir"):
+            with patch("builtins.open", create=True):
+                with patch("json.dump"):
                     await export_command(args)
 
         # Verify API was called with correct parameters
         mock_request.assert_called_once()
         call_args = mock_request.call_args
-        params = call_args[1]['params']
+        params = call_args[1]["params"]
 
-        assert params['types'] == "tools,gateways"
-        assert params['exclude_types'] == "servers"
-        assert params['tags'] == "production,api"
-        assert params['include_inactive'] == "true"
-        assert params['include_dependencies'] == "false"
+        assert params["types"] == "tools,gateways"
+        assert params["exclude_types"] == "servers"
+        assert params["tags"] == "production,api"
+        assert params["include_inactive"] == "true"
+        assert params["include_dependencies"] == "false"
 
 
 @pytest.mark.asyncio
@@ -184,45 +170,28 @@ async def test_import_command_parameter_parsing():
     from mcpgateway.cli_export_import import import_command
 
     # Create temp file with valid JSON
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        test_data = {
-            "version": "2025-03-26",
-            "entities": {"tools": []},
-            "metadata": {"entity_counts": {"tools": 0}}
-        }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        test_data = {"version": "2025-03-26", "entities": {"tools": []}, "metadata": {"entity_counts": {"tools": 0}}}
         json.dump(test_data, f)
         temp_file = f.name
 
-    args = argparse.Namespace(
-        input_file=temp_file,
-        conflict_strategy='update',
-        dry_run=True,
-        rekey_secret='new-secret',
-        include='tools:tool1,tool2;servers:server1',
-        verbose=True
-    )
+    args = argparse.Namespace(input_file=temp_file, conflict_strategy="update", dry_run=True, rekey_secret="new-secret", include="tools:tool1,tool2;servers:server1", verbose=True)
 
     # Mock the API call
-    with patch('mcpgateway.cli_export_import.make_authenticated_request') as mock_request:
-        mock_request.return_value = {
-            "import_id": "test_123",
-            "status": "completed",
-            "progress": {"total": 1, "processed": 1, "created": 1, "failed": 0},
-            "warnings": [],
-            "errors": []
-        }
+    with patch("mcpgateway.cli_export_import.make_authenticated_request") as mock_request:
+        mock_request.return_value = {"import_id": "test_123", "status": "completed", "progress": {"total": 1, "processed": 1, "created": 1, "failed": 0}, "warnings": [], "errors": []}
 
         await import_command(args)
 
         # Verify API was called with correct data
         mock_request.assert_called_once()
         call_args = mock_request.call_args
-        request_data = call_args[1]['json_data']
+        request_data = call_args[1]["json_data"]
 
-        assert request_data['conflict_strategy'] == 'update'
-        assert request_data['dry_run'] == True
-        assert request_data['rekey_secret'] == 'new-secret'
-        assert 'selected_entities' in request_data
+        assert request_data["conflict_strategy"] == "update"
+        assert request_data["dry_run"] == True
+        assert request_data["rekey_secret"] == "new-secret"
+        assert "selected_entities" in request_data
 
 
 def test_utils_coverage():
@@ -231,13 +200,7 @@ def test_utils_coverage():
     from mcpgateway.utils.create_slug import slugify
 
     # Test slugify variations
-    test_cases = [
-        ("Simple Test", "simple-test"),
-        ("API_Gateway", "api-gateway"),
-        ("Multiple   Spaces", "multiple-spaces"),
-        ("", ""),
-        ("123Numbers", "123numbers")
-    ]
+    test_cases = [("Simple Test", "simple-test"), ("API_Gateway", "api-gateway"), ("Multiple   Spaces", "multiple-spaces"), ("", ""), ("123Numbers", "123numbers")]
 
     for input_text, expected in test_cases:
         result = slugify(input_text)
@@ -250,10 +213,10 @@ def test_config_properties():
     from mcpgateway.config import settings
 
     # Test basic properties exist
-    assert hasattr(settings, 'app_name')
-    assert hasattr(settings, 'host')
-    assert hasattr(settings, 'port')
-    assert hasattr(settings, 'database_url')
+    assert hasattr(settings, "app_name")
+    assert hasattr(settings, "host")
+    assert hasattr(settings, "port")
+    assert hasattr(settings, "database_url")
 
     # Test computed properties
     api_key = settings.api_key
@@ -311,12 +274,12 @@ def test_services_init():
 def test_cli_module_main_execution():
     """Test CLI module main execution path."""
     # Standard
-    import sys
 
     # First-Party
     # Test __main__ execution path exists
     from mcpgateway import cli_export_import
-    assert hasattr(cli_export_import, 'main_with_subcommands')
+
+    assert hasattr(cli_export_import, "main_with_subcommands")
 
     # Test module can be executed
-    assert cli_export_import.__name__ == 'mcpgateway.cli_export_import'
+    assert cli_export_import.__name__ == "mcpgateway.cli_export_import"

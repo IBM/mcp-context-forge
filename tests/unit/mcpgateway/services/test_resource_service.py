@@ -81,7 +81,7 @@ def mock_resource():
     resource.metrics = []
     resource.tags = []  # Ensure tags is a list, not a MagicMock
     resource.team_id = "1234"  # Ensure team_id is a valid string or None
-    resource.team = "test-team"     # Ensure team is a valid string or None
+    resource.team = "test-team"  # Ensure team is a valid string or None
 
     # .content property stub
     content_mock = MagicMock()
@@ -1330,7 +1330,6 @@ class TestResourceServiceMetricsExtended:
     async def test_list_resources_with_tags(self, resource_service, mock_db, mock_resource):
         """Test listing resources with tag filtering."""
         # Third-Party
-        from sqlalchemy import func
 
         # Mock query chain
         mock_query = MagicMock()
@@ -1339,7 +1338,7 @@ class TestResourceServiceMetricsExtended:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
         mock_db.get_bind.return_value = bind
 
         with patch("mcpgateway.services.resource_service.select", return_value=mock_query):
@@ -1352,14 +1351,12 @@ class TestResourceServiceMetricsExtended:
                 mock_team.name = "test-team"
                 mock_db.query().filter().first.return_value = mock_team
 
-                result = await resource_service.list_resources(
-                    mock_db, tags=["test", "production"]
-                )
+                result = await resource_service.list_resources(mock_db, tags=["test", "production"])
 
                 # helper should be called once with the tags list (not once per tag)
-                mock_json_contains.assert_called_once()                       # called exactly once
-                called_args = mock_json_contains.call_args[0]                # positional args tuple
-                assert called_args[0] is mock_db                            # session passed through
+                mock_json_contains.assert_called_once()  # called exactly once
+                called_args = mock_json_contains.call_args[0]  # positional args tuple
+                assert called_args[0] is mock_db  # session passed through
                 # third positional arg is the tags list (signature: session, col, values, match_any=True)
                 assert called_args[2] == ["test", "production"]
                 # and the fake condition returned must have been passed to where()

@@ -8,7 +8,6 @@ Tests for resource hook functionality in the plugin framework.
 """
 
 # Standard
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -17,6 +16,7 @@ import pytest
 # First-Party
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework.base import Plugin, PluginRef
+
 # Registry is imported for mocking
 from mcpgateway.plugins.framework import (
     GlobalContext,
@@ -71,7 +71,6 @@ class TestResourceHooks:
         with pytest.raises(NotImplementedError, match="'resource_pre_fetch' not implemented"):
             await plugin.resource_pre_fetch(payload, context)
 
-
     @pytest.mark.asyncio
     async def test_plugin_resource_post_fetch_default(self):
         """Test default resource_post_fetch implementation."""
@@ -91,7 +90,6 @@ class TestResourceHooks:
 
         with pytest.raises(NotImplementedError, match="'resource_post_fetch' not implemented"):
             await plugin.resource_post_fetch(payload, context)
-
 
     @pytest.mark.asyncio
     async def test_resource_hook_blocking(self):
@@ -225,6 +223,7 @@ class TestResourceHookIntegration:
         # Clear before test
         # First-Party
         from mcpgateway.plugins.framework.manager import PluginManager
+
         PluginManager._PluginManager__shared_state.clear()
         yield
         # Clear after test
@@ -433,7 +432,6 @@ class TestResourceHookIntegration:
                 # Should throw a plugin error since fail_on_plugin_error = True
                 with pytest.raises(PluginError):
                     result, contexts = await manager.resource_pre_fetch(payload, global_context)
-
 
     @pytest.mark.asyncio
     async def test_resource_uri_modification(self):

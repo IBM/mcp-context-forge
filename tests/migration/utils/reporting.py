@@ -11,13 +11,11 @@ including HTML dashboards, JSON reports, and performance visualizations.
 """
 
 # Standard
-from dataclasses import asdict
 from datetime import datetime
 import json
 import logging
 from pathlib import Path
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +42,7 @@ class MigrationReportGenerator:
 
         logger.info(f"📊 Initialized MigrationReportGenerator: {self.output_dir}")
 
-    def generate_html_dashboard(self, test_results: List[Dict],
-                               metadata: Dict[str, Any] = None) -> Path:
+    def generate_html_dashboard(self, test_results: List[Dict], metadata: Dict[str, Any] = None) -> Path:
         """Generate comprehensive HTML dashboard for migration test results.
 
         Args:
@@ -65,23 +62,22 @@ class MigrationReportGenerator:
 
         # Save HTML report
         html_file = self.output_dir / "migration_dashboard.html"
-        with open(html_file, 'w', encoding='utf-8') as f:
+        with open(html_file, "w", encoding="utf-8") as f:
             f.write(html_content)
 
         logger.info(f"✅ HTML dashboard generated: {html_file}")
         return html_file
 
-    def _prepare_dashboard_data(self, test_results: List[Dict],
-                               metadata: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _prepare_dashboard_data(self, test_results: List[Dict], metadata: Dict[str, Any] = None) -> Dict[str, Any]:
         """Prepare data for dashboard generation."""
 
         # Calculate summary statistics
         total_tests = len(test_results)
-        successful_tests = sum(1 for result in test_results if result.get('success', False))
+        successful_tests = sum(1 for result in test_results if result.get("success", False))
         failed_tests = total_tests - successful_tests
 
         # Performance statistics
-        execution_times = [r.get('execution_time', 0) for r in test_results if r.get('execution_time')]
+        execution_times = [r.get("execution_time", 0) for r in test_results if r.get("execution_time")]
         avg_execution_time = sum(execution_times) / len(execution_times) if execution_times else 0
         max_execution_time = max(execution_times) if execution_times else 0
         min_execution_time = min(execution_times) if execution_times else 0
@@ -91,37 +87,37 @@ class MigrationReportGenerator:
         for result in test_results:
             version_key = f"{result.get('version_from', 'unknown')} → {result.get('version_to', 'unknown')}"
             if version_key not in version_pairs:
-                version_pairs[version_key] = {'total': 0, 'successful': 0, 'avg_time': 0}
+                version_pairs[version_key] = {"total": 0, "successful": 0, "avg_time": 0}
 
-            version_pairs[version_key]['total'] += 1
-            if result.get('success', False):
-                version_pairs[version_key]['successful'] += 1
+            version_pairs[version_key]["total"] += 1
+            if result.get("success", False):
+                version_pairs[version_key]["successful"] += 1
 
         # Calculate success rates for each version pair
         for pair_data in version_pairs.values():
-            pair_data['success_rate'] = (pair_data['successful'] / pair_data['total']) * 100
+            pair_data["success_rate"] = (pair_data["successful"] / pair_data["total"]) * 100
 
         return {
-            'metadata': metadata or {},
-            'summary': {
-                'total_tests': total_tests,
-                'successful_tests': successful_tests,
-                'failed_tests': failed_tests,
-                'success_rate': (successful_tests / total_tests * 100) if total_tests > 0 else 0,
-                'avg_execution_time': avg_execution_time,
-                'max_execution_time': max_execution_time,
-                'min_execution_time': min_execution_time
+            "metadata": metadata or {},
+            "summary": {
+                "total_tests": total_tests,
+                "successful_tests": successful_tests,
+                "failed_tests": failed_tests,
+                "success_rate": (successful_tests / total_tests * 100) if total_tests > 0 else 0,
+                "avg_execution_time": avg_execution_time,
+                "max_execution_time": max_execution_time,
+                "min_execution_time": min_execution_time,
             },
-            'version_analysis': version_pairs,
-            'test_results': test_results,
-            'generation_time': datetime.now().isoformat(),
-            'total_execution_time': sum(execution_times)
+            "version_analysis": version_pairs,
+            "test_results": test_results,
+            "generation_time": datetime.now().isoformat(),
+            "total_execution_time": sum(execution_times),
         }
 
     def _generate_dashboard_html(self, report_data: Dict[str, Any]) -> str:
         """Generate HTML dashboard content."""
 
-        html_template = '''
+        html_template = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -468,25 +464,25 @@ class MigrationReportGenerator:
     </script>
 </body>
 </html>
-'''
+"""
 
         # Prepare template variables
-        summary = report_data['summary']
+        summary = report_data["summary"]
 
         # Calculate chart widths (relative to max time)
-        max_time = summary['max_execution_time'] if summary['max_execution_time'] > 0 else 1
-        avg_time_width = (summary['avg_execution_time'] / max_time) * 100
+        max_time = summary["max_execution_time"] if summary["max_execution_time"] > 0 else 1
+        avg_time_width = (summary["avg_execution_time"] / max_time) * 100
         max_time_width = 100
-        min_time_width = (summary['min_execution_time'] / max_time) * 100 if summary['min_execution_time'] > 0 else 5
+        min_time_width = (summary["min_execution_time"] / max_time) * 100 if summary["min_execution_time"] > 0 else 5
 
         # Generate version cards
         version_cards = []
-        for version_pair, stats in report_data['version_analysis'].items():
-            success_rate = stats['success_rate']
-            version_card = f'''
+        for version_pair, stats in report_data["version_analysis"].items():
+            success_rate = stats["success_rate"]
+            version_card = f"""
             <div class="version-card">
                 <div class="version-title">{version_pair}</div>
-                <div>Tests: {stats['total']} | Success: {stats['successful']}</div>
+                <div>Tests: {stats["total"]} | Success: {stats["successful"]}</div>
                 <div class="success-bar">
                     <div class="success-fill" style="width: {success_rate}%"></div>
                 </div>
@@ -494,68 +490,67 @@ class MigrationReportGenerator:
                     Success Rate: {success_rate:.1f}%
                 </div>
             </div>
-            '''
+            """
             version_cards.append(version_card)
 
         # Generate test result rows
         test_result_rows = []
-        for result in report_data['test_results']:
-            status_class = 'status-success' if result.get('success', False) else 'status-error'
-            status_text = '✅ Success' if result.get('success', False) else '❌ Failed'
+        for result in report_data["test_results"]:
+            status_class = "status-success" if result.get("success", False) else "status-error"
+            status_text = "✅ Success" if result.get("success", False) else "❌ Failed"
 
             migration_path = f"{result.get('version_from', 'unknown')} → {result.get('version_to', 'unknown')}"
             duration = f"{result.get('execution_time', 0):.2f}s"
-            direction = result.get('migration_direction', 'unknown').title()
+            direction = result.get("migration_direction", "unknown").title()
 
             # Calculate total records
-            records_after = result.get('records_after', {})
+            records_after = result.get("records_after", {})
             total_records = sum(records_after.values()) if isinstance(records_after, dict) else 0
 
             error_details = ""
-            if not result.get('success', False) and result.get('error_message'):
-                error_details = f'''
+            if not result.get("success", False) and result.get("error_message"):
+                error_details = f"""
                 <div class="expandable">
                     <div style="color: #ef4444; cursor: pointer;">View Error ⤵</div>
                     <div class="expandable-content">
-                        <div class="error-details">{result['error_message'][:500]}{'...' if len(result.get('error_message', '')) > 500 else ''}</div>
+                        <div class="error-details">{result["error_message"][:500]}{"..." if len(result.get("error_message", "")) > 500 else ""}</div>
                     </div>
                 </div>
-                '''
+                """
 
-            row = f'''
+            row = f"""
             <tr>
                 <td><code>{migration_path}</code></td>
                 <td><span class="status-badge {status_class}">{status_text}</span></td>
                 <td>{duration}</td>
                 <td>{direction}</td>
                 <td>{total_records:,}</td>
-                <td>{error_details if error_details else '—'}</td>
+                <td>{error_details if error_details else "—"}</td>
             </tr>
-            '''
+            """
             test_result_rows.append(row)
 
         # Format the HTML template
         formatted_html = html_template.format(
-            generation_time=report_data['generation_time'],
-            total_tests=summary['total_tests'],
-            successful_tests=summary['successful_tests'],
-            failed_tests=summary['failed_tests'],
-            success_rate=summary['success_rate'],
-            avg_execution_time=summary['avg_execution_time'],
-            max_execution_time=summary['max_execution_time'],
-            min_execution_time=summary['min_execution_time'],
-            total_execution_time=report_data['total_execution_time'],
+            generation_time=report_data["generation_time"],
+            total_tests=summary["total_tests"],
+            successful_tests=summary["successful_tests"],
+            failed_tests=summary["failed_tests"],
+            success_rate=summary["success_rate"],
+            avg_execution_time=summary["avg_execution_time"],
+            max_execution_time=summary["max_execution_time"],
+            min_execution_time=summary["min_execution_time"],
+            total_execution_time=report_data["total_execution_time"],
             avg_time_width=avg_time_width,
             max_time_width=max_time_width,
             min_time_width=min_time_width,
-            version_cards=''.join(version_cards),
-            test_result_rows=''.join(test_result_rows)
+            version_cards="".join(version_cards),
+            test_result_rows="".join(test_result_rows),
         )
 
         return formatted_html
 
-    def generate_json_report(self, test_results: List[Dict],
-                           metadata: Dict[str, Any] = None) -> Path:
+    def generate_json_report(self, test_results: List[Dict], metadata: Dict[str, Any] = None) -> Path:
         """Generate JSON report for programmatic consumption.
 
         Args:
@@ -568,20 +563,15 @@ class MigrationReportGenerator:
         logger.info(f"📋 Generating JSON report with {len(test_results)} test results")
 
         report_data = {
-            'metadata': {
-                'generated_at': datetime.now().isoformat(),
-                'generator': 'MigrationReportGenerator',
-                'version': '1.0.0',
-                **(metadata or {})
-            },
-            'summary': self._calculate_summary_stats(test_results),
-            'test_results': test_results,
-            'version_analysis': self._analyze_version_performance(test_results),
-            'performance_metrics': self._calculate_performance_metrics(test_results)
+            "metadata": {"generated_at": datetime.now().isoformat(), "generator": "MigrationReportGenerator", "version": "1.0.0", **(metadata or {})},
+            "summary": self._calculate_summary_stats(test_results),
+            "test_results": test_results,
+            "version_analysis": self._analyze_version_performance(test_results),
+            "performance_metrics": self._calculate_performance_metrics(test_results),
         }
 
         json_file = self.output_dir / "migration_test_results.json"
-        with open(json_file, 'w', encoding='utf-8') as f:
+        with open(json_file, "w", encoding="utf-8") as f:
             json.dump(report_data, f, indent=2, default=str)
 
         logger.info(f"✅ JSON report generated: {json_file}")
@@ -590,21 +580,21 @@ class MigrationReportGenerator:
     def _calculate_summary_stats(self, test_results: List[Dict]) -> Dict[str, Any]:
         """Calculate summary statistics from test results."""
         total_tests = len(test_results)
-        successful_tests = sum(1 for result in test_results if result.get('success', False))
+        successful_tests = sum(1 for result in test_results if result.get("success", False))
 
-        execution_times = [r.get('execution_time', 0) for r in test_results if r.get('execution_time')]
+        execution_times = [r.get("execution_time", 0) for r in test_results if r.get("execution_time")]
 
         return {
-            'total_tests': total_tests,
-            'successful_tests': successful_tests,
-            'failed_tests': total_tests - successful_tests,
-            'success_rate': (successful_tests / total_tests * 100) if total_tests > 0 else 0,
-            'execution_time_stats': {
-                'avg': sum(execution_times) / len(execution_times) if execution_times else 0,
-                'min': min(execution_times) if execution_times else 0,
-                'max': max(execution_times) if execution_times else 0,
-                'total': sum(execution_times)
-            }
+            "total_tests": total_tests,
+            "successful_tests": successful_tests,
+            "failed_tests": total_tests - successful_tests,
+            "success_rate": (successful_tests / total_tests * 100) if total_tests > 0 else 0,
+            "execution_time_stats": {
+                "avg": sum(execution_times) / len(execution_times) if execution_times else 0,
+                "min": min(execution_times) if execution_times else 0,
+                "max": max(execution_times) if execution_times else 0,
+                "total": sum(execution_times),
+            },
         }
 
     def _analyze_version_performance(self, test_results: List[Dict]) -> Dict[str, Any]:
@@ -615,37 +605,32 @@ class MigrationReportGenerator:
             version_key = f"{result.get('version_from', 'unknown')}_to_{result.get('version_to', 'unknown')}"
 
             if version_key not in version_stats:
-                version_stats[version_key] = {
-                    'test_count': 0,
-                    'success_count': 0,
-                    'execution_times': [],
-                    'directions': []
-                }
+                version_stats[version_key] = {"test_count": 0, "success_count": 0, "execution_times": [], "directions": []}
 
             stats = version_stats[version_key]
-            stats['test_count'] += 1
+            stats["test_count"] += 1
 
-            if result.get('success', False):
-                stats['success_count'] += 1
+            if result.get("success", False):
+                stats["success_count"] += 1
 
-            if result.get('execution_time'):
-                stats['execution_times'].append(result['execution_time'])
+            if result.get("execution_time"):
+                stats["execution_times"].append(result["execution_time"])
 
-            if result.get('migration_direction'):
-                stats['directions'].append(result['migration_direction'])
+            if result.get("migration_direction"):
+                stats["directions"].append(result["migration_direction"])
 
         # Calculate derived metrics
         for version_key, stats in version_stats.items():
-            stats['success_rate'] = (stats['success_count'] / stats['test_count'] * 100) if stats['test_count'] > 0 else 0
+            stats["success_rate"] = (stats["success_count"] / stats["test_count"] * 100) if stats["test_count"] > 0 else 0
 
-            if stats['execution_times']:
-                stats['avg_execution_time'] = sum(stats['execution_times']) / len(stats['execution_times'])
-                stats['min_execution_time'] = min(stats['execution_times'])
-                stats['max_execution_time'] = max(stats['execution_times'])
+            if stats["execution_times"]:
+                stats["avg_execution_time"] = sum(stats["execution_times"]) / len(stats["execution_times"])
+                stats["min_execution_time"] = min(stats["execution_times"])
+                stats["max_execution_time"] = max(stats["execution_times"])
             else:
-                stats['avg_execution_time'] = 0
-                stats['min_execution_time'] = 0
-                stats['max_execution_time'] = 0
+                stats["avg_execution_time"] = 0
+                stats["min_execution_time"] = 0
+                stats["max_execution_time"] = 0
 
         return version_stats
 
@@ -658,15 +643,15 @@ class MigrationReportGenerator:
         processing_rates = []
 
         for result in test_results:
-            if result.get('execution_time'):
-                execution_times.append(result['execution_time'])
+            if result.get("execution_time"):
+                execution_times.append(result["execution_time"])
 
-            if result.get('performance_metrics', {}).get('memory_mb'):
-                memory_usage.append(result['performance_metrics']['memory_mb'])
+            if result.get("performance_metrics", {}).get("memory_mb"):
+                memory_usage.append(result["performance_metrics"]["memory_mb"])
 
             # Calculate processing rate if data available
-            records_after = result.get('records_after', {})
-            exec_time = result.get('execution_time', 0)
+            records_after = result.get("records_after", {})
+            exec_time = result.get("execution_time", 0)
             if isinstance(records_after, dict) and exec_time > 0:
                 total_records = sum(records_after.values())
                 if total_records > 0:
@@ -675,31 +660,26 @@ class MigrationReportGenerator:
         metrics = {}
 
         if execution_times:
-            metrics['execution_time'] = {
-                'avg': sum(execution_times) / len(execution_times),
-                'min': min(execution_times),
-                'max': max(execution_times),
-                'median': sorted(execution_times)[len(execution_times) // 2]
+            metrics["execution_time"] = {
+                "avg": sum(execution_times) / len(execution_times),
+                "min": min(execution_times),
+                "max": max(execution_times),
+                "median": sorted(execution_times)[len(execution_times) // 2],
             }
 
         if memory_usage:
-            metrics['memory_usage'] = {
-                'avg_mb': sum(memory_usage) / len(memory_usage),
-                'min_mb': min(memory_usage),
-                'max_mb': max(memory_usage)
-            }
+            metrics["memory_usage"] = {"avg_mb": sum(memory_usage) / len(memory_usage), "min_mb": min(memory_usage), "max_mb": max(memory_usage)}
 
         if processing_rates:
-            metrics['processing_rate'] = {
-                'avg_records_per_sec': sum(processing_rates) / len(processing_rates),
-                'min_records_per_sec': min(processing_rates),
-                'max_records_per_sec': max(processing_rates)
+            metrics["processing_rate"] = {
+                "avg_records_per_sec": sum(processing_rates) / len(processing_rates),
+                "min_records_per_sec": min(processing_rates),
+                "max_records_per_sec": max(processing_rates),
             }
 
         return metrics
 
-    def generate_performance_comparison(self, current_results: List[Dict],
-                                      historical_results: List[Dict] = None) -> Path:
+    def generate_performance_comparison(self, current_results: List[Dict], historical_results: List[Dict] = None) -> Path:
         """Generate performance comparison report.
 
         Args:
@@ -709,32 +689,27 @@ class MigrationReportGenerator:
         Returns:
             Path to generated comparison report
         """
-        logger.info(f"📈 Generating performance comparison report")
+        logger.info("📈 Generating performance comparison report")
 
         current_metrics = self._calculate_performance_metrics(current_results)
         historical_metrics = self._calculate_performance_metrics(historical_results) if historical_results else None
 
         comparison_data = {
-            'metadata': {
-                'generated_at': datetime.now().isoformat(),
-                'current_test_count': len(current_results),
-                'historical_test_count': len(historical_results) if historical_results else 0
-            },
-            'current_metrics': current_metrics,
-            'historical_metrics': historical_metrics,
-            'performance_changes': self._calculate_performance_changes(current_metrics, historical_metrics),
-            'recommendations': self._generate_performance_recommendations(current_metrics, historical_metrics)
+            "metadata": {"generated_at": datetime.now().isoformat(), "current_test_count": len(current_results), "historical_test_count": len(historical_results) if historical_results else 0},
+            "current_metrics": current_metrics,
+            "historical_metrics": historical_metrics,
+            "performance_changes": self._calculate_performance_changes(current_metrics, historical_metrics),
+            "recommendations": self._generate_performance_recommendations(current_metrics, historical_metrics),
         }
 
         comparison_file = self.output_dir / "performance_comparison.json"
-        with open(comparison_file, 'w', encoding='utf-8') as f:
+        with open(comparison_file, "w", encoding="utf-8") as f:
             json.dump(comparison_data, f, indent=2, default=str)
 
         logger.info(f"✅ Performance comparison report generated: {comparison_file}")
         return comparison_file
 
-    def _calculate_performance_changes(self, current: Dict[str, Any],
-                                     historical: Dict[str, Any]) -> Dict[str, Any]:
+    def _calculate_performance_changes(self, current: Dict[str, Any], historical: Dict[str, Any]) -> Dict[str, Any]:
         """Calculate performance changes between current and historical results."""
         if not historical:
             return {"note": "No historical data available for comparison"}
@@ -742,58 +717,47 @@ class MigrationReportGenerator:
         changes = {}
 
         # Compare execution times
-        if 'execution_time' in current and 'execution_time' in historical:
-            current_avg = current['execution_time']['avg']
-            historical_avg = historical['execution_time']['avg']
+        if "execution_time" in current and "execution_time" in historical:
+            current_avg = current["execution_time"]["avg"]
+            historical_avg = historical["execution_time"]["avg"]
 
             if historical_avg > 0:
                 change_percent = ((current_avg - historical_avg) / historical_avg) * 100
-                changes['execution_time_change'] = {
-                    'current_avg': current_avg,
-                    'historical_avg': historical_avg,
-                    'change_percent': change_percent,
-                    'improvement': change_percent < 0
-                }
+                changes["execution_time_change"] = {"current_avg": current_avg, "historical_avg": historical_avg, "change_percent": change_percent, "improvement": change_percent < 0}
 
         # Compare memory usage
-        if 'memory_usage' in current and 'memory_usage' in historical:
-            current_avg = current['memory_usage']['avg_mb']
-            historical_avg = historical['memory_usage']['avg_mb']
+        if "memory_usage" in current and "memory_usage" in historical:
+            current_avg = current["memory_usage"]["avg_mb"]
+            historical_avg = historical["memory_usage"]["avg_mb"]
 
             if historical_avg > 0:
                 change_percent = ((current_avg - historical_avg) / historical_avg) * 100
-                changes['memory_usage_change'] = {
-                    'current_avg_mb': current_avg,
-                    'historical_avg_mb': historical_avg,
-                    'change_percent': change_percent,
-                    'improvement': change_percent < 0
-                }
+                changes["memory_usage_change"] = {"current_avg_mb": current_avg, "historical_avg_mb": historical_avg, "change_percent": change_percent, "improvement": change_percent < 0}
 
         # Compare processing rates
-        if 'processing_rate' in current and 'processing_rate' in historical:
-            current_avg = current['processing_rate']['avg_records_per_sec']
-            historical_avg = historical['processing_rate']['avg_records_per_sec']
+        if "processing_rate" in current and "processing_rate" in historical:
+            current_avg = current["processing_rate"]["avg_records_per_sec"]
+            historical_avg = historical["processing_rate"]["avg_records_per_sec"]
 
             if historical_avg > 0:
                 change_percent = ((current_avg - historical_avg) / historical_avg) * 100
-                changes['processing_rate_change'] = {
-                    'current_avg_rps': current_avg,
-                    'historical_avg_rps': historical_avg,
-                    'change_percent': change_percent,
-                    'improvement': change_percent > 0  # Higher rate is better
+                changes["processing_rate_change"] = {
+                    "current_avg_rps": current_avg,
+                    "historical_avg_rps": historical_avg,
+                    "change_percent": change_percent,
+                    "improvement": change_percent > 0,  # Higher rate is better
                 }
 
         return changes
 
-    def _generate_performance_recommendations(self, current: Dict[str, Any],
-                                           historical: Dict[str, Any]) -> List[str]:
+    def _generate_performance_recommendations(self, current: Dict[str, Any], historical: Dict[str, Any]) -> List[str]:
         """Generate performance recommendations based on results."""
         recommendations = []
 
         # Execution time recommendations
-        if 'execution_time' in current:
-            avg_time = current['execution_time']['avg']
-            max_time = current['execution_time']['max']
+        if "execution_time" in current:
+            avg_time = current["execution_time"]["avg"]
+            max_time = current["execution_time"]["max"]
 
             if avg_time > 60:
                 recommendations.append("Average execution time is over 1 minute. Consider optimizing migration scripts.")
@@ -801,13 +765,13 @@ class MigrationReportGenerator:
             if max_time > 300:
                 recommendations.append("Maximum execution time exceeds 5 minutes. Investigate slow migrations.")
 
-            if current['execution_time']['max'] > current['execution_time']['avg'] * 3:
+            if current["execution_time"]["max"] > current["execution_time"]["avg"] * 3:
                 recommendations.append("High variance in execution times detected. Check for performance outliers.")
 
         # Memory usage recommendations
-        if 'memory_usage' in current:
-            avg_memory = current['memory_usage']['avg_mb']
-            max_memory = current['memory_usage']['max_mb']
+        if "memory_usage" in current:
+            avg_memory = current["memory_usage"]["avg_mb"]
+            max_memory = current["memory_usage"]["max_mb"]
 
             if avg_memory > 512:
                 recommendations.append("Average memory usage is high (>512MB). Consider memory optimization.")
@@ -816,8 +780,8 @@ class MigrationReportGenerator:
                 recommendations.append("Peak memory usage exceeds 1GB. Monitor for memory leaks.")
 
         # Processing rate recommendations
-        if 'processing_rate' in current:
-            avg_rate = current['processing_rate']['avg_records_per_sec']
+        if "processing_rate" in current:
+            avg_rate = current["processing_rate"]["avg_records_per_sec"]
 
             if avg_rate < 10:
                 recommendations.append("Low processing rate detected (<10 records/sec). Review migration efficiency.")
@@ -826,14 +790,14 @@ class MigrationReportGenerator:
         if historical:
             changes = self._calculate_performance_changes(current, historical)
 
-            if 'execution_time_change' in changes:
-                change = changes['execution_time_change']
-                if not change['improvement'] and abs(change['change_percent']) > 20:
+            if "execution_time_change" in changes:
+                change = changes["execution_time_change"]
+                if not change["improvement"] and abs(change["change_percent"]) > 20:
                     recommendations.append(f"Execution time regression of {change['change_percent']:.1f}% detected.")
 
-            if 'memory_usage_change' in changes:
-                change = changes['memory_usage_change']
-                if not change['improvement'] and abs(change['change_percent']) > 30:
+            if "memory_usage_change" in changes:
+                change = changes["memory_usage_change"]
+                if not change["improvement"] and abs(change["change_percent"]) > 30:
                     recommendations.append(f"Memory usage increased by {change['change_percent']:.1f}%.")
 
         if not recommendations:
@@ -857,12 +821,8 @@ class MigrationReportGenerator:
 
         results_file = self.output_dir / filename
 
-        with open(results_file, 'w', encoding='utf-8') as f:
-            json.dump({
-                'timestamp': datetime.now().isoformat(),
-                'test_count': len(test_results),
-                'results': test_results
-            }, f, indent=2, default=str)
+        with open(results_file, "w", encoding="utf-8") as f:
+            json.dump({"timestamp": datetime.now().isoformat(), "test_count": len(test_results), "results": test_results}, f, indent=2, default=str)
 
         logger.info(f"💾 Test results saved: {results_file}")
         return results_file
@@ -884,9 +844,9 @@ def main():
 
     # Load test results
     try:
-        with open(args.results, 'r') as f:
+        with open(args.results, "r") as f:
             data = json.load(f)
-            test_results = data.get('results', data)  # Handle different formats
+            test_results = data.get("results", data)  # Handle different formats
     except (FileNotFoundError, json.JSONDecodeError) as e:
         print(f"Error loading test results: {e}")
         sys.exit(1)
@@ -906,9 +866,9 @@ def main():
     # Generate comparison if historical data provided
     if args.historical:
         try:
-            with open(args.historical, 'r') as f:
+            with open(args.historical, "r") as f:
                 historical_data = json.load(f)
-                historical_results = historical_data.get('results', historical_data)
+                historical_results = historical_data.get("results", historical_data)
 
             comparison_report = reporter.generate_performance_comparison(test_results, historical_results)
             print(f"Performance comparison generated: {comparison_report}")

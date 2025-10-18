@@ -78,6 +78,7 @@ async def test_non_blocking_mode_reports_metadata(tmp_path):
 async def test_prompt_post_fetch_blocks_on_eicar_text():
     plugin = _mk_plugin(True)
     from mcpgateway.plugins.framework.models import PromptPosthookPayload
+
     pr = __import__("mcpgateway.models").models.PromptResult(
         messages=[
             __import__("mcpgateway.models").models.Message(
@@ -97,6 +98,7 @@ async def test_prompt_post_fetch_blocks_on_eicar_text():
 async def test_tool_post_invoke_blocks_on_eicar_string():
     plugin = _mk_plugin(True)
     from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+
     ctx = PluginContext(global_context=GlobalContext(request_id="r5"))
     payload = ToolPostInvokePayload(name="t", result={"text": EICAR})
     res = await plugin.tool_post_invoke(payload, ctx)
@@ -117,6 +119,7 @@ async def test_health_stats_counters():
 
     # 2) prompt_post_fetch with EICAR -> attempted +1, infected +1 (total attempted=2, infected=2)
     from mcpgateway.plugins.framework.models import PromptPosthookPayload
+
     pr = __import__("mcpgateway.models").models.PromptResult(
         messages=[
             __import__("mcpgateway.models").models.Message(
@@ -130,6 +133,7 @@ async def test_health_stats_counters():
 
     # 3) tool_post_invoke with one EICAR and one clean string -> attempted +2, infected +1
     from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+
     payload_t = ToolPostInvokePayload(name="t", result={"a": EICAR, "b": "clean"})
     await plugin.tool_post_invoke(payload_t, ctx)
 

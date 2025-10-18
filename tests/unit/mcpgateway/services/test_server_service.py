@@ -159,6 +159,7 @@ class TestServerService:
         mock_member.role = "member"
         member_query = MagicMock()
         member_query.filter.return_value.first.return_value = None  # The filter for role=="owner" returns None
+
         def query_side_effect(model):
             if model.__name__ == "EmailTeam":
                 return mock_query
@@ -168,6 +169,7 @@ class TestServerService:
                 member_query.filter.return_value.first = Mock(return_value=None)
                 return member_query
             return MagicMock()
+
         test_db.query.side_effect = query_side_effect
         server_update = ServerUpdate(visibility="team")
         test_user_email = "user@example.com"
@@ -195,36 +197,40 @@ class TestServerService:
         mock_member.role = "owner"
         member_query = MagicMock()
         member_query.filter.return_value.first.return_value = mock_member
+
         def query_side_effect(model):
             if model.__name__ == "EmailTeam":
                 return mock_query
             elif model.__name__ == "EmailTeamMember":
                 return member_query
             return MagicMock()
+
         test_db.query.side_effect = query_side_effect
         server_service._notify_server_updated = AsyncMock()
-        server_service._convert_server_to_read = Mock(return_value=ServerRead(
-            id="1",
-            name="updated_server",
-            description="An updated server",
-            icon="http://example.com/image.jpg",
-            created_at="2023-01-01T00:00:00",
-            updated_at="2023-01-01T00:00:00",
-            is_active=True,
-            associated_tools=[],
-            associated_resources=[],
-            associated_prompts=[],
-            metrics={
-                "total_executions": 0,
-                "successful_executions": 0,
-                "failed_executions": 0,
-                "failure_rate": 0.0,
-                "min_response_time": None,
-                "max_response_time": None,
-                "avg_response_time": None,
-                "last_execution_time": None,
-            },
-        ))
+        server_service._convert_server_to_read = Mock(
+            return_value=ServerRead(
+                id="1",
+                name="updated_server",
+                description="An updated server",
+                icon="http://example.com/image.jpg",
+                created_at="2023-01-01T00:00:00",
+                updated_at="2023-01-01T00:00:00",
+                is_active=True,
+                associated_tools=[],
+                associated_resources=[],
+                associated_prompts=[],
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+        )
         server_update = ServerUpdate(visibility="team")
         test_user_email = "user@example.com"
         result = await server_service.update_server(test_db, 1, server_update, test_user_email)
@@ -441,8 +447,8 @@ class TestServerService:
 
         result = await server_service.list_servers(test_db)
 
-        #test_db.execute.assert_called_once()
-        test_db.execute.call_count=2
+        # test_db.execute.assert_called_once()
+        test_db.execute.call_count = 2
         assert result == [server_read]
         server_service._convert_server_to_read.assert_called_once_with(mock_server)
 
@@ -603,10 +609,10 @@ class TestServerService:
     @pytest.mark.asyncio
     async def test_update_server_name_conflict(self, server_service, mock_server, test_db):
         import types
-        from mcpgateway.services.server_service import ServerNameConflictError, ServerError
+        from mcpgateway.services.server_service import ServerNameConflictError
 
         # Mock PermissionService to bypass ownership checks (this test is about name conflicts)
-        with patch('mcpgateway.services.permission_service.PermissionService') as mock_perm_service_class:
+        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
 
@@ -627,6 +633,7 @@ class TestServerService:
 
             # Should not raise ServerNameConflictError for private, but should raise IntegrityError for duplicate name
             from sqlalchemy.exc import IntegrityError
+
             test_db.commit = Mock(side_effect=IntegrityError("Duplicate name", None, None))
 
             test_user_email = "user@example.com"
@@ -646,13 +653,7 @@ class TestServerService:
             server_team.visibility = "team"
             server_team.team_id = "teamA"
 
-            conflict_team_server = types.SimpleNamespace(
-                id="3",
-                name="existing_server",
-                is_active=True,
-                visibility="team",
-                team_id="teamA"
-            )
+            conflict_team_server = types.SimpleNamespace(id="3", name="existing_server", is_active=True, visibility="team", team_id="teamA")
 
             test_db.get = Mock(return_value=server_team)
             mock_scalar = Mock()
@@ -680,13 +681,7 @@ class TestServerService:
             server_public.visibility = "public"
             server_public.team_id = None
 
-            conflict_public_server = types.SimpleNamespace(
-                id="5",
-                name="existing_server",
-                is_active=True,
-                visibility="public",
-                team_id=None
-            )
+            conflict_public_server = types.SimpleNamespace(id="5", name="existing_server", is_active=True, visibility="public", team_id=None)
 
             test_db.get = Mock(return_value=server_public)
             mock_scalar = Mock()
@@ -790,7 +785,7 @@ class TestServerService:
 
         # Standard UUID format (with dashes)
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace("-", "")
 
         # No existing server with the same name
         mock_scalar = Mock()
@@ -799,6 +794,7 @@ class TestServerService:
 
         # Capture the server being added to verify UUID normalization
         captured_server = None
+
         def capture_add(server):
             nonlocal captured_server
             captured_server = server
@@ -835,11 +831,7 @@ class TestServerService:
             )
         )
 
-        server_create = ServerCreate(
-            id=standard_uuid,
-            name="UUID Normalization Test",
-            description="Test UUID normalization"
-        )
+        server_create = ServerCreate(id=standard_uuid, name="UUID Normalization Test", description="Test UUID normalization")
 
         # Call the service method
         result = await server_service.register_server(test_db, server_create)
@@ -864,7 +856,7 @@ class TestServerService:
 
         # Standard UUID that will be normalized
         standard_uuid = "123e4567-e89b-12d3-a456-426614174000"
-        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace("-", "")
 
         # No existing server with the same name
         mock_scalar = Mock()
@@ -873,6 +865,7 @@ class TestServerService:
 
         # Capture the server being added to verify UUID normalization
         captured_server = None
+
         def capture_add(server):
             nonlocal captured_server
             captured_server = server
@@ -912,7 +905,7 @@ class TestServerService:
         server_create = ServerCreate(
             id=standard_uuid,  # Will be normalized by the service
             name="Hex UUID Test",
-            description="Test hex UUID handling"
+            description="Test hex UUID handling",
         )
 
         # Call the service method
@@ -936,6 +929,7 @@ class TestServerService:
 
         # Capture the server being added
         captured_server = None
+
         def capture_add(server):
             nonlocal captured_server
             captured_server = server
@@ -972,10 +966,7 @@ class TestServerService:
             )
         )
 
-        server_create = ServerCreate(
-            name="Auto UUID Test",
-            description="Test auto UUID generation"
-        )
+        server_create = ServerCreate(name="Auto UUID Test", description="Test auto UUID generation")
         # Verify no UUID is set
         assert server_create.id is None
 
@@ -998,11 +989,7 @@ class TestServerService:
         # Mock database rollback for error scenarios
         test_db.rollback = Mock()
 
-        server_create = ServerCreate(
-            id="550e8400-e29b-41d4-a716-446655440000",
-            name="Error Test",
-            description="Test error handling"
-        )
+        server_create = ServerCreate(id="550e8400-e29b-41d4-a716-446655440000", name="Error Test", description="Test error handling")
 
         # Simulate an error during database operations
         test_db.add = Mock(side_effect=Exception("Database error"))
@@ -1036,7 +1023,7 @@ class TestServerService:
 
         # New UUID to update to
         new_standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex_uuid = str(uuid_module.UUID(new_standard_uuid)).replace('-', '')
+        expected_hex_uuid = str(uuid_module.UUID(new_standard_uuid)).replace("-", "")
 
         # Mock db.get to return existing server for the initial lookup, then None for the UUID check
         test_db.get = Mock(side_effect=lambda cls, _id: existing_server if _id == "oldserverid" else None)
@@ -1076,11 +1063,7 @@ class TestServerService:
             )
         )
 
-        server_update = ServerUpdate(
-            id=new_standard_uuid,
-            name="Updated Server",
-            description="Updated description"
-        )
+        server_update = ServerUpdate(id=new_standard_uuid, name="Updated Server", description="Updated description")
 
         test_user_email = "user@example.com"
 
@@ -1101,43 +1084,25 @@ class TestServerService:
 
         # Test various UUID formats that should all normalize correctly
         test_cases = [
-            {
-                "input": "550e8400-e29b-41d4-a716-446655440000",
-                "expected": "550e8400e29b41d4a716446655440000",
-                "description": "Standard lowercase UUID"
-            },
-            {
-                "input": "550E8400-E29B-41D4-A716-446655440000",
-                "expected": "550e8400e29b41d4a716446655440000",
-                "description": "Uppercase UUID (should normalize to lowercase)"
-            },
-            {
-                "input": "00000000-0000-0000-0000-000000000000",
-                "expected": "00000000000000000000000000000000",
-                "description": "Nil UUID"
-            },
-            {
-                "input": "ffffffff-ffff-ffff-ffff-ffffffffffff",
-                "expected": "ffffffffffffffffffffffffffffffff",
-                "description": "Max UUID"
-            },
+            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Standard lowercase UUID"},
+            {"input": "550E8400-E29B-41D4-A716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Uppercase UUID (should normalize to lowercase)"},
+            {"input": "00000000-0000-0000-0000-000000000000", "expected": "00000000000000000000000000000000", "description": "Nil UUID"},
+            {"input": "ffffffff-ffff-ffff-ffff-ffffffffffff", "expected": "ffffffffffffffffffffffffffffffff", "description": "Max UUID"},
         ]
 
         for case in test_cases:
             # Simulate the exact normalization logic from server_service.py
-            normalized = str(uuid_module.UUID(case["input"])).replace('-', '')
+            normalized = str(uuid_module.UUID(case["input"])).replace("-", "")
             assert normalized == case["expected"], f"Failed for {case['description']}: expected {case['expected']}, got {normalized}"
             assert len(normalized) == 32
             # Check that any alphabetic characters are lowercase
             assert normalized.islower() or not any(c.isalpha() for c in normalized)
             assert normalized.isalnum()
 
-
     @pytest.mark.asyncio
     async def test_list_servers_with_tags(self, server_service, mock_server):
         """Test listing servers with tag filtering."""
         # Third-Party
-        from sqlalchemy import func
 
         # Mock query chain
         mock_query = MagicMock()
@@ -1148,7 +1113,7 @@ class TestServerService:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
         session.get_bind.return_value = bind
 
         with patch("mcpgateway.services.server_service.select", return_value=mock_query):
@@ -1160,14 +1125,12 @@ class TestServerService:
                 mock_team.name = "test-team"
                 session.query().filter().first.return_value = mock_team
 
-                result = await server_service.list_servers(
-                    session, tags=["test", "production"]
-                )
+                result = await server_service.list_servers(session, tags=["test", "production"])
 
                 # helper should be called once with the tags list (not once per tag)
-                mock_json_contains.assert_called_once()                       # called exactly once
-                called_args = mock_json_contains.call_args[0]                # positional args tuple
-                assert called_args[0] is session                            # session passed through
+                mock_json_contains.assert_called_once()  # called exactly once
+                called_args = mock_json_contains.call_args[0]  # positional args tuple
+                assert called_args[0] is session  # session passed through
                 # third positional arg is the tags list (signature: session, col, values, match_any=True)
                 assert called_args[2] == ["test", "production"]
                 # and the fake condition returned must have been passed to where()

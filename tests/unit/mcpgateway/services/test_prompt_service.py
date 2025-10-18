@@ -511,12 +511,10 @@ class TestPromptService:
         test_db.execute.assert_called()
         test_db.commit.assert_called_once()
 
-
     @pytest.mark.asyncio
     async def test_list_prompts_with_tags(self, prompt_service, mock_prompt):
         """Test listing prompts with tag filtering."""
         # Third-Party
-        from sqlalchemy import func
 
         # Mock query chain
         mock_query = MagicMock()
@@ -527,7 +525,7 @@ class TestPromptService:
 
         bind = MagicMock()
         bind.dialect = MagicMock()
-        bind.dialect.name = "sqlite"    # or "postgresql" or "mysql"
+        bind.dialect.name = "sqlite"  # or "postgresql" or "mysql"
         session.get_bind.return_value = bind
 
         with patch("mcpgateway.services.prompt_service.select", return_value=mock_query):
@@ -536,14 +534,12 @@ class TestPromptService:
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
 
-                result = await prompt_service.list_prompts(
-                    session, tags=["test", "production"]
-                )
+                result = await prompt_service.list_prompts(session, tags=["test", "production"])
 
                 # helper should be called once with the tags list (not once per tag)
-                mock_json_contains.assert_called_once()                       # called exactly once
-                called_args = mock_json_contains.call_args[0]                # positional args tuple
-                assert called_args[0] is session                            # session passed through
+                mock_json_contains.assert_called_once()  # called exactly once
+                called_args = mock_json_contains.call_args[0]  # positional args tuple
+                assert called_args[0] is session  # session passed through
                 # third positional arg is the tags list (signature: session, col, values, match_any=True)
                 assert called_args[2] == ["test", "production"]
                 # and the fake condition returned must have been passed to where()

@@ -11,7 +11,6 @@ version specifiers from >= to == for reproducible builds.
 """
 
 # Standard
-from pathlib import Path
 import re
 import sys
 import tomllib
@@ -47,7 +46,7 @@ def pin_requirements(pyproject_path="pyproject.toml", output_path="requirements.
     for dep in dependencies:
         # Match package name with optional extras and version
         # Pattern: package_name[optional_extras]>=version
-        match = re.match(r'^([a-zA-Z0-9_-]+)(?:\[.*\])?>=(.+)', dep)
+        match = re.match(r"^([a-zA-Z0-9_-]+)(?:\[.*\])?>=(.+)", dep)
 
         if match:
             name, version = match.groups()
@@ -83,24 +82,10 @@ def main():
     # Standard
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Extract and pin dependencies from pyproject.toml"
-    )
-    parser.add_argument(
-        "-i", "--input",
-        default="pyproject.toml",
-        help="Path to pyproject.toml file (default: pyproject.toml)"
-    )
-    parser.add_argument(
-        "-o", "--output",
-        default="requirements.txt",
-        help="Path to output requirements file (default: requirements.txt)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print dependencies without writing to file"
-    )
+    parser = argparse.ArgumentParser(description="Extract and pin dependencies from pyproject.toml")
+    parser.add_argument("-i", "--input", default="pyproject.toml", help="Path to pyproject.toml file (default: pyproject.toml)")
+    parser.add_argument("-o", "--output", default="requirements.txt", help="Path to output requirements file (default: requirements.txt)")
+    parser.add_argument("--dry-run", action="store_true", help="Print dependencies without writing to file")
 
     args = parser.parse_args()
 
@@ -117,7 +102,7 @@ def main():
         print("Would generate the following pinned dependencies:\n")
 
         for dep in sorted(dependencies, key=lambda x: x.lower()):
-            match = re.match(r'^([a-zA-Z0-9_-]+)(?:\[.*\])?>=(.+)', dep)
+            match = re.match(r"^([a-zA-Z0-9_-]+)(?:\[.*\])?>=(.+)", dep)
             if match:
                 name, version = match.groups()
                 print(f"{name}=={version}")

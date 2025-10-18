@@ -45,7 +45,7 @@ print(json.dumps(env_vars))
 sys.stdout.flush()
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
@@ -131,7 +131,7 @@ if __name__ == "__main__":
     main()
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
@@ -197,8 +197,8 @@ if __name__ == "__main__":
         }
         mappings = {
             "Authorization": "GITHUB_TOKEN",  # Proper case
-            "X-Tenant-Id": "TENANT_ID",     # Proper case
-            "X-Api-Key": "API_KEY",         # Proper case
+            "X-Tenant-Id": "TENANT_ID",  # Proper case
+            "X-Api-Key": "API_KEY",  # Proper case
         }
 
         # Extract environment variables
@@ -286,11 +286,7 @@ if __name__ == "__main__":
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {"name": "test-client", "version": "1.0.0"}
-                }
+                "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}},
             }
             await endpoint.send(json.dumps(init_request) + "\n")
 
@@ -298,12 +294,7 @@ if __name__ == "__main__":
             await asyncio.sleep(0.1)
 
             # Send environment test request
-            env_test_request = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "env_test",
-                "params": {}
-            }
+            env_test_request = {"jsonrpc": "2.0", "id": 2, "method": "env_test", "params": {}}
             await endpoint.send(json.dumps(env_test_request) + "\n")
 
             # Wait for response
@@ -330,7 +321,7 @@ if __name__ == "__main__":
         }
         mappings = {
             "Authorization": "GITHUB_TOKEN",  # This will override initial
-            "X-Tenant-Id": "TENANT_ID",      # This is new
+            "X-Tenant-Id": "TENANT_ID",  # This is new
         }
 
         # Extract environment variables from headers
@@ -341,8 +332,8 @@ if __name__ == "__main__":
 
         expected = {
             "GITHUB_TOKEN": "Bearer override-token",  # Overridden
-            "BASE_VAR": "base-value",                 # Preserved
-            "TENANT_ID": "override-tenant",           # New
+            "BASE_VAR": "base-value",  # Preserved
+            "TENANT_ID": "override-tenant",  # New
         }
         assert combined_env_vars == expected
 
@@ -363,8 +354,8 @@ if __name__ == "__main__":
         """Test that header value sanitization works in integration."""
         headers = {
             "Authorization": "Bearer\x00token\n123",  # Contains dangerous chars
-            "X-Tenant-Id": "acme\x01corp",           # Contains control chars
-            "Normal-Header": "normal-value",          # Normal value
+            "X-Tenant-Id": "acme\x01corp",  # Contains control chars
+            "Normal-Header": "normal-value",  # Normal value
         }
         mappings = {
             "Authorization": "GITHUB_TOKEN",
@@ -378,8 +369,8 @@ if __name__ == "__main__":
         # Verify sanitization
         expected = {
             "GITHUB_TOKEN": "Bearertoken123",  # Dangerous chars removed
-            "TENANT_ID": "acmecorp",           # Control chars removed
-            "NORMAL_VAR": "normal-value",      # Normal value preserved
+            "TENANT_ID": "acmecorp",  # Control chars removed
+            "NORMAL_VAR": "normal-value",  # Normal value preserved
         }
         assert env_vars == expected
 
@@ -496,10 +487,12 @@ if __name__ == "__main__":
 
         # Test duplicate header
         with pytest.raises(HeaderMappingError, match="Duplicate header mapping"):
-            parse_header_mappings([
-                "Authorization=GITHUB_TOKEN",
-                "Authorization=API_TOKEN",
-            ])
+            parse_header_mappings(
+                [
+                    "Authorization=GITHUB_TOKEN",
+                    "Authorization=API_TOKEN",
+                ]
+            )
 
     @pytest.mark.asyncio
     async def test_large_header_values(self, test_script):
@@ -577,20 +570,10 @@ if __name__ == "__main__":
 
         try:
             # Send requests to both endpoints
-            request1 = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "env_test",
-                "params": {}
-            }
+            request1 = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
             await endpoint1.send(json.dumps(request1) + "\n")
 
-            request2 = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "env_test",
-                "params": {}
-            }
+            request2 = {"jsonrpc": "2.0", "id": 2, "method": "env_test", "params": {}}
             await endpoint2.send(json.dumps(request2) + "\n")
 
             await asyncio.sleep(0.1)
@@ -624,7 +607,7 @@ print(json.dumps(env_vars))
 sys.stdout.flush()
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
