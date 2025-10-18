@@ -14,7 +14,7 @@ across different parts of the application without creating circular imports.
 from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Optional, Generator, Never
+from typing import Generator, Never, Optional
 
 # Third-Party
 from fastapi import Depends, HTTPException, status
