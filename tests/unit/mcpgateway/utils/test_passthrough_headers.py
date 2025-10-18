@@ -157,7 +157,7 @@ class TestPassthroughHeaders:
 
         # Request headers are expected to be normalized to lowercase
         request_headers = {"x-tenant-id": "mixed-case-value", "authorization": "bearer lowercase-header"}  # Lowercase key
-        base_headers = {}
+        base_headers: dict[str, str] = {}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
@@ -186,7 +186,7 @@ class TestPassthroughHeaders:
         assert result == expected
 
         # Check debug message for missing header
-        with caplog.at_level(logging.DEBUG):
+        with caplog.at_level(logging.DEBUG, logger="mcpgateway.utils.passthrough_headers"):
             # Re-run to capture debug messages
             result = get_passthrough_headers(request_headers, base_headers, mock_db)
 
@@ -255,7 +255,7 @@ class TestPassthroughHeaders:
         mock_global_config.passthrough_headers = ["X-Tenant-Id"]
         mock_db.query.return_value.first.return_value = mock_global_config
 
-        request_headers = {}
+        request_headers: dict[str, str] = {}
         base_headers = {"Content-Type": "application/json"}
 
         result = get_passthrough_headers(request_headers, base_headers, mock_db)
@@ -278,7 +278,7 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = None
 
         request_headers = {"authorization": "Bearer client-token"}
-        base_headers = {}
+        base_headers: dict[str, str] = {}
 
         mock_gateway = Mock(spec=DbGateway)
         mock_gateway.passthrough_headers = None
@@ -299,7 +299,7 @@ class TestPassthroughHeaders:
         request_headers = None
         base_headers = {"Content-Type": "application/json"}
 
-        result = get_passthrough_headers(request_headers, base_headers, mock_db)
+        result = get_passthrough_headers(request_headers, base_headers, mock_db) # type: ignore[arg-type]
 
         # Only base headers should remain
         expected = {"Content-Type": "application/json"}
@@ -339,7 +339,7 @@ class TestPassthroughHeaders:
         mock_db.query.return_value.first.return_value = mock_global_config
 
         request_headers = {"authorization": "Bearer token"}
-        base_headers = {}
+        base_headers: dict[str, str] = {}
 
         # Test with different auth types. Include the string "none" which should
         # allow passthrough of the client's Authorization header (special-case handled
