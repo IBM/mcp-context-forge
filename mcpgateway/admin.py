@@ -26,6 +26,7 @@ import html
 import io
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -41,6 +42,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -68,6 +70,7 @@ from mcpgateway.schemas import (
     GatewayUpdate,
     GlobalConfigRead,
     GlobalConfigUpdate,
+    PaginationMeta,
     PluginDetail,
     PluginListResponse,
     PluginStatsResponse,
@@ -109,6 +112,7 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
@@ -235,17 +239,17 @@ def rate_limit(requests_per_minute: Optional[int] = None):
         True
     """
 
-    def decorator(func):
+    def decorator(func_to_wrap):
         """Decorator that wraps the function with rate limiting logic.
 
         Args:
-            func: The function to be wrapped with rate limiting
+            func_to_wrap: The function to be wrapped with rate limiting
 
         Returns:
             The wrapped function with rate limiting applied
         """
 
-        @wraps(func)
+        @wraps(func_to_wrap)
         async def wrapper(*args, request: Optional[Request] = None, **kwargs):
             """Execute the wrapped function with rate limiting enforcement.
 
@@ -273,7 +277,7 @@ def rate_limit(requests_per_minute: Optional[int] = None):
 
             # enforce
             if len(rate_limit_storage[client_ip]) >= limit:
-                LOGGER.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
+                LOGGER.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func_to_wrap.__name__}")
                 raise HTTPException(
                     status_code=429,
                     detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
@@ -282,7 +286,7 @@ def rate_limit(requests_per_minute: Optional[int] = None):
             rate_limit_storage[client_ip].append(current_time)
 
             # IMPORTANT: forward request to the real endpoint
-            return await func(*args, request=request, **kwargs)
+            return await func_to_wrap(*args, request=request, **kwargs)
 
         return wrapper
 
@@ -4695,132 +4699,259 @@ async def admin_delete_user(
         return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {str(e)}</div>', status_code=400)
 
 
-@admin_router.get("/tools", response_model=List[ToolRead])
+@admin_router.get("/tools")
 async def admin_list_tools(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
-    List tools for the admin UI with an option to include inactive tools.
+    List tools for the admin UI with pagination support.
 
-    This endpoint retrieves a list of tools from the database, optionally including
-    those that are inactive. The inactive filter helps administrators manage tools
-    that have been deactivated but not deleted from the system.
+    This endpoint retrieves a paginated list of tools from the database, optionally
+    including those that are inactive. Supports offset-based pagination with
+    configurable page size.
 
     Args:
+        page (int): Page number (1-indexed). Default: 1.
+        per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
     Returns:
-        List[ToolRead]: A list of tool records formatted with by_alias=True.
+        Dict with 'data', 'pagination', and 'links' keys containing paginated tools.
 
-    Examples:
-        >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import ToolRead, ToolMetrics
-        >>> from datetime import datetime, timezone
-        >>>
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>>
-        >>> # Mock tool data
-    >>> mock_tool = ToolRead(
-    ...     id="tool-1",
-    ...     name="Test Tool",
-    ...     original_name="TestTool",
-    ...     url="http://test.com/tool",
-    ...     description="A test tool",
-    ...     request_type="HTTP",
-    ...     integration_type="MCP",
-    ...     headers={},
-    ...     input_schema={},
-    ...     annotations={},
-    ...     jsonpath_filter=None,
-    ...     auth=None,
-    ...     created_at=datetime.now(timezone.utc),
-    ...     updated_at=datetime.now(timezone.utc),
-    ...     enabled=True,
-    ...     reachable=True,
-    ...     gateway_id=None,
-    ...     execution_count=0,
-    ...     metrics=ToolMetrics(
-    ...         total_executions=5, successful_executions=5, failed_executions=0,
-    ...         failure_rate=0.0, min_response_time=0.1, max_response_time=0.5,
-    ...         avg_response_time=0.3, last_execution_time=datetime.now(timezone.utc)
-    ...     ),
-    ...     gateway_slug="default",
-    ...     custom_name_slug="test-tool",
-    ...     customName="Test Tool",
-    ...     tags=[]
-    ... )  #  Added gateway_id=None
-        >>>
-        >>> # Mock the tool_service.list_tools_for_user method
-        >>> original_list_tools_for_user = tool_service.list_tools_for_user
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool])
-        >>>
-        >>> # Test listing active tools
-        >>> async def test_admin_list_tools_active():
-        ...     result = await admin_list_tools(include_inactive=False, db=mock_db, user=mock_user)
-        ...     return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Test Tool"
-        >>>
-        >>> asyncio.run(test_admin_list_tools_active())
-        True
-        >>>
-        >>> # Test listing with inactive tools (if mock includes them)
-        >>> mock_inactive_tool = ToolRead(
-        ...     id="tool-2", name="Inactive Tool", original_name="InactiveTool", url="http://inactive.com",
-        ...     description="Another test", request_type="HTTP", integration_type="MCP",
-        ...     headers={}, input_schema={}, annotations={}, jsonpath_filter=None, auth=None,
-        ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     enabled=False, reachable=False, gateway_id=None, execution_count=0,
-        ...     metrics=ToolMetrics(
-        ...         total_executions=0, successful_executions=0, failed_executions=0,
-        ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
-        ...         avg_response_time=0.0, last_execution_time=None
-        ...     ),
-        ...     gateway_slug="default", custom_name_slug="inactive-tool",
-        ...     customName="Inactive Tool",
-        ...     tags=[]
-        ... )
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool, mock_inactive_tool])
-        >>> async def test_admin_list_tools_all():
-        ...     result = await admin_list_tools(include_inactive=True, db=mock_db, user=mock_user)
-        ...     return len(result) == 2 and not result[1]['enabled']
-        >>>
-        >>> asyncio.run(test_admin_list_tools_all())
-        True
-        >>>
-        >>> # Test empty list
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[])
-        >>> async def test_admin_list_tools_empty():
-        ...     result = await admin_list_tools(include_inactive=False, db=mock_db, user=mock_user)
-        ...     return result == []
-        >>>
-        >>> asyncio.run(test_admin_list_tools_empty())
-        True
-        >>>
-        >>> # Test exception handling
-        >>> tool_service.list_tools_for_user = AsyncMock(side_effect=Exception("Tool list error"))
-        >>> async def test_admin_list_tools_exception():
-        ...     try:
-        ...         await admin_list_tools(False, mock_db, mock_user)
-        ...         return False
-        ...     except Exception as e:
-        ...         return str(e) == "Tool list error"
-        >>>
-        >>> asyncio.run(test_admin_list_tools_exception())
-        True
-        >>>
-        >>> # Restore original method
-        >>> tool_service.list_tools_for_user = original_list_tools_for_user
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tool list")
+    LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
-    tools = await tool_service.list_tools_for_user(db, user_email, include_inactive=include_inactive)
 
-    return [tool.model_dump(by_alias=True) for tool in tools]
+    # Validate and constrain parameters
+    page = max(1, page)
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    # Build base query using tool_service's team filtering logic
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+
+    # Build query
+    query = select(DbTool)
+
+    # Apply active/inactive filter
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+
+    # Build access conditions (same logic as tool_service.list_tools_for_user)
+    access_conditions = []
+
+    # 1. User's personal tools (owner_email matches)
+    access_conditions.append(DbTool.owner_email == user_email)
+
+    # 2. Team tools where user is member
+    if team_ids:
+        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+
+    # 3. Public tools
+    access_conditions.append(DbTool.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Add sorting for consistent pagination (using new indexes)
+    query = query.order_by(desc(DbTool.created_at), desc(DbTool.id))
+
+    # Get total count
+    count_query = select(func.count()).select_from(query.alias())  # pylint: disable=not-callable
+    total_items = db.execute(count_query).scalar() or 0
+
+    # Calculate pagination metadata
+    total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0
+    offset = (page - 1) * per_page
+
+    # Execute paginated query
+    paginated_query = query.offset(offset).limit(per_page)
+    tools = db.execute(paginated_query).scalars().all()
+
+    # Convert to ToolRead using tool_service
+    result = []
+    for t in tools:
+        team_name = tool_service._get_team_name(db, getattr(t, "team_id", None))  # pylint: disable=protected-access
+        t.team = team_name
+        result.append(tool_service._convert_tool_to_read(t))  # pylint: disable=protected-access
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=total_pages,
+        has_next=page < total_pages,
+        has_prev=page > 1,
+        next_cursor=None,
+        prev_cursor=None,
+    )
+
+    # Build links
+    links = None
+    if settings.pagination_include_links:
+        links = generate_pagination_links(
+            base_url="/admin/tools",
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages,
+            query_params={"include_inactive": include_inactive} if include_inactive else {},
+        )
+
+    return {
+        "data": [tool.model_dump(by_alias=True) for tool in result],
+        "pagination": pagination.model_dump(),
+        "links": links.model_dump() if links else None,
+    }
+
+
+@admin_router.get("/tools/partial", response_class=HTMLResponse)
+async def admin_tools_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Return HTML partial for paginated tools list (HTMX endpoint).
+
+    This endpoint returns only the table body rows and pagination controls
+    for HTMX-based pagination in the admin UI.
+
+    Args:
+        request (Request): FastAPI request object.
+        page (int): Page number (1-indexed). Default: 1.
+        per_page (int): Items per page (1-500). Default: 50.
+        include_inactive (bool): Whether to include inactive tools in the results.
+        render (str): Render mode - 'controls' returns only pagination controls.
+        db (Session): Database session dependency.
+        user (str): Authenticated user dependency.
+
+    Returns:
+        HTMLResponse with tools table rows and pagination controls.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render})")
+
+    # Get paginated data from the JSON endpoint logic
+    user_email = get_user_email(user)
+
+    # Validate and constrain parameters
+    page = max(1, page)
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    # Build base query using tool_service's team filtering logic
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+
+    # Build query
+    query = select(DbTool)
+
+    # Apply active/inactive filter
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+
+    # Build access conditions (same logic as tool_service.list_tools_for_user)
+    access_conditions = []
+
+    # 1. User's personal tools (owner_email matches)
+    access_conditions.append(DbTool.owner_email == user_email)
+
+    # 2. Team tools where user is member
+    if team_ids:
+        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+
+    # 3. Public tools
+    access_conditions.append(DbTool.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Count total items
+    count_query = select(func.count()).select_from(DbTool).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if not include_inactive:
+        count_query = count_query.where(DbTool.enabled.is_(True))
+
+    total_items = db.scalar(count_query) or 0
+
+    # Apply pagination
+    offset = (page - 1) * per_page
+    # Ensure deterministic pagination even when URL/name fields collide by including primary key
+    query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id).offset(offset).limit(per_page)
+
+    # Execute query
+    tools_db = list(db.scalars(query).all())
+
+    # Convert to Pydantic models
+    local_tool_service = ToolService()
+    tools_pydantic = []
+    for tool_db in tools_db:
+        try:
+            tool_schema = await local_tool_service.get_tool(db, tool_db.id)
+            if tool_schema:
+                tools_pydantic.append(tool_schema)
+        except Exception as e:
+            LOGGER.warning(f"Failed to convert tool {tool_db.id} to schema: {e}")
+            continue
+
+    # Serialize tools
+    data = jsonable_encoder(tools_pydantic)
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
+        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
+        has_prev=page > 1,
+    )
+
+    # Build pagination links using helper function
+    base_url = f"{settings.app_root_path}/admin/tools/partial"
+    links = generate_pagination_links(
+        base_url=base_url,
+        page=page,
+        per_page=per_page,
+        total_pages=pagination.total_pages,
+        query_params={"include_inactive": "true"} if include_inactive else {},
+    )
+
+    # If render=controls, return only pagination controls
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#tools-table-body",
+                "hx_indicator": "#tools-loading",
+                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    # Render template with paginated data
+    return request.app.state.templates.TemplateResponse(
+        "tools_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
