@@ -27,6 +27,7 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Literal, Optional, Self, Union
+from urllib.parse import urlparse
 
 # Third-Party
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
@@ -422,6 +423,17 @@ class ToolCreate(BaseModel):
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
 
+    # Passthrough REST fields
+    base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
+    path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
+    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
+    expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
+    allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
+    plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
+    plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
@@ -753,6 +765,184 @@ class ToolCreate(BaseModel):
             raise ValueError("Cannot manually create A2A tools. Add A2A agents via the A2A interface - tools will be auto-created when agents are associated with servers.")
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def enforce_passthrough_fields_for_rest(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Enforce that passthrough REST fields are only set for integration_type 'REST'.
+        If any passthrough field is set for non-REST, raise ValueError.
+
+        Args:
+            values (Dict[str, Any]): The input values to validate.
+
+        Returns:
+            Dict[str, Any]: The validated values.
+
+        Raises:
+            ValueError: If passthrough fields are set for non-REST integration_type.
+        """
+        passthrough_fields = ["base_url", "path_template", "query_mapping", "header_mapping", "timeout_ms", "expose_passthrough", "allowlist", "plugin_chain_pre", "plugin_chain_post"]
+        integration_type = values.get("integration_type")
+        if integration_type != "REST":
+            for field in passthrough_fields:
+                if field in values and values[field] not in (None, [], {}):
+                    raise ValueError(f"Field '{field}' is only allowed for integration_type 'REST'.")
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_path_template(cls, values: dict) -> dict:
+        """
+        Only for integration_type 'REST':
+        If 'url' is provided, extract 'base_url' and 'path_template'.
+        Ensures path_template starts with a single '/'.
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url and path_template if applicable.
+        """
+        integration_type = values.get("integration_type")
+        if integration_type != "REST":
+            # Only process for REST, skip for others
+            return values
+        url = values.get("url")
+        if url:
+            parsed = urlparse(str(url))
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            path_template = parsed.path
+            # Ensure path_template starts with a single '/'
+            if path_template:
+                path_template = "/" + path_template.lstrip("/")
+            if not values.get("base_url"):
+                values["base_url"] = base_url
+            if not values.get("path_template"):
+                values["path_template"] = path_template
+        return values
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v):
+        """
+        Validate that base_url is a valid URL with scheme and netloc.
+
+        Args:
+            v (str): The base_url value to validate.
+
+        Returns:
+            str: The validated base_url value.
+
+        Raises:
+            ValueError: If base_url is not a valid URL.
+        """
+        if v is None:
+            return v
+        parsed = urlparse(str(v))
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("base_url must be a valid URL with scheme and netloc")
+        return v
+
+    @field_validator("path_template")
+    @classmethod
+    def validate_path_template(cls, v):
+        """
+        Validate that path_template starts with '/'.
+
+        Args:
+            v (str): The path_template value to validate.
+
+        Returns:
+            str: The validated path_template value.
+
+        Raises:
+            ValueError: If path_template does not start with '/'.
+        """
+        if v and not str(v).startswith("/"):
+            raise ValueError("path_template must start with '/'")
+        return v
+
+    @field_validator("timeout_ms")
+    @classmethod
+    def validate_timeout_ms(cls, v):
+        """
+        Validate that timeout_ms is a positive integer.
+
+        Args:
+            v (int): The timeout_ms value to validate.
+
+        Returns:
+            int: The validated timeout_ms value.
+
+        Raises:
+            ValueError: If timeout_ms is not a positive integer.
+        """
+        if v is not None and v <= 0:
+            raise ValueError("timeout_ms must be a positive integer")
+        return v
+
+    @field_validator("allowlist")
+    @classmethod
+    def validate_allowlist(cls, v):
+        """
+        Validate that allowlist is a list and each entry is a valid host or scheme string.
+
+        Args:
+            v (List[str]): The allowlist to validate.
+
+        Returns:
+            List[str]: The validated allowlist.
+
+        Raises:
+            ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
+        """
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError("allowlist must be a list of host/scheme strings")
+        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        for host in v:
+            if not isinstance(host, str):
+                raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
+            if not hostname_regex.match(host):
+                raise ValueError(f"Invalid host/scheme in allowlist: {host}")
+        return v
+
+    @field_validator("plugin_chain_pre", "plugin_chain_post")
+    @classmethod
+    def validate_plugin_chain(cls, v):
+        """
+        Validate that each plugin in the chain is allowed.
+
+        Args:
+            v (List[str]): The plugin chain to validate.
+
+        Returns:
+            List[str]: The validated plugin chain.
+
+        Raises:
+            ValueError: If any plugin is not in the allowed set.
+        """
+        allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
+        if v is None:
+            return v
+        for plugin in v:
+            if plugin not in allowed_plugins:
+                raise ValueError(f"Unknown plugin: {plugin}")
+        return v
+
+    @model_validator(mode="after")
+    def handle_timeout_ms_defaults(self):
+        """Handle timeout_ms defaults based on integration_type and expose_passthrough.
+
+        Returns:
+            self: The validated model instance with timeout_ms potentially set to default.
+        """
+        # If timeout_ms is None and we have REST with passthrough, set default
+        if self.timeout_ms is None and self.integration_type == "REST" and getattr(self, "expose_passthrough", True):
+            self.timeout_ms = 20000
+        return self
+
 
 class ToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
@@ -776,6 +966,17 @@ class ToolUpdate(BaseModelWithConfigDict):
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # Passthrough REST fields
+    base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
+    path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
+    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
+    expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
+    allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
+    plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
+    plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
     @field_validator("tags")
     @classmethod
@@ -1012,6 +1213,146 @@ class ToolUpdate(BaseModelWithConfigDict):
             raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_path_template(cls, values: dict) -> dict:
+        """
+        If 'integration_type' is 'REST' and 'url' is provided, extract 'base_url' and 'path_template'.
+        Ensures path_template starts with a single '/'.
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url and path_template if applicable.
+        """
+        integration_type = values.get("integration_type")
+        url = values.get("url")
+        if integration_type == "REST" and url:
+            parsed = urlparse(str(url))
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            path_template = parsed.path
+            # Ensure path_template starts with a single '/'
+            if path_template and not path_template.startswith("/"):
+                path_template = "/" + path_template.lstrip("/")
+            elif path_template:
+                path_template = "/" + path_template.lstrip("/")
+            if not values.get("base_url"):
+                values["base_url"] = base_url
+            if not values.get("path_template"):
+                values["path_template"] = path_template
+        return values
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v):
+        """
+        Validate that base_url is a valid URL with scheme and netloc.
+
+        Args:
+            v (str): The base_url value to validate.
+
+        Returns:
+            str: The validated base_url value.
+
+        Raises:
+            ValueError: If base_url is not a valid URL.
+        """
+        if v is None:
+            return v
+        parsed = urlparse(str(v))
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("base_url must be a valid URL with scheme and netloc")
+        return v
+
+    @field_validator("path_template")
+    @classmethod
+    def validate_path_template(cls, v):
+        """
+        Validate that path_template starts with '/'.
+
+        Args:
+            v (str): The path_template value to validate.
+
+        Returns:
+            str: The validated path_template value.
+
+        Raises:
+            ValueError: If path_template does not start with '/'.
+        """
+        if v and not str(v).startswith("/"):
+            raise ValueError("path_template must start with '/'")
+        return v
+
+    @field_validator("timeout_ms")
+    @classmethod
+    def validate_timeout_ms(cls, v):
+        """
+        Validate that timeout_ms is a positive integer.
+
+        Args:
+            v (int): The timeout_ms value to validate.
+
+        Returns:
+            int: The validated timeout_ms value.
+
+        Raises:
+            ValueError: If timeout_ms is not a positive integer.
+        """
+        if v is not None and v <= 0:
+            raise ValueError("timeout_ms must be a positive integer")
+        return v
+
+    @field_validator("allowlist")
+    @classmethod
+    def validate_allowlist(cls, v):
+        """
+        Validate that allowlist is a list and each entry is a valid host or scheme string.
+
+        Args:
+            v (List[str]): The allowlist to validate.
+
+        Returns:
+            List[str]: The validated allowlist.
+
+        Raises:
+            ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
+        """
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError("allowlist must be a list of host/scheme strings")
+        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        for host in v:
+            if not isinstance(host, str):
+                raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
+            if not hostname_regex.match(host):
+                raise ValueError(f"Invalid host/scheme in allowlist: {host}")
+        return v
+
+    @field_validator("plugin_chain_pre", "plugin_chain_post")
+    @classmethod
+    def validate_plugin_chain(cls, v):
+        """
+        Validate that each plugin in the chain is allowed.
+
+        Args:
+            v (List[str]): The plugin chain to validate.
+
+        Returns:
+            List[str]: The validated plugin chain.
+
+        Raises:
+            ValueError: If any plugin is not in the allowed set.
+        """
+        allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
+        if v is None:
+            return v
+        for plugin in v:
+            if plugin not in allowed_plugins:
+                raise ValueError(f"Unknown plugin: {plugin}")
+        return v
+
 
 class ToolRead(BaseModelWithConfigDict):
     """Schema for reading tool information.
@@ -1073,6 +1414,17 @@ class ToolRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # Passthrough REST fields
+    base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
+    path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
+    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    timeout_ms: Optional[int] = Field(20000, description="Timeout in milliseconds for REST passthrough")
+    expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
+    allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
+    plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
+    plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
 
 class ToolInvocation(BaseModelWithConfigDict):
