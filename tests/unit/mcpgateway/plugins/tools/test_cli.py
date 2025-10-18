@@ -32,11 +32,13 @@ def test_bootrap_command_help(runner: CliRunner):
     result = runner.invoke(cli.app, raw)
     assert "Creates a new plugin project from template" in result.stdout
 
+
 def test_bootstrap_command_dry_run(runner: CliRunner):
     """Boostrapping dry run."""
     raw = ["bootstrap", "--destination", "/tmp/myplugin", "--template_url", ".", "--defaults", "--dry_run"]
     result = runner.invoke(cli.app, raw)
     assert result.exit_code == 0
+
 
 def test_install_manifest():
     """Test install manifest."""

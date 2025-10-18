@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/libreoffice_server/src/libreoffice_server/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

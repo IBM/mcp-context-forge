@@ -9,7 +9,6 @@ Comprehensive tests for Argon2 password hashing service.
 
 # Standard
 from unittest.mock import MagicMock, patch
-import sys
 
 # Third-Party
 import pytest

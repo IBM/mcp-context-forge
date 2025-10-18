@@ -6,6 +6,7 @@ Authors: Teryl Taylor
 
 Unit tests for plugin manager.
 """
+
 # Third-Party
 import pytest
 
@@ -264,7 +265,7 @@ async def test_manager_tool_hooks_with_header_mods():
     assert result.modified_payload.headers["Connection"] == "keep-alive"
 
     # Test tool pre-invoke with transformation - use correct tool name from config
-    tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"}, headers=HttpHeaderPayload({'Content-Type': 'application/json'}))
+    tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"}, headers=HttpHeaderPayload({"Content-Type": "application/json"}))
     global_context = GlobalContext(request_id="1", server_id="2")
     result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
 
@@ -278,6 +279,6 @@ async def test_manager_tool_hooks_with_header_mods():
     assert result.modified_payload.headers
     assert result.modified_payload.headers["User-Agent"] == "Mozilla/5.0"
     assert result.modified_payload.headers["Connection"] == "keep-alive"
-    assert result.modified_payload.headers['Content-Type'] == 'application/json'
+    assert result.modified_payload.headers["Content-Type"] == "application/json"
 
     await manager.shutdown()

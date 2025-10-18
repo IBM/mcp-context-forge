@@ -84,9 +84,10 @@ async def test_initialize_config_retrieval_failure():
     mock_session.call_tool = AsyncMock()
     mock_session.call_tool.return_value = CallToolResult(content=[])
 
-    with patch('mcpgateway.plugins.framework.external.mcp.client.stdio_client') as mock_stdio_client, \
-         patch('mcpgateway.plugins.framework.external.mcp.client.ClientSession', return_value=mock_session):
-
+    with (
+        patch("mcpgateway.plugins.framework.external.mcp.client.stdio_client") as mock_stdio_client,
+        patch("mcpgateway.plugins.framework.external.mcp.client.ClientSession", return_value=mock_session),
+    ):
         mock_stdio_client.return_value.__aenter__ = AsyncMock(return_value=(mock_stdio, mock_write))
         mock_stdio_client.return_value.__aexit__ = AsyncMock(return_value=False)
 

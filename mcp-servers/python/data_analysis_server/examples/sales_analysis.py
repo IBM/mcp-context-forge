@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Sales Analysis Example
 
@@ -84,7 +83,9 @@ async def main():
         # Show basic info
         basic_info = analysis["basic_info"]
         print(f"   • Dataset shape: {basic_info['shape']}")
-        print(f"   • Missing values: {sum(basic_info['missing_values'].values())} total")
+        print(
+            f"   • Missing values: {sum(basic_info['missing_values'].values())} total"
+        )
         print(f"   • Duplicate rows: {basic_info['duplicate_rows']}")
 
         # Show numeric column statistics

@@ -14,7 +14,6 @@ pydantic models are required and exercises almost every branch inside
 import asyncio
 import contextlib
 import errno
-import json
 import sys
 import types
 
@@ -84,8 +83,10 @@ def test_send_to_stdout_json_and_str(monkeypatch):
 
 def test_send_to_stdout_oserror(monkeypatch):
     wrapper._shutdown.clear()
+
     def bad_write(_):
         raise OSError(errno.EPIPE, "broken pipe")
+
     monkeypatch.setattr(sys.stdout, "write", bad_write)
     monkeypatch.setattr(sys.stdout, "flush", lambda: None)
     wrapper.send_to_stdout({"x": 1})
@@ -176,7 +177,7 @@ async def test_stdin_reader_valid_and_invalid(monkeypatch):
     q = asyncio.Queue()
 
     # synchronous readline callable used by asyncio.to_thread
-    lines = iter(['{"ok":1}\n', '{bad json}\n', "   \n", ""])
+    lines = iter(['{"ok":1}\n', "{bad json}\n", "   \n", ""])
 
     def fake_readline():
         try:
@@ -333,6 +334,7 @@ async def test_main_async_smoke(monkeypatch):
     class DummyResilient:
         def __init__(self, *a, **k):
             pass
+
         async def aclose(self):
             return None
 

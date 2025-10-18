@@ -46,6 +46,7 @@ class TzConfig(BaseModel):
         direction: Translation direction ('to_user' or 'to_server').
         fields: Argument fields to translate (None = all).
     """
+
     user_tz: str = "UTC"
     server_tz: str = "UTC"
     direction: str = "to_user"  # to_user | to_server
@@ -87,6 +88,7 @@ def _translate_text(text: str, source: ZoneInfo, target: ZoneInfo) -> str:
     Returns:
         Text with translated timestamps.
     """
+
     def repl(m: re.Match[str]) -> str:
         """Replace matched timestamp with converted version.
 

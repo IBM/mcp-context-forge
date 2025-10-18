@@ -42,6 +42,7 @@ class WatchdogConfig(BaseModel):
         action: Action to take on timeout (warn or block).
         tool_overrides: Per-tool configuration overrides.
     """
+
     max_duration_ms: int = 30000
     action: str = "warn"  # warn | block
     tool_overrides: Dict[str, Dict[str, Any]] = {}

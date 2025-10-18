@@ -14,11 +14,10 @@ from unittest.mock import MagicMock, patch
 # Third-Party
 import pytest
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 # First-Party
 from mcpgateway.db import Base
-from mcpgateway.db import Resource as DbResource
 from mcpgateway.models import ResourceContent
 from mcpgateway.schemas import ResourceCreate
 from mcpgateway.services.resource_service import ResourceService
@@ -44,6 +43,7 @@ class TestResourcePluginIntegration:
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 # Standard
                 from unittest.mock import AsyncMock
+
                 mock_manager = MagicMock()
                 mock_manager._initialized = True
                 mock_manager.initialize = AsyncMock()
@@ -60,6 +60,7 @@ class TestResourcePluginIntegration:
         # Configure mock plugin manager for all operations
         # Standard
         from unittest.mock import AsyncMock
+
         pre_result = MagicMock()
         pre_result.continue_processing = True
         pre_result.modified_payload = None
@@ -68,12 +69,8 @@ class TestResourcePluginIntegration:
         post_result.continue_processing = True
         post_result.modified_payload = None
 
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(pre_result, {"context": "data"})
-        )
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(post_result, None)
-        )
+        mock_manager.resource_pre_fetch = AsyncMock(return_value=(pre_result, {"context": "data"}))
+        mock_manager.resource_post_fetch = AsyncMock(return_value=(post_result, None))
 
         # 1. Create a resource
         resource_data = ResourceCreate(
@@ -135,7 +132,6 @@ class TestResourcePluginIntegration:
             # Use real plugin manager but mock its initialization
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 # First-Party
-                from mcpgateway.plugins.framework.manager import PluginManager
                 from mcpgateway.plugins.framework.models import (
                     ResourcePostFetchPayload,
                     ResourcePostFetchResult,
@@ -167,14 +163,15 @@ class TestResourcePluginIntegration:
                         else:
                             # First-Party
                             from mcpgateway.plugins.framework.models import PluginViolation
+
                             raise PluginViolationError(
-                                    message="Protocol not allowed",
-                                    violation=PluginViolation(
-                                        reason="Protocol not allowed",
-                                        description="Protocol is not in the allowed list",
-                                        code="PROTOCOL_BLOCKED",
-                                        details={"protocol": payload.uri.split(":")[0], "uri": payload.uri}
-                                    ),
+                                message="Protocol not allowed",
+                                violation=PluginViolation(
+                                    reason="Protocol not allowed",
+                                    description="Protocol is not in the allowed list",
+                                    code="PROTOCOL_BLOCKED",
+                                    details={"protocol": payload.uri.split(":")[0], "uri": payload.uri},
+                                ),
                             )
 
                     async def resource_post_fetch(self, payload, global_context, contexts, violations_as_exceptions):
@@ -308,12 +305,8 @@ class TestResourcePluginIntegration:
         post_result.continue_processing = True
         post_result.modified_payload = None
 
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(pre_result, {"context": "data"})
-        )
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(post_result, None)
-        )
+        mock_manager.resource_pre_fetch = AsyncMock(return_value=(pre_result, {"context": "data"}))
+        mock_manager.resource_post_fetch = AsyncMock(return_value=(post_result, None))
 
         # Create a regular resource with template-like content
         resource = ResourceCreate(
@@ -339,13 +332,12 @@ class TestResourcePluginIntegration:
         # Configure mock plugin manager
         # Standard
         from unittest.mock import AsyncMock
+
         pre_result = MagicMock()
         pre_result.continue_processing = True
         pre_result.modified_payload = None
 
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(pre_result, None)
-        )
+        mock_manager.resource_pre_fetch = AsyncMock(return_value=(pre_result, None))
         mock_manager.resource_post_fetch = AsyncMock()
 
         # Create a resource

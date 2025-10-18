@@ -6,9 +6,10 @@ Authors: Mihai Criveti
 
 Extended tests for plugin manager to achieve 100% coverage.
 """
+
 # Standard
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 import re
 
 # Third-Party
@@ -55,19 +56,11 @@ async def test_manager_timeout_handling():
 
     # Mock plugin registry
     plugin_config = PluginConfig(
-        name="TimeoutPlugin",
-        description="Test timeout plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="TimeoutPlugin",
-        mode=PluginMode.ENFORCE,
-        hooks=["prompt_pre_fetch"],
-        config={}
+        name="TimeoutPlugin", description="Test timeout plugin", author="Test", version="1.0", tags=["test"], kind="TimeoutPlugin", mode=PluginMode.ENFORCE, hooks=["prompt_pre_fetch"], config={}
     )
     timeout_plugin = TimeoutPlugin(plugin_config)
 
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(timeout_plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -80,13 +73,13 @@ async def test_manager_timeout_handling():
 
         # Should pass since fail_on_plugin_error: false
         # assert result.continue_processing
-        #assert result.violation is not None
-        #assert result.violation.code == "PLUGIN_TIMEOUT"
-        #assert "timeout" in result.violation.description.lower()
+        # assert result.violation is not None
+        # assert result.violation.code == "PLUGIN_TIMEOUT"
+        # assert "timeout" in result.violation.description.lower()
 
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(timeout_plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -112,20 +105,12 @@ async def test_manager_exception_handling():
     await manager.initialize()
 
     plugin_config = PluginConfig(
-        name="ErrorPlugin",
-        description="Test error plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="ErrorPlugin",
-        mode=PluginMode.ENFORCE,
-        hooks=["prompt_pre_fetch"],
-        config={}
+        name="ErrorPlugin", description="Test error plugin", author="Test", version="1.0", tags=["test"], kind="ErrorPlugin", mode=PluginMode.ENFORCE, hooks=["prompt_pre_fetch"], config={}
     )
     error_plugin = ErrorPlugin(plugin_config)
 
     # Test with enforce mode
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(error_plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -137,14 +122,14 @@ async def test_manager_exception_handling():
             result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
 
         # Should block in enforce mode
-        #assert result.continue_processing
-        #assert result.violation is not None
-        #assert result.violation.code == "PLUGIN_ERROR"
-        #assert "error" in result.violation.description.lower()
+        # assert result.continue_processing
+        # assert result.violation is not None
+        # assert result.violation.code == "PLUGIN_ERROR"
+        # assert "error" in result.violation.description.lower()
 
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(error_plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -155,7 +140,7 @@ async def test_manager_exception_handling():
         assert result.violation is None
 
     plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(error_plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -166,7 +151,7 @@ async def test_manager_exception_handling():
         assert result.violation is None
 
     plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(error_plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -177,7 +162,7 @@ async def test_manager_exception_handling():
         assert result.violation is None
 
     plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(error_plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -212,11 +197,11 @@ async def test_manager_condition_filtering():
         kind="ConditionalPlugin",
         hooks=["prompt_pre_fetch"],
         config={},
-        conditions=[PluginCondition(server_ids={"server1"})]
+        conditions=[PluginCondition(server_ids={"server1"})],
     )
     plugin = ConditionalPlugin(plugin_config)
 
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -249,49 +234,25 @@ async def test_manager_metadata_aggregation():
 
     class MetadataPlugin1(Plugin):
         async def prompt_pre_fetch(self, payload, context):
-            return PluginResult(
-                continue_processing=True,
-                metadata={"plugin1": "data1", "shared": "value1"}
-            )
+            return PluginResult(continue_processing=True, metadata={"plugin1": "data1", "shared": "value1"})
 
     class MetadataPlugin2(Plugin):
         async def prompt_pre_fetch(self, payload, context):
             return PluginResult(
                 continue_processing=True,
-                metadata={"plugin2": "data2", "shared": "value2"}  # Overwrites shared
+                metadata={"plugin2": "data2", "shared": "value2"},  # Overwrites shared
             )
 
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
     await manager.initialize()
 
-    config1 = PluginConfig(
-        name="Plugin1",
-        description="Metadata plugin 1",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="Plugin1",
-        hooks=["prompt_pre_fetch"],
-        config={}
-    )
-    config2 = PluginConfig(
-        name="Plugin2",
-        description="Metadata plugin 2",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="Plugin2",
-        hooks=["prompt_pre_fetch"],
-        config={}
-    )
+    config1 = PluginConfig(name="Plugin1", description="Metadata plugin 1", author="Test", version="1.0", tags=["test"], kind="Plugin1", hooks=["prompt_pre_fetch"], config={})
+    config2 = PluginConfig(name="Plugin2", description="Metadata plugin 2", author="Test", version="1.0", tags=["test"], kind="Plugin2", hooks=["prompt_pre_fetch"], config={})
     plugin1 = MetadataPlugin1(config1)
     plugin2 = MetadataPlugin2(config2)
 
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
-        refs = [
-            PluginRef(plugin1),
-            PluginRef(plugin2)
-        ]
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
+        refs = [PluginRef(plugin1), PluginRef(plugin2)]
         mock_get.return_value = refs
 
         prompt = PromptPrehookPayload(name="test", args={})
@@ -327,20 +288,11 @@ async def test_manager_local_context_persistence():
     await manager.initialize()
 
     config = PluginConfig(
-        name="StatefulPlugin",
-        description="Test stateful plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="StatefulPlugin",
-        hooks=["prompt_pre_fetch", "prompt_post_fetch"],
-        config={}
+        name="StatefulPlugin", description="Test stateful plugin", author="Test", version="1.0", tags=["test"], kind="StatefulPlugin", hooks=["prompt_pre_fetch", "prompt_post_fetch"], config={}
     )
     plugin = StatefulPlugin(config)
 
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_pre, \
-         patch.object(manager._registry, 'get_plugins_for_hook') as mock_post:
-
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_pre, patch.object(manager._registry, "get_plugins_for_hook") as mock_post:
         plugin_ref = PluginRef(plugin)
 
         mock_pre.return_value = [plugin_ref]
@@ -358,11 +310,7 @@ async def test_manager_local_context_persistence():
         prompt_result = PromptResult(messages=[message])
         post_payload = PromptPosthookPayload(name="test", result=prompt_result)
 
-        result_post, _ = await manager.prompt_post_fetch(
-            post_payload,
-            global_context=global_context,
-            local_contexts=contexts
-        )
+        result_post, _ = await manager.prompt_post_fetch(post_payload, global_context=global_context, local_contexts=contexts)
 
         # Should have modified with persisted state
         assert result_post.continue_processing
@@ -378,31 +326,18 @@ async def test_manager_plugin_blocking():
 
     class BlockingPlugin(Plugin):
         async def prompt_pre_fetch(self, payload, context):
-            violation = PluginViolation(
-                reason="Content violation",
-                description="Blocked content detected",
-                code="CONTENT_BLOCKED",
-                details={"content": payload.args}
-            )
+            violation = PluginViolation(reason="Content violation", description="Blocked content detected", code="CONTENT_BLOCKED", details={"content": payload.args})
             return PluginResult(continue_processing=False, violation=violation)
 
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
     await manager.initialize()
 
     config = PluginConfig(
-        name="BlockingPlugin",
-        description="Test blocking plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="BlockingPlugin",
-        mode=PluginMode.ENFORCE,
-        hooks=["prompt_pre_fetch"],
-        config={}
+        name="BlockingPlugin", description="Test blocking plugin", author="Test", version="1.0", tags=["test"], kind="BlockingPlugin", mode=PluginMode.ENFORCE, hooks=["prompt_pre_fetch"], config={}
     )
     plugin = BlockingPlugin(config)
 
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -432,11 +367,7 @@ async def test_manager_plugin_permissive_blocking():
 
     class BlockingPlugin(Plugin):
         async def prompt_pre_fetch(self, payload, context):
-            violation = PluginViolation(
-                reason="Would block",
-                description="Content would be blocked",
-                code="WOULD_BLOCK"
-            )
+            violation = PluginViolation(reason="Would block", description="Content would be blocked", code="WOULD_BLOCK")
             return PluginResult(continue_processing=False, violation=violation)
 
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
@@ -451,12 +382,12 @@ async def test_manager_plugin_permissive_blocking():
         kind="BlockingPlugin",
         mode=PluginMode.PERMISSIVE,  # Permissive mode
         hooks=["prompt_pre_fetch"],
-        config={}
+        config={},
     )
     plugin = BlockingPlugin(config)
 
     # Test permissive mode blocking (covers lines 194-195)
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -519,6 +450,7 @@ async def test_manager_payload_size_validation():
     # Test large result payload (covers line 258)
     # First-Party
     from mcpgateway.models import Message, PromptResult, Role, TextContent
+
     large_text = "y" * (MAX_PAYLOAD_SIZE + 1)
     message = Message(role=Role.USER, content=TextContent(type="text", text=large_text))
     large_result = PromptResult(messages=[message])
@@ -538,7 +470,7 @@ async def test_manager_initialization_edge_cases():
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
     await manager.initialize()
 
-    with patch('mcpgateway.plugins.framework.manager.logger') as mock_logger:
+    with patch("mcpgateway.plugins.framework.manager.logger") as mock_logger:
         # Initialize again - should skip
         await manager.initialize()
         mock_logger.debug.assert_called_with("Plugin manager already initialized")
@@ -561,14 +493,14 @@ async def test_manager_initialization_edge_cases():
                 kind="nonexistent.Plugin",
                 mode=PluginMode.ENFORCE,
                 hooks=[HookType.PROMPT_PRE_FETCH],
-                config={}
+                config={},
             )
         ],
-        plugin_settings=PluginSettings()
+        plugin_settings=PluginSettings(),
     )
 
     # Mock the loader to return None (covers lines 495-496)
-    with patch.object(manager2._loader, 'load_and_instantiate_plugin', return_value=None):
+    with patch.object(manager2._loader, "load_and_instantiate_plugin", return_value=None):
         with pytest.raises(RuntimeError, match="Plugin initialization failed: FailingPlugin"):
             await manager2.initialize()
 
@@ -585,10 +517,10 @@ async def test_manager_initialization_edge_cases():
                 kind="test.Plugin",
                 mode=PluginMode.DISABLED,  # Disabled mode
                 hooks=[HookType.PROMPT_PRE_FETCH],
-                config={}
+                config={},
             )
         ],
-        plugin_settings=PluginSettings()
+        plugin_settings=PluginSettings(),
     )
 
     await manager3.shutdown()
@@ -615,7 +547,7 @@ async def test_manager_context_cleanup():
     # Force cleanup by setting last cleanup time to 0
     manager._last_cleanup = 0
 
-    with patch('mcpgateway.plugins.framework.manager.logger') as mock_logger:
+    with patch("mcpgateway.plugins.framework.manager.logger") as mock_logger:
         # Run cleanup (covers lines 551, 554)
         await manager._cleanup_old_contexts()
 
@@ -628,6 +560,7 @@ async def test_manager_context_cleanup():
 
     await manager.shutdown()
 
+
 @pytest.mark.asyncio
 async def test_manager_constructor_context_init():
     """Test manager constructor context initialization."""
@@ -637,10 +570,10 @@ async def test_manager_constructor_context_init():
     manager2 = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
 
     # Both managers should share the same state
-    assert hasattr(manager1, '_context_store')
-    assert hasattr(manager2, '_context_store')
-    assert hasattr(manager1, '_last_cleanup')
-    assert hasattr(manager2, '_last_cleanup')
+    assert hasattr(manager1, "_context_store")
+    assert hasattr(manager2, "_context_store")
+    assert hasattr(manager1, "_last_cleanup")
+    assert hasattr(manager2, "_last_cleanup")
 
     # They should be the same instance due to shared state
     assert manager1._context_store is manager2._context_store
@@ -675,7 +608,7 @@ async def test_base_plugin_coverage():
         tags=["test", "coverage"],  # Tags to be accessed
         kind="test.Plugin",
         hooks=[HookType.PROMPT_PRE_FETCH],
-        config={}
+        config={},
     )
 
     plugin = Plugin(config)
@@ -743,12 +676,7 @@ async def test_plugin_types_coverage():
     assert len(plugin_ctx.metadata) == 0
 
     # Test PluginViolationError (covers lines 301-303)
-    violation = PluginViolation(
-        reason="Test violation",
-        description="Test description",
-        code="TEST_CODE",
-        details={"key": "value"}
-    )
+    violation = PluginViolation(reason="Test violation", description="Test description", code="TEST_CODE", details={"key": "value"})
 
     error = PluginViolationError("Test message", violation)
 
@@ -767,16 +695,7 @@ async def test_plugin_loader_return_none():
     loader = PluginLoader()
 
     # Test return None when plugin_type is None (covers line 90)
-    config = PluginConfig(
-        name="TestPlugin",
-        description="Test",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="test.plugin.TestPlugin",
-        hooks=[HookType.PROMPT_PRE_FETCH],
-        config={}
-    )
+    config = PluginConfig(name="TestPlugin", description="Test", author="Test", version="1.0", tags=["test"], kind="test.plugin.TestPlugin", hooks=[HookType.PROMPT_PRE_FETCH], config={})
 
     # Mock the plugin_types dict to contain None for this kind
     loader._plugin_types[config.kind] = None
@@ -790,12 +709,7 @@ def test_plugin_violation_setter_validation():
     # First-Party
     from mcpgateway.plugins.framework.models import PluginViolation
 
-    violation = PluginViolation(
-        reason="Test",
-        description="Test description",
-        code="TEST_CODE",
-        details={"key": "value"}
-    )
+    violation = PluginViolation(reason="Test", description="Test description", code="TEST_CODE", details={"key": "value"})
 
     # Test valid plugin name setting
     violation.plugin_name = "valid_plugin_name"
@@ -835,11 +749,11 @@ async def test_manager_compare_function_wrapper():
         kind="TestPlugin",
         hooks=["tool_pre_invoke"],
         config={},
-        conditions=[PluginCondition(tools={"calculator"})]
+        conditions=[PluginCondition(tools={"calculator"})],
     )
     plugin = TestPlugin(config)
 
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 
@@ -869,19 +783,10 @@ async def test_manager_tool_post_invoke_coverage():
             payload.result["modified"] = True
             return PluginResult(continue_processing=True, modified_payload=payload)
 
-    config = PluginConfig(
-        name="ModifyingPlugin",
-        description="Test modifying plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="ModifyingPlugin",
-        hooks=["tool_post_invoke"],
-        config={}
-    )
+    config = PluginConfig(name="ModifyingPlugin", description="Test modifying plugin", author="Test", version="1.0", tags=["test"], kind="ModifyingPlugin", hooks=["tool_post_invoke"], config={})
     plugin = ModifyingPlugin(config)
 
-    with patch.object(manager._registry, 'get_plugins_for_hook') as mock_get:
+    with patch.object(manager._registry, "get_plugins_for_hook") as mock_get:
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 

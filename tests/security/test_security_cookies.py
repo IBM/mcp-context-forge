@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 # Third-Party
 from fastapi import Response
-from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
@@ -29,8 +28,8 @@ class TestSecureCookies:
         """Test auth cookie in development environment."""
         response = Response()
 
-        with patch.object(settings, 'environment', 'development'):
-            with patch.object(settings, 'secure_cookies', False):
+        with patch.object(settings, "environment", "development"):
+            with patch.object(settings, "secure_cookies", False):
                 set_auth_cookie(response, "test_token", remember_me=False)
 
         # Check that cookie was set
@@ -48,7 +47,7 @@ class TestSecureCookies:
         """Test auth cookie in production environment."""
         response = Response()
 
-        with patch.object(settings, 'environment', 'production'):
+        with patch.object(settings, "environment", "production"):
             set_auth_cookie(response, "test_token", remember_me=False)
 
         set_cookie_header = response.headers.get("set-cookie", "")
@@ -71,7 +70,7 @@ class TestSecureCookies:
         """Test auth cookie with custom SameSite setting."""
         response = Response()
 
-        with patch.object(settings, 'cookie_samesite', 'strict'):
+        with patch.object(settings, "cookie_samesite", "strict"):
             set_auth_cookie(response, "test_token")
 
         set_cookie_header = response.headers.get("set-cookie", "")
@@ -115,8 +114,8 @@ class TestSecureCookies:
         response = Response()
 
         # Test with secure_cookies=True in development
-        with patch.object(settings, 'environment', 'development'):
-            with patch.object(settings, 'secure_cookies', True):
+        with patch.object(settings, "environment", "development"):
+            with patch.object(settings, "secure_cookies", True):
                 set_auth_cookie(response, "test_token")
 
         set_cookie_header = response.headers.get("set-cookie", "")
@@ -127,8 +126,8 @@ class TestSecureCookies:
         response_set = Response()
         response_clear = Response()
 
-        with patch.object(settings, 'environment', 'production'):
-            with patch.object(settings, 'cookie_samesite', 'strict'):
+        with patch.object(settings, "environment", "production"):
+            with patch.object(settings, "cookie_samesite", "strict"):
                 set_auth_cookie(response_set, "test_token")
                 clear_auth_cookie(response_clear)
 
@@ -144,18 +143,21 @@ class TestSecureCookies:
 class TestCookieSecurityConfiguration:
     """Test cookie security configuration under different scenarios."""
 
-    @pytest.mark.parametrize("environment,secure_cookies,expected_secure", [
-        ("development", False, False),
-        ("development", True, True),
-        ("production", False, True),  # Production always uses secure
-        ("production", True, True),
-    ])
+    @pytest.mark.parametrize(
+        "environment,secure_cookies,expected_secure",
+        [
+            ("development", False, False),
+            ("development", True, True),
+            ("production", False, True),  # Production always uses secure
+            ("production", True, True),
+        ],
+    )
     def test_secure_flag_combinations(self, environment: str, secure_cookies: bool, expected_secure: bool):
         """Test secure flag under different environment and configuration combinations."""
         response = Response()
 
-        with patch.object(settings, 'environment', environment):
-            with patch.object(settings, 'secure_cookies', secure_cookies):
+        with patch.object(settings, "environment", environment):
+            with patch.object(settings, "secure_cookies", secure_cookies):
                 set_auth_cookie(response, "test_token")
 
         set_cookie_header = response.headers.get("set-cookie", "")
@@ -170,7 +172,7 @@ class TestCookieSecurityConfiguration:
         """Test different SameSite options."""
         response = Response()
 
-        with patch.object(settings, 'cookie_samesite', samesite_value):
+        with patch.object(settings, "cookie_samesite", samesite_value):
             set_auth_cookie(response, "test_token")
 
         set_cookie_header = response.headers.get("set-cookie", "")

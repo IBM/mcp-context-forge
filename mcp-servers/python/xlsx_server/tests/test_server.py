@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/xlsx_server/tests/test_server.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -7,10 +6,10 @@ Authors: Mihai Criveti
 Tests for XLSX MCP Server (FastMCP).
 """
 
-import json
-import pytest
 import tempfile
 from pathlib import Path
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -90,12 +89,14 @@ async def test_format_cells():
 
         # Format the cell
         format_result = ops.format_cells(
-            file_path, "A1", None,
+            file_path,
+            "A1",
+            None,
             font_bold=True,
             font_italic=False,
             font_color="#FF0000",
             background_color="#FFFF00",
-            alignment="center"
+            alignment="center",
         )
         assert format_result["success"] is True
 
@@ -115,10 +116,7 @@ async def test_analyze_workbook():
 
         # Analyze workbook
         analysis = ops.analyze_workbook(
-            file_path,
-            include_structure=True,
-            include_data_summary=True,
-            include_formulas=True
+            file_path, include_structure=True, include_data_summary=True, include_formulas=True
         )
 
         assert analysis["success"] is True
@@ -137,12 +135,7 @@ async def test_create_chart():
 
         # Create workbook with data
         ops.create_workbook(file_path, ["Sheet1"])
-        data = [
-            ["Month", "Sales"],
-            ["Jan", 100],
-            ["Feb", 150],
-            ["Mar", 120]
-        ]
+        data = [["Month", "Sales"], ["Jan", 100], ["Feb", 150], ["Mar", 120]]
         ops.write_data(file_path, data, None, 1, 1, None)
 
         # Create a chart
@@ -153,7 +146,7 @@ async def test_create_chart():
             data_range="A1:B4",
             title="Monthly Sales",
             x_axis_title="Month",
-            y_axis_title="Sales"
+            y_axis_title="Sales",
         )
 
         assert chart_result["success"] is True

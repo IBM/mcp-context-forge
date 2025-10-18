@@ -42,7 +42,7 @@ class TestSecurityHeaders:
     def test_security_headers_present_on_api_endpoints(self, client: TestClient):
         """Test security headers on API endpoints."""
         # Test with authentication disabled for this test
-        with patch.object(settings, 'auth_required', False):
+        with patch.object(settings, "auth_required", False):
             response = client.get("/tools")
 
             assert response.headers["X-Content-Type-Options"] == "nosniff"
@@ -99,25 +99,19 @@ class TestCORSConfiguration:
 
     def test_cors_with_development_origins(self, client: TestClient):
         """Test CORS works with development origins."""
-        with patch.object(settings, 'environment', 'development'):
-            with patch.object(settings, 'allowed_origins', {'http://localhost:3000', 'http://localhost:8080'}):
+        with patch.object(settings, "environment", "development"):
+            with patch.object(settings, "allowed_origins", {"http://localhost:3000", "http://localhost:8080"}):
                 # Test with actual GET request that includes CORS headers
-                response = client.get(
-                    "/health",
-                    headers={"Origin": "http://localhost:3000"}
-                )
+                response = client.get("/health", headers={"Origin": "http://localhost:3000"})
                 assert response.status_code == 200
                 # Check that CORS headers are present for allowed origin
                 assert response.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
 
     def test_cors_blocks_unauthorized_origin(self, client: TestClient):
         """Test CORS blocks unauthorized origins."""
-        with patch.object(settings, 'allowed_origins', {'http://localhost:3000'}):
+        with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
             # Test blocked origin with GET request
-            response = client.get(
-                "/health",
-                headers={"Origin": "https://evil.com"}
-            )
+            response = client.get("/health", headers={"Origin": "https://evil.com"})
             # For blocked origins, Access-Control-Allow-Origin should not be set to the blocked origin
             assert response.headers.get("Access-Control-Allow-Origin") != "https://evil.com"
             # The response should still succeed but without CORS headers for the blocked origin
@@ -125,34 +119,25 @@ class TestCORSConfiguration:
 
     def test_cors_credentials_allowed(self, client: TestClient):
         """Test CORS allows credentials when configured."""
-        with patch.object(settings, 'cors_allow_credentials', True):
-            with patch.object(settings, 'allowed_origins', {'http://localhost:3000'}):
-                response = client.get(
-                    "/health",
-                    headers={"Origin": "http://localhost:3000"}
-                )
+        with patch.object(settings, "cors_allow_credentials", True):
+            with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
+                response = client.get("/health", headers={"Origin": "http://localhost:3000"})
                 assert response.headers.get("Access-Control-Allow-Credentials") == "true"
 
     def test_cors_allowed_methods(self, client: TestClient):
         """Test CORS exposes correct allowed methods."""
-        with patch.object(settings, 'allowed_origins', {'http://localhost:3000'}):
+        with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
             # Test with an endpoint that supports OPTIONS for proper CORS preflight
             # Use the root endpoint which should support more methods
-            response = client.get(
-                "/health",
-                headers={"Origin": "http://localhost:3000"}
-            )
+            response = client.get("/health", headers={"Origin": "http://localhost:3000"})
 
             # Check that the response includes CORS origin header indicating CORS is working
             assert response.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
 
     def test_cors_exposed_headers(self, client: TestClient):
         """Test CORS exposes correct headers."""
-        with patch.object(settings, 'allowed_origins', {'http://localhost:3000'}):
-            response = client.get(
-                "/health",
-                headers={"Origin": "http://localhost:3000"}
-            )
+        with patch.object(settings, "allowed_origins", {"http://localhost:3000"}):
+            response = client.get("/health", headers={"Origin": "http://localhost:3000"})
 
             # Check that CORS is working with the allowed origin
             assert response.headers.get("Access-Control-Allow-Origin") == "http://localhost:3000"
@@ -169,22 +154,18 @@ class TestProductionSecurity:
 
     def test_production_cors_requires_explicit_origins(self, client: TestClient):
         """Test that production environment requires explicit CORS origins."""
-        with patch.object(settings, 'environment', 'production'):
-            with patch.object(settings, 'allowed_origins', set()):
+        with patch.object(settings, "environment", "production"):
+            with patch.object(settings, "allowed_origins", set()):
                 # Should have empty origins list for production without explicit config
                 assert len(settings.allowed_origins) == 0
 
     def test_production_uses_https_origins(self, client: TestClient):
         """Test that production environment uses HTTPS origins."""
-        with patch.object(settings, 'environment', 'production'):
-            with patch.object(settings, 'app_domain', 'example.com'):
+        with patch.object(settings, "environment", "production"):
+            with patch.object(settings, "app_domain", "example.com"):
                 # This would be set during initialization
-                test_origins = {
-                    "https://example.com",
-                    "https://app.example.com",
-                    "https://admin.example.com"
-                }
-                with patch.object(settings, 'allowed_origins', test_origins):
+                test_origins = {"https://example.com", "https://app.example.com", "https://admin.example.com"}
+                with patch.object(settings, "allowed_origins", test_origins):
                     # All origins should be HTTPS
                     for origin in settings.allowed_origins:
                         assert origin.startswith("https://")
@@ -193,13 +174,7 @@ class TestProductionSecurity:
         """Test security headers are consistent across different endpoints."""
         endpoints = ["/health", "/ready"]
 
-        headers_to_check = [
-            "X-Content-Type-Options",
-            "X-Frame-Options",
-            "X-XSS-Protection",
-            "Referrer-Policy",
-            "Content-Security-Policy"
-        ]
+        headers_to_check = ["X-Content-Type-Options", "X-Frame-Options", "X-XSS-Protection", "Referrer-Policy", "Content-Security-Policy"]
 
         responses = {}
         for endpoint in endpoints:

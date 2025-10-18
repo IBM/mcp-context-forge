@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Visualization Showcase Example for MCP Data Analysis Server
 
@@ -44,7 +43,9 @@ async def main():
     # Step 1: Load marketing campaign data
     print("\n📊 Step 1: Loading marketing campaign data...")
 
-    campaign_data_path = Path(__file__).parent.parent / "sample_data" / "marketing_data.csv"
+    campaign_data_path = (
+        Path(__file__).parent.parent / "sample_data" / "marketing_data.csv"
+    )
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -85,7 +86,9 @@ async def main():
         viz_info = scatter_result["visualization"]
         print(f"✅ Created scatter plot: {viz_info.get('filename', 'N/A')}")
         metadata = viz_info.get("metadata", {})
-        print(f"   • Dimensions: {metadata.get('width', 800)}x{metadata.get('height', 600)}")
+        print(
+            f"   • Dimensions: {metadata.get('width', 800)}x{metadata.get('height', 600)}"
+        )
     else:
         print(f"❌ Scatter plot failed: {scatter_result.get('error')}")
 
@@ -304,7 +307,10 @@ async def main():
             print("✅ Campaign performance summary:")
             for i, row in enumerate(query_data["data"][:5]):  # Show top 5
                 print(
-                    f"   {i+1}. {row['campaign_type']} → {row['target_audience']}: " f"ROI={row['avg_roi']:.2f}, " f"Engagement={row['avg_engagement']:.1%}, " f"Revenue=${row['total_revenue']:,.0f}"
+                    f"   {i + 1}. {row['campaign_type']} → {row['target_audience']}: "
+                    f"ROI={row['avg_roi']:.2f}, "
+                    f"Engagement={row['avg_engagement']:.1%}, "
+                    f"Revenue=${row['total_revenue']:,.0f}"
                 )
 
     # Step 12: Create final dashboard-style visualization

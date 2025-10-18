@@ -192,14 +192,7 @@ class TestResourceFilterPlugin:
         content = ResourceContent(
             type="resource",
             uri="test://config",
-            text=(
-                "Config file:\n"
-                "password: pass123\n"
-                "api-key: key456\n"
-                "api_key: key789\n"
-                "secret: sec000\n"
-                "username: admin"
-            ),
+            text=("Config file:\npassword: pass123\napi-key: key456\napi_key: key789\nsecret: sec000\nusername: admin"),
         )
         payload = ResourcePostFetchPayload(uri="test://config", content=content)
 

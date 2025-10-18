@@ -77,7 +77,7 @@ def _inject_header(text: str, cfg: LicenseHeaderConfig, language: str) -> str:
     header_lines = cfg.header_template.strip().splitlines()
     if suffix:
         # Block-style comments
-        commented = [f"{prefix}{line}{suffix if i == len(header_lines)-1 else ''}" for i, line in enumerate(header_lines)]
+        commented = [f"{prefix}{line}{suffix if i == len(header_lines) - 1 else ''}" for i, line in enumerate(header_lines)]
         header_block = "\n".join(commented)
     else:
         commented = [f"{prefix}{line}" for line in header_lines]

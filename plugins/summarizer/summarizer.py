@@ -92,7 +92,7 @@ class SummarizerConfig(BaseModel):
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     anthropic: AnthropicConfig = Field(default_factory=AnthropicConfig)
     prompt_template: str = (
-        "You are a helpful assistant. Summarize the following content succinctly " "in no more than {max_tokens} tokens. Focus on key points, remove redundancy, " "and preserve critical details."
+        "You are a helpful assistant. Summarize the following content succinctly in no more than {max_tokens} tokens. Focus on key points, remove redundancy, and preserve critical details."
     )
     include_bullets: bool = True
     language: Optional[str] = None  # e.g., "en", "de"; None = autodetect by model

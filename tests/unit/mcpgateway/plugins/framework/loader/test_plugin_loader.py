@@ -8,7 +8,7 @@ Unit tests for config and plugin loaders.
 """
 
 # Standard
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -19,7 +19,6 @@ from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.models import GlobalContext, PluginContext, PluginMode, PromptPosthookPayload, PromptPrehookPayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig, SearchReplacePlugin
-from unittest.mock import patch
 
 
 def test_config_loader_load():
@@ -56,7 +55,7 @@ async def test_plugin_loader_load():
     assert plugin.hooks[1] == "prompt_post_fetch"
 
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
-    prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
+    prompt = PromptPrehookPayload(name="test_prompt", args={"user": "What a crapshow!"})
     result = await plugin.prompt_pre_fetch(prompt, context=context)
     assert len(result.modified_payload.args) == 1
     assert result.modified_payload.args["user"] == "What a yikesshow!"
@@ -114,14 +113,7 @@ async def test_plugin_loader_get_plugin_type_error():
 
     # Create a config with an invalid plugin kind that will cause an import error
     invalid_config = PluginConfig(
-        name="InvalidPlugin",
-        description="Test invalid plugin",
-        author="Test Author",
-        version="1.0",
-        tags=["test"],
-        kind="nonexistent.module.InvalidPlugin",
-        hooks=["prompt_pre_fetch"],
-        config={}
+        name="InvalidPlugin", description="Test invalid plugin", author="Test Author", version="1.0", tags=["test"], kind="nonexistent.module.InvalidPlugin", hooks=["prompt_pre_fetch"], config={}
     )
 
     # This should raise an exception during plugin type registration
@@ -140,19 +132,10 @@ async def test_plugin_loader_none_plugin_type():
     loader = PluginLoader()
 
     # Mock the _plugin_types to return None for a specific kind
-    test_config = PluginConfig(
-        name="TestPlugin",
-        description="Test plugin",
-        author="Test Author",
-        version="1.0",
-        tags=["test"],
-        kind="test.plugin.TestPlugin",
-        hooks=["prompt_pre_fetch"],
-        config={}
-    )
+    test_config = PluginConfig(name="TestPlugin", description="Test plugin", author="Test Author", version="1.0", tags=["test"], kind="test.plugin.TestPlugin", hooks=["prompt_pre_fetch"], config={})
 
     # Manually set plugin type to None to test line 90 (return None)
-    with patch.object(loader, '_PluginLoader__get_plugin_type') as mock_get_type:
+    with patch.object(loader, "_PluginLoader__get_plugin_type") as mock_get_type:
         mock_get_type.return_value = None
         loader._plugin_types[test_config.kind] = None
 
@@ -210,7 +193,7 @@ async def test_plugin_loader_registration_branch_coverage():
         tags=["test"],
         kind="plugins.regex_filter.search_replace.SearchReplacePlugin",
         hooks=["prompt_pre_fetch"],
-        config={"words": [{"search": "test", "replace": "example"}]}
+        config={"words": [{"search": "test", "replace": "example"}]},
     )
 
     # First load - should register the plugin type (lines 85-87)

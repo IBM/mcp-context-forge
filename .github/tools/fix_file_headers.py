@@ -222,7 +222,7 @@ Authors: {authors}
 Module documentation...
 """''')
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
 
 def _write_file(file_path: Path, content: str) -> None:
@@ -396,8 +396,9 @@ def show_file_lines(file_path: Path, num_lines: int = 10) -> str:
         return f"Error reading file: {e}"
 
 
-def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = False, debug: bool = False,
-                 require_shebang: Optional[bool] = None, require_encoding: bool = True) -> Optional[Dict[str, Any]]:
+def process_file(
+    file_path: Path, mode: str, authors: str, show_diff: bool = False, debug: bool = False, require_shebang: Optional[bool] = None, require_encoding: bool = True
+) -> Optional[Dict[str, Any]]:
     """Check a single file and optionally fix its header.
 
     Args:
@@ -517,8 +518,7 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                         line_stripped = line.strip()
 
                         # Check if this line is a header field
-                        is_header_field = (any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or
-                                         line_stripped.startswith("Copyright"))
+                        is_header_field = any(line_stripped.startswith(field + ":") for field in HEADER_FIELDS) or line_stripped.startswith("Copyright")
 
                         if is_header_field:
                             in_header_section = True
@@ -533,9 +533,7 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                             # Content before any header section (like module descriptions)
                             # Look ahead to see if there are headers following
                             has_headers_following = any(
-                                any(future_line.strip().startswith(field + ":") for field in HEADER_FIELDS) or
-                                future_line.strip().startswith("Copyright")
-                                for future_line in docstring_lines[i+1:]
+                                any(future_line.strip().startswith(field + ":") for field in HEADER_FIELDS) or future_line.strip().startswith("Copyright") for future_line in docstring_lines[i + 1 :]
                             )
                             if has_headers_following:
                                 # This is content, headers follow later
@@ -561,8 +559,8 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
                         new_inner_content += "\n\n" + content_str
 
                     # Ensure proper ending with newline before closing quotes
-                    if not new_inner_content.endswith('\n'):
-                        new_inner_content += '\n'
+                    if not new_inner_content.endswith("\n"):
+                        new_inner_content += "\n"
 
                     new_docstring = f"{quotes}{new_inner_content}{quotes}"
 
@@ -598,12 +596,7 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
         # Generate new source code for diff preview or actual fixing
         if mode in ["fix-all", "fix", "interactive"] or show_diff:
             # Create new header
-            new_header = get_header_template(
-                relative_path_str,
-                authors=authors,
-                include_shebang=shebang_required,
-                include_encoding=require_encoding
-            )
+            new_header = get_header_template(relative_path_str, authors=authors, include_shebang=shebang_required, include_encoding=require_encoding)
 
             # Remove existing shebang/encoding if present
             start_line = 0
@@ -619,12 +612,7 @@ def process_file(file_path: Path, mode: str, authors: str, show_diff: bool = Fal
     result: Dict[str, Any] = {"file": relative_path_str, "issues": issues}
 
     if debug:
-        result["debug"] = {
-            "executable": file_is_executable,
-            "has_shebang": has_shebang,
-            "has_encoding": has_encoding,
-            "first_lines": show_file_lines(file_path, 5)
-        }
+        result["debug"] = {"executable": file_is_executable, "has_shebang": has_shebang, "has_encoding": has_encoding, "first_lines": show_file_lines(file_path, 5)}
 
     if show_diff and new_source_code and new_source_code != source_code:
         result["diff"] = generate_diff(source_code, new_source_code, relative_path_str)
@@ -692,7 +680,7 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
         False
     """
     parser = argparse.ArgumentParser(
-        description="Check and fix file headers in Python source files. " "By default, runs in check mode (dry run).",
+        description="Check and fix file headers in Python source files. By default, runs in check mode (dry run).",
         epilog="Examples:\n"
         "  %(prog)s                    # Check all files (default)\n"
         "  %(prog)s --fix-all          # Fix all files\n"
@@ -716,16 +704,13 @@ def parse_arguments(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
     # Header configuration options
     header_group = parser.add_argument_group("header configuration")
-    header_group.add_argument("--require-shebang", choices=["always", "never", "auto"], default="auto",
-                              help="Require shebang line: 'always', 'never', or 'auto' (only for executable files). Default: auto")
-    header_group.add_argument("--require-encoding", action="store_true", default=True,
-                              help="Require encoding line. Default: True")
-    header_group.add_argument("--no-encoding", action="store_false", dest="require_encoding",
-                              help="Don't require encoding line.")
-    header_group.add_argument("--copyright-year", type=int, default=COPYRIGHT_YEAR,
-                              help=f"Copyright year to use. Default: {COPYRIGHT_YEAR}")
-    header_group.add_argument("--license", type=str, default=LICENSE,
-                              help=f"License identifier to use. Default: {LICENSE}")
+    header_group.add_argument(
+        "--require-shebang", choices=["always", "never", "auto"], default="auto", help="Require shebang line: 'always', 'never', or 'auto' (only for executable files). Default: auto"
+    )
+    header_group.add_argument("--require-encoding", action="store_true", default=True, help="Require encoding line. Default: True")
+    header_group.add_argument("--no-encoding", action="store_false", dest="require_encoding", help="Don't require encoding line.")
+    header_group.add_argument("--copyright-year", type=int, default=COPYRIGHT_YEAR, help=f"Copyright year to use. Default: {COPYRIGHT_YEAR}")
+    header_group.add_argument("--license", type=str, default=LICENSE, help=f"License identifier to use. Default: {LICENSE}")
 
     return parser.parse_args(argv)
 
@@ -882,7 +867,7 @@ def print_results(issues_found: List[Dict[str, Any]], mode: str, modified_count:
         print("\nSome files may have been skipped in interactive mode.", file=sys.stderr)
         print("To fix all remaining headers, run: make fix-all-headers", file=sys.stderr)
     elif modified_count > 0:
-        print(f"\nSuccessfully fixed {modified_count} file(s). " f"Please re-stage and commit.", file=sys.stderr)
+        print(f"\nSuccessfully fixed {modified_count} file(s). Please re-stage and commit.", file=sys.stderr)
 
 
 def main(argv: Optional[List[str]] = None) -> None:
@@ -972,15 +957,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     modified_files_count = 0
 
     for file_path in files_to_process:
-        result = process_file(
-            file_path,
-            mode,
-            args.authors,
-            show_diff=args.show_diff,
-            debug=args.debug,
-            require_shebang=require_shebang,
-            require_encoding=args.require_encoding
-        )
+        result = process_file(file_path, mode, args.authors, show_diff=args.show_diff, debug=args.debug, require_shebang=require_shebang, require_encoding=args.require_encoding)
         if result:
             issues_found_in_files.append(result)
             if result.get("fixed", False):

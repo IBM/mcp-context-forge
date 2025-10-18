@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/services/diagram.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -10,11 +9,11 @@ Utilities for producing diagram artefacts.
 from __future__ import annotations
 
 import logging
-import uuid
+from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
-from typing import Iterable, List, Sequence
 
 from dateutil.parser import isoparse
+
 try:
     from graphviz import Digraph
 except ImportError as exc:  # pragma: no cover - handled by raising runtime error
@@ -50,7 +49,9 @@ def _ensure_graphviz() -> None:
         ) from exc
 
 
-def render_dependency_network(schedule: ScheduleModel, critical_task_ids: Iterable[str]) -> DiagramArtifact:
+def render_dependency_network(
+    schedule: ScheduleModel, critical_task_ids: Iterable[str]
+) -> DiagramArtifact:
     """Render a dependency network diagram and mermaid fallback."""
 
     _ensure_graphviz()

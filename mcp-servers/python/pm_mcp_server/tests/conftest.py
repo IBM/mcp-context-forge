@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Module Description.
 Location: ./mcp-servers/python/pm_mcp_server/tests/conftest.py
 Copyright 2025
@@ -7,6 +6,7 @@ Authors: Mihai Criveti
 
 Module documentation...
 """
+
 from __future__ import annotations
 
 import sys

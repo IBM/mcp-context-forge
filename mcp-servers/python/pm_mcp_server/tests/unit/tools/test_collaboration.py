@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Module Description.
 Location: ./mcp-servers/python/pm_mcp_server/tests/unit/tools/test_collaboration.py
 Copyright 2025
@@ -7,6 +6,7 @@ Authors: Mihai Criveti
 
 Module documentation...
 """
+
 from pm_mcp_server.schemata import ActionItem, ActionItemLog, Stakeholder
 from pm_mcp_server.tools import collaboration
 
@@ -25,7 +25,10 @@ def test_meeting_minutes_summarizer_extracts_decisions_and_actions():
 
 def test_action_item_tracker_merges_updates():
     current = ActionItemLog(items=[ActionItem(id="AI-1", description="Old", owner="PM")])
-    updates = [ActionItem(id="AI-1", description="Updated", owner="PM"), ActionItem(id="AI-2", description="New", owner="Lead")]
+    updates = [
+        ActionItem(id="AI-1", description="Updated", owner="PM"),
+        ActionItem(id="AI-2", description="New", owner="Lead"),
+    ]
     merged = collaboration.action_item_tracker(current, updates)
     assert len(merged.items) == 2
     assert any(item.description == "Updated" for item in merged.items)

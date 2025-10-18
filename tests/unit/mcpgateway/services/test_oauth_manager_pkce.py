@@ -76,9 +76,7 @@ class TestPKCEGeneration:
         pkce = manager._generate_pkce_params()
 
         # Manually compute expected challenge
-        expected_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(pkce["code_verifier"].encode('utf-8')).digest()
-        ).decode('utf-8').rstrip('=')
+        expected_challenge = base64.urlsafe_b64encode(hashlib.sha256(pkce["code_verifier"].encode("utf-8")).digest()).decode("utf-8").rstrip("=")
 
         assert pkce["code_challenge"] == expected_challenge
 
@@ -90,19 +88,12 @@ class TestAuthorizationURLWithPKCE:
         """Test that authorization URL includes code_challenge parameter."""
         manager = OAuthManager()
 
-        credentials = {
-            "client_id": "test-client",
-            "authorization_url": "https://as.example.com/authorize",
-            "redirect_uri": "http://localhost:4444/callback",
-            "scopes": ["mcp:read", "mcp:tools"]
-        }
+        credentials = {"client_id": "test-client", "authorization_url": "https://as.example.com/authorize", "redirect_uri": "http://localhost:4444/callback", "scopes": ["mcp:read", "mcp:tools"]}
         state = "test-state"
         code_challenge = "test-challenge"
         code_challenge_method = "S256"
 
-        auth_url = manager._create_authorization_url_with_pkce(
-            credentials, state, code_challenge, code_challenge_method
-        )
+        auth_url = manager._create_authorization_url_with_pkce(credentials, state, code_challenge, code_challenge_method)
 
         assert "code_challenge=test-challenge" in auth_url
         assert "code_challenge_method=S256" in auth_url
@@ -111,18 +102,11 @@ class TestAuthorizationURLWithPKCE:
         """Test that authorization URL includes all required OAuth parameters."""
         manager = OAuthManager()
 
-        credentials = {
-            "client_id": "test-client",
-            "authorization_url": "https://as.example.com/authorize",
-            "redirect_uri": "http://localhost:4444/callback",
-            "scopes": ["mcp:read"]
-        }
+        credentials = {"client_id": "test-client", "authorization_url": "https://as.example.com/authorize", "redirect_uri": "http://localhost:4444/callback", "scopes": ["mcp:read"]}
         state = "test-state"
         code_challenge = "test-challenge"
 
-        auth_url = manager._create_authorization_url_with_pkce(
-            credentials, state, code_challenge, "S256"
-        )
+        auth_url = manager._create_authorization_url_with_pkce(credentials, state, code_challenge, "S256")
 
         assert "response_type=code" in auth_url
         assert "client_id=test-client" in auth_url
@@ -138,12 +122,10 @@ class TestAuthorizationURLWithPKCE:
             "client_id": "test-client",
             "authorization_url": "https://as.example.com/authorize",
             "redirect_uri": "http://localhost:4444/callback",
-            "scopes": ["mcp:read", "mcp:tools", "mcp:resources"]
+            "scopes": ["mcp:read", "mcp:tools", "mcp:resources"],
         }
 
-        auth_url = manager._create_authorization_url_with_pkce(
-            credentials, "state", "challenge", "S256"
-        )
+        auth_url = manager._create_authorization_url_with_pkce(credentials, "state", "challenge", "S256")
 
         # Scopes should be space-separated
         assert "scope=" in auth_url
@@ -162,7 +144,7 @@ class TestStoreAuthorizationStateWithPKCE:
         code_verifier = "test-verifier"
 
         # Patch module-level _state_lock, not instance
-        with patch('mcpgateway.services.oauth_manager._state_lock'):
+        with patch("mcpgateway.services.oauth_manager._state_lock"):
             await manager._store_authorization_state(gateway_id, state, code_verifier)
 
         # This test validates the method signature accepts code_verifier
@@ -177,7 +159,7 @@ class TestStoreAuthorizationStateWithPKCE:
         state = "test-state"
 
         # Should not raise error
-        with patch('mcpgateway.services.oauth_manager._state_lock'):
+        with patch("mcpgateway.services.oauth_manager._state_lock"):
             await manager._store_authorization_state(gateway_id, state)
 
 
@@ -200,13 +182,7 @@ class TestValidateAndRetrieveState:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=300)
 
         async with _state_lock:
-            _oauth_states[state_key] = {
-                "state": state,
-                "gateway_id": gateway_id,
-                "code_verifier": "test-verifier-123",
-                "expires_at": expires_at.isoformat(),
-                "used": False
-            }
+            _oauth_states[state_key] = {"state": state, "gateway_id": gateway_id, "code_verifier": "test-verifier-123", "expires_at": expires_at.isoformat(), "used": False}
 
         result = await manager._validate_and_retrieve_state(gateway_id, state)
 
@@ -230,13 +206,7 @@ class TestValidateAndRetrieveState:
         expires_at = datetime.now(timezone.utc) - timedelta(seconds=60)  # Expired
 
         async with _state_lock:
-            _oauth_states[state_key] = {
-                "state": state,
-                "gateway_id": gateway_id,
-                "code_verifier": "test-verifier",
-                "expires_at": expires_at.isoformat(),
-                "used": False
-            }
+            _oauth_states[state_key] = {"state": state, "gateway_id": gateway_id, "code_verifier": "test-verifier", "expires_at": expires_at.isoformat(), "used": False}
 
         result = await manager._validate_and_retrieve_state(gateway_id, state)
 
@@ -257,13 +227,7 @@ class TestValidateAndRetrieveState:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=300)
 
         async with _state_lock:
-            _oauth_states[state_key] = {
-                "state": state,
-                "gateway_id": gateway_id,
-                "code_verifier": "test-verifier",
-                "expires_at": expires_at.isoformat(),
-                "used": False
-            }
+            _oauth_states[state_key] = {"state": state, "gateway_id": gateway_id, "code_verifier": "test-verifier", "expires_at": expires_at.isoformat(), "used": False}
 
         # First retrieval should succeed
         result1 = await manager._validate_and_retrieve_state(gateway_id, state)
@@ -282,22 +246,13 @@ class TestExchangeCodeForTokensWithPKCE:
         """Test that token exchange includes code_verifier in request."""
         manager = OAuthManager()
 
-        credentials = {
-            "client_id": "test-client",
-            "client_secret": "test-secret",
-            "token_url": "https://as.example.com/token",
-            "redirect_uri": "http://localhost:4444/callback"
-        }
+        credentials = {"client_id": "test-client", "client_secret": "test-secret", "token_url": "https://as.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
         code = "auth-code-123"
         code_verifier = "test-verifier-xyz"
 
-        mock_response = {
-            "access_token": "access-token-123",
-            "token_type": "Bearer",
-            "expires_in": 3600
-        }
+        mock_response = {"access_token": "access-token-123", "token_type": "Bearer", "expires_in": 3600}
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             # Create mock response
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
@@ -318,9 +273,7 @@ class TestExchangeCodeForTokensWithPKCE:
 
             mock_session_class.return_value = mock_session
 
-            result = await manager._exchange_code_for_tokens(
-                credentials, code, code_verifier=code_verifier
-            )
+            result = await manager._exchange_code_for_tokens(credentials, code, code_verifier=code_verifier)
 
         # Verify code_verifier was included in request
         call_kwargs = mock_post.call_args[1]
@@ -331,21 +284,12 @@ class TestExchangeCodeForTokensWithPKCE:
         """Test backward compatibility - token exchange without PKCE."""
         manager = OAuthManager()
 
-        credentials = {
-            "client_id": "test-client",
-            "client_secret": "test-secret",
-            "token_url": "https://as.example.com/token",
-            "redirect_uri": "http://localhost:4444/callback"
-        }
+        credentials = {"client_id": "test-client", "client_secret": "test-secret", "token_url": "https://as.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
         code = "auth-code-123"
 
-        mock_response = {
-            "access_token": "access-token-123",
-            "token_type": "Bearer",
-            "expires_in": 3600
-        }
+        mock_response = {"access_token": "access-token-123", "token_type": "Bearer", "expires_in": 3600}
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             # Create mock response
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
@@ -383,30 +327,20 @@ class TestInitiateAuthorizationCodeFlowWithPKCE:
         manager = OAuthManager(token_storage=mock_storage)
 
         gateway_id = "test-gateway"
-        credentials = {
-            "client_id": "test-client",
-            "authorization_url": "https://as.example.com/authorize",
-            "redirect_uri": "http://localhost:4444/callback",
-            "scopes": ["mcp:read"]
-        }
+        credentials = {"client_id": "test-client", "authorization_url": "https://as.example.com/authorize", "redirect_uri": "http://localhost:4444/callback", "scopes": ["mcp:read"]}
 
-        with patch.object(manager, '_generate_pkce_params') as mock_pkce, \
-             patch.object(manager, '_generate_state') as mock_state, \
-             patch.object(manager, '_store_authorization_state') as mock_store, \
-             patch.object(manager, '_create_authorization_url_with_pkce') as mock_create_url:
-
-            mock_pkce.return_value = {
-                "code_verifier": "verifier",
-                "code_challenge": "challenge",
-                "code_challenge_method": "S256"
-            }
+        with (
+            patch.object(manager, "_generate_pkce_params") as mock_pkce,
+            patch.object(manager, "_generate_state") as mock_state,
+            patch.object(manager, "_store_authorization_state") as mock_store,
+            patch.object(manager, "_create_authorization_url_with_pkce") as mock_create_url,
+        ):
+            mock_pkce.return_value = {"code_verifier": "verifier", "code_challenge": "challenge", "code_challenge_method": "S256"}
             mock_state.return_value = "state-123"
             mock_store.return_value = None
             mock_create_url.return_value = "https://as.example.com/authorize?..."
 
-            result = await manager.initiate_authorization_code_flow(
-                gateway_id, credentials
-            )
+            result = await manager.initiate_authorization_code_flow(gateway_id, credentials)
 
         # Verify PKCE was generated
         mock_pkce.assert_called_once()
@@ -428,32 +362,18 @@ class TestCompleteAuthorizationCodeFlowWithPKCE:
         gateway_id = "test-gateway"
         code = "auth-code-123"
         state = "state-123"
-        credentials = {
-            "client_id": "test-client",
-            "client_secret": "test-secret",
-            "token_url": "https://as.example.com/token",
-            "redirect_uri": "http://localhost:4444/callback"
-        }
+        credentials = {"client_id": "test-client", "client_secret": "test-secret", "token_url": "https://as.example.com/token", "redirect_uri": "http://localhost:4444/callback"}
 
-        with patch.object(manager, '_validate_and_retrieve_state') as mock_validate, \
-             patch.object(manager, '_exchange_code_for_tokens') as mock_exchange, \
-             patch.object(manager, '_extract_user_id') as mock_extract:
-
-            mock_validate.return_value = {
-                "state": state,
-                "gateway_id": gateway_id,
-                "code_verifier": "verifier-xyz",
-                "expires_at": "2025-12-31T23:59:59+00:00"
-            }
-            mock_exchange.return_value = {
-                "access_token": "token",
-                "expires_in": 3600
-            }
+        with (
+            patch.object(manager, "_validate_and_retrieve_state") as mock_validate,
+            patch.object(manager, "_exchange_code_for_tokens") as mock_exchange,
+            patch.object(manager, "_extract_user_id") as mock_extract,
+        ):
+            mock_validate.return_value = {"state": state, "gateway_id": gateway_id, "code_verifier": "verifier-xyz", "expires_at": "2025-12-31T23:59:59+00:00"}
+            mock_exchange.return_value = {"access_token": "token", "expires_in": 3600}
             mock_extract.return_value = "user-123"
 
-            result = await manager.complete_authorization_code_flow(
-                gateway_id, code, state, credentials
-            )
+            result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
         # Verify code_verifier was passed to token exchange
         mock_exchange.assert_called_once()
@@ -470,13 +390,11 @@ class TestCompleteAuthorizationCodeFlowWithPKCE:
         state = "invalid-state"
         credentials = {"client_id": "test"}
 
-        with patch.object(manager, '_validate_and_retrieve_state') as mock_validate:
+        with patch.object(manager, "_validate_and_retrieve_state") as mock_validate:
             mock_validate.return_value = None  # Invalid state
 
             with pytest.raises(OAuthError, match="Invalid or expired state"):
-                await manager.complete_authorization_code_flow(
-                    gateway_id, code, state, credentials
-                )
+                await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
 
 class TestPKCESecurityProperties:

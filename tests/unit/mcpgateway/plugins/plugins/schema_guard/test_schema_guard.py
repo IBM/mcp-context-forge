@@ -30,9 +30,7 @@ async def test_schema_guard_valid_and_invalid():
                 "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
             }
         },
-        "result_schemas": {
-            "calc": {"type": "object", "required": ["result"], "properties": {"result": {"type": "number"}}}
-        },
+        "result_schemas": {"calc": {"type": "object", "required": ["result"], "properties": {"result": {"type": "number"}}}},
         "block_on_violation": True,
     }
     plugin = SchemaGuardPlugin(

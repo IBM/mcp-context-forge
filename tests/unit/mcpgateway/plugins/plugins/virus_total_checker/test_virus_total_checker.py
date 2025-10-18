@@ -7,9 +7,7 @@ Authors: Mihai Criveti
 Unit tests for VirusTotalURLCheckerPlugin with stubbed client.
 """
 
-import asyncio
 import os
-from types import SimpleNamespace
 
 import pytest
 
@@ -89,13 +87,7 @@ async def test_url_block_on_malicious(tmp_path, monkeypatch):
     routes = {
         ("GET", f"{base}/urls/{url_id}"): lambda: _Resp(
             200,
-            data={
-                "data": {
-                    "attributes": {
-                        "last_analysis_stats": {"malicious": 2, "harmless": 80}
-                    }
-                }
-            },
+            data={"data": {"attributes": {"last_analysis_stats": {"malicious": 2, "harmless": 80}}}},
         )
     }
 
@@ -113,6 +105,7 @@ async def test_url_block_on_malicious(tmp_path, monkeypatch):
 async def test_local_allow_and_deny_overrides():
     url = "https://override.example/x"
     from base64 import urlsafe_b64encode
+
     url_id = urlsafe_b64encode(url.encode()).decode().strip("=")
     base = "https://www.virustotal.com/api/v3"
 
@@ -120,13 +113,7 @@ async def test_local_allow_and_deny_overrides():
     routes = {
         ("GET", f"{base}/urls/{url_id}"): lambda: _Resp(
             200,
-            data={
-                "data": {
-                    "attributes": {
-                        "last_analysis_stats": {"malicious": 1, "harmless": 0}
-                    }
-                }
-            },
+            data={"data": {"attributes": {"last_analysis_stats": {"malicious": 1, "harmless": 0}}}},
         )
     }
 
@@ -145,6 +132,7 @@ async def test_local_allow_and_deny_overrides():
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
     from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+
     payload = ToolPostInvokePayload(name="writer", result=f"See {url}")
     ctx = PluginContext(global_context=GlobalContext(request_id="r7"))
     res = await plugin.tool_post_invoke(payload, ctx)
@@ -191,6 +179,7 @@ async def test_override_precedence_allow_over_deny_vs_deny_over_allow():
     plugin_allow._client_factory = lambda c, h: _StubClient({})  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
     from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+
     payload = ToolPostInvokePayload(name="writer", result=f"visit {url}")
     ctx = PluginContext(global_context=GlobalContext(request_id="r8"))
     res_allow = await plugin_allow.tool_post_invoke(payload, ctx)
@@ -231,18 +220,13 @@ async def test_prompt_scan_blocks_on_url():
 
     url = "https://bad.example/"
     from base64 import urlsafe_b64encode
+
     url_id = urlsafe_b64encode(url.encode()).decode().strip("=")
     base = "https://www.virustotal.com/api/v3"
     routes = {
         ("GET", f"{base}/urls/{url_id}"): lambda: _Resp(
             200,
-            data={
-                "data": {
-                    "attributes": {
-                        "last_analysis_stats": {"malicious": 1, "harmless": 10}
-                    }
-                }
-            },
+            data={"data": {"attributes": {"last_analysis_stats": {"malicious": 1, "harmless": 10}}}},
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
@@ -250,6 +234,7 @@ async def test_prompt_scan_blocks_on_url():
 
     pr = PromptResult(messages=[Message(role="assistant", content=TextContent(type="text", text=f"see {url}"))])
     from mcpgateway.plugins.framework.models import PromptPosthookPayload
+
     payload = PromptPosthookPayload(name="p", result=pr)
     ctx = PluginContext(global_context=GlobalContext(request_id="r5"))
     res = await plugin.prompt_post_fetch(payload, ctx)
@@ -272,26 +257,23 @@ async def test_resource_scan_blocks_on_url():
 
     url = "https://bad2.example/"
     from base64 import urlsafe_b64encode
+
     url_id = urlsafe_b64encode(url.encode()).decode().strip("=")
     base = "https://www.virustotal.com/api/v3"
     routes = {
         ("GET", f"{base}/urls/{url_id}"): lambda: _Resp(
             200,
-            data={
-                "data": {
-                    "attributes": {
-                        "last_analysis_stats": {"malicious": 1, "harmless": 10}
-                    }
-                }
-            },
+            data={"data": {"attributes": {"last_analysis_stats": {"malicious": 1, "harmless": 10}}}},
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
 
     from mcpgateway.models import ResourceContent
+
     rc = ResourceContent(type="resource", uri="test://x", mime_type="text/plain", text=f"{url} is fishy")
     from mcpgateway.plugins.framework.models import ResourcePostFetchPayload
+
     payload = ResourcePostFetchPayload(uri="test://x", content=rc)
     ctx = PluginContext(global_context=GlobalContext(request_id="r6"))
     res = await plugin.resource_post_fetch(payload, ctx)
@@ -324,13 +306,7 @@ async def test_file_hash_lookup_blocks(tmp_path, monkeypatch):
     routes = {
         ("GET", f"{base}/files/{sha256}"): lambda: _Resp(
             200,
-            data={
-                "data": {
-                    "attributes": {
-                        "last_analysis_stats": {"malicious": 1, "harmless": 10}
-                    }
-                }
-            },
+            data={"data": {"attributes": {"last_analysis_stats": {"malicious": 1, "harmless": 10}}}},
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
@@ -372,19 +348,11 @@ async def test_unknown_file_then_upload_wait_allows_when_clean(tmp_path):
         # upload
         ("POST", f"{base}/files"): lambda: _Resp(200, data={"data": {"id": analysis_id}}),
         # poll analyses -> completed
-        ("GET", f"{base}/analyses/{analysis_id}"): lambda: _Resp(
-            200, data={"data": {"attributes": {"status": "completed"}}}
-        ),
+        ("GET", f"{base}/analyses/{analysis_id}"): lambda: _Resp(200, data={"data": {"attributes": {"status": "completed"}}}),
         # re-check hash -> clean
         ("GET", f"{base}/files/{sha256}"): lambda: _Resp(
             200,
-            data={
-                "data": {
-                    "attributes": {
-                        "last_analysis_stats": {"malicious": 0, "suspicious": 0, "harmless": 15}
-                    }
-                }
-            },
+            data={"data": {"attributes": {"last_analysis_stats": {"malicious": 0, "suspicious": 0, "harmless": 15}}}},
         ),
     }
 
@@ -397,6 +365,8 @@ async def test_unknown_file_then_upload_wait_allows_when_clean(tmp_path):
     res = await plugin.resource_pre_fetch(payload, ctx)
     assert res.violation is None
     assert res.metadata is not None and "virustotal" in res.metadata
+
+
 @pytest.mark.asyncio
 async def test_tool_output_url_block_and_ratio():
     cfg = PluginConfig(
@@ -414,6 +384,7 @@ async def test_tool_output_url_block_and_ratio():
     # Prepare two URLs: one insufficient harmless ratio
     url = "https://maybe.example/thing"
     from base64 import urlsafe_b64encode
+
     url_id = urlsafe_b64encode(url.encode()).decode().strip("=")
     base = "https://www.virustotal.com/api/v3"
 
@@ -421,13 +392,7 @@ async def test_tool_output_url_block_and_ratio():
     routes = {
         ("GET", f"{base}/urls/{url_id}"): lambda: _Resp(
             200,
-            data={
-                "data": {
-                    "attributes": {
-                        "last_analysis_stats": {"harmless": 5, "undetected": 50}
-                    }
-                }
-            },
+            data={"data": {"attributes": {"last_analysis_stats": {"harmless": 5, "undetected": 50}}}},
         )
     }
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore

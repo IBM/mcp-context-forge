@@ -26,15 +26,16 @@ import sys
 import sqlite3
 import subprocess
 import platform
-from pathlib import Path
+
 
 # Colors for output
 class Colors:
-    GREEN = '\033[0;32m'
-    RED = '\033[0;31m'
-    YELLOW = '\033[1;33m'
-    BLUE = '\033[0;34m'
-    NC = '\033[0m'  # No Color
+    GREEN = "\033[0;32m"
+    RED = "\033[0;31m"
+    YELLOW = "\033[1;33m"
+    BLUE = "\033[0;34m"
+    NC = "\033[0m"  # No Color
+
 
 def print_status(message, success=True):
     """Print status with color coding."""
@@ -42,26 +43,27 @@ def print_status(message, success=True):
     symbol = "✓" if success else "✗"
     print(f"{color}{symbol}{Colors.NC} {message}")
 
+
 def print_warning(message):
     """Print warning message."""
     print(f"{Colors.YELLOW}⚠{Colors.NC} {message}")
+
 
 def print_info(message):
     """Print info message."""
     print(f"{Colors.BLUE}ℹ{Colors.NC} {message}")
 
+
 def run_command(cmd, capture_output=True, timeout=30):
     """Run a shell command safely."""
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=capture_output,
-            text=True, timeout=timeout
-        )
+        result = subprocess.run(cmd, shell=True, capture_output=capture_output, text=True, timeout=timeout)
         return result.returncode == 0, result.stdout.strip(), result.stderr.strip()
     except subprocess.TimeoutExpired:
         return False, "", "Command timed out"
     except Exception as e:
         return False, "", str(e)
+
 
 class SQLiteDiagnostics:
     """System diagnostics for SQLite issues."""
@@ -116,8 +118,7 @@ class SQLiteDiagnostics:
             self.issues.append(f"Database file {self.db_path} does not exist")
 
         # Check WAL files
-        wal_files = [f for f in [f"{self.db_path}-wal", f"{self.db_path}-shm", f"{self.db_path}-journal"]
-                    if os.path.exists(f)]
+        wal_files = [f for f in [f"{self.db_path}-wal", f"{self.db_path}-shm", f"{self.db_path}-journal"] if os.path.exists(f)]
         if wal_files:
             print_warning(f"WAL/Journal files present: {wal_files}")
             self.issues.append("WAL/Journal files may indicate unclean shutdown")
@@ -130,11 +131,11 @@ class SQLiteDiagnostics:
         if success:
             print(f"Disk space:\n{output}")
             # Parse disk usage
-            lines = output.split('\n')
+            lines = output.split("\n")
             if len(lines) > 1:
                 usage_line = lines[1].split()
                 if len(usage_line) >= 4:
-                    usage_percent = usage_line[4].rstrip('%')
+                    usage_percent = usage_line[4].rstrip("%")
                     try:
                         if int(usage_percent) > 90:
                             self.issues.append(f"Disk usage high: {usage_percent}%")
@@ -158,6 +159,7 @@ class SQLiteDiagnostics:
         # Python SQLite
         try:
             import sqlite3 as sqlite_module
+
             print(f"Python SQLite: {sqlite_module.sqlite_version}")
             print(f"Python sqlite3 module: {sqlite_module.version}")
             print_status("Python SQLite module working")
@@ -237,7 +239,7 @@ class SQLiteDiagnostics:
                 print(f"  {', '.join(tables)}")
 
             # Check for multitenancy tables
-            multitenancy_tables = ['email_users', 'email_teams', 'email_team_members']
+            multitenancy_tables = ["email_users", "email_teams", "email_team_members"]
             found_mt_tables = [t for t in tables if t in multitenancy_tables]
             if found_mt_tables:
                 print_info(f"Multitenancy tables found: {found_mt_tables} (v0.7.0+)")
@@ -245,7 +247,7 @@ class SQLiteDiagnostics:
                 print_info("No multitenancy tables (v0.6.0 or earlier)")
 
             # Test basic queries
-            if 'gateways' in tables:
+            if "gateways" in tables:
                 cursor = conn.execute("SELECT COUNT(*) FROM gateways;")
                 count = cursor.fetchone()[0]
                 print(f"Gateway records: {count}")
@@ -297,22 +299,22 @@ class SQLiteDiagnostics:
         print(f"{Colors.BLUE}=== Environment Configuration ==={Colors.NC}")
 
         env_vars = {
-            'DATABASE_URL': os.getenv('DATABASE_URL', 'not set'),
-            'DB_POOL_SIZE': os.getenv('DB_POOL_SIZE', 'not set (default: 10)'),
-            'DB_MAX_OVERFLOW': os.getenv('DB_MAX_OVERFLOW', 'not set (default: 5)'),
-            'DB_POOL_TIMEOUT': os.getenv('DB_POOL_TIMEOUT', 'not set (default: 30)'),
-            'TMPDIR': os.getenv('TMPDIR', 'not set'),
+            "DATABASE_URL": os.getenv("DATABASE_URL", "not set"),
+            "DB_POOL_SIZE": os.getenv("DB_POOL_SIZE", "not set (default: 10)"),
+            "DB_MAX_OVERFLOW": os.getenv("DB_MAX_OVERFLOW", "not set (default: 5)"),
+            "DB_POOL_TIMEOUT": os.getenv("DB_POOL_TIMEOUT", "not set (default: 30)"),
+            "TMPDIR": os.getenv("TMPDIR", "not set"),
         }
 
         for key, value in env_vars.items():
             print(f"{key}: {value}")
 
         # Check .env file
-        if os.path.exists('.env'):
+        if os.path.exists(".env"):
             print_status(".env file present")
-            with open('.env', 'r') as f:
+            with open(".env", "r") as f:
                 content = f.read()
-                if 'DATABASE_URL' in content:
+                if "DATABASE_URL" in content:
                     print_info("DATABASE_URL configured in .env")
                 else:
                     print_warning("DATABASE_URL not found in .env")
@@ -336,7 +338,7 @@ class SQLiteDiagnostics:
 
         # Check directory location
         cwd = os.getcwd()
-        if any(folder in cwd for folder in ['/Desktop', '/Documents', '/Downloads']):
+        if any(folder in cwd for folder in ["/Desktop", "/Documents", "/Downloads"]):
             print_warning(f"Running in sandboxed directory: {cwd}")
             self.recommendations.append("Move to ~/Developer/ or similar non-sandboxed directory")
         else:
@@ -372,6 +374,7 @@ class SQLiteDiagnostics:
 
         print()
 
+
 class SQLiteDirectTest:
     """Direct SQLite database access tests."""
 
@@ -404,7 +407,7 @@ class SQLiteDirectTest:
                 print(f"  Tables: {table_names}")
 
             # Test multitenancy tables (v0.7.0)
-            multitenancy_tables = ['email_users', 'email_teams', 'email_team_members']
+            multitenancy_tables = ["email_users", "email_teams", "email_team_members"]
             found_mt_tables = [t for t in table_names if t in multitenancy_tables]
             if found_mt_tables:
                 print_info(f"Multitenancy tables found: {found_mt_tables}")
@@ -412,7 +415,7 @@ class SQLiteDirectTest:
                 print_info("No multitenancy tables found (v0.6.0 or earlier)")
 
             # Test read operations on main tables
-            if 'gateways' in table_names:
+            if "gateways" in table_names:
                 cursor = conn.execute("SELECT COUNT(*) FROM gateways;")
                 count = cursor.fetchone()[0]
                 print_status(f"Gateway table read successful: {count} records")
@@ -459,6 +462,7 @@ class SQLiteDirectTest:
                 except Exception:
                     pass  # Ignore cleanup errors
 
+
 class SQLAlchemyTest:
     """SQLAlchemy engine tests using MCP Gateway settings."""
 
@@ -481,7 +485,7 @@ class SQLAlchemyTest:
                 max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "5")),
                 pool_timeout=int(os.getenv("DB_POOL_TIMEOUT", "30")),
                 pool_recycle=int(os.getenv("DB_POOL_RECYCLE", "3600")),
-                echo=self.verbose  # Show SQL queries if verbose
+                echo=self.verbose,  # Show SQL queries if verbose
             )
 
             print_status("Engine created successfully")
@@ -499,18 +503,20 @@ class SQLAlchemyTest:
                     print(f"  Tables: {tables}")
 
                 # Test basic query
-                if 'gateways' in tables:
+                if "gateways" in tables:
                     result = conn.execute(text("SELECT COUNT(*) FROM gateways"))
                     count = result.scalar()
                     print_status(f"Gateway query successful: {count} records")
 
                     # Test more complex query
                     try:
-                        result = conn.execute(text("""
+                        result = conn.execute(
+                            text("""
                             SELECT gateways.name, gateways.enabled, gateways.reachable
                             FROM gateways
                             LIMIT 5
-                        """))
+                        """)
+                        )
                         rows = result.fetchall()
                         print_status(f"Complex query successful: {len(rows)} gateway records")
 
@@ -522,20 +528,20 @@ class SQLAlchemyTest:
                         print_warning(f"Complex query failed (might be schema issue): {e}")
 
                 # Test multitenancy tables (v0.7.0)
-                multitenancy_tables = ['email_users', 'email_teams', 'email_team_members']
+                multitenancy_tables = ["email_users", "email_teams", "email_team_members"]
                 found_mt_tables = [t for t in tables if t in multitenancy_tables]
 
                 if found_mt_tables:
                     print_info(f"Multitenancy tables found: {found_mt_tables}")
 
                     # Test user query
-                    if 'email_users' in tables:
+                    if "email_users" in tables:
                         result = conn.execute(text("SELECT COUNT(*) FROM email_users"))
                         user_count = result.scalar()
                         print_status(f"Email users query successful: {user_count} users")
 
                     # Test team query
-                    if 'email_teams' in tables:
+                    if "email_teams" in tables:
                         result = conn.execute(text("SELECT COUNT(*) FROM email_teams"))
                         team_count = result.scalar()
                         print_status(f"Email teams query successful: {team_count} teams")
@@ -545,8 +551,7 @@ class SQLAlchemyTest:
                 # Test write operation
                 test_table = "mcpgateway_sqlalchemy_test"
                 conn.execute(text(f"CREATE TABLE IF NOT EXISTS {test_table} (id INTEGER, test_data TEXT)"))
-                conn.execute(text(f"INSERT INTO {test_table} (id, test_data) VALUES (:id, :data)"),
-                           {"id": 1, "data": "test"})
+                conn.execute(text(f"INSERT INTO {test_table} (id, test_data) VALUES (:id, :data)"), {"id": 1, "data": "test"})
                 conn.commit()
                 print_status("Write operation successful")
 
@@ -583,25 +588,17 @@ class SQLAlchemyTest:
 
             return False
 
+
 def main():
     """Main function with argument parsing."""
-    parser = argparse.ArgumentParser(
-        description="Comprehensive SQLite testing and diagnostics for MCP Gateway",
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
+    parser = argparse.ArgumentParser(description="Comprehensive SQLite testing and diagnostics for MCP Gateway", formatter_class=argparse.RawDescriptionHelpFormatter)
 
-    parser.add_argument("--db-path", default="mcp.db",
-                       help="Database file path (default: mcp.db)")
-    parser.add_argument("--database-url",
-                       help="Database URL (overrides --db-path)")
-    parser.add_argument("--skip-diagnostics", action="store_true",
-                       help="Skip system diagnostics")
-    parser.add_argument("--skip-sqlite", action="store_true",
-                       help="Skip direct SQLite tests")
-    parser.add_argument("--skip-sqlalchemy", action="store_true",
-                       help="Skip SQLAlchemy tests")
-    parser.add_argument("--verbose", action="store_true",
-                       help="Show detailed output")
+    parser.add_argument("--db-path", default="mcp.db", help="Database file path (default: mcp.db)")
+    parser.add_argument("--database-url", help="Database URL (overrides --db-path)")
+    parser.add_argument("--skip-diagnostics", action="store_true", help="Skip system diagnostics")
+    parser.add_argument("--skip-sqlite", action="store_true", help="Skip direct SQLite tests")
+    parser.add_argument("--skip-sqlalchemy", action="store_true", help="Skip SQLAlchemy tests")
+    parser.add_argument("--verbose", action="store_true", help="Show detailed output")
 
     args = parser.parse_args()
 
@@ -650,6 +647,7 @@ def main():
             print("6. Update SQLite on macOS: brew install sqlite3 && brew link --force sqlite3")
 
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

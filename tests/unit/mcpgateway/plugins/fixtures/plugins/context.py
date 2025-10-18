@@ -8,7 +8,6 @@ Authors: Mihai Criveti
 Context plugin.
 """
 
-
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginContext,
@@ -25,6 +24,7 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+
 
 class ContextPlugin(Plugin):
     """A simple Context plugin."""
@@ -53,7 +53,6 @@ class ContextPlugin(Plugin):
         if "key1" not in context.state or context.state["key1"] != "value1":
             raise ValueError("key1 not in context!! It should be!!")
         return PromptPosthookResult(continue_processing=True)
-
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Plugin hook run before a tool is invoked.
@@ -111,6 +110,7 @@ class ContextPlugin(Plugin):
         """
         return ResourcePreFetchResult(continue_processing=True)
 
+
 class ContextPlugin2(Plugin):
     """A simple Context plugin."""
 
@@ -124,7 +124,7 @@ class ContextPlugin2(Plugin):
         """
         if "key1" in context.state:
             raise ValueError("key1 should not be in ContextPlugin2's context")
-        #context.state["cp2key1"] = "cp2value1"
+        # context.state["cp2key1"] = "cp2value1"
         return PromptPrehookResult(continue_processing=True)
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
@@ -140,7 +140,6 @@ class ContextPlugin2(Plugin):
         if "key1" not in context.state or context.state["key1"] != "value1":
             raise ValueError("key1 not in context!! It should be!!")
         return PromptPosthookResult(continue_processing=True)
-
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
         """Plugin hook run before a tool is invoked.

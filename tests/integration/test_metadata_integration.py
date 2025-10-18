@@ -11,22 +11,16 @@ and UI integration.
 """
 
 # Standard
-import asyncio
-from datetime import datetime
-import json
-from typing import Dict
 import uuid
 
 # Third-Party
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
-from mcpgateway.db import Base, get_db
-from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import Base
 from mcpgateway.main import app
 from mcpgateway.schemas import ToolCreate
 from mcpgateway.services.tool_service import ToolService
@@ -58,6 +52,7 @@ def test_app():
     # Patch settings
     # First-Party
     from mcpgateway.config import settings
+
     mp.setattr(settings, "database_url", url, raising=False)
 
     # First-Party
@@ -113,7 +108,7 @@ def test_app():
             db.close()
 
     # Patch the PermissionService class to always return our mock
-    with patch('mcpgateway.middleware.rbac.PermissionService', MockPermissionService):
+    with patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService):
         app.dependency_overrides[require_auth] = lambda: "test_user"
         app.dependency_overrides[get_current_user] = lambda: mock_email_user
         app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
@@ -154,15 +149,9 @@ class TestMetadataIntegration:
         """Test that tool creation via API captures metadata correctly."""
         unique_name = f"api_test_tool_{uuid.uuid4().hex[:8]}"
         tool_data = {
-            "tool": {
-                "name": unique_name,
-                "url": "http://example.com/api",
-                "description": "Tool created via API",
-                "integration_type": "REST",
-                "request_type": "GET"
-            },
+            "tool": {"name": unique_name, "url": "http://example.com/api", "description": "Tool created via API", "integration_type": "REST", "request_type": "GET"},
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
 
         response = client.post("/tools/", json=tool_data, headers=auth_headers)
@@ -187,7 +176,7 @@ class TestMetadataIntegration:
             "url": "http://example.com/admin",
             "description": "Tool created via admin UI",
             "integrationType": "REST",
-            "requestType": "GET"
+            "requestType": "GET",
         }
 
         # Simulate admin UI request
@@ -202,15 +191,9 @@ class TestMetadataIntegration:
         """Test that tool updates capture modification metadata."""
         # First create a tool
         tool_data = {
-            "tool": {
-                "name": f"update_test_tool_{uuid.uuid4().hex[:8]}",
-                "url": "http://example.com/test",
-                "description": "Tool for update testing",
-                "integration_type": "REST",
-                "request_type": "GET"
-            },
+            "tool": {"name": f"update_test_tool_{uuid.uuid4().hex[:8]}", "url": "http://example.com/test", "description": "Tool for update testing", "integration_type": "REST", "request_type": "GET"},
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
 
         create_response = client.post("/tools/", json=tool_data, headers=auth_headers)
@@ -218,9 +201,7 @@ class TestMetadataIntegration:
         tool_id = create_response.json()["id"]
 
         # Now update the tool
-        update_data = {
-            "description": "Updated description"
-        }
+        update_data = {"description": "Updated description"}
 
         update_response = client.put(f"/tools/{tool_id}", json=update_data, headers=auth_headers)
         assert update_response.status_code == 200
@@ -242,10 +223,10 @@ class TestMetadataIntegration:
                 "url": "http://example.com/legacy",
                 "description": "Simulated legacy tool",
                 "integration_type": "REST",
-                "request_type": "GET"
+                "request_type": "GET",
             },
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
 
         response = client.post("/tools/", json=tool_data, headers=auth_headers)
@@ -269,6 +250,7 @@ class TestMetadataIntegration:
             # Need to import here to get the same SessionLocal the test is using
             # First-Party
             import mcpgateway.db as db_mod
+
             db_session = db_mod.SessionLocal()
             return {
                 "email": "anonymous",
@@ -287,10 +269,10 @@ class TestMetadataIntegration:
                 "url": "http://example.com/anon",
                 "description": "Tool created anonymously",
                 "integration_type": "REST",
-                "request_type": "GET"
+                "request_type": "GET",
             },
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
 
         response = client.post("/tools/", json=tool_data, headers=auth_headers)
@@ -311,10 +293,10 @@ class TestMetadataIntegration:
                 "url": "http://example.com/schema",
                 "description": "Tool for schema testing",
                 "integration_type": "REST",
-                "request_type": "GET"
+                "request_type": "GET",
             },
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
 
         response = client.post("/tools/", json=tool_data, headers=auth_headers)
@@ -324,9 +306,17 @@ class TestMetadataIntegration:
 
         # Verify all metadata fields are present
         expected_fields = [
-            "createdBy", "createdFromIp", "createdVia", "createdUserAgent",
-            "modifiedBy", "modifiedFromIp", "modifiedVia", "modifiedUserAgent",
-            "importBatchId", "federationSource", "version"
+            "createdBy",
+            "createdFromIp",
+            "createdVia",
+            "createdUserAgent",
+            "modifiedBy",
+            "modifiedFromIp",
+            "modifiedVia",
+            "modifiedUserAgent",
+            "importBatchId",
+            "federationSource",
+            "version",
         ]
 
         for field in expected_fields:
@@ -336,15 +326,9 @@ class TestMetadataIntegration:
         """Test that tool list endpoint includes metadata fields."""
         # Create a tool first
         tool_data = {
-            "tool": {
-                "name": f"list_test_tool_{uuid.uuid4().hex[:8]}",
-                "url": "http://example.com/list",
-                "description": "Tool for list testing",
-                "integration_type": "REST",
-                "request_type": "GET"
-            },
+            "tool": {"name": f"list_test_tool_{uuid.uuid4().hex[:8]}", "url": "http://example.com/list", "description": "Tool for list testing", "integration_type": "REST", "request_type": "GET"},
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
 
         client.post("/tools/", json=tool_data, headers=auth_headers)
@@ -391,13 +375,7 @@ class TestMetadataIntegration:
         metadata = MetadataCapture.extract_creation_metadata(mock_request, "service_test_user")
 
         # Create tool data
-        tool_data = ToolCreate(
-            name=f"service_layer_test_{uuid.uuid4().hex[:8]}",
-            url="http://example.com/service",
-            description="Service layer test tool",
-            integration_type="REST",
-            request_type="GET"
-        )
+        tool_data = ToolCreate(name=f"service_layer_test_{uuid.uuid4().hex[:8]}", url="http://example.com/service", description="Service layer test tool", integration_type="REST", request_type="GET")
 
         # Test service creation with metadata
         service = ToolService()
