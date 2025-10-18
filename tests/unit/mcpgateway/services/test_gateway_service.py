@@ -16,14 +16,13 @@ from __future__ import annotations
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
-import socket
+from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import httpx
 import pytest
-from mcpgateway.services.gateway_service import GatewayUrlConflictError
+from url_normalize import url_normalize
 
 # First-Party
 # ---------------------------------------------------------------------------
@@ -38,6 +37,7 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
+    GatewayUrlConflictError,
 )
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,10 @@ from mcpgateway.services.gateway_service import (
 # ---------------------------------------------------------------------------
 
 
-def _make_execute_result(*, scalar=None, scalars_list=None):
+_R = TypeVar("_R")
+
+
+def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | None = None) -> MagicMock:
     """
     Return a MagicMock that behaves like the SQLAlchemy Result object the
     service expects after ``Session.execute``:
@@ -76,26 +79,6 @@ def _bypass_gatewayread_validation(monkeypatch):
     from mcpgateway.schemas import GatewayRead
 
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))
-
-
-@pytest.fixture(autouse=True)
-def _inject_check_gateway_health(monkeypatch):
-    """
-    Older versions of GatewayService (the one under test) do *not* expose
-    `check_gateway_health`, yet the original test-suite calls it.  Inject
-    a minimal coroutine that exercises `_initialize_gateway` and sets
-    `last_seen` on success.
-    """
-
-    async def _check(self, gateway):
-        try:
-            await self._initialize_gateway(gateway.url, getattr(gateway, "auth_value", {}), getattr(gateway, "transport", "sse"))
-            gateway.last_seen = datetime.now(timezone.utc)
-            return True
-        except Exception:
-            return False
-
-    monkeypatch.setattr(GatewayService, "check_gateway_health", _check, raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -186,8 +169,7 @@ class TestGatewayService:
             )
         )
         gateway_service._notify_gateway_added = AsyncMock()
-        normalize_url = lambda url: f"http://{socket.gethostbyname(url)}/gateway"
-        url = normalize_url("example.com")
+        url = url_normalize("example.com")
         # Patch GatewayRead.model_validate to return a mock with .masked()
         mock_model = Mock()
         mock_model.masked.return_value = mock_model
@@ -277,9 +259,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # url = f"http://{socket.gethostbyname('example.com')}/gateway"
-        normalize_url = lambda url: f"http://{socket.gethostbyname(url)}/gateway"
-        url = normalize_url("example.com")
+        url = url_normalize("example.com")
         print(f"url:{url}")
         gateway_service._initialize_gateway = AsyncMock(
             return_value=(
@@ -457,7 +437,7 @@ class TestGatewayService:
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
-        test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", "orig"))
+        test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))
 
         gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, [], [], []))
 
@@ -588,25 +568,46 @@ class TestGatewayService:
         assert err.enabled is True
 
     # ────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL Timeout
+    # Validate Gateway URL - Parameterized Tests
     # ────────────────────────────────────────────────────────────────────
+    @pytest.mark.parametrize(
+        "status_code,headers,transport_type,expected",
+        [
+            # SSE transport success cases
+            (200, {"content-type": "text/event-stream"}, "SSE", True),
+            # SSE transport failure cases - auth failures
+            (401, {"content-type": "text/event-stream"}, "SSE", False),
+            (403, {"content-type": "text/event-stream"}, "SSE", False),
+            # SSE transport failure cases - wrong content-type
+            (200, {"content-type": "application/json"}, "SSE", False),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_gateway_validate_timeout(self, gateway_service, monkeypatch):
-        # creating a mock with a timeout error
-        mock_stream = AsyncMock(side_effect=httpx.ReadTimeout("Timeout"))
+    async def test_validate_gateway_url_responses(self, gateway_service, httpx_mock, status_code, headers, transport_type, expected):
+        """Test various HTTP responses during gateway URL validation."""
+        httpx_mock.add_response(
+            method="GET",
+            url="http://example.com",
+            status_code=status_code,
+            headers=headers,
+        )
 
-        mock_aclose = AsyncMock()
+        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type=transport_type)
 
-        # Step 3: Mock client with .stream and .aclose
-        mock_client_instance = MagicMock()
-        mock_client_instance.stream = mock_stream
-        mock_client_instance.aclose = mock_aclose
+        assert result is expected
 
-        mock_http_client = MagicMock()
-        mock_http_client.client = mock_client_instance
-        mock_http_client.aclose = mock_aclose
-
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=mock_http_client))
+    @pytest.mark.parametrize(
+        "exception_class,exception_msg",
+        [
+            (httpx.ReadTimeout, "Timeout"),
+            (httpx.ConnectError, "Connection error"),
+            (httpx.UnsupportedProtocol, "Unsupported protocol"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_validate_gateway_url_exceptions(self, gateway_service, httpx_mock, exception_class, exception_msg):
+        """Test exception handling during gateway URL validation."""
+        httpx_mock.add_exception(exception_class(exception_msg))
 
         result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="SSE", timeout=2)
 
@@ -622,163 +623,49 @@ class TestGatewayService:
 
         """
 
-    # ────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL Auth Failure - 401
-    # ────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
-    async def test_validate_auth_failure_401(self, gateway_service, monkeypatch):
-        # Mock the response object to be returned inside the async with block
-        response_mock = MagicMock()
-        response_mock.status_code = 401
-        response_mock.headers = {"content-type": "text/event-stream"}
-
-        # Create an async context manager mock that returns response_mock
-        stream_context = MagicMock()
-        stream_context.__aenter__ = AsyncMock(return_value=response_mock)
-        stream_context.__aexit__ = AsyncMock(return_value=None)
-
-        # Mock the AsyncClient to return this context manager from .stream()
-        client_mock = MagicMock()
-        client_mock.stream = AsyncMock(return_value=stream_context)
-        client_mock.aclose = AsyncMock()
-
-        # Mock ResilientHttpClient to return this client
-        resilient_client_mock = MagicMock()
-        resilient_client_mock.client = client_mock
-        resilient_client_mock.aclose = AsyncMock()
-
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
-
-        # Run the method
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="SSE")
-
-        # Expect False due to 401
-        assert result is False
-
-    # ────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL Auth Failure - 403
-    # ────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
-    async def test_validate_auth_failure_403(self, gateway_service, monkeypatch):
-        # Mock the response object to be returned inside the async with block
-        response_mock = MagicMock()
-        response_mock.status_code = 403
-        response_mock.headers = {"content-type": "text/event-stream"}
-
-        # Create an async context manager mock that returns response_mock
-        stream_context = MagicMock()
-        stream_context.__aenter__ = AsyncMock(return_value=response_mock)
-        stream_context.__aexit__ = AsyncMock(return_value=None)
-
-        # Mock the AsyncClient to return this context manager from .stream()
-        client_mock = MagicMock()
-        client_mock.stream = AsyncMock(return_value=stream_context)
-        client_mock.aclose = AsyncMock()
-
-        # Mock ResilientHttpClient to return this client
-        resilient_client_mock = MagicMock()
-        resilient_client_mock.client = client_mock
-        resilient_client_mock.aclose = AsyncMock()
-
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
-
-        # Run the method
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="SSE")
-
-        # Expect False due to 401
-        assert result is False
-
-    # ────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL Connection Error
-    # ────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
-    async def test_validate_connectivity_failure(self, gateway_service, monkeypatch):
-        # Create an async context manager mock that raises ConnectError
-        stream_context = AsyncMock()
-        stream_context.__aenter__.side_effect = httpx.ConnectError("connection error")
-        stream_context.__aexit__.return_value = AsyncMock()
-
-        # Mock client with .stream() and .aclose()
-        mock_client = MagicMock()
-        mock_client.stream.return_value = stream_context
-        mock_client.aclose = AsyncMock()
-
-        # Patch ResilientHttpClient to return this mock client
-        resilient_client_mock = MagicMock()
-        resilient_client_mock.client = mock_client
-        resilient_client_mock.aclose = AsyncMock()
-
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
-
-        # Call the method and assert result
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="SSE")
-
-        assert result is False
-
     # ───────────────────────────────────────────────────────────────────────────
     # Validate Gateway - StreamableHTTP with mcp-session-id & redirected-url
     # ───────────────────────────────────────────────────────────────────────────
-    @pytest.mark.skip(reason="Investigating the test case")
-    async def test_streamablehttp_redirect(self, gateway_service, monkeypatch):
-        # Mock first response (redirect)
-        first_response = MagicMock()
-        first_response.status_code = 200
-        first_response.headers = {"Location": "http://sampleredirected.com"}
+    @pytest.mark.asyncio
+    async def test_streamablehttp_redirect(self, gateway_service, httpx_mock):
+        """Test STREAMABLEHTTP transport with redirection and MCP session ID."""
+        # Mock first response with redirect
+        httpx_mock.add_response(
+            method="GET",
+            url="http://example.com",
+            status_code=302,
+            headers={"location": "http://sampleredirected.com"},
+        )
 
-        first_cm = AsyncMock()
-        first_cm.__aenter__.return_value = first_response
-        first_cm.__aexit__.return_value = None
-
-        # Mock redirected response (final)
-        redirected_response = MagicMock()
-        redirected_response.status_code = 200
-        redirected_response.headers = {"Mcp-Session-Id": "sample123", "Content-Type": "application/json"}
-
-        second_cm = AsyncMock()
-        second_cm.__aenter__.return_value = redirected_response
-        second_cm.__aexit__.return_value = None
-
-        # Mock ResilientHttpClient client.stream to return redirect chain
-        client_mock = MagicMock()
-        client_mock.stream = AsyncMock(side_effect=[first_cm, second_cm])
-        client_mock.aclose = AsyncMock()
-
-        resilient_http_mock = MagicMock()
-        resilient_http_mock.client = client_mock
-        resilient_http_mock.aclose = AsyncMock()
-
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_http_mock))
+        # Mock redirected response with MCP session
+        httpx_mock.add_response(
+            method="GET",
+            url="http://sampleredirected.com",
+            status_code=200,
+            headers={"mcp-session-id": "sample123", "content-type": "application/json"},
+        )
 
         result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="STREAMABLEHTTP")
-        # The current implementation doesn't validate STREAMABLEHTTP properly, so it returns False
-        # This test covers the redirect handling code path
-        assert result is False
+
+        # Should return True when redirect has mcp-session-id and application/json content-type
+        assert result is True
 
     # ───────────────────────────────────────────────────────────────────────────
     # Validate Gateway URL - Bulk Concurrent requests Validation
     # ───────────────────────────────────────────────────────────────────────────
     @pytest.mark.asyncio
-    async def test_bulk_concurrent_validation(self, gateway_service, monkeypatch):
+    async def test_bulk_concurrent_validation(self, gateway_service, httpx_mock):
+        """Test bulk concurrent gateway URL validations."""
         urls = [f"http://gateway{i}.com" for i in range(20)]
 
-        # Simulate a successful stream context
-        stream_context = AsyncMock()
-        stream_context.__aenter__.return_value.status_code = 200
-        stream_context.__aenter__.return_value.headers = {"content-type": "text/event-stream"}
-        stream_context.__aexit__.return_value = AsyncMock()
-
-        # Mock client to return the above stream context
-        mock_client = MagicMock()
-        mock_client.stream.return_value = stream_context
-        mock_client.aclose = AsyncMock()
-
-        # ResilientHttpClient mock returns a .client and .aclose
-        resilient_client_mock = MagicMock()
-        resilient_client_mock.client = mock_client
-        resilient_client_mock.aclose = AsyncMock()
-
-        # Patch ResilientHttpClient where it's used in your module
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
+        # Add responses for all URLs
+        for url in urls:
+            httpx_mock.add_response(
+                method="GET",
+                url=url,
+                status_code=200,
+                headers={"content-type": "text/event-stream"},
+            )
 
         # Run the validations concurrently
         results = await asyncio.gather(*[gateway_service._validate_gateway_url(url, {}, "SSE") for url in urls])
@@ -847,7 +734,7 @@ class TestGatewayService:
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
             result = await gateway_service.get_gateway(test_db, 1, include_inactive=True)
             assert result.id == 1
-            assert result.enabled == False
+            assert not result.enabled
 
             # Now test the inactive = False path
             test_db.get = Mock(return_value=mock_gateway)
@@ -1162,7 +1049,7 @@ class TestGatewayService:
 
         test_db.get = Mock(return_value=mock_gateway)
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
-        test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", "orig"))
+        test_db.commit = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))
 
         gateway_service._notify_gateway_updated = AsyncMock()
 
@@ -1441,96 +1328,54 @@ class TestGatewayService:
             await gateway_service.forward_request(mock_gateway, "method", {})
 
     # ────────────────────────────────────────────────────────────────────
-    # VALIDATE GATEWAY URL COVERAGE
+    # VALIDATE GATEWAY URL REDIRECT COVERAGE
     # ────────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_validate_gateway_url_redirect_with_auth_failure(self, gateway_service, monkeypatch):
+    async def test_validate_gateway_url_redirect_with_auth_failure(self, gateway_service, httpx_mock):
         """Test redirect handling with authentication failure at redirect location."""
-        # Mock first response (redirect)
-        first_response = MagicMock()
-        first_response.status_code = 302
-        first_response.headers = {"Location": "http://redirected.com/api"}
+        # Mock first response (redirect with Location header)
+        httpx_mock.add_response(
+            method="GET",
+            url="http://example.com",
+            status_code=302,
+            headers={"location": "http://redirected.com/api"},
+        )
 
-        first_cm = AsyncMock()
-        first_cm.__aenter__.return_value = first_response
-        first_cm.__aexit__.return_value = None
-
-        # Mock redirected response (auth failure)
-        redirected_response = MagicMock()
-        redirected_response.status_code = 401
-
-        second_cm = AsyncMock()
-        second_cm.__aenter__.return_value = redirected_response
-        second_cm.__aexit__.return_value = None
-
-        client_mock = MagicMock()
-        client_mock.stream = AsyncMock(side_effect=[first_cm, second_cm])
-        client_mock.aclose = AsyncMock()
-
-        resilient_client_mock = MagicMock()
-        resilient_client_mock.client = client_mock
-        resilient_client_mock.aclose = AsyncMock()
-
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
-
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="SSE")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_url_redirect_with_mcp_session(self, gateway_service, monkeypatch):
-        """Test redirect handling with MCP session ID in response."""
-        # Mock first response (redirect)
-        first_response = MagicMock()
-        first_response.status_code = 302
-        first_response.headers = {"Location": "http://redirected.com/api"}
-
-        first_cm = AsyncMock()
-        first_cm.__aenter__.return_value = first_response
-        first_cm.__aexit__.return_value = None
-
-        # Mock redirected response with MCP session
-        redirected_response = MagicMock()
-        redirected_response.status_code = 200
-        redirected_response.headers = {"mcp-session-id": "session123", "content-type": "application/json"}
-
-        second_cm = AsyncMock()
-        second_cm.__aenter__.return_value = redirected_response
-        second_cm.__aexit__.return_value = None
-
-        client_mock = MagicMock()
-        client_mock.stream = AsyncMock(side_effect=[first_cm, second_cm])
-        client_mock.aclose = AsyncMock()
-
-        resilient_client_mock = MagicMock()
-        resilient_client_mock.client = client_mock
-        resilient_client_mock.aclose = AsyncMock()
-
-        monkeypatch.setattr("mcpgateway.services.gateway_service.ResilientHttpClient", MagicMock(return_value=resilient_client_mock))
+        # Mock redirected response with auth failure
+        httpx_mock.add_response(
+            method="GET",
+            url="http://redirected.com/api",
+            status_code=401,
+        )
 
         result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="STREAMABLEHTTP")
-        # The current implementation doesn't validate STREAMABLEHTTP properly, so it returns False
-        # This test covers the redirect handling code path
+
         assert result is False
 
-    # ────────────────────────────────────────────────────────────────────
-    # HEALTH CHECK helper (injected fixture)
-    # ────────────────────────────────────────────────────────────────────
-
     @pytest.mark.asyncio
-    async def test_check_gateway_health(self, gateway_service, mock_gateway):
-        """Injected helper returns True + updates last_seen."""
-        gateway_service._initialize_gateway = AsyncMock()
-        ok = await gateway_service.check_gateway_health(mock_gateway)
-        assert ok is True
-        assert mock_gateway.last_seen is not None
+    async def test_validate_gateway_url_redirect_with_mcp_session(self, gateway_service, httpx_mock):
+        """Test redirect handling with MCP session ID in response."""
+        # Mock first response (redirect with Location header)
+        httpx_mock.add_response(
+            method="GET",
+            url="http://example.com",
+            status_code=302,
+            headers={"location": "http://redirected.com/api"},
+        )
 
-    @pytest.mark.asyncio
-    async def test_check_gateway_health_failure(self, gateway_service, mock_gateway):
-        """Injected helper returns False upon failure."""
-        gateway_service._initialize_gateway = AsyncMock(side_effect=Exception("fail"))
-        ok = await gateway_service.check_gateway_health(mock_gateway)
-        assert ok is False
+        # Mock redirected response with MCP session
+        httpx_mock.add_response(
+            method="GET",
+            url="http://redirected.com/api",
+            status_code=200,
+            headers={"mcp-session-id": "session123", "content-type": "application/json"},
+        )
+
+        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="STREAMABLEHTTP")
+
+        # Should return True when redirect has mcp-session-id and application/json content-type
+        assert result is True
 
     # ────────────────────────────────────────────────────────────────────
     # REDIS/INITIALIZATION COVERAGE
@@ -1541,7 +1386,7 @@ class TestGatewayService:
         """Test initialization when Redis import fails."""
         monkeypatch.setattr("mcpgateway.services.gateway_service.REDIS_AVAILABLE", False)
 
-        with patch("mcpgateway.services.gateway_service.logging") as mock_logging:
+        with patch("mcpgateway.services.gateway_service.logging"):
             # Import should trigger the ImportError path
             # First-Party
             from mcpgateway.services.gateway_service import GatewayService
