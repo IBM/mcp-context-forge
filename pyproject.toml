@@ -349,6 +349,17 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 preview = true
 
+# Ignore D1 (docstring checks) in tests and other non-production code
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D1"]
+"scripts/**/*.py" = ["D1"]
+"mcp-servers/**/*.py" = ["D1"]
+"agent_runtimes/**/*.py" = ["D1"]
+".github/**/*.py" = ["D1"]
+"migration_add_annotations.py" = ["D1"]
+"playwright.config.py" = ["D1"]
+"run_mutmut.py" = ["D1"]
+
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 

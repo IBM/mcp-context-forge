@@ -533,4 +533,5 @@ repos:
     rev: 1.7.0  # or master if you're bold
     hooks:
       - id: interrogate
-        args: [--quiet]
+        args: [--quiet, --fail-under=100]
+        files: ^mcpgateway/
