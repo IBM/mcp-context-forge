@@ -14,12 +14,12 @@ This module handles OAuth 2.0 authentication flows including:
 # Standard
 import asyncio
 import base64
-from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 # Third-Party
@@ -669,7 +669,7 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import OAuthState, get_db  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
                 db = next(db_gen)
@@ -760,7 +760,7 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import OAuthState, get_db  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
                 db = next(db_gen)
@@ -873,7 +873,7 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import OAuthState, get_db  # pylint: disable=import-outside-toplevel
 
                 db_gen = get_db()
                 db = next(db_gen)

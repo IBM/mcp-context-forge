@@ -22,9 +22,9 @@ from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
+    HookType,
     HttpHeaderPayload,
     HttpHeaderPayloadResult,
-    HookType,
     PluginCondition,
     PluginConfig,
     PluginContext,

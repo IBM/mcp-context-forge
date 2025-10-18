@@ -11,8 +11,8 @@ SQLAlchemy modifiers
 
 # Standard
 import json
-from typing import Any, Iterable, List, Union
 import uuid
+from typing import Any, Iterable, List, Union
 
 # Third-Party
 from sqlalchemy import and_, func, or_, text

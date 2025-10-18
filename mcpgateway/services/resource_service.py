@@ -26,26 +26,24 @@ Examples:
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
 import mimetypes
 import os
 import re
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import parse
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import Float, and_, case, delete, desc, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, ResourceMetric, server_resource_association
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
-from mcpgateway.db import server_resource_association
 from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer

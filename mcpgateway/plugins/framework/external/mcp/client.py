@@ -10,10 +10,10 @@ Module that contains plugin MCP client code to serve external plugins.
 
 # Standard
 import asyncio
-from contextlib import AsyncExitStack
 import json
 import logging
 import os
+from contextlib import AsyncExitStack
 from typing import Any, Optional, Type, TypeVar
 
 # Third-Party
@@ -26,7 +26,7 @@ from pydantic import BaseModel
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, IGNORE_CONFIG_EXTERNAL, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT
-from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
+from mcpgateway.plugins.framework.errors import PluginError, convert_exception_to_error
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
 from mcpgateway.plugins.framework.models import (
     HookType,

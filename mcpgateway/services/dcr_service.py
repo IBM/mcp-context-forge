@@ -13,9 +13,9 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 """
 
 # Standard
-from datetime import datetime, timezone
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 # Third-Party

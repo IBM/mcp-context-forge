@@ -39,18 +39,19 @@ Examples:
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
 import logging
 import os
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
 import uuid
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, Generator, List, Optional, Set, cast
+from urllib.parse import urlparse, urlunparse
+
+import httpx
 
 # Third-Party
 from filelock import FileLock, Timeout
-import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -69,12 +70,10 @@ except ImportError:
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, SessionLocal, get_db
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate

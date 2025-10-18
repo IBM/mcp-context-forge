@@ -11,8 +11,8 @@ for Authorization Code flow implementations.
 """
 
 # Standard
-from datetime import datetime, timedelta, timezone
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 # Third-Party

@@ -17,36 +17,33 @@ It handles:
 # Standard
 import asyncio
 import base64
-from datetime import datetime, timezone
 import json
 import os
 import re
 import time
+import uuid
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
-import uuid
 
 # Third-Party
 import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import Float, and_, case, delete, desc, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, ToolMetric, server_tool_association
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric
 from mcpgateway.models import Gateway as PydanticGateway
-from mcpgateway.models import TextContent
+from mcpgateway.models import TextContent, ToolResult
 from mcpgateway.models import Tool as PydanticTool
-from mcpgateway.models import ToolResult
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA

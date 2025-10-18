@@ -12,8 +12,8 @@ functions for protecting routes.
 """
 
 # Standard
-from functools import wraps
 import logging
+from functools import wraps
 from typing import Callable, Generator, List, Optional
 
 # Third-Party

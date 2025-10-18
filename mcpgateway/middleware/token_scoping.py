@@ -11,9 +11,9 @@ and time-based restrictions.
 """
 
 # Standard
-from datetime import datetime, timezone
 import ipaddress
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 # Third-Party
@@ -460,7 +460,7 @@ class TokenScopingMiddleware:
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import Prompt, Resource, Server, Tool, get_db  # pylint: disable=import-outside-toplevel
 
         db = next(get_db())
         try:

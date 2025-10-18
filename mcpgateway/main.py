@@ -27,17 +27,17 @@ Structure:
 
 # Standard
 import asyncio
-from contextlib import asynccontextmanager
-from datetime import datetime
 import json
 import os as _os  # local alias to avoid collisions
 import sys
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
-import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
@@ -61,7 +61,7 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.config import jsonpath_modifier, settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import SessionLocal, refresh_slugs_on_startup
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -101,9 +101,8 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
-from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportService, ImportValidationError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
@@ -2599,8 +2598,10 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        from mcpgateway.models import ResourceContent  # pylint: disable=import-outside-toplevel
-        from mcpgateway.models import TextContent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.models import (
+            ResourceContent,  # pylint: disable=import-outside-toplevel
+            TextContent,  # pylint: disable=import-outside-toplevel
+        )
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
