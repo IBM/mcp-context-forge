@@ -219,16 +219,16 @@
       // Only handle if not in an input field
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-      if (e.key === 'ArrowLeft' && {{ 'true' if pagination.has_prev else 'false' }}) {
+      if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        // Trigger previous page
+        // Trigger previous page - the Alpine.js component will check hasPrev
         const prevBtn = document.querySelector('[\\@click="prevPage()"]');
-        if (prevBtn) prevBtn.click();
-      } else if (e.key === 'ArrowRight' && {{ 'true' if pagination.has_next else 'false' }}) {
+        if (prevBtn && !prevBtn.disabled) prevBtn.click();
+      } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        // Trigger next page
+        // Trigger next page - the Alpine.js component will check hasNext
         const nextBtn = document.querySelector('[\\@click="nextPage()"]');
-        if (nextBtn) nextBtn.click();
+        if (nextBtn && !nextBtn.disabled) nextBtn.click();
       }
     });
   });
