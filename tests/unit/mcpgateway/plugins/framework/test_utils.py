@@ -19,7 +19,7 @@ def test_server_ids():
     condition1 = PluginCondition(server_ids={"1", "2"})
     context1 = GlobalContext(server_id="1", tenant_id="4", request_id="5")
 
-    payload1 = PromptPrehookPayload(name="test_prompt", args={})
+    payload1 = PromptPrehookPayload(prompt_id="test_prompt", args={})
 
     assert matches(condition=condition1, context=context1)
     assert pre_prompt_matches(payload1, [condition1], context1)
@@ -119,14 +119,14 @@ def test_post_prompt_matches():
     # Test basic matching
     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))
     result = PromptResult(messages=[msg])
-    payload = PromptPosthookPayload(name="greeting", result=result)
+    payload = PromptPosthookPayload(prompt_id="greeting", result=result)
     condition = PluginCondition(prompts={"greeting"})
     context = GlobalContext(request_id="req1")
 
     assert post_prompt_matches(payload, [condition], context) is True
 
     # Test no match
-    payload2 = PromptPosthookPayload(name="other", result=result)
+    payload2 = PromptPosthookPayload(prompt_id ="other", result=result)
     assert post_prompt_matches(payload2, [condition], context) is False
 
     # Test with server_id condition
@@ -148,7 +148,7 @@ def test_post_prompt_matches_multiple_conditions():
     # Create the payload
     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))
     result = PromptResult(messages=[msg])
-    payload = PromptPosthookPayload(name="greeting", result=result)
+    payload = PromptPosthookPayload(prompt_id="greeting", result=result)
 
     # First condition fails, second condition succeeds
     condition1 = PluginCondition(server_ids={"srv1"}, prompts={"greeting"})
@@ -274,7 +274,7 @@ def test_post_tool_matches_multiple_conditions():
 
 def test_pre_prompt_matches_multiple_conditions():
     """Test pre_prompt_matches with multiple conditions to cover OR logic paths."""
-    payload = PromptPrehookPayload(name="greeting", args={})
+    payload = PromptPrehookPayload(prompt_id="greeting", args={})
 
     # First condition fails, second condition succeeds
     condition1 = PluginCondition(server_ids={"srv1"}, prompts={"greeting"})

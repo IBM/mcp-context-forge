@@ -790,7 +790,7 @@ class TestAdminResourceRoutes:
         assert len(result) == 1
         assert result[0]["uri"] == "complex://resource"
 
-    @patch.object(ResourceService, "get_resource_by_uri")
+    @patch.object(ResourceService, "get_resource_by_id")
     @patch.object(ResourceService, "read_resource")
     async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_db):
         """Test getting resource when content read fails."""
@@ -803,7 +803,7 @@ class TestAdminResourceRoutes:
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
         with pytest.raises(IOError):
-            await admin_get_resource("/test/resource", mock_db, "test-user")
+            await admin_get_resource("1", mock_db, "test-user")
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):

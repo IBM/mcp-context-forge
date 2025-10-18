@@ -119,14 +119,14 @@ async def test_hook_methods_empty_content():
     context = PluginContext(global_context=GlobalContext(request_id="test", server_id="test"))
 
     # Test prompt_pre_fetch with empty content - should raise PluginError
-    payload = PromptPrehookPayload(name="test", args={})
+    payload = PromptPrehookPayload(prompt_id="1", args={})
     with pytest.raises(PluginError):
         await plugin.prompt_pre_fetch(payload, context)
 
     # Test prompt_post_fetch with empty content - should raise PluginError
     message = Message(content=TextContent(type="text", text="test"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
-    payload = PromptPosthookPayload(name="test", result=prompt_result)
+    payload = PromptPosthookPayload(prompt_id="1", result=prompt_result)
     with pytest.raises(PluginError):
         await plugin.prompt_post_fetch(payload, context)
 
@@ -146,7 +146,7 @@ async def test_hook_methods_empty_content():
         await plugin.resource_pre_fetch(payload, context)
 
     # Test resource_post_fetch with empty content - should raise PluginError
-    resource_content = ResourceContent(type="resource", uri="file://test.txt", text="content")
+    resource_content = ResourceContent(type="resource", id="123",uri="file://test.txt", text="content")
     payload = ResourcePostFetchPayload(uri="file://test.txt", content=resource_content)
     with pytest.raises(PluginError):
         await plugin.resource_post_fetch(payload, context)

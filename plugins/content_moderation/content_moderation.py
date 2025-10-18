@@ -178,11 +178,6 @@ class ContentModerationPlugin(Plugin):
     """Plugin for advanced content moderation using multiple AI providers."""
 
     def __init__(self, config: PluginConfig) -> None:
-        """Initialize the content moderation plugin.
-
-        Args:
-            config: Plugin configuration.
-        """
         super().__init__(config)
         self._cfg = ContentModerationConfig(**(config.config or {}))
         self._client = httpx.AsyncClient()
@@ -523,12 +518,7 @@ Respond with JSON format:
                     break
 
         return ModerationResult(
-            flagged=flagged,
-            categories=categories,
-            action=action,
-            provider=ModerationProvider.IBM_WATSON,
-            confidence=max_score,
-            details={"method": "pattern_matching"},  # Default fallback
+            flagged=flagged, categories=categories, action=action, provider=ModerationProvider.IBM_WATSON, confidence=max_score, details={"method": "pattern_matching"}  # Default fallback
         )
 
     async def _extract_text_content(self, payload: Any) -> List[str]:
@@ -559,7 +549,9 @@ Respond with JSON format:
                 result = await self._moderate_content(text)
 
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Prompt: {payload.name}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}, Confidence: {result.confidence:.2f}")
+                    logger.info(
+                        f"Content moderation - Prompt: {payload.prompt_id}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
+                    )
 
                 if result.action == ModerationAction.BLOCK:
                     return PromptPrehookResult(
@@ -579,11 +571,11 @@ Respond with JSON format:
                     )
                 elif result.modified_content:
                     # Modify the payload with redacted/transformed content
-                    modified_payload = PromptPrehookPayload(name=payload.name, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
+                    modified_payload = PromptPrehookPayload(prompt_id=payload.prompt_id, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
                     return PromptPrehookResult(modified_payload=modified_payload, metadata={"moderation_result": result.dict(), "content_modified": True})
 
             except Exception as e:
-                logger.error(f"Content moderation failed for prompt {payload.name}: {e}")
+                logger.error(f"Content moderation failed for prompt {payload.prompt_id}: {e}")
                 if self._cfg.fallback_on_error == ModerationAction.BLOCK:
                     return PromptPrehookResult(
                         continue_processing=False,
@@ -601,7 +593,7 @@ Respond with JSON format:
                 result = await self._moderate_content(text)
 
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}")
+                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}")
 
                 if result.action == ModerationAction.BLOCK:
                     return ToolPreInvokeResult(
@@ -682,7 +674,7 @@ Respond with JSON format:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - cleanup HTTP client."""
         if hasattr(self, "_client"):
             await self._client.aclose()

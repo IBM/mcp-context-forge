@@ -54,7 +54,7 @@ async def test_resource_pre_fetch_blocks_on_eicar(tmp_path):
 async def test_resource_post_fetch_blocks_on_eicar_text():
     plugin = _mk_plugin(True)
     ctx = PluginContext(global_context=GlobalContext(request_id="r2"))
-    rc = ResourceContent(type="resource", uri="test://mem", mime_type="text/plain", text=EICAR)
+    rc = ResourceContent(type="resource", id="123", uri="test://mem", mime_type="text/plain", text=EICAR)
     payload = ResourcePostFetchPayload(uri="test://mem", content=rc)
     res = await plugin.resource_post_fetch(payload, ctx)
     assert res.violation is not None
@@ -88,7 +88,7 @@ async def test_prompt_post_fetch_blocks_on_eicar_text():
         ]
     )
     ctx = PluginContext(global_context=GlobalContext(request_id="r4"))
-    payload = PromptPosthookPayload(name="p", result=pr)
+    payload = PromptPosthookPayload(prompt_id="p", result=pr)
     res = await plugin.prompt_post_fetch(payload, ctx)
     assert res.violation is not None
     assert res.violation.code == "CLAMAV_INFECTED"
@@ -113,7 +113,7 @@ async def test_health_stats_counters():
     ctx = PluginContext(global_context=GlobalContext(request_id="r6"))
 
     # 1) resource_post_fetch with EICAR -> attempted +1, infected +1
-    rc = ResourceContent(type="resource", uri="test://mem", mime_type="text/plain", text=EICAR)
+    rc = ResourceContent(type="resource", id="123", uri="test://mem", mime_type="text/plain", text=EICAR)
     payload_r = ResourcePostFetchPayload(uri="test://mem", content=rc)
     await plugin.resource_post_fetch(payload_r, ctx)
 
@@ -128,7 +128,7 @@ async def test_health_stats_counters():
             )
         ]
     )
-    payload_p = PromptPosthookPayload(name="p", result=pr)
+    payload_p = PromptPosthookPayload(prompt_id="p", result=pr)
     await plugin.prompt_post_fetch(payload_p, ctx)
 
     # 3) tool_post_invoke with one EICAR and one clean string -> attempted +2, infected +1

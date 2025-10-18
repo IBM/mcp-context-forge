@@ -46,7 +46,7 @@ class TestResourceHooks:
 
     def test_resource_post_fetch_payload(self):
         """Test ResourcePostFetchPayload creation and attributes."""
-        content = ResourceContent(type="resource", uri="file:///test.txt", text="Test content")
+        content = ResourceContent(type="resource", id="123",uri="file:///test.txt", text="Test content")
         payload = ResourcePostFetchPayload(uri="file:///test.txt", content=content)
         assert payload.uri == "file:///test.txt"
         assert payload.content == content
@@ -84,7 +84,7 @@ class TestResourceHooks:
             tags=["test"],
         )
         plugin = Plugin(config)
-        content = ResourceContent(type="resource", uri="file:///test.txt", text="Test content")
+        content = ResourceContent(type="resource",  id="123",uri="file:///test.txt", text="Test content")
         payload = ResourcePostFetchPayload(uri="file:///test.txt", content=content)
         context = PluginContext(global_context=GlobalContext(request_id="test-123"))
 
@@ -138,6 +138,7 @@ class TestResourceHooks:
                 modified_text = payload.content.text.replace("password: secret123", "password: [REDACTED]")
                 modified_content = ResourceContent(
                     type=payload.content.type,
+                    id=payload.content.id,
                     uri=payload.content.uri,
                     text=modified_text,
                 )
@@ -162,6 +163,7 @@ class TestResourceHooks:
         plugin = ContentFilterPlugin(config)
         content = ResourceContent(
             type="resource",
+             id="123",
             uri="test://config",
             text="Database config:\npassword: secret123\nport: 5432",
         )
@@ -315,7 +317,7 @@ class TestResourceHookIntegration:
                 manager._registry = MockRegistry.return_value
                 manager._initialized = True
 
-                content = ResourceContent(type="resource", uri="test://resource", text="Test")
+                content = ResourceContent(type="resource", id="123", uri="test://resource", text="Test")
                 payload = ResourcePostFetchPayload(uri="test://resource", content=content)
                 global_context = GlobalContext(request_id="test-123")
 

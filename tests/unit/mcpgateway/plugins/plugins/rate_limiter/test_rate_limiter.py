@@ -34,7 +34,7 @@ def _mk(rate: str) -> RateLimiterPlugin:
 async def test_rate_limit_blocks_on_third_call():
     plugin = _mk("2/s")
     ctx = PluginContext(global_context=GlobalContext(request_id="r1", user="u1"))
-    payload = PromptPrehookPayload(name="p", args={})
+    payload = PromptPrehookPayload(prompt_id="p", args={})
     r1 = await plugin.prompt_pre_fetch(payload, ctx)
     assert r1.violation is None
     r2 = await plugin.prompt_pre_fetch(payload, ctx)

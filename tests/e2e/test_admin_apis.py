@@ -504,7 +504,7 @@ class TestAdminPromptAPIs:
         prompt_id = prompt["id"]
 
         # Get individual prompt
-        response = await client.get(f"/admin/prompts/{form_data['name']}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["name"] == "test_admin_prompt"
 
@@ -515,7 +515,7 @@ class TestAdminPromptAPIs:
             "template": "Updated {{greeting}}",
             "arguments": '[{"name": "greeting", "description": "Greeting", "required": false}]',
         }
-        response = await client.post(f"/admin/prompts/{form_data['name']}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/admin/prompts/{prompt_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
         # Toggle prompt status
@@ -523,7 +523,7 @@ class TestAdminPromptAPIs:
         assert response.status_code == 303
 
         # Delete prompt (use updated name)
-        response = await client.post(f"/admin/prompts/{edit_data['name']}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/admin/prompts/{prompt_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
 

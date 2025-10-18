@@ -46,7 +46,6 @@ from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
-from pydantic import AnyUrl
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
@@ -471,12 +470,12 @@ async def list_prompts() -> List[types.Prompt]:
 
 
 @mcp_app.get_prompt()
-async def get_prompt(name: str, arguments: dict[str, str] | None = None) -> types.GetPromptResult:
+async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) -> types.GetPromptResult:
     """
-    Retrieves a prompt by name, optionally substituting arguments.
+    Retrieves a prompt by ID, optionally substituting arguments.
 
     Args:
-        name (str): The name of the prompt to retrieve.
+        prompt_id (str): The ID of the prompt to retrieve.
         arguments (Optional[dict[str, str]]): Optional dictionary of arguments to substitute into the prompt.
 
     Returns:
@@ -489,24 +488,24 @@ async def get_prompt(name: str, arguments: dict[str, str] | None = None) -> type
         >>> import inspect
         >>> sig = inspect.signature(get_prompt)
         >>> list(sig.parameters.keys())
-        ['name', 'arguments']
+        ['prompt_id', 'arguments']
         >>> sig.return_annotation.__name__
         'GetPromptResult'
     """
     try:
         async with get_db() as db:
             try:
-                result = await prompt_service.get_prompt(db=db, name=name, arguments=arguments)
+                result = await prompt_service.get_prompt(db=db, prompt_id=prompt_id, arguments=arguments)
             except Exception as e:
-                logger.exception(f"Error getting prompt '{name}': {e}")
+                logger.exception(f"Error getting prompt '{prompt_id}': {e}")
                 return []
             if not result or not result.messages:
-                logger.warning(f"No content returned by prompt: {name}")
+                logger.warning(f"No content returned by prompt: {prompt_id}")
                 return []
             message_dicts = [message.dict() for message in result.messages]
             return types.GetPromptResult(messages=message_dicts, description=result.description)
     except Exception as e:
-        logger.exception(f"Error getting prompt '{name}': {e}")
+        logger.exception(f"Error getting prompt '{prompt_id}': {e}")
         return []
 
 
@@ -548,12 +547,12 @@ async def list_resources() -> List[types.Resource]:
 
 
 @mcp_app.read_resource()
-async def read_resource(uri: AnyUrl) -> Union[str, bytes]:
+async def read_resource(resource_id: str) -> Union[str, bytes]:
     """
-    Reads the content of a resource specified by its URI.
+    Reads the content of a resource specified by its ID.
 
     Args:
-        uri (AnyUrl): The URI of the resource to read.
+        resource_id (str): The ID of the resource to read.
 
     Returns:
         Union[str, bytes]: The content of the resource, typically as text.
@@ -565,24 +564,24 @@ async def read_resource(uri: AnyUrl) -> Union[str, bytes]:
         >>> import inspect
         >>> sig = inspect.signature(read_resource)
         >>> list(sig.parameters.keys())
-        ['uri']
+        ['resource_id']
         >>> sig.return_annotation
         typing.Union[str, bytes]
     """
     try:
         async with get_db() as db:
             try:
-                result = await resource_service.read_resource(db=db, uri=str(uri))
+                result = await resource_service.read_resource(db=db, resource_id=resource_id)
             except Exception as e:
-                logger.exception(f"Error reading resource '{uri}': {e}")
+                logger.exception(f"Error reading resource '{resource_id}': {e}")
                 return []
             if not result or not result.text:
-                logger.warning(f"No content returned by resource: {uri}")
+                logger.warning(f"No content returned by resource: {resource_id}")
                 return []
 
             return result.text
     except Exception as e:
-        logger.exception(f"Error reading resource '{uri}': {e}")
+        logger.exception(f"Error reading resource '{resource_id}': {e}")
         return []
 
 

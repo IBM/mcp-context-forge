@@ -86,10 +86,11 @@ class TestResourcePluginIntegration:
         assert created.uri == "test://integration"
         assert created.name == "Integration Test Resource"
 
+
         # 2. Read the resource (should trigger plugins)
         content = await service.read_resource(
             test_db,
-            "test://integration",
+            created.id,
             request_id="test-123",
             user="testuser",
         )
@@ -103,6 +104,7 @@ class TestResourcePluginIntegration:
         assert len(resources) == 1
         assert resources[0].uri == "test://integration"
 
+
         # 4. Update the resource
         # First-Party
         from mcpgateway.schemas import ResourceUpdate
@@ -111,11 +113,12 @@ class TestResourcePluginIntegration:
             name="Updated Integration Resource",
             content="Updated content",
         )
-        updated = await service.update_resource(test_db, "test://integration", update_data)
+        updated = await service.update_resource(test_db, created.id, update_data)
         assert updated.name == "Updated Integration Resource"
 
+
         # 5. Delete the resource
-        await service.delete_resource(test_db, "test://integration")
+        await service.delete_resource(test_db, created.id)
         resources = await service.list_resources(test_db)
         assert len(resources) == 0
 
@@ -182,6 +185,7 @@ class TestResourcePluginIntegration:
                                 "password: [REDACTED]",
                             )
                             filtered_content = ResourceContent(
+                                id=payload.content.id,
                                 type=payload.content.type,
                                 uri=payload.content.uri,
                                 text=filtered_text,
@@ -213,10 +217,11 @@ class TestResourcePluginIntegration:
                     mime_type="text/plain",
                 )
 
-                await service.register_resource(test_db, resource_data)
+                create_response = await service.register_resource(test_db, resource_data)
+
 
                 # Read the resource - should be filtered
-                content = await service.read_resource(test_db, "test://sensitive")
+                content = await service.read_resource(test_db, create_response.id)
                 assert "[REDACTED]" in content.text
                 assert "secret123" not in content.text
                 assert "port: 8080" in content.text
@@ -233,8 +238,17 @@ class TestResourcePluginIntegration:
                 )
                 await service.register_resource(test_db, blocked_resource)
 
+
+                # Find the blocked resource by uri to get its id
+                blocked = await service.list_resources(test_db)
+                blocked_id = None
+                for r in blocked:
+                    if r.uri == "file:///etc/passwd":
+                        blocked_id = r.id
+                        break
+                assert blocked_id is not None
                 with pytest.raises(PluginViolationError) as exc_info:
-                    await service.read_resource(test_db, "file:///etc/passwd")
+                    await service.read_resource(test_db, blocked_id)
                 assert "Protocol not allowed" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -274,11 +288,10 @@ class TestResourcePluginIntegration:
             content="Test content",
             mime_type="text/plain",
         )
-        await service.register_resource(test_db, resource)
-
+        created = await service.register_resource(test_db, resource)
         await service.read_resource(
             test_db,
-            "test://context-test",
+            created.id,
             request_id="integration-test-123",
             user="integration-user",
             server_id="server-123",
@@ -315,10 +328,8 @@ class TestResourcePluginIntegration:
             content="Data for ID: 123",
             mime_type="text/plain",
         )
-        await service.register_resource(test_db, resource)
-
-        # Read the resource
-        content = await service.read_resource(test_db, "test://data/123")
+        created = await service.register_resource(test_db, resource)
+        content = await service.read_resource(test_db, created.id)
 
         assert content.text == "Data for ID: 123"
         mock_manager.resource_pre_fetch.assert_called_once()
@@ -352,12 +363,13 @@ class TestResourcePluginIntegration:
         # Deactivate the resource
         await service.toggle_resource_status(test_db, created.id, activate=False)
 
+
         # Try to read inactive resource
         # First-Party
         from mcpgateway.services.resource_service import ResourceNotFoundError
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            await service.read_resource(test_db, "test://inactive-test")
+            await service.read_resource(test_db, created.id)
 
         assert "exists but is inactive" in str(exc_info.value)
         # Pre-fetch is called but post-fetch should not be called for inactive resources
