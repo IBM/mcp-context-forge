@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Statistical Analysis Example for MCP Data Analysis Server
 

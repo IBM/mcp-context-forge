@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """MCP LangChain Agent Package.
 
 A production-ready LangChain agent that integrates with the MCP Gateway,

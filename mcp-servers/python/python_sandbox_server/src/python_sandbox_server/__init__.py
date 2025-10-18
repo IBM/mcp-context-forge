@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/python_sandbox_server/src/python_sandbox_server/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

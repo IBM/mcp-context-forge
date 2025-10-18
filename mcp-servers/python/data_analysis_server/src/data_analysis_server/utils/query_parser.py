@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 SQL-like query parsing and execution for pandas DataFrames.
 """

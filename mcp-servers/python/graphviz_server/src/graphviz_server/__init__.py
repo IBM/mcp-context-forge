@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/graphviz_server/src/graphviz_server/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

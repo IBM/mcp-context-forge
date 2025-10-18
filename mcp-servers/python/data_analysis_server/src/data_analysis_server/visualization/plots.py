@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data visualization functionality using matplotlib, seaborn, and plotly.
 """
