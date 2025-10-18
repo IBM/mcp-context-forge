@@ -21,10 +21,12 @@ Examples:
     >>> import asyncio
     >>> from mcpgateway.utils.pagination import paginate_query
     >>> from sqlalchemy import select
-    >>> from mcpgateway.db import Tool
+    >>> from mcpgateway.db import Tool, get_db
     >>>
     >>> # Simple offset pagination
     >>> query = select(Tool)
+    >>> gen = get_db()
+    >>> db = next(gen)
     >>> async def _run():
     ...     return await paginate_query(
     ...         db=db,
@@ -215,7 +217,9 @@ async def offset_paginate(
     Examples:
         >>> import asyncio
         >>> from sqlalchemy import select
-        >>> from mcpgateway.db import Tool
+        >>> from mcpgateway.db import Tool, get_db
+        >>> gen = get_db()
+        >>> db = next(gen)
         >>> query = select(Tool)
         >>> async def _run():
         ...     return await offset_paginate(
@@ -312,7 +316,9 @@ async def cursor_paginate(
 
     Examples:
         >>> import asyncio
-        >>> from mcpgateway.db import Tool
+        >>> from mcpgateway.db import Tool, get_db
+        >>> gen = get_db()
+        >>> db = next(gen)
         >>> query = select(Tool)
         >>> async def _run():
         ...     return await cursor_paginate(
@@ -432,7 +438,9 @@ async def paginate_query(
 
     Examples:
         >>> import asyncio
-        >>> from mcpgateway.db import Tool
+        >>> from mcpgateway.db import Tool, get_db
+        >>> gen = get_db()
+        >>> db = next(gen)
         >>> query = select(Tool)
         >>> async def _run():
         ...     return await paginate_query(
