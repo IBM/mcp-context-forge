@@ -14,7 +14,7 @@ across different parts of the application without creating circular imports.
 from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Optional
+from typing import Generator, Never, Optional
 
 # Third-Party
 from fastapi import Depends, HTTPException, status
@@ -30,7 +30,7 @@ from mcpgateway.utils.verify_credentials import verify_jwt_token
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-def get_db():
+def get_db() -> Generator[Session, Never, None]:
     """Database dependency.
 
     Yields:
@@ -211,7 +211,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
                 full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
                 is_admin=True,
                 is_active=True,
-                is_email_verified=True,
+                email_verified_at=datetime.now(timezone.utc),
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
             )
