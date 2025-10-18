@@ -19,20 +19,28 @@ Features:
 
 Examples:
     >>> import asyncio
+    >>> from unittest.mock import MagicMock
     >>> from mcpgateway.utils.pagination import paginate_query
-    >>> from sqlalchemy import select
-    >>> from mcpgateway.db import Tool, get_db
-    >>>
-    >>> # Simple offset pagination
-    >>> query = select(Tool)
-    >>> gen = get_db()
-    >>> db = next(gen)
+    >>> # Mock db session and query
+    >>> mock_db = MagicMock()
+    >>> mock_query = MagicMock()
+    >>> # Mock settings
+    >>> from mcpgateway.config import settings
+    >>> settings.pagination_default_page_size = 50
+    >>> settings.pagination_min_page_size = 1
+    >>> settings.pagination_max_page_size = 100
+    >>> settings.pagination_max_offset = 1000
+    >>> settings.pagination_include_links = True
+    >>> # Mock db.execute().scalar() for count
+    >>> mock_db.execute().scalar.return_value = 100
+    >>> # Mock db.execute().scalars().all() for items
+    >>> mock_db.execute().scalars().all.return_value = ["item1", "item2"]
     >>> async def _run():
     ...     return await paginate_query(
-    ...         db=db,
-    ...         query=query,
+    ...         db=mock_db,
+    ...         query=mock_query,
     ...         page=1,
-    ...         per_page=50,
+    ...         per_page=2,
     ...         base_url="/admin/tools"
     ...     )
     >>> result = asyncio.run(_run())
