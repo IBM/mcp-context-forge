@@ -404,17 +404,17 @@ repos:
   # -----------------------------------------------------------------------------
   # 🐍 Python Formatting Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
-  # - repo: https://github.com/astral-sh/ruff-pre-commit
-  #   # Ruff version.
-  #   rev: v0.11.12
-  #   hooks:
-  #     # Run the linter.
-  #     - id: ruff-check
-  #       types_or: [ python, pyi ]
-  #       args: [ --fix ]
-  #     # Run the formatter.
-  #     - id: ruff-format
-  #       types_or: [ python, pyi ]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.11.12
+    hooks:
+      # Run the linter.
+      - id: ruff-check
+        types_or: [ python, pyi ]
+        args: [ --fix ]
+      # Run the formatter.
+      - id: ruff-format
+        types_or: [ python, pyi ]
 
   # - repo: https://github.com/psf/black
   #   rev: 25.1.0
@@ -525,3 +525,13 @@ repos:
   #       pass_filenames: false
   #       always_run: true
   #       types: [python]
+
+  # -----------------------------------------------------------------------------
+  #  Interrogate
+  # -----------------------------------------------------------------------------
+  - repo: https://github.com/econchick/interrogate
+    rev: 1.7.0  # or master if you're bold
+    hooks:
+      - id: interrogate
+        args: [--quiet, --fail-under=100]
+        files: ^mcpgateway/

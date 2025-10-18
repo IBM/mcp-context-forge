@@ -7,6 +7,7 @@ Authors: Fred Araujo
 Simple example plugin for searching and replacing text.
 This module loads configurations for plugins.
 """
+
 # Third-Party
 from pydantic import BaseModel
 

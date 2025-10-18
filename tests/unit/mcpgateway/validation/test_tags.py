@@ -7,7 +7,6 @@ Authors: Mihai Criveti
 Tests for tag validation and normalization.
 """
 
-
 # First-Party
 from mcpgateway.validation.tags import TagValidator, validate_tags_field
 

@@ -9,7 +9,7 @@ Authors: Mihai Criveti
 import asyncio
 import os
 import tempfile
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 # Third-Party
 from _pytest.monkeypatch import MonkeyPatch
@@ -20,16 +20,13 @@ from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.config import Settings
-import mcpgateway.db  # Import entire module to ensure all models are registered
-from mcpgateway.db import Base, OAuthState, RegisteredOAuthClient
+from mcpgateway.db import Base
 
 # Local
 # Test utilities - import before mcpgateway modules
-from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
 # Skip session-level RBAC patching for now - let individual tests handle it
 # _session_rbac_originals = patch_rbac_decorators()
-
 
 
 @pytest.fixture(scope="session")
@@ -93,6 +90,7 @@ def app():
     # 2) patch settings
     # First-Party
     from mcpgateway.config import settings
+
     mp.setattr(settings, "database_url", url, raising=False)
 
     # First-Party
@@ -106,6 +104,7 @@ def app():
     # 4) patch the already‑imported main module **without reloading**
     # First-Party
     import mcpgateway.main as main_mod
+
     mp.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     # (patch engine too if your code references it)
     mp.setattr(main_mod, "engine", engine, raising=False)

@@ -6,6 +6,7 @@ Authors: Mihai Criveti
 
 Runtime async monitoring with aiomonitor integration.
 """
+
 # Standard
 import argparse
 import asyncio
@@ -35,9 +36,9 @@ class AsyncMonitor:
             asyncio.get_event_loop(),
             host=self.host,
             webui_port=self.webui_port,
-            console_port=self.console_port,     # TODO: FIX CONSOLE NOT CONNECTING TO PORT
+            console_port=self.console_port,  # TODO: FIX CONSOLE NOT CONNECTING TO PORT
             console_enabled=console_enabled,
-            locals={'monitor': self}
+            locals={"monitor": self},
         )
 
         self.monitor.start()
@@ -59,7 +60,7 @@ class AsyncMonitor:
                 if len(tasks) % 100 == 0 and len(tasks) > 0:
                     print(f"📈 Current active tasks: {len(tasks)}")
 
-        except KeyboardInterrupt: # TODO: FIX STACK TRACE STILL APPEARING ON CTRL-C
+        except KeyboardInterrupt:  # TODO: FIX STACK TRACE STILL APPEARING ON CTRL-C
             print("\n🛑 Stopping aiomonitor...")
         finally:
             self.monitor.close()
@@ -74,22 +75,21 @@ class AsyncMonitor:
         tasks = asyncio.all_tasks()
 
         summary: Dict[str, Any] = {
-            'total_tasks': len(tasks),
-            'running_tasks': len([t for t in tasks if not t.done()]),
-            'completed_tasks': len([t for t in tasks if t.done()]),
-            'cancelled_tasks': len([t for t in tasks if t.cancelled()]),
-            'task_details': []
+            "total_tasks": len(tasks),
+            "running_tasks": len([t for t in tasks if not t.done()]),
+            "completed_tasks": len([t for t in tasks if t.done()]),
+            "cancelled_tasks": len([t for t in tasks if t.cancelled()]),
+            "task_details": [],
         }
 
         for task in tasks:
             if not task.done():
-                summary['task_details'].append({
-                    'name': getattr(task, '_name', 'unnamed'),
-                    'state': task._state.name if hasattr(task, '_state') else 'unknown',
-                    'coro': str(task._coro) if hasattr(task, '_coro') else 'unknown'
-                })
+                summary["task_details"].append(
+                    {"name": getattr(task, "_name", "unnamed"), "state": task._state.name if hasattr(task, "_state") else "unknown", "coro": str(task._coro) if hasattr(task, "_coro") else "unknown"}
+                )
 
         return summary
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run aiomonitor for live async debugging.")

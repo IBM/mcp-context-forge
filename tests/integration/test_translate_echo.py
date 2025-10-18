@@ -92,7 +92,8 @@ while True:
     # Write script to temp file
     # Standard
     import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(echo_script)
         script_path = f.name
 
@@ -101,6 +102,7 @@ while True:
     # Cleanup
     # Standard
     import os
+
     os.unlink(script_path)
 
 
@@ -113,7 +115,7 @@ async def test_stdio_to_sse_echo_initialize(echo_server, unused_tcp_port):
             cmd=echo_server,
             port=unused_tcp_port,
             host=TEST_HOST,
-            log_level="error"  # Quiet for tests
+            log_level="error",  # Quiet for tests
         )
     )
 
@@ -126,15 +128,15 @@ async def test_stdio_to_sse_echo_initialize(echo_server, unused_tcp_port):
             message_endpoint = None
             received_messages = []
 
-            async with client.stream('GET', f'http://{TEST_HOST}:{unused_tcp_port}/sse') as response:
+            async with client.stream("GET", f"http://{TEST_HOST}:{unused_tcp_port}/sse") as response:
                 line_count = 0
                 async for line in response.aiter_lines():
                     line_count += 1
 
-                    if line.startswith('data: '):
+                    if line.startswith("data: "):
                         data = line[6:]
 
-                        if message_endpoint is None and data.startswith('http'):
+                        if message_endpoint is None and data.startswith("http"):
                             # First data is the endpoint URL
                             message_endpoint = data
 
@@ -143,30 +145,20 @@ async def test_stdio_to_sse_echo_initialize(echo_server, unused_tcp_port):
                                 "jsonrpc": "2.0",
                                 "id": 1,
                                 "method": "initialize",
-                                "params": {
-                                    "protocolVersion": "2025-03-26",
-                                    "capabilities": {},
-                                    "clientInfo": {
-                                        "name": "test-client",
-                                        "version": "1.0.0"
-                                    }
-                                }
+                                "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}},
                             }
 
-                            post_response = await client.post(
-                                message_endpoint,
-                                json=init_request
-                            )
+                            post_response = await client.post(message_endpoint, json=init_request)
                             assert post_response.status_code == 202
 
-                        elif data != '{}':  # Skip keepalive
+                        elif data != "{}":  # Skip keepalive
                             try:
                                 msg = json.loads(data)
                                 received_messages.append(msg)
 
                                 # Check if we got the initialize response
-                                if msg.get('id') == 1:
-                                    assert msg['result']['protocolVersion'] == '2025-03-26'
+                                if msg.get("id") == 1:
+                                    assert msg["result"]["protocolVersion"] == "2025-03-26"
                                     break
                             except json.JSONDecodeError:
                                 pass
@@ -177,7 +169,7 @@ async def test_stdio_to_sse_echo_initialize(echo_server, unused_tcp_port):
 
             assert message_endpoint is not None
             assert len(received_messages) > 0
-            assert received_messages[0]['id'] == 1
+            assert received_messages[0]["id"] == 1
 
     finally:
         # Cancel server task
@@ -208,7 +200,7 @@ async def test_stdio_to_sse_multiple_clients(unused_tcp_port):
     # Get SSE handler
     sse_handler = None
     for route in app.routes:
-        if hasattr(route, 'path') and hasattr(route, 'endpoint') and route.path == '/sse':
+        if hasattr(route, "path") and hasattr(route, "endpoint") and route.path == "/sse":
             sse_handler = route.endpoint
             break
 
@@ -262,7 +254,7 @@ async def test_message_endpoint_validation():
     # Get message handler
     message_handler = None
     for route in app.routes:
-        if hasattr(route, 'path') and hasattr(route, 'endpoint') and route.path == '/message':
+        if hasattr(route, "path") and hasattr(route, "endpoint") and route.path == "/message":
             message_handler = route.endpoint
             break
 
@@ -277,7 +269,7 @@ async def test_message_endpoint_validation():
             return self._body
 
     # Invalid JSON should return 400
-    invalid_req = MockRequest(b'not json')
+    invalid_req = MockRequest(b"not json")
     response = await message_handler(invalid_req, session_id="test")
     assert response.status_code == 400
     assert "Invalid JSON" in response.body.decode()
@@ -289,9 +281,10 @@ async def test_message_endpoint_validation():
     async def mock_send(x):
         pass
 
-    with contextlib.redirect_stdout(open(os.devnull, 'w')):
+    with contextlib.redirect_stdout(open(os.devnull, "w")):
         response = await message_handler(valid_req, session_id="test")
         assert response.status_code == 202
+
 
 @pytest.mark.asyncio
 async def test_keepalive_events():
@@ -314,7 +307,7 @@ async def test_keepalive_events():
     # Get SSE handler
     sse_handler = None
     for route in app.routes:
-        if hasattr(route, 'path') and hasattr(route, 'endpoint') and getattr(route, 'path', None) == '/sse':
+        if hasattr(route, "path") and hasattr(route, "endpoint") and getattr(route, "path", None) == "/sse":
             sse_handler = route.endpoint
             break
     assert sse_handler is not None
@@ -329,9 +322,9 @@ async def test_keepalive_events():
             break
 
     # Should have endpoint and keepalive events
-    event_types = [e.get('event') for e in events if isinstance(e, dict)]
-    assert 'endpoint' in event_types
-    assert 'keepalive' in event_types
+    event_types = [e.get("event") for e in events if isinstance(e, dict)]
+    assert "endpoint" in event_types
+    assert "keepalive" in event_types
 
 
 @pytest.mark.asyncio
@@ -354,15 +347,10 @@ async def test_custom_paths():
     pubsub = _PubSub()
     stdio = StdIOEndpoint("cat", pubsub)
 
-    app = _build_fastapi(
-        pubsub,
-        stdio,
-        sse_path="/custom/events",
-        message_path="/custom/send"
-    )
+    app = _build_fastapi(pubsub, stdio, sse_path="/custom/events", message_path="/custom/send")
 
     # Check custom routes exist
-    routes = [r.path for r in app.routes if hasattr(r, 'path')]
+    routes = [r.path for r in app.routes if hasattr(r, "path")]
     assert "/custom/events" in routes
     assert "/custom/send" in routes
     assert "/healthz" in routes  # Health check should still be at default
@@ -390,7 +378,7 @@ async def test_session_id_tracking():
     # Get SSE handler
     sse_handler = None
     for route in app.routes:
-        if hasattr(route, 'path') and hasattr(route, 'endpoint') and getattr(route, 'path', None) == '/sse':
+        if hasattr(route, "path") and hasattr(route, "endpoint") and getattr(route, "path", None) == "/sse":
             sse_handler = route.endpoint
             break
     assert sse_handler is not None
@@ -406,12 +394,12 @@ async def test_session_id_tracking():
             break
 
     # Verify endpoint event contains session_id
-    assert events[0]['event'] == 'endpoint'
-    endpoint_url = events[0]['data']
-    assert 'session_id=' in endpoint_url
+    assert events[0]["event"] == "endpoint"
+    endpoint_url = events[0]["data"]
+    assert "session_id=" in endpoint_url
 
     # Extract session ID
-    session_id = endpoint_url.split('session_id=')[1]
+    session_id = endpoint_url.split("session_id=")[1]
     assert len(session_id) == 32  # UUID hex is 32 chars
 
 
@@ -437,8 +425,7 @@ async def test_concurrent_requests():
             return self._returncode
 
     class MockStdio:
-
-        def __init__(self)-> None:
+        def __init__(self) -> None:
             self._proc: MockProc | None = None
 
         async def send(self, msg):
@@ -462,7 +449,7 @@ async def test_concurrent_requests():
     # Get message handler
     message_handler = None
     for route in app.routes:
-        if hasattr(route, 'path') and hasattr(route, 'endpoint') and getattr(route, 'path', None) == '/message':
+        if hasattr(route, "path") and hasattr(route, "endpoint") and getattr(route, "path", None) == "/message":
             message_handler = route.endpoint
             break
     assert message_handler is not None
@@ -474,11 +461,10 @@ async def test_concurrent_requests():
         def create_body_func(idx: int) -> Callable[[Any], Coroutine[Any, Any, bytes]]:
             async def body(self: Any) -> bytes:
                 return json.dumps({"id": idx}).encode()
+
             return body
 
-        req = type('Request', (), {
-            'body': create_body_func(i)
-        })()
+        req = type("Request", (), {"body": create_body_func(i)})()
         requests.append(message_handler(req, session_id=f"session_{i}"))
 
     # Execute all requests concurrently
@@ -489,7 +475,7 @@ async def test_concurrent_requests():
     assert len(sent_messages) == 10
 
     # Verify all messages were sent
-    sent_ids = [json.loads(msg.strip())['id'] for msg in sent_messages]
+    sent_ids = [json.loads(msg.strip())["id"] for msg in sent_messages]
     assert set(sent_ids) == set(range(10))
 
 
@@ -511,6 +497,7 @@ async def test_subprocess_termination():
     # Process should be terminated (either returncode is set or proc is None)
     assert stdio._proc is None or stdio._proc.returncode is not None
 
+
 @pytest.mark.asyncio
 async def test_large_message_handling():
     """Test handling of large JSON-RPC messages."""
@@ -518,11 +505,7 @@ async def test_large_message_handling():
 
     # Create a large message
     large_data = "x" * 10000  # 10KB of data
-    large_message = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {"data": large_data}
-    })
+    large_message = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"data": large_data}})
 
     # Publish to subscribers
     q1 = pubsub.subscribe()

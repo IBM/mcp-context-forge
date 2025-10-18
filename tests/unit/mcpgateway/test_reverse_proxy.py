@@ -10,9 +10,7 @@ Unit tests for the MCP reverse proxy module.
 # Standard
 import asyncio
 import json
-import os
 import signal
-import sys
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
@@ -184,7 +182,7 @@ class TestStdioProcess:
             mock_process.stdout.readline.side_effect = [
                 b'{"test": "message1"}\n',
                 b'{"test": "message2"}\n',
-                b'',  # EOF
+                b"",  # EOF
             ]
 
             handler = AsyncMock()
@@ -197,10 +195,7 @@ class TestStdioProcess:
 
             # Verify handler was called with messages
             assert handler.call_count == 2
-            handler.assert_has_calls([
-                call('{"test": "message1"}'),
-                call('{"test": "message2"}')
-            ])
+            handler.assert_has_calls([call('{"test": "message1"}'), call('{"test": "message2"}')])
 
     @pytest.mark.asyncio
     async def test_read_stdout_handler_error(self):
@@ -213,7 +208,7 @@ class TestStdioProcess:
 
             mock_process.stdout.readline.side_effect = [
                 b'{"test": "message"}\n',
-                b'',  # EOF
+                b"",  # EOF
             ]
 
             # Handler that raises exception
@@ -273,10 +268,7 @@ class TestReverseProxyClient:
 
     def test_init_defaults(self):
         """Test initialization with default values."""
-        client = ReverseProxyClient(
-            gateway_url="wss://example.com",
-            local_command="echo test"
-        )
+        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test")
         assert client.token is None
         assert client.reconnect_delay == DEFAULT_RECONNECT_DELAY
         assert client.max_retries == DEFAULT_MAX_RETRIES
@@ -287,14 +279,7 @@ class TestReverseProxyClient:
 
     def test_init_custom_values(self):
         """Test initialization with custom values."""
-        client = ReverseProxyClient(
-            gateway_url="wss://example.com",
-            local_command="echo test",
-            token="custom-token",
-            reconnect_delay=5.0,
-            max_retries=10,
-            keepalive_interval=60
-        )
+        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test", token="custom-token", reconnect_delay=5.0, max_retries=10, keepalive_interval=60)
         assert client.token == "custom-token"
         assert client.reconnect_delay == 5.0
         assert client.max_retries == 10
@@ -434,7 +419,7 @@ class TestReverseProxyClient:
         """Test handling invalid JSON from stdio."""
         self.client.connection = AsyncMock()
 
-        message = 'invalid json'
+        message = "invalid json"
         await self.client._handle_stdio_message(message)
 
         # Should not send anything to gateway
@@ -444,10 +429,7 @@ class TestReverseProxyClient:
     async def test_handle_gateway_message_request(self):
         """Test handling request from gateway."""
         with patch.object(self.client.stdio_process, "send", AsyncMock()) as mock_send:
-            message = json.dumps({
-                "type": MessageType.REQUEST.value,
-                "payload": {"jsonrpc": "2.0", "id": 1, "method": "test"}
-            })
+            message = json.dumps({"type": MessageType.REQUEST.value, "payload": {"jsonrpc": "2.0", "id": 1, "method": "test"}})
 
             await self.client._handle_gateway_message(message)
 
@@ -471,10 +453,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_handle_gateway_message_error(self):
         """Test handling error message from gateway."""
-        message = json.dumps({
-            "type": MessageType.ERROR.value,
-            "message": "Test error"
-        })
+        message = json.dumps({"type": MessageType.ERROR.value, "message": "Test error"})
 
         await self.client._handle_gateway_message(message)
         # Should log error but not crash
@@ -497,10 +476,7 @@ class TestReverseProxyClient:
     async def test_receive_websocket_messages(self):
         """Test receiving messages from WebSocket."""
         mock_connection = AsyncMock()
-        mock_connection.__aiter__.return_value = [
-            '{"type": "heartbeat"}',
-            '{"type": "request", "payload": {"method": "test"}}'
-        ]
+        mock_connection.__aiter__.return_value = ['{"type": "heartbeat"}', '{"type": "request", "payload": {"method": "test"}}']
         self.client.connection = mock_connection
 
         with patch.object(self.client, "_handle_gateway_message", AsyncMock()) as mock_handle:
@@ -517,6 +493,7 @@ class TestReverseProxyClient:
         try:
             # Third-Party
             from websockets.exceptions import ConnectionClosed
+
             mock_connection.__aiter__.side_effect = ConnectionClosed(None, None)
         except ImportError:
             # If websockets not available, use generic exception
@@ -721,15 +698,24 @@ class TestParseArgs:
 
     def test_parse_all_args(self):
         """Test parsing all arguments."""
-        args = parse_args([
-            "--local-stdio", "uvx mcp-server-git",
-            "--gateway", "wss://gateway.example.com",
-            "--token", "secret-token",
-            "--reconnect-delay", "2.0",
-            "--max-retries", "5",
-            "--keepalive", "60",
-            "--log-level", "DEBUG",
-        ])
+        args = parse_args(
+            [
+                "--local-stdio",
+                "uvx mcp-server-git",
+                "--gateway",
+                "wss://gateway.example.com",
+                "--token",
+                "secret-token",
+                "--reconnect-delay",
+                "2.0",
+                "--max-retries",
+                "5",
+                "--keepalive",
+                "60",
+                "--log-level",
+                "DEBUG",
+            ]
+        )
 
         assert args.local_stdio == "uvx mcp-server-git"
         assert args.gateway == "wss://gateway.example.com"
@@ -755,18 +741,11 @@ reconnect_delay: 3.0
 
         with patch("builtins.open", mock_open(read_data=config_content)):
             with patch("mcpgateway.reverse_proxy.yaml") as mock_yaml:
-                mock_yaml.safe_load.return_value = {
-                    "gateway": "https://config.example.com",
-                    "token": "config-token",
-                    "reconnect_delay": 3.0
-                }
+                mock_yaml.safe_load.return_value = {"gateway": "https://config.example.com", "token": "config-token", "reconnect_delay": 3.0}
 
                 # Need to provide gateway in environment since config loading happens after validation
                 with patch.dict("os.environ", {"REVERSE_PROXY_GATEWAY": "https://config.example.com"}):
-                    args = parse_args([
-                        "--local-stdio", "echo test",
-                        "--config", "config.yaml"
-                    ])
+                    args = parse_args(["--local-stdio", "echo test", "--config", "config.yaml"])
 
                 assert args.gateway == "https://config.example.com"
                 assert args.token == "config-token"
@@ -779,17 +758,11 @@ reconnect_delay: 3.0
 
         with patch("builtins.open", mock_open(read_data=config_content)):
             with patch("json.load") as mock_json:
-                mock_json.return_value = {
-                    "gateway": "https://config.example.com",
-                    "token": "config-token"
-                }
+                mock_json.return_value = {"gateway": "https://config.example.com", "token": "config-token"}
 
                 # Need to provide gateway in environment since config loading happens after validation
                 with patch.dict("os.environ", {"REVERSE_PROXY_GATEWAY": "https://config.example.com"}):
-                    args = parse_args([
-                        "--local-stdio", "echo test",
-                        "--config", "config.json"
-                    ])
+                    args = parse_args(["--local-stdio", "echo test", "--config", "config.json"])
 
                 assert args.gateway == "https://config.example.com"
                 assert args.token == "config-token"
@@ -798,25 +771,15 @@ reconnect_delay: 3.0
         """Test config file parsing when PyYAML not available."""
         with patch("mcpgateway.reverse_proxy.yaml", None):
             with pytest.raises(SystemExit):
-                parse_args([
-                    "--local-stdio", "echo test",
-                    "--config", "config.yaml"
-                ])
+                parse_args(["--local-stdio", "echo test", "--config", "config.yaml"])
 
     def test_parse_command_line_overrides_config(self):
         """Test command line arguments override config file."""
         with patch("builtins.open", mock_open()):
             with patch("mcpgateway.reverse_proxy.yaml") as mock_yaml:
-                mock_yaml.safe_load.return_value = {
-                    "gateway": "https://config.example.com",
-                    "token": "config-token"
-                }
+                mock_yaml.safe_load.return_value = {"gateway": "https://config.example.com", "token": "config-token"}
 
-                args = parse_args([
-                    "--local-stdio", "echo test",
-                    "--gateway", "https://cli.example.com",
-                    "--config", "config.yaml"
-                ])
+                args = parse_args(["--local-stdio", "echo test", "--gateway", "https://cli.example.com", "--config", "config.yaml"])
 
                 # CLI should override config
                 assert args.gateway == "https://cli.example.com"
@@ -830,22 +793,13 @@ reconnect_delay: 3.0
 
     def test_token_from_env(self):
         """Test reading token from environment."""
-        with patch.dict("os.environ", {
-            ENV_GATEWAY: "https://gateway.example.com",
-            ENV_TOKEN: "env-token"
-        }):
+        with patch.dict("os.environ", {ENV_GATEWAY: "https://gateway.example.com", ENV_TOKEN: "env-token"}):
             args = parse_args(["--local-stdio", "echo test"])
             assert args.token == "env-token"
 
     def test_env_variables(self):
         """Test reading various environment variables."""
-        with patch.dict("os.environ", {
-            ENV_GATEWAY: "https://gateway.example.com",
-            ENV_TOKEN: "env-token",
-            ENV_RECONNECT_DELAY: "5.0",
-            ENV_MAX_RETRIES: "10",
-            ENV_LOG_LEVEL: "WARNING"
-        }):
+        with patch.dict("os.environ", {ENV_GATEWAY: "https://gateway.example.com", ENV_TOKEN: "env-token", ENV_RECONNECT_DELAY: "5.0", ENV_MAX_RETRIES: "10", ENV_LOG_LEVEL: "WARNING"}):
             # Environment variables don't override command line args in current implementation
             # This test documents the current behavior
             args = parse_args(["--local-stdio", "echo test"])
@@ -988,4 +942,5 @@ def mock_open(read_data=""):
     """Create a mock for open() that returns read_data."""
     # Standard
     from unittest.mock import mock_open as _mock_open
+
     return _mock_open(read_data=read_data)

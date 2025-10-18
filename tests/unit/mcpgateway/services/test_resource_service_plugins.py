@@ -21,7 +21,6 @@ from mcpgateway.services.resource_service import ResourceNotFoundError, Resource
 from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError
 
 
-
 class TestResourceServicePluginIntegration:
     """Test ResourceService integration with plugin framework."""
 
@@ -130,14 +129,10 @@ class TestResourceServicePluginIntegration:
 
         # Setup pre-fetch hook to block
         mock_manager.resource_pre_fetch = AsyncMock(
-                side_effect=PluginViolationError(message="Protocol not allowed",
-                    violation=PluginViolation(
-                        reason="Protocol not allowed",
-                        code="PROTOCOL_BLOCKED",
-                        description="file:// protocol is blocked",
-                        details={"protocol": "file", "uri": "file:///etc/passwd"}
-                    ),
-                ),
+            side_effect=PluginViolationError(
+                message="Protocol not allowed",
+                violation=PluginViolation(reason="Protocol not allowed", code="PROTOCOL_BLOCKED", description="file:// protocol is blocked", details={"protocol": "file", "uri": "file:///etc/passwd"}),
+            ),
         )
 
         with pytest.raises(PluginViolationError) as exc_info:
@@ -291,13 +286,15 @@ class TestResourceServicePluginIntegration:
 
         # Setup post-fetch hook to block
         mock_manager.resource_post_fetch = AsyncMock(
-            side_effect=PluginViolationError(message="Content contains sensitive data",
-                                             violation=PluginViolation(
-                        reason="Content contains sensitive data",
-                        description="The resource content was flagged as containing sensitive information",
-                        code="SENSITIVE_CONTENT",
-                        details={"uri": "test://resource"}
-                        ))
+            side_effect=PluginViolationError(
+                message="Content contains sensitive data",
+                violation=PluginViolation(
+                    reason="Content contains sensitive data",
+                    description="The resource content was flagged as containing sensitive information",
+                    code="SENSITIVE_CONTENT",
+                    details={"uri": "test://resource"},
+                ),
+            )
         )
 
         with pytest.raises(PluginViolationError) as exc_info:
@@ -333,9 +330,7 @@ class TestResourceServicePluginIntegration:
         mock_post_result.continue_processing = True
         mock_post_result.modified_payload = None
 
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(mock_post_result, None)
-        )
+        mock_manager.resource_post_fetch = AsyncMock(return_value=(mock_post_result, None))
 
         result = await service.read_resource(mock_db, "test://123/data")
 
@@ -429,12 +424,8 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
 
         # Setup hooks
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(MagicMock(continue_processing=True), None)
-        )
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(MagicMock(continue_processing=True), None)
-        )
+        mock_manager.resource_pre_fetch = AsyncMock(return_value=(MagicMock(continue_processing=True), None))
+        mock_manager.resource_post_fetch = AsyncMock(return_value=(MagicMock(continue_processing=True), None))
 
         await service.read_resource(mock_db, "test://resource")
 

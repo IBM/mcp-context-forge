@@ -1044,7 +1044,23 @@ def test_main_function_not_implemented_error(monkeypatch, translate, capsys):
 def test_main_unknown_args(monkeypatch, translate, capsys):
     """Test main() function with no valid transport arguments."""
     monkeypatch.setattr(
-        translate, "_parse_args", lambda argv: type("Args", (), {"stdio": None, "connect_sse": None, "connect_streamable_http": None, "expose_sse": False, "expose_streamable_http": False, "logLevel": "info", "cors": None, "oauth2Bearer": None, "port": 8000})()
+        translate,
+        "_parse_args",
+        lambda argv: type(
+            "Args",
+            (),
+            {
+                "stdio": None,
+                "connect_sse": None,
+                "connect_streamable_http": None,
+                "expose_sse": False,
+                "expose_streamable_http": False,
+                "logLevel": "info",
+                "cors": None,
+                "oauth2Bearer": None,
+                "port": 8000,
+            },
+        )(),
     )
     # Should exit with error when no transport is specified
     with pytest.raises(SystemExit) as exc_info:
@@ -1164,9 +1180,7 @@ async def test_stdio_endpoint_send_not_started(translate):
 
 def test_sse_event_init(translate):
     """Test SSEEvent initialization."""
-    event = translate.SSEEvent(
-        event="custom", data="test data", event_id="123", retry=5000
-    )
+    event = translate.SSEEvent(event="custom", data="test data", event_id="123", retry=5000)
     assert event.event == "custom"
     assert event.data == "test data"
     assert event.event_id == "123"
@@ -1399,18 +1413,20 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
     # Mock the import path for CORS middleware
     # Standard
     import types
-    cors_module = types.ModuleType('cors')
+
+    cors_module = types.ModuleType("cors")
     cors_module.CORSMiddleware = MockCORSMiddleware
-    middleware_module = types.ModuleType('middleware')
+    middleware_module = types.ModuleType("middleware")
     middleware_module.cors = cors_module
-    starlette_module = types.ModuleType('starlette')
+    starlette_module = types.ModuleType("starlette")
     starlette_module.middleware = middleware_module
 
     # Standard
     import sys
-    sys.modules['starlette'] = starlette_module
-    sys.modules['starlette.middleware'] = middleware_module
-    sys.modules['starlette.middleware.cors'] = cors_module
+
+    sys.modules["starlette"] = starlette_module
+    sys.modules["starlette.middleware"] = middleware_module
+    sys.modules["starlette.middleware.cors"] = cors_module
 
     class MockTask:
         def cancel(self):
@@ -1427,15 +1443,19 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
     # Mock other required components
     async def mock_subprocess(*a, **k):
         return MockProcess()
+
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", mock_subprocess)
     monkeypatch.setattr(translate, "MCPServer", lambda name: None)
     monkeypatch.setattr(translate, "StreamableHTTPSessionManager", lambda **k: None)
     monkeypatch.setattr(translate, "Route", lambda path, handler, methods=None: None)
     monkeypatch.setattr(translate, "Starlette", MockStarlette)
+
     async def mock_serve():
         return None
+
     async def mock_shutdown():
         return None
+
     monkeypatch.setattr(translate.uvicorn, "Server", lambda config: types.SimpleNamespace(serve=mock_serve, shutdown=mock_shutdown))
     monkeypatch.setattr(translate.uvicorn, "Config", lambda *a, **k: None)
     monkeypatch.setattr(
@@ -1447,17 +1467,15 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
 
     try:
         # Test with CORS
-        await translate._run_stdio_to_streamable_http(
-            "echo test", 8000, "info", cors=["http://example.com"]
-        )
+        await translate._run_stdio_to_streamable_http("echo test", 8000, "info", cors=["http://example.com"])
 
         # Verify CORS middleware was added (using our Mock class name)
         assert "add_middleware_MockCORSMiddleware" in calls
     finally:
         # Clean up sys.modules to avoid affecting other tests
-        sys.modules.pop('starlette', None)
-        sys.modules.pop('starlette.middleware', None)
-        sys.modules.pop('starlette.middleware.cors', None)
+        sys.modules.pop("starlette", None)
+        sys.modules.pop("starlette.middleware", None)
+        sys.modules.pop("starlette.middleware.cors", None)
 
 
 def test_main_module_name_check(translate, capsys):
@@ -1478,7 +1496,7 @@ async def test_sse_event_generator_keepalive_flow(monkeypatch, translate):
     stdio = Mock()
 
     # Test with keepalive enabled
-    monkeypatch.setattr(translate, 'DEFAULT_KEEPALIVE_ENABLED', True)
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", True)
 
     app = translate._build_fastapi(ps, stdio, keep_alive=1)
 
@@ -1510,26 +1528,20 @@ async def test_sse_event_generator_keepalive_flow(monkeypatch, translate):
 
 def test_parse_args_custom_paths(translate):
     """Test parse_args with custom SSE and message paths."""
-    args = translate._parse_args(
-        ["--stdio", "cmd", "--port", "8080", "--ssePath", "/custom/sse", "--messagePath", "/custom/message"]
-    )
+    args = translate._parse_args(["--stdio", "cmd", "--port", "8080", "--ssePath", "/custom/sse", "--messagePath", "/custom/message"])
     assert args.ssePath == "/custom/sse"
     assert args.messagePath == "/custom/message"
 
 
 def test_parse_args_custom_keep_alive(translate):
     """Test parse_args with custom keep-alive interval."""
-    args = translate._parse_args(
-        ["--stdio", "cmd", "--port", "8080", "--keepAlive", "60"]
-    )
+    args = translate._parse_args(["--stdio", "cmd", "--port", "8080", "--keepAlive", "60"])
     assert args.keepAlive == 60
 
 
 def test_parse_args_sse_with_stdio_command(translate):
     """Test parse_args for SSE mode with stdio command."""
-    args = translate._parse_args(
-        ["--sse", "http://example.com/sse", "--stdioCommand", "python script.py"]
-    )
+    args = translate._parse_args(["--sse", "http://example.com/sse", "--stdioCommand", "python script.py"])
     assert args.stdioCommand == "python script.py"
 
 
@@ -1538,6 +1550,7 @@ async def test_run_sse_to_stdio_with_stdio_command(monkeypatch, translate):
     """Test _run_sse_to_stdio with stdio command for full coverage."""
     # Third-Party
     import httpx as real_httpx
+
     setattr(translate, "httpx", real_httpx)
 
     # Mock subprocess creation - make the stdout reader that will immediately return EOF
@@ -1576,6 +1589,7 @@ async def test_run_sse_to_stdio_with_stdio_command(monkeypatch, translate):
             class MockResponse:
                 status_code = 202
                 text = "accepted"
+
             return MockResponse()
 
         def stream(self, method, url):
@@ -1586,13 +1600,7 @@ async def test_run_sse_to_stdio_with_stdio_command(monkeypatch, translate):
 
     # Run with single retry to test error handling
     try:
-        await translate._run_sse_to_stdio(
-            "http://test/sse",
-            None,
-            stdio_command="echo test",
-            max_retries=1,
-            timeout=1.0
-        )
+        await translate._run_sse_to_stdio("http://test/sse", None, stdio_command="echo test", max_retries=1, timeout=1.0)
     except Exception as e:
         # Expected to fail due to ConnectError
         assert "Connection failed" in str(e) or "Max retries" in str(e)
@@ -1603,6 +1611,7 @@ async def test_simple_sse_pump_error_handling(monkeypatch, translate):
     """Test _simple_sse_pump error handling and retry logic."""
     # Third-Party
     import httpx as real_httpx
+
     setattr(translate, "httpx", real_httpx)
 
     class MockClient:
@@ -1618,15 +1627,19 @@ async def test_simple_sse_pump_error_handling(monkeypatch, translate):
                 # Second attempt succeeds but then fails with ReadError
                 class MockResponse:
                     status_code = 200
+
                     async def __aenter__(self):
                         return self
+
                     async def __aexit__(self, *args):
                         pass
+
                     async def aiter_lines(self):
                         yield "event: message"
                         yield "data: test"
                         yield ""
                         raise real_httpx.ReadError("Stream ended")
+
                 return MockResponse()
 
     client = MockClient()
@@ -1689,9 +1702,9 @@ def test_config_import_fallback(monkeypatch, translate):
     # This tests the ImportError handling in lines 94-97
 
     # Mock the settings import to fail
-    original_settings = getattr(translate, 'settings', None)
-    monkeypatch.setattr(translate, 'DEFAULT_KEEP_ALIVE_INTERVAL', 30)
-    monkeypatch.setattr(translate, 'DEFAULT_KEEPALIVE_ENABLED', True)
+    original_settings = getattr(translate, "settings", None)
+    monkeypatch.setattr(translate, "DEFAULT_KEEP_ALIVE_INTERVAL", 30)
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", True)
 
     # Verify the fallback values are used
     assert translate.DEFAULT_KEEP_ALIVE_INTERVAL == 30
@@ -1714,7 +1727,7 @@ async def test_sse_event_generator_keepalive_disabled(monkeypatch, translate):
     stdio = Mock()
 
     # Disable keepalive
-    monkeypatch.setattr(translate, 'DEFAULT_KEEPALIVE_ENABLED', False)
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", False)
 
     app = translate._build_fastapi(ps, stdio, keep_alive=30)
 
@@ -1754,6 +1767,7 @@ async def test_runtime_errors_in_stdio_endpoint(monkeypatch, translate):
             stdin = None  # Missing stdin should trigger RuntimeError
             stdout = None
             pid = 1234
+
         return BadProcess()
 
     monkeypatch.setattr(translate.asyncio, "create_subprocess_exec", failing_exec)
@@ -1769,6 +1783,7 @@ async def test_sse_to_stdio_http_status_error(monkeypatch, translate):
     """Test SSE to stdio handling of HTTP status errors."""
     # Third-Party
     import httpx as real_httpx
+
     setattr(translate, "httpx", real_httpx)
 
     class MockClient:
@@ -1814,7 +1829,7 @@ async def test_sse_event_generator_full_flow(monkeypatch, translate):
     stdio = Mock()
 
     # Enable keepalive for this test
-    monkeypatch.setattr(translate, 'DEFAULT_KEEPALIVE_ENABLED', True)
+    monkeypatch.setattr(translate, "DEFAULT_KEEPALIVE_ENABLED", True)
 
     app = translate._build_fastapi(ps, stdio, keep_alive=1)  # Short keepalive interval
 
@@ -1893,6 +1908,7 @@ async def test_read_stdout_message_endpoint_error(monkeypatch, translate):
     """Test read_stdout when message endpoint POST fails."""
     # Third-Party
     import httpx as real_httpx
+
     setattr(translate, "httpx", real_httpx)
 
     # Mock subprocess with output
@@ -1931,6 +1947,7 @@ async def test_read_stdout_message_endpoint_error(monkeypatch, translate):
             class MockResponse:
                 status_code = 500
                 text = "Internal Server Error"
+
             return MockResponse()
 
         def stream(self, method, url):
@@ -1958,12 +1975,7 @@ async def test_read_stdout_message_endpoint_error(monkeypatch, translate):
 
     # This will test the POST error handling path in read_stdout
     try:
-        await translate._run_sse_to_stdio(
-            "http://test/sse",
-            None,
-            stdio_command="echo test",
-            max_retries=1
-        )
+        await translate._run_sse_to_stdio("http://test/sse", None, stdio_command="echo test", max_retries=1)
     except Exception:
         pass  # Expected to fail
 
@@ -2024,6 +2036,7 @@ async def test_run_streamable_http_to_stdio_simple_mode(monkeypatch, translate):
     """Test _run_streamable_http_to_stdio in simple mode (no stdio command)."""
     # Third-Party
     import httpx as real_httpx
+
     setattr(translate, "httpx", real_httpx)
 
     # Mock simple pump function as async
@@ -2056,6 +2069,7 @@ async def test_simple_streamable_http_pump_basic(monkeypatch, translate):
     """Test _simple_streamable_http_pump basic functionality."""
     # Third-Party
     import httpx as real_httpx
+
     setattr(translate, "httpx", real_httpx)
 
     # Capture printed output
@@ -2126,12 +2140,14 @@ async def test_multi_protocol_server_basic(monkeypatch, translate):
             def decorator(func):
                 calls.append(f"get_{path}")
                 return func
+
             return decorator
 
         def post(self, path, **kwargs):
             def decorator(func):
                 calls.append(f"post_{path}")
                 return func
+
             return decorator
 
     class MockServer:
@@ -2161,10 +2177,7 @@ async def test_multi_protocol_server_basic(monkeypatch, translate):
     )
 
     # Test with SSE exposed
-    await translate._run_multi_protocol_server(
-        "test_cmd", 8000, "info", None, "127.0.0.1",
-        expose_sse=True, expose_streamable_http=False
-    )
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=True, expose_streamable_http=False)
 
     # Verify key components were initialized and started
     assert "stdio_init" in calls
@@ -2202,12 +2215,14 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
             def decorator(func):
                 calls.append(f"get_{path}")
                 return func
+
             return decorator
 
         def post(self, path, **kwargs):
             def decorator(func):
                 calls.append(f"post_{path}")
                 return func
+
             return decorator
 
         async def __call__(self, *args, **kwargs):
@@ -2227,8 +2242,10 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
                 async def __aenter__(self):
                     calls.append("context_enter")
                     return self
+
                 async def __aexit__(self, *args):
                     calls.append("context_exit")
+
             return MockContext()
 
     class MockServer:
@@ -2254,11 +2271,7 @@ async def test_multi_protocol_server_with_streamable_http(monkeypatch, translate
     )
 
     # Test with both SSE and streamable HTTP
-    await translate._run_multi_protocol_server(
-        "test_cmd", 8000, "info", None, "127.0.0.1",
-        expose_sse=True, expose_streamable_http=True,
-        stateless=True, json_response=True
-    )
+    await translate._run_multi_protocol_server("test_cmd", 8000, "info", None, "127.0.0.1", expose_sse=True, expose_streamable_http=True, stateless=True, json_response=True)
 
     # Verify streamable components were set up
     assert "mcp_server_init" in calls

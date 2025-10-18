@@ -523,7 +523,12 @@ Respond with JSON format:
                     break
 
         return ModerationResult(
-            flagged=flagged, categories=categories, action=action, provider=ModerationProvider.IBM_WATSON, confidence=max_score, details={"method": "pattern_matching"}  # Default fallback
+            flagged=flagged,
+            categories=categories,
+            action=action,
+            provider=ModerationProvider.IBM_WATSON,
+            confidence=max_score,
+            details={"method": "pattern_matching"},  # Default fallback
         )
 
     async def _extract_text_content(self, payload: Any) -> List[str]:
@@ -554,9 +559,7 @@ Respond with JSON format:
                 result = await self._moderate_content(text)
 
                 if self._cfg.audit_decisions:
-                    logger.info(
-                        f"Content moderation - Prompt: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
-                    )
+                    logger.info(f"Content moderation - Prompt: {payload.name}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}, Confidence: {result.confidence:.2f}")
 
                 if result.action == ModerationAction.BLOCK:
                     return PromptPrehookResult(
@@ -598,7 +601,7 @@ Respond with JSON format:
                 result = await self._moderate_content(text)
 
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}")
+                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}")
 
                 if result.action == ModerationAction.BLOCK:
                     return ToolPreInvokeResult(

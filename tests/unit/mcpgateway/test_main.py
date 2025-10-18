@@ -179,12 +179,13 @@ def test_client(app):
     from mcpgateway.db import EmailUser
     from mcpgateway.main import require_auth
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
     mock_user = EmailUser(
         email="test_user@example.com",
         full_name="Test User",
         is_admin=True,  # Give admin privileges for tests
         is_active=True,
-        auth_provider="test"
+        auth_provider="test",
     )
 
     # Override old auth system
@@ -192,13 +193,12 @@ def test_client(app):
 
     # Patch the auth function used by DocsAuthMiddleware
     # Standard
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     # Third-Party
     from fastapi import HTTPException, status
 
     # First-Party
-    from mcpgateway.utils.verify_credentials import require_auth_override
 
     # Create a mock that validates JWT tokens properly
     async def mock_require_auth_override(auth_header=None, jwt_token=None):
@@ -229,24 +229,19 @@ def test_client(app):
         except jwt_lib.InvalidTokenError:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    patcher = patch('mcpgateway.main.require_docs_auth_override', mock_require_auth_override)
+    patcher = patch("mcpgateway.main.require_docs_auth_override", mock_require_auth_override)
     patcher.start()
 
     # Override the core auth function used by RBAC system
     # First-Party
     from mcpgateway.auth import get_current_user
+
     app.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
 
     # Override get_current_user_with_permissions for RBAC system
     def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
-        return {
-            "email": "test_user@example.com",
-            "full_name": "Test User",
-            "is_admin": True,
-            "ip_address": "127.0.0.1",
-            "user_agent": "test",
-            "db": db
-        }
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "db": db}
+
     app.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
     # Mock the permission service to always return True for tests
@@ -254,20 +249,11 @@ def test_client(app):
     from mcpgateway.services.permission_service import PermissionService
 
     # Store original method
-    if not hasattr(PermissionService, '_original_check_permission'):
+    if not hasattr(PermissionService, "_original_check_permission"):
         PermissionService._original_check_permission = PermissionService.check_permission
 
     # Mock with correct async signature matching the real method
-    async def mock_check_permission(
-        self,
-        user_email: str,
-        permission: str,
-        resource_type=None,
-        resource_id=None,
-        team_id=None,
-        ip_address=None,
-        user_agent=None
-    ) -> bool:
+    async def mock_check_permission(self, user_email: str, permission: str, resource_type=None, resource_id=None, team_id=None, ip_address=None, user_agent=None) -> bool:
         return True
 
     PermissionService.check_permission = mock_check_permission
@@ -280,19 +266,14 @@ def test_client(app):
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_with_permissions, None)
     patcher.stop()  # Stop the require_auth_override patch
-    if hasattr(PermissionService, '_original_check_permission'):
+    if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
 
 
 @pytest.fixture
 def mock_jwt_token():
     """Create a valid JWT token for testing."""
-    payload = {
-        "sub": "test_user@example.com",
-        "email": "test_user@example.com",
-        "iss": "mcpgateway",
-        "aud": "mcpgateway-api"
-    }
+    payload = {"sub": "test_user@example.com", "email": "test_user@example.com", "iss": "mcpgateway", "aud": "mcpgateway-api"}
     secret = settings.jwt_secret_key
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
@@ -500,11 +481,7 @@ class TestServerEndpoints:
     def test_create_server_endpoint(self, mock_create, test_client, auth_headers):
         """Test creating a new server."""
         mock_create.return_value = ServerRead(**MOCK_SERVER_READ)
-        req = {
-            "server": {"name": "test_server", "description": "A test server"},
-            "team_id": None,
-            "visibility": "private"
-        }
+        req = {"server": {"name": "test_server", "description": "A test server"}, "team_id": None, "visibility": "private"}
         response = test_client.post("/servers/", json=req, headers=auth_headers)
         assert response.status_code == 201
         mock_create.assert_called_once()
@@ -616,11 +593,7 @@ class TestToolEndpoints:
     @patch("mcpgateway.main.tool_service.register_tool")
     def test_create_tool_endpoint(self, mock_create, test_client, auth_headers):
         mock_create.return_value = MOCK_TOOL_READ_SNAKE
-        req = {
-            "tool": {"name": "test_tool", "url": "http://example.com", "description": "A test tool"},
-            "team_id": None,
-            "visibility": "private"
-        }
+        req = {"tool": {"name": "test_tool", "url": "http://example.com", "description": "A test tool"}, "team_id": None, "visibility": "private"}
         response = test_client.post("/tools/", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_create.assert_called_once()
@@ -701,11 +674,7 @@ class TestResourceEndpoints:
         """Test registering a new resource."""
         mock_create.return_value = ResourceRead(**MOCK_RESOURCE_READ)
 
-        req = {
-            "resource": {"uri": "test/resource", "name": "Test Resource", "description": "A test resource", "content": "Hello world"},
-            "team_id": None,
-            "visibility": "private"
-        }
+        req = {"resource": {"uri": "test/resource", "name": "Test Resource", "description": "A test resource", "content": "Hello world"}, "team_id": None, "visibility": "private"}
         response = test_client.post("/resources/", json=req, headers=auth_headers)
 
         assert response.status_code == 200  # route returns 200 on success
@@ -860,11 +829,7 @@ class TestPromptEndpoints:
         # Return an actual model instance
         mock_create.return_value = PromptRead(**MOCK_PROMPT_READ)
 
-        req = {
-            "prompt": {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"},
-            "team_id": None,
-            "visibility": "private"
-        }
+        req = {"prompt": {"name": "test_prompt", "template": "Hello {name}", "description": "A test prompt"}, "team_id": None, "visibility": "private"}
         response = test_client.post("/prompts/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
@@ -1087,6 +1052,7 @@ class TestRootEndpoints:
     @patch("mcpgateway.main.root_service.subscribe_changes")
     def test_subscribe_root_changes(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to root directory changes via SSE."""
+
         async def mock_async_gen():
             yield {"event": "test"}
 
@@ -1105,27 +1071,9 @@ class TestRPCEndpoints:
     @patch("mcpgateway.main.tool_service.invoke_tool")
     def test_rpc_tool_invocation(self, mock_invoke_tool, test_client, auth_headers):
         """Test tool invocation via JSON-RPC."""
-        mock_invoke_tool.return_value = {
-            "content": [
-            {
-                "type": "text",
-                "text": "Tool response"
-            }
-            ],
-            "is_error": False
-        }
+        mock_invoke_tool.return_value = {"content": [{"type": "text", "text": "Tool response"}], "is_error": False}
 
-        req = {
-            "jsonrpc": "2.0",
-            "id": "test-id",
-            "method": "tools/call",
-            "params": {
-                "name": "test_tool",
-                "arguments": {
-                    "param": "value"
-                }
-            }
-        }
+        req = {"jsonrpc": "2.0", "id": "test-id", "method": "tools/call", "params": {"name": "test_tool", "arguments": {"param": "value"}}}
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
@@ -1294,25 +1242,25 @@ class TestMetricsEndpoints:
         assert "servers" in data and "prompts" in data
         # A2A agents may or may not be present based on configuration
 
-#    @patch("mcpgateway.main.a2a_service")
-#    @patch("mcpgateway.main.prompt_service.reset_metrics")
-#    @patch("mcpgateway.main.server_service.reset_metrics")
-#    @patch("mcpgateway.main.resource_service.reset_metrics")
-#    @patch("mcpgateway.main.tool_service.reset_metrics")
-#    def test_reset_all_metrics(self, mock_tool_reset, mock_resource_reset, mock_server_reset, mock_prompt_reset, mock_a2a_service, test_client, auth_headers):
-#        """Test resetting metrics for all entity types."""
-#        # Mock A2A service with reset_metrics method
-#        mock_a2a_service.reset_metrics = MagicMock()
-#
-#        response = test_client.post("/metrics/reset", headers=auth_headers)
-#        assert response.status_code == 200
-#
-#        # Verify all services had their metrics reset
-#        mock_tool_reset.assert_called_once()
-#        mock_resource_reset.assert_called_once()
-#        mock_server_reset.assert_called_once()
-#        mock_prompt_reset.assert_called_once()
-#        mock_a2a_service.reset_metrics.assert_called_once()
+    #    @patch("mcpgateway.main.a2a_service")
+    #    @patch("mcpgateway.main.prompt_service.reset_metrics")
+    #    @patch("mcpgateway.main.server_service.reset_metrics")
+    #    @patch("mcpgateway.main.resource_service.reset_metrics")
+    #    @patch("mcpgateway.main.tool_service.reset_metrics")
+    #    def test_reset_all_metrics(self, mock_tool_reset, mock_resource_reset, mock_server_reset, mock_prompt_reset, mock_a2a_service, test_client, auth_headers):
+    #        """Test resetting metrics for all entity types."""
+    #        # Mock A2A service with reset_metrics method
+    #        mock_a2a_service.reset_metrics = MagicMock()
+    #
+    #        response = test_client.post("/metrics/reset", headers=auth_headers)
+    #        assert response.status_code == 200
+    #
+    #        # Verify all services had their metrics reset
+    #        mock_tool_reset.assert_called_once()
+    #        mock_resource_reset.assert_called_once()
+    #        mock_server_reset.assert_called_once()
+    #        mock_prompt_reset.assert_called_once()
+    #        mock_a2a_service.reset_metrics.assert_called_once()
 
     @patch("mcpgateway.main.tool_service.reset_metrics")
     def test_reset_specific_entity_metrics(self, mock_tool_reset, test_client, auth_headers):
@@ -1434,6 +1382,7 @@ class TestMetricsEndpoints:
 #        mock_invoke.assert_called_once()
 #
 
+
 # ----------------------------------------------------- #
 # Middleware & Security Tests                           #
 # ----------------------------------------------------- #
@@ -1542,11 +1491,7 @@ class TestErrorHandling:
 
         mock_register.side_effect = ToolNameConflictError("Tool name already exists")
 
-        req = {
-            "tool": {"name": "existing_tool", "url": "http://example.com"},
-            "team_id": None,
-            "visibility": "private"
-        }
+        req = {"tool": {"name": "existing_tool", "url": "http://example.com"}, "team_id": None, "visibility": "private"}
         response = test_client.post("/tools/", json=req, headers=auth_headers)
         assert response.status_code == 409
 

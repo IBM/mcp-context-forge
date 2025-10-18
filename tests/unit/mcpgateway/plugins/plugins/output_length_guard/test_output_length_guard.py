@@ -17,7 +17,6 @@ from mcpgateway.plugins.framework.models import (
 )
 
 from plugins.output_length_guard.output_length_guard import (
-    OutputLengthGuardConfig,
     OutputLengthGuardPlugin,
 )
 

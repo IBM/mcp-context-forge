@@ -24,23 +24,15 @@ class ProfileComparator:
         baseline_stats = pstats.Stats(str(baseline_path))
         current_stats = pstats.Stats(str(current_path))
 
-        comparison: Dict[str, Any] = {
-            'baseline_file': str(baseline_path),
-            'current_file': str(current_path),
-            'regressions': [],
-            'improvements': [],
-            'summary': {}
-        }
+        comparison: Dict[str, Any] = {"baseline_file": str(baseline_path), "current_file": str(current_path), "regressions": [], "improvements": [], "summary": {}}
 
         # Compare overall performance
         baseline_total_time = baseline_stats.total_tt
         current_total_time = current_stats.total_tt
 
-        total_time_change = (
-            (current_total_time - baseline_total_time) / baseline_total_time * 100
-        )
+        total_time_change = (current_total_time - baseline_total_time) / baseline_total_time * 100
 
-        comparison['summary']['total_time_change'] = total_time_change
+        comparison["summary"]["total_time_change"] = total_time_change
 
         # Compare function-level performance
         baseline_functions = self._extract_function_stats(baseline_stats)
@@ -52,22 +44,11 @@ class ProfileComparator:
                 change_percent = (current_time - baseline_time) / baseline_time * 100
 
                 if change_percent > 20:  # 20% regression threshold
-                    comparison['regressions'].append({
-                        'function': func_name,
-                        'baseline_time': baseline_time,
-                        'current_time': current_time,
-                        'change_percent': change_percent
-                    })
+                    comparison["regressions"].append({"function": func_name, "baseline_time": baseline_time, "current_time": current_time, "change_percent": change_percent})
                 elif change_percent < -10:  # 10% improvement
-                    comparison['improvements'].append({
-                        'function': func_name,
-                        'baseline_time': baseline_time,
-                        'current_time': current_time,
-                        'change_percent': change_percent
-                    })
+                    comparison["improvements"].append({"function": func_name, "baseline_time": baseline_time, "current_time": current_time, "change_percent": change_percent})
 
         return comparison
-
 
     def _extract_function_stats(self, stats: pstats.Stats) -> Dict[str, float]:
         """Extract function-level statistics from pstats.Stats."""
@@ -93,7 +74,7 @@ if __name__ == "__main__":
     comparator = ProfileComparator()
     comparison = comparator.compare_profiles(args.baseline, args.current)
 
-    with open(args.output, 'w') as f:
+    with open(args.output, "w") as f:
         json.dump(comparison, f, indent=4)
 
     print(f"Comparison report saved to {args.output}")

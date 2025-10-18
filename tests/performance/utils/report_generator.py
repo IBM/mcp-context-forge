@@ -758,12 +758,12 @@ class SimpleTemplate:
 
         # Handle simple variable substitution {{ var }}
         for key, value in context.items():
-            pattern = r'\{\{\s*' + re.escape(key) + r'\s*\}\}'
+            pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
             result = re.sub(pattern, str(value), result)
 
         # Handle safe JSON {{ var | safe }}
         for key, value in context.items():
-            pattern = r'\{\{\s*' + re.escape(key) + r'\s*\|\s*safe\s*\}\}'
+            pattern = r"\{\{\s*" + re.escape(key) + r"\s*\|\s*safe\s*\}\}"
             if isinstance(value, (dict, list)):
                 # Use lambda to avoid regex backslash interpretation issues with JSON
                 result = re.sub(pattern, lambda m: json.dumps(value), result)
@@ -779,19 +779,19 @@ class SimpleTemplate:
     def _render_conditionals(self, template: str, context: Dict) -> str:
         """Render if/else blocks"""
         # Simple implementation - handle {% if var %} ... {% endif %}
-        pattern = r'\{%\s*if\s+(\w+)\s*%\}(.*?)\{%\s*endif\s*%\}'
+        pattern = r"\{%\s*if\s+(\w+)\s*%\}(.*?)\{%\s*endif\s*%\}"
 
         def replace_conditional(match):
             var_name = match.group(1)
             content = match.group(2)
-            return content if context.get(var_name) else ''
+            return content if context.get(var_name) else ""
 
         return re.sub(pattern, replace_conditional, template, flags=re.DOTALL)
 
     def _render_loops(self, template: str, context: Dict) -> str:
         """Render for loops"""
         # Simple implementation - handle {% for item in items %} ... {% endfor %}
-        pattern = r'\{%\s*for\s+(\w+)\s+in\s+(\w+)\s*%\}(.*?)\{%\s*endfor\s*%\}'
+        pattern = r"\{%\s*for\s+(\w+)\s+in\s+(\w+)\s*%\}(.*?)\{%\s*endfor\s*%\}"
 
         def replace_loop(match):
             item_name = match.group(1)
@@ -808,12 +808,12 @@ class SimpleTemplate:
                 item_result = content
                 if isinstance(item, dict):
                     for key, value in item.items():
-                        var_pattern = r'\{\{\s*' + re.escape(item_name) + r'\.' + re.escape(key) + r'\s*\}\}'
+                        var_pattern = r"\{\{\s*" + re.escape(item_name) + r"\." + re.escape(key) + r"\s*\}\}"
                         item_result = re.sub(var_pattern, str(value), item_result)
 
                 result.append(item_result)
 
-            return ''.join(result)
+            return "".join(result)
 
         return re.sub(pattern, replace_loop, template, flags=re.DOTALL)
 
@@ -824,7 +824,7 @@ class PerformanceReportGenerator:
     def __init__(self, results_dir: Path, config_file: Optional[Path] = None):
         self.results_dir = Path(results_dir)
         self.config = self._load_config(config_file)
-        self.slos = self.config.get('slos', {})
+        self.slos = self.config.get("slos", {})
 
     def _load_config(self, config_file: Optional[Path]) -> Dict:
         """Load configuration from YAML file"""
@@ -842,48 +842,48 @@ class PerformanceReportGenerator:
             metrics = {}
 
             # Extract summary metrics
-            if match := re.search(r'Requests/sec:\s+([\d.]+)', content):
-                metrics['rps'] = float(match.group(1))
+            if match := re.search(r"Requests/sec:\s+([\d.]+)", content):
+                metrics["rps"] = float(match.group(1))
 
-            if match := re.search(r'Average:\s+([\d.]+)\s+secs', content):
-                metrics['avg'] = float(match.group(1)) * 1000  # Convert to ms
+            if match := re.search(r"Average:\s+([\d.]+)\s+secs", content):
+                metrics["avg"] = float(match.group(1)) * 1000  # Convert to ms
 
-            if match := re.search(r'Slowest:\s+([\d.]+)\s+secs', content):
-                metrics['max'] = float(match.group(1)) * 1000
+            if match := re.search(r"Slowest:\s+([\d.]+)\s+secs", content):
+                metrics["max"] = float(match.group(1)) * 1000
 
-            if match := re.search(r'Fastest:\s+([\d.]+)\s+secs', content):
-                metrics['min'] = float(match.group(1)) * 1000
+            if match := re.search(r"Fastest:\s+([\d.]+)\s+secs", content):
+                metrics["min"] = float(match.group(1)) * 1000
 
             # Extract percentiles from latency distribution
             # Look for patterns like "0.050 [9500]" which indicates 95th percentile
-            latency_section = re.search(r'Latency distribution:(.*?)(?=\n\n|\Z)', content, re.DOTALL)
+            latency_section = re.search(r"Latency distribution:(.*?)(?=\n\n|\Z)", content, re.DOTALL)
             if latency_section:
                 latency_text = latency_section.group(1)
 
-                if match := re.search(r'50%\s+in\s+([\d.]+)\s+secs', latency_text):
-                    metrics['p50'] = float(match.group(1)) * 1000
+                if match := re.search(r"50%\s+in\s+([\d.]+)\s+secs", latency_text):
+                    metrics["p50"] = float(match.group(1)) * 1000
 
-                if match := re.search(r'95%\s+in\s+([\d.]+)\s+secs', latency_text):
-                    metrics['p95'] = float(match.group(1)) * 1000
+                if match := re.search(r"95%\s+in\s+([\d.]+)\s+secs", latency_text):
+                    metrics["p95"] = float(match.group(1)) * 1000
 
-                if match := re.search(r'99%\s+in\s+([\d.]+)\s+secs', latency_text):
-                    metrics['p99'] = float(match.group(1)) * 1000
+                if match := re.search(r"99%\s+in\s+([\d.]+)\s+secs", latency_text):
+                    metrics["p99"] = float(match.group(1)) * 1000
 
             # Extract status code distribution
             status_codes = {}
-            status_section = re.search(r'Status code distribution:(.*?)(?=\n\n|\Z)', content, re.DOTALL)
+            status_section = re.search(r"Status code distribution:(.*?)(?=\n\n|\Z)", content, re.DOTALL)
             if status_section:
-                for line in status_section.group(1).strip().split('\n'):
-                    if match := re.search(r'\[(\d+)\]\s+(\d+)\s+responses', line):
+                for line in status_section.group(1).strip().split("\n"):
+                    if match := re.search(r"\[(\d+)\]\s+(\d+)\s+responses", line):
                         status_codes[int(match.group(1))] = int(match.group(2))
 
-            metrics['status_codes'] = status_codes
+            metrics["status_codes"] = status_codes
 
             # Calculate error rate
             total_responses = sum(status_codes.values())
             error_responses = sum(count for code, count in status_codes.items() if code >= 400)
-            metrics['error_rate'] = (error_responses / total_responses * 100) if total_responses > 0 else 0
-            metrics['total_requests'] = total_responses
+            metrics["error_rate"] = (error_responses / total_responses * 100) if total_responses > 0 else 0
+            metrics["total_requests"] = total_responses
 
             return metrics
 
@@ -896,14 +896,14 @@ class PerformanceReportGenerator:
         results = {}
 
         # Group results by category (tools, resources, prompts, etc.)
-        for result_file in self.results_dir.glob('*.txt'):
+        for result_file in self.results_dir.glob("*.txt"):
             # Parse filename: {category}_{test_name}_{profile}_{timestamp}.txt
-            parts = result_file.stem.split('_')
+            parts = result_file.stem.split("_")
             if len(parts) < 2:
                 continue
 
             category = parts[0]
-            test_name = '_'.join(parts[1:-2]) if len(parts) > 3 else parts[1]
+            test_name = "_".join(parts[1:-2]) if len(parts) > 3 else parts[1]
 
             metrics = self.parse_hey_output(result_file)
             if not metrics:
@@ -912,11 +912,7 @@ class PerformanceReportGenerator:
             if category not in results:
                 results[category] = []
 
-            results[category].append({
-                'name': test_name,
-                'file': result_file.name,
-                **metrics
-            })
+            results[category].append({"name": test_name, "file": result_file.name, **metrics})
 
         return results
 
@@ -924,15 +920,15 @@ class PerformanceReportGenerator:
         """Evaluate metrics against SLO thresholds"""
         # Map test names to SLO keys
         slo_key_map = {
-            'list_tools': 'tools_list',
-            'get_system_time': 'tools_invoke_simple',
-            'convert_time': 'tools_invoke_complex',
-            'list_resources': 'resources_list',
-            'read_timezone_info': 'resources_read',
-            'read_world_times': 'resources_read',
-            'list_prompts': 'prompts_list',
-            'get_compare_timezones': 'prompts_get',
-            'health_check': 'health_check',
+            "list_tools": "tools_list",
+            "get_system_time": "tools_invoke_simple",
+            "convert_time": "tools_invoke_complex",
+            "list_resources": "resources_list",
+            "read_timezone_info": "resources_read",
+            "read_world_times": "resources_read",
+            "list_prompts": "prompts_list",
+            "get_compare_timezones": "prompts_get",
+            "health_check": "health_check",
         }
 
         slo_key = slo_key_map.get(test_name)
@@ -943,65 +939,75 @@ class PerformanceReportGenerator:
         results = []
 
         # Check p50
-        if 'p50_ms' in slo and 'p50' in metrics:
-            results.append({
-                'test_name': test_name,
-                'metric': 'p50',
-                'target': f"{slo['p50_ms']}ms",
-                'actual': f"{metrics['p50']:.1f}ms",
-                'status': 'pass' if metrics['p50'] <= slo['p50_ms'] else 'fail',
-                'status_text': '✅ Pass' if metrics['p50'] <= slo['p50_ms'] else '❌ Fail',
-                'margin': f"{((metrics['p50'] - slo['p50_ms']) / slo['p50_ms'] * 100):+.1f}%"
-            })
+        if "p50_ms" in slo and "p50" in metrics:
+            results.append(
+                {
+                    "test_name": test_name,
+                    "metric": "p50",
+                    "target": f"{slo['p50_ms']}ms",
+                    "actual": f"{metrics['p50']:.1f}ms",
+                    "status": "pass" if metrics["p50"] <= slo["p50_ms"] else "fail",
+                    "status_text": "✅ Pass" if metrics["p50"] <= slo["p50_ms"] else "❌ Fail",
+                    "margin": f"{((metrics['p50'] - slo['p50_ms']) / slo['p50_ms'] * 100):+.1f}%",
+                }
+            )
 
         # Check p95
-        if 'p95_ms' in slo and 'p95' in metrics:
-            results.append({
-                'test_name': test_name,
-                'metric': 'p95',
-                'target': f"{slo['p95_ms']}ms",
-                'actual': f"{metrics['p95']:.1f}ms",
-                'status': 'pass' if metrics['p95'] <= slo['p95_ms'] else 'fail',
-                'status_text': '✅ Pass' if metrics['p95'] <= slo['p95_ms'] else '❌ Fail',
-                'margin': f"{((metrics['p95'] - slo['p95_ms']) / slo['p95_ms'] * 100):+.1f}%"
-            })
+        if "p95_ms" in slo and "p95" in metrics:
+            results.append(
+                {
+                    "test_name": test_name,
+                    "metric": "p95",
+                    "target": f"{slo['p95_ms']}ms",
+                    "actual": f"{metrics['p95']:.1f}ms",
+                    "status": "pass" if metrics["p95"] <= slo["p95_ms"] else "fail",
+                    "status_text": "✅ Pass" if metrics["p95"] <= slo["p95_ms"] else "❌ Fail",
+                    "margin": f"{((metrics['p95'] - slo['p95_ms']) / slo['p95_ms'] * 100):+.1f}%",
+                }
+            )
 
         # Check p99
-        if 'p99_ms' in slo and 'p99' in metrics:
-            results.append({
-                'test_name': test_name,
-                'metric': 'p99',
-                'target': f"{slo['p99_ms']}ms",
-                'actual': f"{metrics['p99']:.1f}ms",
-                'status': 'pass' if metrics['p99'] <= slo['p99_ms'] else 'fail',
-                'status_text': '✅ Pass' if metrics['p99'] <= slo['p99_ms'] else '❌ Fail',
-                'margin': f"{((metrics['p99'] - slo['p99_ms']) / slo['p99_ms'] * 100):+.1f}%"
-            })
+        if "p99_ms" in slo and "p99" in metrics:
+            results.append(
+                {
+                    "test_name": test_name,
+                    "metric": "p99",
+                    "target": f"{slo['p99_ms']}ms",
+                    "actual": f"{metrics['p99']:.1f}ms",
+                    "status": "pass" if metrics["p99"] <= slo["p99_ms"] else "fail",
+                    "status_text": "✅ Pass" if metrics["p99"] <= slo["p99_ms"] else "❌ Fail",
+                    "margin": f"{((metrics['p99'] - slo['p99_ms']) / slo['p99_ms'] * 100):+.1f}%",
+                }
+            )
 
         # Check throughput
-        if 'min_rps' in slo and 'rps' in metrics:
-            results.append({
-                'test_name': test_name,
-                'metric': 'throughput',
-                'target': f"{slo['min_rps']} req/s",
-                'actual': f"{metrics['rps']:.1f} req/s",
-                'status': 'pass' if metrics['rps'] >= slo['min_rps'] else 'fail',
-                'status_text': '✅ Pass' if metrics['rps'] >= slo['min_rps'] else '❌ Fail',
-                'margin': f"{((metrics['rps'] - slo['min_rps']) / slo['min_rps'] * 100):+.1f}%"
-            })
+        if "min_rps" in slo and "rps" in metrics:
+            results.append(
+                {
+                    "test_name": test_name,
+                    "metric": "throughput",
+                    "target": f"{slo['min_rps']} req/s",
+                    "actual": f"{metrics['rps']:.1f} req/s",
+                    "status": "pass" if metrics["rps"] >= slo["min_rps"] else "fail",
+                    "status_text": "✅ Pass" if metrics["rps"] >= slo["min_rps"] else "❌ Fail",
+                    "margin": f"{((metrics['rps'] - slo['min_rps']) / slo['min_rps'] * 100):+.1f}%",
+                }
+            )
 
         # Check error rate
-        if 'max_error_rate' in slo and 'error_rate' in metrics:
-            max_error_pct = slo['max_error_rate'] * 100
-            results.append({
-                'test_name': test_name,
-                'metric': 'error_rate',
-                'target': f"{max_error_pct}%",
-                'actual': f"{metrics['error_rate']:.2f}%",
-                'status': 'pass' if metrics['error_rate'] <= max_error_pct else 'fail',
-                'status_text': '✅ Pass' if metrics['error_rate'] <= max_error_pct else '❌ Fail',
-                'margin': f"{(metrics['error_rate'] - max_error_pct):+.2f}%"
-            })
+        if "max_error_rate" in slo and "error_rate" in metrics:
+            max_error_pct = slo["max_error_rate"] * 100
+            results.append(
+                {
+                    "test_name": test_name,
+                    "metric": "error_rate",
+                    "target": f"{max_error_pct}%",
+                    "actual": f"{metrics['error_rate']:.2f}%",
+                    "status": "pass" if metrics["error_rate"] <= max_error_pct else "fail",
+                    "status_text": "✅ Pass" if metrics["error_rate"] <= max_error_pct else "❌ Fail",
+                    "margin": f"{(metrics['error_rate'] - max_error_pct):+.2f}%",
+                }
+            )
 
         return results
 
@@ -1010,50 +1016,58 @@ class PerformanceReportGenerator:
         recommendations = []
 
         # Check for SLO violations
-        failed_slos = [slo for slo in slo_results if slo['status'] == 'fail']
+        failed_slos = [slo for slo in slo_results if slo["status"] == "fail"]
         if failed_slos:
             for slo in failed_slos[:3]:  # Top 3 violations
-                recommendations.append({
-                    'priority': 'high',
-                    'title': f"SLO Violation: {slo['test_name']} {slo['metric']}",
-                    'description': f"The {slo['metric']} metric ({slo['actual']}) exceeds the target ({slo['target']}) by {slo['margin']}.",
-                    'action': None
-                })
+                recommendations.append(
+                    {
+                        "priority": "high",
+                        "title": f"SLO Violation: {slo['test_name']} {slo['metric']}",
+                        "description": f"The {slo['metric']} metric ({slo['actual']}) exceeds the target ({slo['target']}) by {slo['margin']}.",
+                        "action": None,
+                    }
+                )
 
         # Check for high error rates
         for category, tests in test_results.items():
             for test in tests:
-                if test.get('error_rate', 0) > 1:
-                    recommendations.append({
-                        'priority': 'high',
-                        'title': f"High Error Rate: {test['name']}",
-                        'description': f"Error rate of {test['error_rate']:.2f}% detected. Investigate application logs for failures.",
-                        'action': f"docker logs gateway | grep -i error"
-                    })
+                if test.get("error_rate", 0) > 1:
+                    recommendations.append(
+                        {
+                            "priority": "high",
+                            "title": f"High Error Rate: {test['name']}",
+                            "description": f"Error rate of {test['error_rate']:.2f}% detected. Investigate application logs for failures.",
+                            "action": "docker logs gateway | grep -i error",
+                        }
+                    )
 
         # Check for high latency variance
         for category, tests in test_results.items():
             for test in tests:
-                if 'p99' in test and 'p50' in test:
-                    variance = test['p99'] / test['p50'] if test['p50'] > 0 else 0
+                if "p99" in test and "p50" in test:
+                    variance = test["p99"] / test["p50"] if test["p50"] > 0 else 0
                     if variance > 3:  # p99 is 3x p50
-                        recommendations.append({
-                            'priority': 'medium',
-                            'title': f"High Latency Variance: {test['name']}",
-                            'description': f"p99 latency ({test['p99']:.1f}ms) is {variance:.1f}x the p50 ({test['p50']:.1f}ms). This indicates inconsistent performance.",
-                            'action': "# Profile the application to identify slow code paths\npy-spy record -o profile.svg --pid <PID> --duration 60"
-                        })
+                        recommendations.append(
+                            {
+                                "priority": "medium",
+                                "title": f"High Latency Variance: {test['name']}",
+                                "description": f"p99 latency ({test['p99']:.1f}ms) is {variance:.1f}x the p50 ({test['p50']:.1f}ms). This indicates inconsistent performance.",
+                                "action": "# Profile the application to identify slow code paths\npy-spy record -o profile.svg --pid <PID> --duration 60",
+                            }
+                        )
 
         # Check for low throughput
         for category, tests in test_results.items():
             for test in tests:
-                if test.get('rps', float('inf')) < 100:
-                    recommendations.append({
-                        'priority': 'medium',
-                        'title': f"Low Throughput: {test['name']}",
-                        'description': f"Throughput of {test['rps']:.1f} req/s is lower than expected. Consider optimizing the request handling.",
-                        'action': "# Check database connection pool settings\n# Review application logs for bottlenecks"
-                    })
+                if test.get("rps", float("inf")) < 100:
+                    recommendations.append(
+                        {
+                            "priority": "medium",
+                            "title": f"Low Throughput: {test['name']}",
+                            "description": f"Throughput of {test['rps']:.1f} req/s is lower than expected. Consider optimizing the request handling.",
+                            "action": "# Check database connection pool settings\n# Review application logs for bottlenecks",
+                        }
+                    )
 
         return recommendations[:10]  # Top 10 recommendations
 
@@ -1066,36 +1080,36 @@ class PerformanceReportGenerator:
         slo_results = []
         for category, tests in test_results.items():
             for test in tests:
-                slo_results.extend(self.evaluate_slo(test['name'], test))
+                slo_results.extend(self.evaluate_slo(test["name"], test))
 
         # Calculate summary statistics
         total_tests = sum(len(tests) for tests in test_results.values())
         all_tests = [test for tests in test_results.values() for test in tests]
 
-        avg_rps = sum(t.get('rps', 0) for t in all_tests) / len(all_tests) if all_tests else 0
-        avg_p95 = sum(t.get('p95', 0) for t in all_tests) / len(all_tests) if all_tests else 0
-        avg_p99 = sum(t.get('p99', 0) for t in all_tests) / len(all_tests) if all_tests else 0
+        avg_rps = sum(t.get("rps", 0) for t in all_tests) / len(all_tests) if all_tests else 0
+        avg_p95 = sum(t.get("p95", 0) for t in all_tests) / len(all_tests) if all_tests else 0
+        avg_p99 = sum(t.get("p99", 0) for t in all_tests) / len(all_tests) if all_tests else 0
 
-        slos_met = sum(1 for slo in slo_results if slo['status'] == 'pass')
+        slos_met = sum(1 for slo in slo_results if slo["status"] == "pass")
         total_slos = len(slo_results)
         slo_compliance = (slos_met / total_slos * 100) if total_slos > 0 else 0
 
         summary = {
-            'overall_status': 'excellent' if slo_compliance >= 95 else 'good' if slo_compliance >= 80 else 'warning' if slo_compliance >= 60 else 'poor',
-            'overall_status_text': '✅ Excellent' if slo_compliance >= 95 else '✓ Good' if slo_compliance >= 80 else '⚠ Warning' if slo_compliance >= 60 else '❌ Poor',
-            'tests_passed': total_tests,  # Simplified
-            'total_tests': total_tests,
-            'slo_status': 'excellent' if slo_compliance >= 95 else 'good' if slo_compliance >= 80 else 'warning' if slo_compliance >= 60 else 'poor',
-            'slo_compliance_percent': f"{slo_compliance:.1f}",
-            'slos_met': slos_met,
-            'total_slos': total_slos,
-            'perf_status': 'good' if avg_rps > 300 else 'warning' if avg_rps > 100 else 'poor',
-            'avg_rps': f"{avg_rps:.0f}",
-            'latency_status': 'good' if avg_p95 < 50 else 'warning' if avg_p95 < 100 else 'poor',
-            'avg_p95': f"{avg_p95:.1f}",
-            'avg_p99': f"{avg_p99:.1f}",
-            'has_regressions': False,
-            'regression_count': 0
+            "overall_status": "excellent" if slo_compliance >= 95 else "good" if slo_compliance >= 80 else "warning" if slo_compliance >= 60 else "poor",
+            "overall_status_text": "✅ Excellent" if slo_compliance >= 95 else "✓ Good" if slo_compliance >= 80 else "⚠ Warning" if slo_compliance >= 60 else "❌ Poor",
+            "tests_passed": total_tests,  # Simplified
+            "total_tests": total_tests,
+            "slo_status": "excellent" if slo_compliance >= 95 else "good" if slo_compliance >= 80 else "warning" if slo_compliance >= 60 else "poor",
+            "slo_compliance_percent": f"{slo_compliance:.1f}",
+            "slos_met": slos_met,
+            "total_slos": total_slos,
+            "perf_status": "good" if avg_rps > 300 else "warning" if avg_rps > 100 else "poor",
+            "avg_rps": f"{avg_rps:.0f}",
+            "latency_status": "good" if avg_p95 < 50 else "warning" if avg_p95 < 100 else "poor",
+            "avg_p95": f"{avg_p95:.1f}",
+            "avg_p99": f"{avg_p99:.1f}",
+            "has_regressions": False,
+            "regression_count": 0,
         }
 
         # Format test results for display
@@ -1103,28 +1117,30 @@ class PerformanceReportGenerator:
         for category, tests in test_results.items():
             formatted_results[category] = []
             for test in tests:
-                formatted_results[category].append({
-                    'name': test['name'],
-                    'rps': f"{test.get('rps', 0):.1f}",
-                    'p50': f"{test.get('p50', 0):.1f}",
-                    'p95': f"{test.get('p95', 0):.1f}",
-                    'p99': f"{test.get('p99', 0):.1f}",
-                    'error_rate': f"{test.get('error_rate', 0):.2f}",
-                    'status': 'pass' if test.get('error_rate', 0) < 1 else 'fail',
-                    'status_text': '✅ Pass' if test.get('error_rate', 0) < 1 else '❌ Fail',
-                    'has_baseline': False,
-                    'comparison_status': '',
-                    'comparison_text': ''
-                })
+                formatted_results[category].append(
+                    {
+                        "name": test["name"],
+                        "rps": f"{test.get('rps', 0):.1f}",
+                        "p50": f"{test.get('p50', 0):.1f}",
+                        "p95": f"{test.get('p95', 0):.1f}",
+                        "p99": f"{test.get('p99', 0):.1f}",
+                        "error_rate": f"{test.get('error_rate', 0):.2f}",
+                        "status": "pass" if test.get("error_rate", 0) < 1 else "fail",
+                        "status_text": "✅ Pass" if test.get("error_rate", 0) < 1 else "❌ Fail",
+                        "has_baseline": False,
+                        "comparison_status": "",
+                        "comparison_text": "",
+                    }
+                )
 
         # Generate chart data
         chart_data = {}
         for category, tests in test_results.items():
             chart_data[category] = {
-                'labels': [t['name'] for t in tests],
-                'p50': [t.get('p50', 0) for t in tests],
-                'p95': [t.get('p95', 0) for t in tests],
-                'p99': [t.get('p99', 0) for t in tests],
+                "labels": [t["name"] for t in tests],
+                "p50": [t.get("p50", 0) for t in tests],
+                "p95": [t.get("p95", 0) for t in tests],
+                "p99": [t.get("p99", 0) for t in tests],
             }
 
         # Generate recommendations
@@ -1132,27 +1148,20 @@ class PerformanceReportGenerator:
 
         # Prepare context for template
         context = {
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'profile': profile,
-            'gateway_url': self.config.get('environment', {}).get('gateway_url', 'http://localhost:4444'),
-            'git_commit': '',
-            'summary': summary,
-            'slo_results': slo_results,
-            'test_results': formatted_results,
-            'system_metrics': None,  # TODO: Parse system metrics
-            'db_metrics': None,  # TODO: Parse DB metrics
-            'recommendations': recommendations,
-            'chart_data': chart_data,
-            'config': {
-                'requests': 'Variable',
-                'concurrency': 'Variable',
-                'timeout': '60'
-            },
-            'duration': 'Variable',
-            'result_files': [
-                {'name': f.name, 'path': f.name}
-                for f in sorted(self.results_dir.glob('*.txt'))
-            ]
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "profile": profile,
+            "gateway_url": self.config.get("environment", {}).get("gateway_url", "http://localhost:4444"),
+            "git_commit": "",
+            "summary": summary,
+            "slo_results": slo_results,
+            "test_results": formatted_results,
+            "system_metrics": None,  # TODO: Parse system metrics
+            "db_metrics": None,  # TODO: Parse DB metrics
+            "recommendations": recommendations,
+            "chart_data": chart_data,
+            "config": {"requests": "Variable", "concurrency": "Variable", "timeout": "60"},
+            "duration": "Variable",
+            "result_files": [{"name": f.name, "path": f.name} for f in sorted(self.results_dir.glob("*.txt"))],
         }
 
         # Render template
@@ -1161,7 +1170,7 @@ class PerformanceReportGenerator:
 
         # Write output
         output_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             f.write(html)
 
         print(f"✅ Report generated: {output_file}")
@@ -1169,27 +1178,23 @@ class PerformanceReportGenerator:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Generate HTML performance test report')
-    parser.add_argument('--results-dir', type=Path, default=Path('results'),
-                       help='Directory containing test results')
-    parser.add_argument('--output', type=Path, default=None,
-                       help='Output HTML file path')
-    parser.add_argument('--config', type=Path, default=Path('config.yaml'),
-                       help='Configuration file')
-    parser.add_argument('--profile', type=str, default='medium',
-                       help='Test profile name')
+    parser = argparse.ArgumentParser(description="Generate HTML performance test report")
+    parser.add_argument("--results-dir", type=Path, default=Path("results"), help="Directory containing test results")
+    parser.add_argument("--output", type=Path, default=None, help="Output HTML file path")
+    parser.add_argument("--config", type=Path, default=Path("config.yaml"), help="Configuration file")
+    parser.add_argument("--profile", type=str, default="medium", help="Test profile name")
 
     args = parser.parse_args()
 
     # Default output path
     if not args.output:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        args.output = Path(f'reports/performance_report_{args.profile}_{timestamp}.html')
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output = Path(f"reports/performance_report_{args.profile}_{timestamp}.html")
 
     # Generate report
     generator = PerformanceReportGenerator(args.results_dir, args.config)
     generator.generate_report(args.output, args.profile)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

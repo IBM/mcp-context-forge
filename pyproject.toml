@@ -292,16 +292,89 @@ line-length = 200
 target-version = ["py310", "py311", "py312"]
 include = "\\.pyi?$"
 
-# isort configuration
-# --------------------------------------------------------------------
-#  🛠  Async tool configurations (async-test, async-lint, etc.)
-# --------------------------------------------------------------------
 [tool.ruff]
-select = ["F", "E", "W", "B", "ASYNC"]
-unfixable = ["B"]  # Never auto-fix critical bugbear warnings
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "docs",
+    "test"
+]
 
-[tool.ruff.flake8-bugbear]
+# 200 line length
+line-length = 200
+indent-width = 4
+
+# Assume Python 3.11
+target-version = "py311"
+
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Also "D1" for docstring present checks.
+# TODO: Enable "I" for import sorting as a separate PR.
+select = ["E3", "E4", "E7", "E9", "F", "D1"]
+ignore = []
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+preview = true
+
+# Ignore D1 (docstring checks) in tests and other non-production code
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D1"]
+"scripts/**/*.py" = ["D1"]
+"mcp-servers/**/*.py" = ["D1"]
+"agent_runtimes/**/*.py" = ["D1"]
+".github/**/*.py" = ["D1"]
+"migration_add_annotations.py" = ["D1"]
+"playwright.config.py" = ["D1"]
+"run_mutmut.py" = ["D1"]
+
+[tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -525,3 +598,26 @@ omit = [
     "*/alembic/*",
     "*/version.py"
 ]
+
+# --------------------------------------------------------------------
+#  Interrogate - Documentation coverage tool
+# --------------------------------------------------------------------
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = false
+ignore-magic = false
+ignore-semiprivate = false
+ignore-private = false
+ignore-property-decorators = false
+ignore-module = false
+ignore-nested-functions = false
+ignore-nested-classes = true
+ignore-setters = false
+fail-under = 100
+exclude = ["setup.py", "docs", "build", "tests"]
+ignore-regex = ["^get_", "^post_"]
+verbose = 0
+quiet = false
+whitelist-regex = []
+color = true
+omit-covered-files = false

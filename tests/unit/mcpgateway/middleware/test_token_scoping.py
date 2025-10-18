@@ -16,8 +16,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
-from fastapi import HTTPException, Request, status
-import jwt
+from fastapi import Request, status
 import pytest
 
 # First-Party
@@ -89,8 +88,6 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/admin", "GET", ["admin.read"])
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
-
-
     @pytest.mark.asyncio
     async def test_server_scoped_token_blocked_from_admin(self, middleware, mock_request):
         """Test that server-scoped tokens are blocked from admin endpoints (security fix)."""
@@ -99,7 +96,7 @@ class TestTokenScopingMiddleware:
         mock_request.headers = {"Authorization": "Bearer token"}
 
         # Mock token extraction to return server-scoped token
-        with patch.object(middleware, '_extract_token_scopes') as mock_extract:
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
             mock_extract.return_value = {"scopes": {"server_id": "specific-server"}}
 
             # Mock call_next (the next middleware or request handler)
@@ -124,7 +121,7 @@ class TestTokenScopingMiddleware:
         mock_request.headers = {"Authorization": "Bearer token"}
 
         # Mock token extraction to return permission-scoped token without admin permissions
-        with patch.object(middleware, '_extract_token_scopes') as mock_extract:
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
             mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
 
             # Mock call_next (the next middleware or request handler)
@@ -141,8 +138,6 @@ class TestTokenScopingMiddleware:
             assert "Insufficient permissions for this operation" in content.get("detail")
             call_next.assert_not_called()  # Ensure the next handler is not called
 
-
-
     @pytest.mark.asyncio
     async def test_admin_token_allowed_to_admin_endpoints(self, middleware, mock_request):
         """Test that tokens with admin permissions can access admin endpoints."""
@@ -151,7 +146,7 @@ class TestTokenScopingMiddleware:
         mock_request.headers = {"Authorization": "Bearer token"}
 
         # Mock token extraction to return admin-scoped token
-        with patch.object(middleware, '_extract_token_scopes') as mock_extract:
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
             mock_extract.return_value = {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}
 
             call_next = AsyncMock()
@@ -170,7 +165,7 @@ class TestTokenScopingMiddleware:
         mock_request.headers = {"Authorization": "Bearer token"}
 
         # Mock token extraction to return wildcard permissions
-        with patch.object(middleware, '_extract_token_scopes') as mock_extract:
+        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
             mock_extract.return_value = {"permissions": ["*"]}
 
             call_next = AsyncMock()

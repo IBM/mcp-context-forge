@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

@@ -16,8 +16,7 @@ These tests specifically target OAuth functionality in gateway_service.py includ
 from __future__ import annotations
 
 # Standard
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -28,7 +27,7 @@ from mcpgateway.services.gateway_service import (
     GatewayConnectionError,
     GatewayService,
 )
-from mcpgateway.schemas import ToolCreate, ResourceCreate, PromptCreate
+from mcpgateway.schemas import ToolCreate
 
 
 def _make_execute_result(*, scalar=None, scalars_list=None):
@@ -46,6 +45,7 @@ def _bypass_validation(monkeypatch):
     """Bypass Pydantic validation for mock objects."""
     # First-Party
     from mcpgateway.schemas import GatewayRead
+
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))
 
 
@@ -75,13 +75,7 @@ def mock_oauth_gateway():
     gw.transport = "sse"
     gw.auth_type = "oauth"
     gw.auth_value = {}
-    gw.oauth_config = {
-        "grant_type": "client_credentials",
-        "client_id": "test_client",
-        "client_secret": "test_secret",
-        "token_url": "https://oauth.example.com/token",
-        "scopes": ["read", "write"]
-    }
+    gw.oauth_config = {"grant_type": "client_credentials", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
     return gw
 
 
@@ -108,7 +102,7 @@ def mock_oauth_auth_code_gateway():
         "authorization_url": "https://oauth.example.com/authorize",
         "token_url": "https://oauth.example.com/token",
         "redirect_uri": "http://localhost:8000/oauth/callback",
-        "scopes": ["read", "write"]
+        "scopes": ["read", "write"],
     }
     return gw
 
@@ -310,7 +304,7 @@ class TestGatewayServiceOAuthComprehensive:
                     # This will raise an exception
                     access_token = await gateway_service.oauth_manager.get_access_token(mock_oauth_gateway.oauth_config)
                     headers = {"Authorization": f"Bearer {access_token}"}
-            except Exception as oauth_error:
+            except Exception:
                 # Simulate logging the error
                 error_logged = True
                 headers = {}
@@ -386,13 +380,9 @@ class TestGatewayServiceOAuthComprehensive:
                 if mock_oauth_auth_code_gateway.auth_type == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
                     grant_type = mock_oauth_auth_code_gateway.oauth_config.get("grant_type")
                     if grant_type == "authorization_code":
-                        access_token = await mock_token_service.get_valid_access_token(
-                            test_db, mock_oauth_auth_code_gateway.id
-                        )
+                        access_token = await mock_token_service.get_valid_access_token(test_db, mock_oauth_auth_code_gateway.id)
                         if not access_token:
-                            raise GatewayConnectionError(
-                                f"No valid OAuth token found for authorization_code gateway {mock_oauth_auth_code_gateway.name}"
-                            )
+                            raise GatewayConnectionError(f"No valid OAuth token found for authorization_code gateway {mock_oauth_auth_code_gateway.name}")
 
             assert "No valid OAuth token found" in str(exc_info.value)
 
@@ -531,7 +521,7 @@ class TestGatewayServiceOAuthComprehensive:
         # Set up side effect for multiple database calls
         test_db.execute.side_effect = [
             mock_gateway_result,  # First call to get gateway
-            mock_tool_result,     # Call from _update_or_create_tools helper method
+            mock_tool_result,  # Call from _update_or_create_tools helper method
         ]
 
         # Mock TokenStorageService
@@ -547,12 +537,14 @@ class TestGatewayServiceOAuthComprehensive:
             mock_tool.inputSchema = {}
 
             # Mock the new _connect_to_sse_server_without_validation method (used for OAuth servers)
-            gateway_service._connect_to_sse_server_without_validation = AsyncMock(return_value=(
-                {"protocolVersion": "0.1.0"},  # capabilities
-                [mock_tool],  # tools
-                [],  # resources
-                []  # prompts
-            ))
+            gateway_service._connect_to_sse_server_without_validation = AsyncMock(
+                return_value=(
+                    {"protocolVersion": "0.1.0"},  # capabilities
+                    [mock_tool],  # tools
+                    [],  # resources
+                    [],  # prompts
+                )
+            )
 
             # Execute
             result = await gateway_service.fetch_tools_after_oauth(test_db, "2", "test@example.com")
@@ -561,10 +553,7 @@ class TestGatewayServiceOAuthComprehensive:
             mock_token_service.get_user_token.assert_called_once_with(mock_oauth_auth_code_gateway.id, "test@example.com")
 
             # Verify connection was made with token using the new method
-            gateway_service._connect_to_sse_server_without_validation.assert_called_once_with(
-                mock_oauth_auth_code_gateway.url,
-                {"Authorization": "Bearer oauth_callback_token"}
-            )
+            gateway_service._connect_to_sse_server_without_validation.assert_called_once_with(mock_oauth_auth_code_gateway.url, {"Authorization": "Bearer oauth_callback_token"})
 
             # Verify result structure
             assert "capabilities" in result
@@ -666,25 +655,17 @@ class TestGatewayServiceOAuthComprehensive:
             "client_id": "test_client",
             "client_secret": "test_secret",
             "token_url": "https://oauth.example.com/token",
-            "scopes": []  # Empty scopes
+            "scopes": [],  # Empty scopes
         }
 
         # Mock OAuth manager to return token
         gateway_service.oauth_manager.get_access_token.return_value = "token_without_scopes"
 
         # This should still work
-        with patch("mcpgateway.services.gateway_service.sse_client"), \
-             patch("mcpgateway.services.gateway_service.ClientSession"):
-
+        with patch("mcpgateway.services.gateway_service.sse_client"), patch("mcpgateway.services.gateway_service.ClientSession"):
             # Should not raise an error
             try:
-                await gateway_service._initialize_gateway(
-                    "http://test.example.com",
-                    None,
-                    "SSE",
-                    "oauth",
-                    oauth_config
-                )
+                await gateway_service._initialize_gateway("http://test.example.com", None, "SSE", "oauth", oauth_config)
             except GatewayConnectionError:
                 pass  # Expected if connection setup fails, but OAuth should work
 
@@ -696,23 +677,15 @@ class TestGatewayServiceOAuthComprehensive:
             "client_id": "custom_client",
             "client_secret": "custom_secret",
             "token_url": "https://custom-oauth.example.com/oauth2/token",
-            "scopes": ["custom:read", "custom:write"]
+            "scopes": ["custom:read", "custom:write"],
         }
 
         # Mock OAuth manager
         gateway_service.oauth_manager.get_access_token.return_value = "custom_token"
 
-        with patch("mcpgateway.services.gateway_service.sse_client"), \
-             patch("mcpgateway.services.gateway_service.ClientSession"):
-
+        with patch("mcpgateway.services.gateway_service.sse_client"), patch("mcpgateway.services.gateway_service.ClientSession"):
             try:
-                await gateway_service._initialize_gateway(
-                    "http://test.example.com",
-                    None,
-                    "SSE",
-                    "oauth",
-                    oauth_config
-                )
+                await gateway_service._initialize_gateway("http://test.example.com", None, "SSE", "oauth", oauth_config)
 
                 # Verify OAuth manager was called with custom config
                 gateway_service.oauth_manager.get_access_token.assert_called_once_with(oauth_config)

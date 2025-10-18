@@ -444,9 +444,7 @@ class TestAdminEndpoints:
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
-            response = await list_all_tokens(
-                user_email="user@example.com", include_inactive=False, limit=100, offset=0, current_user=mock_admin_user, db=mock_db
-            )
+            response = await list_all_tokens(user_email="user@example.com", include_inactive=False, limit=100, offset=0, current_user=mock_admin_user, db=mock_db)
 
             assert isinstance(response, TokenListResponse)
             assert len(response.tokens) == 1
@@ -525,9 +523,7 @@ class TestTeamTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.create_token = AsyncMock(
-                side_effect=ValueError("User is not team owner")
-            )
+            mock_service.create_token = AsyncMock(side_effect=ValueError("User is not team owner"))
 
             with pytest.raises(HTTPException) as exc_info:
                 await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
@@ -545,9 +541,7 @@ class TestTeamTokens:
             mock_service.list_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
-            response = await list_team_tokens(
-                team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db
-            )
+            response = await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
 
             assert len(response.tokens) == 1
             assert response.tokens[0].team_id == "team-456"
@@ -557,9 +551,7 @@ class TestTeamTokens:
         """Test listing team tokens without ownership."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_team_tokens = AsyncMock(
-                side_effect=ValueError("User is not team member")
-            )
+            mock_service.list_team_tokens = AsyncMock(side_effect=ValueError("User is not team member"))
 
             with pytest.raises(HTTPException) as exc_info:
                 await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
@@ -625,17 +617,8 @@ class TestEdgeCases:
             "server_id": "srv-123",
             "permissions": ["read", "write", "delete"],
             "ip_restrictions": ["192.168.1.0/24", "10.0.0.0/8"],
-            "time_restrictions": {
-                "start_time": "08:00",
-                "end_time": "18:00",
-                "timezone": "UTC",
-                "days": ["mon", "tue", "wed", "thu", "fri"]
-            },
-            "usage_limits": {
-                "max_calls": 10000,
-                "max_bytes": 1048576,
-                "rate_limit": "100/hour"
-            },
+            "time_restrictions": {"start_time": "08:00", "end_time": "18:00", "timezone": "UTC", "days": ["mon", "tue", "wed", "thu", "fri"]},
+            "usage_limits": {"max_calls": 10000, "max_bytes": 1048576, "rate_limit": "100/hour"},
         }
         request = TokenCreateRequest(
             name="Complex Token",

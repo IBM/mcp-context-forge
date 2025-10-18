@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Module Description.
 Location: ./mcp-servers/python/pm_mcp_server/tests/unit/tools/test_reporting.py
 Copyright 2025
@@ -7,8 +6,9 @@ Authors: Mihai Criveti
 
 Module documentation...
 """
+
 from pm_mcp_server.resource_store import GLOBAL_RESOURCE_STORE
-from pm_mcp_server.schemata import HealthDashboard, StatusReportPayload
+from pm_mcp_server.schemata import StatusReportPayload
 from pm_mcp_server.tools import reporting
 
 
@@ -18,7 +18,7 @@ def test_status_report_generator_renders_markdown():
         overall_health="Green",
         highlights=["Kickoff complete"],
         schedule={"percent_complete": 25, "critical_items": ["Design"]},
-        risks=[{"id": "R1", "severity": "High", "description": "" , "owner": "PM"}],
+        risks=[{"id": "R1", "severity": "High", "description": "", "owner": "PM"}],
         next_steps=[],
     )
     result = reporting.status_report_generator(payload)

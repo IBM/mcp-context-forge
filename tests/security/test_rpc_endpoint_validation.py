@@ -105,7 +105,7 @@ class TestRPCEndpointValidation:
                             results.append(f"   Error data: {str(error_data)[:100]}")
                     elif "Tool not found" in error_message or "Tool not found" in str(error_data):
                         results.append(f"❌ VULNERABILITY: Method reached tool lookup: {payload[:30]}...")
-                        results.append(f"   This means validation happened AFTER routing")
+                        results.append("   This means validation happened AFTER routing")
                     else:
                         results.append(f"✅ Method rejected with error: {payload[:30]}...")
                         results.append(f"   Error: {error_message[:100]}")
@@ -189,7 +189,7 @@ class TestRPCEndpointValidation:
 
         response = client.post("/rpc", json=request_data, headers=auth_headers)
 
-        print(f"\nTest payload: <script>alert(1)</script>")
+        print("\nTest payload: <script>alert(1)</script>")
         print(f"Status code: {response.status_code}")
         print(f"Response body: {response.text}")
 
@@ -235,7 +235,7 @@ class TestRPCEndpointValidation:
         print(f"\nPayload: {test_payload}")
         print(f"Status Code: {response.status_code}")
         print(f"Response Headers: {dict(response.headers)}")
-        print(f"\nFull Response:")
+        print("\nFull Response:")
         print("-" * 40)
 
         try:
@@ -256,9 +256,9 @@ class TestRPCEndpointValidation:
                 # Check for the vulnerability signature
                 error_str = str(error)
                 if test_payload in error_str:
-                    print(f"\n❌ VULNERABILITY CONFIRMED: User input reflected in error!")
+                    print("\n❌ VULNERABILITY CONFIRMED: User input reflected in error!")
                 if "Tool not found" in error_str and test_payload in error_str:
-                    print(f"❌ VULNERABILITY CONFIRMED: Malicious input reached tool lookup!")
+                    print("❌ VULNERABILITY CONFIRMED: Malicious input reached tool lookup!")
 
         except Exception as e:
             print(f"Raw text response: {response.text}")

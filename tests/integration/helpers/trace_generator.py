@@ -24,10 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirna
 
 # Standard
 import random
-import time
 
 # First-Party
-from mcpgateway.observability import create_span, init_telemetry
+from mcpgateway.observability import init_telemetry
 
 
 async def test_phoenix_integration():
@@ -79,9 +78,9 @@ async def test_phoenix_integration():
         parent_span.set_attribute("workflow.steps", 3)
 
         for i in range(3):
-            with tracer.start_as_current_span(f"step.{i+1}") as child_span:
-                child_span.set_attribute("step.index", i+1)
-                child_span.set_attribute("step.name", f"process_batch_{i+1}")
+            with tracer.start_as_current_span(f"step.{i + 1}") as child_span:
+                child_span.set_attribute("step.index", i + 1)
+                child_span.set_attribute("step.name", f"process_batch_{i + 1}")
                 await asyncio.sleep(0.1)
 
         print("  📊 Sent complex workflow trace with nested spans")
@@ -94,6 +93,7 @@ async def test_phoenix_integration():
     print("  - Resource fetching")
     print("  - Gateway federation")
     print("  - Complex workflow with nested spans")
+
 
 if __name__ == "__main__":
     # Set environment variables if not already set

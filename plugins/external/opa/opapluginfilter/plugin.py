@@ -114,7 +114,7 @@ class OPAPluginFilter(Plugin):
         """
 
         def _key(k: str, m: str) -> str:
-            """ Key implementation."""
+            """Key implementation."""
 
             return f"{k}.{m}" if k.split(".")[0] == "context" else k
 
