@@ -239,17 +239,17 @@ def rate_limit(requests_per_minute: Optional[int] = None):
         True
     """
 
-    def decorator(func):
+    def decorator(func_to_wrap):
         """Decorator that wraps the function with rate limiting logic.
 
         Args:
-            func: The function to be wrapped with rate limiting
+            func_to_wrap: The function to be wrapped with rate limiting
 
         Returns:
             The wrapped function with rate limiting applied
         """
 
-        @wraps(func)
+        @wraps(func_to_wrap)
         async def wrapper(*args, request: Optional[Request] = None, **kwargs):
             """Execute the wrapped function with rate limiting enforcement.
 
@@ -277,7 +277,7 @@ def rate_limit(requests_per_minute: Optional[int] = None):
 
             # enforce
             if len(rate_limit_storage[client_ip]) >= limit:
-                LOGGER.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func.__name__}")
+                LOGGER.warning(f"Rate limit exceeded for IP {client_ip} on endpoint {func_to_wrap.__name__}")
                 raise HTTPException(
                     status_code=429,
                     detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
@@ -286,7 +286,7 @@ def rate_limit(requests_per_minute: Optional[int] = None):
             rate_limit_storage[client_ip].append(current_time)
 
             # IMPORTANT: forward request to the real endpoint
-            return await func(*args, request=request, **kwargs)
+            return await func_to_wrap(*args, request=request, **kwargs)
 
         return wrapper
 
