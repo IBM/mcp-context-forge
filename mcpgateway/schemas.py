@@ -3919,7 +3919,13 @@ class A2AAgentCreate(BaseModel):
         capabilities (Dict[str, Any]): Agent capabilities and features.
         config (Dict[str, Any]): Agent-specific configuration parameters.
         auth_type (Optional[str]): Type of authentication ("api_key", "oauth", "bearer", etc.).
-        auth_value (Optional[str]): Authentication credentials (will be encrypted).
+        auth_username (Optional[str]): Username for basic authentication.
+        auth_password (Optional[str]): Password for basic authentication.
+        auth_token (Optional[str]): Token for bearer authentication.
+        auth_header_key (Optional[str]): Key for custom headers authentication.
+        auth_header_value (Optional[str]): Value for custom headers authentication.
+        auth_headers (Optional[List[Dict[str, str]]]): List of custom headers for authentication.
+        auth_value (Optional[str]): Alias for authentication value, used for better access post-validation.
         tags (List[str]): Tags for categorizing the agent.
         team_id (Optional[str]): Team ID for resource organization.
         visibility (str): Visibility level ("private", "team", "public").
@@ -3934,8 +3940,21 @@ class A2AAgentCreate(BaseModel):
     protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
-    auth_type: Optional[str] = Field(None, description="Type of authentication")
-    auth_value: Optional[str] = Field(None, description="Authentication credentials")
+    # Authorizations
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, or none")
+    # Fields for various types of authentication
+    auth_username: Optional[str] = Field(None, description="Username for basic authentication")
+    auth_password: Optional[str] = Field(None, description="Password for basic authentication")
+    auth_token: Optional[str] = Field(None, description="Token for bearer authentication")
+    auth_header_key: Optional[str] = Field(None, description="Key for custom headers authentication")
+    auth_header_value: Optional[str] = Field(None, description="Value for custom headers authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # Adding `auth_value` as an alias for better access post-validation
+    auth_value: Optional[str] = Field(None, validate_default=True)
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
 
     # Team scoping fields
@@ -4064,6 +4083,105 @@ class A2AAgentCreate(BaseModel):
             return SecurityValidator.validate_uuid(v, "team_id")
         return v
 
+    @staticmethod
+    def _process_auth_fields(info: ValidationInfo) -> Optional[str]:
+        """
+        Processes the input authentication fields and returns the correct auth_value.
+        This method is called based on the selected auth_type.
+
+        Args:
+            info: ValidationInfo containing auth fields
+
+        Returns:
+            Encoded auth string or None
+
+        Raises:
+            ValueError: If auth_type is invalid
+        """
+        data = info.data
+        auth_type = data.get("auth_type")
+
+        if auth_type == "basic":
+            # For basic authentication, both username and password must be present
+            username = data.get("auth_username")
+            password = data.get("auth_password")
+
+            if not username or not password:
+                raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
+
+            creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
+            return encode_auth({"Authorization": f"Basic {creds}"})
+
+        if auth_type == "bearer":
+            # For bearer authentication, only token is required
+            token = data.get("auth_token")
+
+            if not token:
+                raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
+
+            return encode_auth({"Authorization": f"Bearer {token}"})
+
+        if auth_type == "oauth":
+            # For OAuth authentication, we don't encode anything here
+            # The OAuth configuration is handled separately in the oauth_config field
+            # This method is only called for traditional auth types
+            return None
+
+        if auth_type == "authheaders":
+            # Support both new multi-headers format and legacy single header format
+            auth_headers = data.get("auth_headers")
+            if auth_headers and isinstance(auth_headers, list):
+                # New multi-headers format with enhanced validation
+                header_dict = {}
+                duplicate_keys = set()
+
+                for header in auth_headers:
+                    if not isinstance(header, dict):
+                        continue
+
+                    key = header.get("key")
+                    value = header.get("value", "")
+
+                    # Skip headers without keys
+                    if not key:
+                        continue
+
+                    # Track duplicate keys (last value wins)
+                    if key in header_dict:
+                        duplicate_keys.add(key)
+
+                    # Validate header key format (basic HTTP header validation)
+                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
+                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
+
+                    # Store header (empty values are allowed)
+                    header_dict[key] = value
+
+                # Ensure at least one valid header
+                if not header_dict:
+                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+
+                # Warn about duplicate keys (optional - could log this instead)
+                if duplicate_keys:
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+
+                # Check for excessive headers (prevent abuse)
+                if len(header_dict) > 100:
+                    raise ValueError("Maximum of 100 headers allowed per gateway.")
+
+                return encode_auth(header_dict)
+
+            # Legacy single header format (backward compatibility)
+            header_key = data.get("auth_header_key")
+            header_value = data.get("auth_header_value")
+
+            if not header_key or not header_value:
+                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+
+            return encode_auth({header_key: header_value})
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
+
 
 class A2AAgentUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing A2A agent.
@@ -4079,7 +4197,19 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
     config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
     auth_type: Optional[str] = Field(None, description="Type of authentication")
-    auth_value: Optional[str] = Field(None, description="Authentication credentials")
+    auth_username: Optional[str] = Field(None, description="username for basic authentication")
+    auth_password: Optional[str] = Field(None, description="password for basic authentication")
+    auth_token: Optional[str] = Field(None, description="token for bearer authentication")
+    auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
+    auth_header_value: Optional[str] = Field(None, description="value for custom headers authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
+
+    # Adding `auth_value` as an alias for better access post-validation
+    auth_value: Optional[str] = Field(None, validate_default=True)
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the agent")
 
     # Team scoping fields
@@ -4222,7 +4352,16 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Audit metadata
+    - Authentication type: basic, bearer, headers, oauth
+    - Authentication value: username/password or token or custom headers
+    - OAuth configuration for OAuth 2.0 authentication
+
+    Auto Populated fields:
+    - Authentication username: for basic auth
+    - Authentication password: for basic auth
+    - Authentication token: for bearer auth
+    - Authentication header key: for headers auth
+    - Authentication header value: for headers auth
     """
 
     id: str
@@ -4234,7 +4373,6 @@ class A2AAgentRead(BaseModelWithConfigDict):
     protocol_version: str
     capabilities: Dict[str, Any]
     config: Dict[str, Any]
-    auth_type: Optional[str]
     enabled: bool
     reachable: bool
     created_at: datetime
@@ -4242,6 +4380,20 @@ class A2AAgentRead(BaseModelWithConfigDict):
     last_interaction: Optional[datetime]
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
     metrics: A2AAgentMetrics
+
+    # Authorizations
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
+    auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # auth_value will populate the following fields
+    auth_username: Optional[str] = Field(None, description="username for basic authentication")
+    auth_password: Optional[str] = Field(None, description="password for basic authentication")
+    auth_token: Optional[str] = Field(None, description="token for bearer authentication")
+    auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
+    auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")

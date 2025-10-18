@@ -13,12 +13,13 @@ and interactions with A2A-compatible agents.
 
 # Standard
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, TYPE_CHECKING
 
 # Third-Party
 import httpx
 from sqlalchemy import and_, case, delete, desc, func, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
@@ -27,6 +28,8 @@ from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -170,55 +173,105 @@ class A2AAgentService:
 
         Raises:
             A2AAgentNameConflictError: If an agent with the same name already exists.
+            IntegrityError: If a database constraint is violated during commit.
+            ValueError: If invalid data or configuration is provided.
         """
         # Check for existing agent with same name
-        existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
-        existing_agent = db.execute(existing_query).scalar_one_or_none()
+        try:
+            visibility = "public" if agent_data.visibility not in ("private", "team", "public") else visibility
+            slug_name = slugify(agent_data.name)
 
-        if existing_agent:
-            raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
+            if visibility.lower() == "public":
+                # existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == slug_name, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                if existing_agent:
+                    raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
+            elif visibility.lower() == "team" and agent_data.team_id:
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == slug_name, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == agent_data.team_id)).scalar_one_or_none()
+                if existing_agent:
+                    raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
 
-        # Create new agent
-        new_agent = DbA2AAgent(
-            name=agent_data.name,
-            description=agent_data.description,
-            endpoint_url=agent_data.endpoint_url,
-            agent_type=agent_data.agent_type,
-            protocol_version=agent_data.protocol_version,
-            capabilities=agent_data.capabilities,
-            config=agent_data.config,
-            auth_type=agent_data.auth_type,
-            auth_value=agent_data.auth_value,  # This should be encrypted in practice
-            tags=agent_data.tags,
-            # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-            team_id=getattr(agent_data, "team_id", None) or team_id,
-            owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
-            visibility=getattr(agent_data, "visibility", None) or visibility,
-            created_by=created_by,
-            created_from_ip=created_from_ip,
-            created_via=created_via,
-            created_user_agent=created_user_agent,
-            import_batch_id=import_batch_id,
-            federation_source=federation_source,
-        )
+            auth_type = getattr(agent_data, "auth_type", None)
+            # Support multiple custom headers
+            auth_value = getattr(agent_data, "auth_value", {})
 
-        db.add(new_agent)
-        db.commit()
-        db.refresh(new_agent)
+            # authentication_headers: Optional[Dict[str, str]] = None
 
-        # Automatically create a tool for the A2A agent if not already present
-        tool_service = ToolService()
-        await tool_service.create_tool_from_a2a_agent(
-            db=db,
-            agent=new_agent,
-            created_by=created_by,
-            created_from_ip=created_from_ip,
-            created_via=created_via,
-            created_user_agent=created_user_agent,
-        )
+            if hasattr(agent_data, "auth_headers") and agent_data.auth_headers:
+                # Convert list of {key, value} to dict
+                header_dict = {h["key"]: h["value"] for h in agent_data.auth_headers if h.get("key")}
+                # Keep encoded form for persistence, but pass raw headers for initialization
+                auth_value = encode_auth(header_dict)  # Encode the dict for consistency
 
-        logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
-        return self._db_to_schema(new_agent)
+                # authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
+            # elif isinstance(auth_value, str) and auth_value:
+            #    # Decode persisted auth for initialization
+            #    decoded = decode_auth(auth_value)
+            # authentication_headers = {str(k): str(v) for k, v in decoded.items()}
+            else:
+                #    #authentication_headers = None
+                auth_value = {}
+
+            oauth_config = getattr(agent_data, "oauth_config", None)
+
+            # Create new agent
+            new_agent = DbA2AAgent(
+                name=agent_data.name,
+                description=agent_data.description,
+                endpoint_url=agent_data.endpoint_url,
+                agent_type=agent_data.agent_type,
+                protocol_version=agent_data.protocol_version,
+                capabilities=agent_data.capabilities,
+                config=agent_data.config,
+                auth_type=auth_type,
+                auth_value=auth_value,  # This should be encrypted in practice
+                oauth_config=oauth_config,
+                tags=agent_data.tags,
+                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
+                team_id=getattr(agent_data, "team_id", None) or team_id,
+                owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
+                visibility=getattr(agent_data, "visibility", None) or visibility,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                import_batch_id=import_batch_id,
+                federation_source=federation_source,
+            )
+
+            db.add(new_agent)
+            db.commit()
+            db.refresh(new_agent)
+
+            # Automatically create a tool for the A2A agent if not already present
+            tool_service = ToolService()
+            await tool_service.create_tool_from_a2a_agent(
+                db=db,
+                agent=new_agent,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+            )
+
+            logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
+            return self._db_to_schema(new_agent)
+        except* A2AAgentNameConflictError as ance:
+            if TYPE_CHECKING:
+                ance: ExceptionGroup[A2AAgentNameConflictError]
+            logger.error(f"A2AAgentNameConflictError in group: {ance.exceptions}")
+            raise ance.exceptions[0]
+        except* IntegrityError as ie:  # pragma: no mutate
+            if TYPE_CHECKING:
+                ie: ExceptionGroup[IntegrityError]
+            logger.error(f"IntegrityErrors in group: {ie.exceptions}")
+            raise ie.exceptions[0]
+        except* ValueError as ve:  # pragma: no mutate
+            if TYPE_CHECKING:
+                ve: ExceptionGroup[ValueError]
+            logger.error(f"ValueErrors in group: {ve.exceptions}")
+            raise ve.exceptions[0]
+
 
     async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
         """List A2A agents with optional filtering.
