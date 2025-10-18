@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Visualization Showcase Example for MCP Data Analysis Server
 

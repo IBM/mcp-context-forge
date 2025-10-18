@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Query Operations Example for MCP Data Analysis Server
 

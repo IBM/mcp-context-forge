@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Future
 from __future__ import annotations
 

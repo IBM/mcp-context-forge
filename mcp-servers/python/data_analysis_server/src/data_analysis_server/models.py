@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data models for MCP data analysis server requests and responses.
 """

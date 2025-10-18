@@ -412,9 +412,11 @@ repos:
       - id: ruff-check
         types_or: [ python, pyi ]
         args: [ --fix ]
+        files: ^mcpgateway/
       # Run the formatter.
       - id: ruff-format
         types_or: [ python, pyi ]
+        files: ^mcpgateway/
 
   # - repo: https://github.com/psf/black
   #   rev: 25.1.0

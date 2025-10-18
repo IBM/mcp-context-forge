@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Comprehensive Workflow Example for MCP Data Analysis Server
 

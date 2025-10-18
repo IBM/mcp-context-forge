@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Pytest configuration and fixtures for MCP LangChain Agent tests."""
 
 # Standard

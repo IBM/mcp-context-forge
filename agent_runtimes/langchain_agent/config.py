@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Standard
 import os
 from functools import lru_cache

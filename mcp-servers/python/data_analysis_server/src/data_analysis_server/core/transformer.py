@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data transformation and cleaning functionality.
 """

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Location: ./mcp-servers/python/pptx_server/src/pptx_server/server_fastmcp.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

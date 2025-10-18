@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Demo script for MCP LangChain Agent.
 
 This script demonstrates how to use the MCP LangChain Agent

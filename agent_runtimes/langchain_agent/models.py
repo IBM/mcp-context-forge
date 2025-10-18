@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Standard
 from typing import Any
 

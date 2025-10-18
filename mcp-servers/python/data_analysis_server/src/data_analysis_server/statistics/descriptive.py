@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Descriptive statistics functionality for data analysis.
 

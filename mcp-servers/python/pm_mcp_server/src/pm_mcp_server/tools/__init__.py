@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Module Description.
 Location: ./mcp-servers/python/pm_mcp_server/src/pm_mcp_server/tools/__init__.py
 Copyright 2025

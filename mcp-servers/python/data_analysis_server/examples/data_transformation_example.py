@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Data Transformation Example for MCP Data Analysis Server
 
