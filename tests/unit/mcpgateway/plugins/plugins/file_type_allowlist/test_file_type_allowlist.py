@@ -36,6 +36,6 @@ async def test_blocks_disallowed_extension_and_mime():
     pre = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://ex.com/data.pdf"), ctx)
     assert pre.violation is not None
     # MIME blocked
-    content = ResourceContent(type="resource", uri="https://ex.com/file.md", mime_type="text/html", text="<p>x</p>")
+    content = ResourceContent(type="resource", id="345",uri="https://ex.com/file.md", mime_type="text/html", text="<p>x</p>")
     post = await plugin.resource_post_fetch(ResourcePostFetchPayload(uri=content.uri, content=content), ctx)
     assert post.violation is not None

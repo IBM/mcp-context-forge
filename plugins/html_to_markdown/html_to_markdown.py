@@ -112,6 +112,6 @@ class HTMLToMarkdownPlugin(Plugin):
             text = content.text or ""
             if "html" in mime or re.search(r"</?[a-zA-Z][^>]*>", text):
                 md = _strip_tags(text)
-                new_content = ResourceContent(type=content.type, uri=content.uri, mime_type="text/markdown", text=md, blob=None)
+                new_content = ResourceContent(type=content.type, id=content.id, uri=content.uri, mime_type="text/markdown", text=md, blob=None)
                 return ResourcePostFetchResult(modified_payload=ResourcePostFetchPayload(uri=payload.uri, content=new_content))
         return ResourcePostFetchResult(continue_processing=True)

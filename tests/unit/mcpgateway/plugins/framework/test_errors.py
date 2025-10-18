@@ -35,7 +35,7 @@ async def test_convert_exception_to_error():
 async def test_error_plugin():
     plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/error_plugin.yaml")
     await plugin_manager.initialize()
-    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    payload = PromptPrehookPayload(prompt_id="test_prompt", args={"arg0": "This is a crap argument"})
     global_context = GlobalContext(request_id="1")
     escaped_regex = re.escape("ValueError('Sadly! Prompt prefetch is broken!')")
     with pytest.raises(PluginError, match=escaped_regex):
@@ -46,7 +46,7 @@ async def test_error_plugin():
 async def test_error_plugin_raise_error_false():
     plugin_manager = PluginManager(config="tests/unit/mcpgateway/plugins/fixtures/configs/error_plugin_raise_error_false.yaml")
     await plugin_manager.initialize()
-    payload = PromptPrehookPayload(name="test_prompt", args={"arg0": "This is a crap argument"})
+    payload = PromptPrehookPayload(prompt_id="test_prompt", args={"arg0": "This is a crap argument"})
     global_context = GlobalContext(request_id="1")
     with pytest.raises(PluginError):
         result, _ = await plugin_manager.prompt_pre_fetch(payload, global_context)

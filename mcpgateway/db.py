@@ -1840,7 +1840,7 @@ class Resource(Base):
     __tablename__ = "resources"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    uri: Mapped[str] = mapped_column(String(767), unique=True)
+    uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -1881,6 +1881,7 @@ class Resource(Base):
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),)
 
     @property
     def content(self) -> "ResourceContent":
@@ -1927,6 +1928,7 @@ class Resource(Base):
         if self.text_content is not None:
             return ResourceContent(
                 type="resource",
+                id=str(self.id),
                 uri=self.uri,
                 mime_type=self.mime_type,
                 text=self.text_content,
@@ -1934,6 +1936,7 @@ class Resource(Base):
         if self.binary_content is not None:
             return ResourceContent(
                 type="resource",
+                id=str(self.id),
                 uri=self.uri,
                 mime_type=self.mime_type or "application/octet-stream",
                 blob=self.binary_content,
@@ -2078,7 +2081,7 @@ class Prompt(Base):
     __tablename__ = "prompts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
@@ -2115,6 +2118,8 @@ class Prompt(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),)
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -2548,8 +2553,8 @@ class A2AAgent(Base):
     __tablename__ = "a2a_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
@@ -2594,6 +2599,7 @@ class A2AAgent(Base):
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),)
 
     @property
     def execution_count(self) -> int:

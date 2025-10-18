@@ -259,9 +259,10 @@ class TestRBACOwnershipHTTP:
         )
         client = TestClient(app)
 
-        # Attempt to delete resource owned by user-a@example.com
+
+        # Attempt to delete resource owned by user-a@example.com (use resource ID, not URI)
         response = client.delete(
-            "/resources/test%3A%2F%2Fresource",  # URL-encoded URI
+            "/resources/resource-123",
             headers={"Authorization": "Bearer test-token"}
         )
 

@@ -98,8 +98,8 @@ from mcpgateway.services.import_service import ImportService, ImportValidationEr
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.plugin_service import get_plugin_service
-from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
@@ -5340,6 +5340,7 @@ async def admin_edit_tool(
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
+    LOGGER.info(f"before Verifying team for user {user_email} with team_id {team_id}")
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
@@ -6411,12 +6412,12 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
-@admin_router.get("/resources/{uri:path}")
-async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+@admin_router.get("/resources/{resource_id}")
+async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
-        uri: Resource URI.
+        resource_id: Resource ID.
         db: Database session.
         user: Authenticated user.
 
@@ -6438,10 +6439,11 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
         >>> resource_uri = "test://resource/get"
+        >>> resource_id = 1
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
-        ...     id=1, uri=resource_uri, name="Get Resource", description="Test",
+        ...     id=resource_id, uri=resource_uri, name="Get Resource", description="Test",
         ...     mime_type="text/plain", size=10, created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc), is_active=True, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
@@ -6450,27 +6452,27 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         ...     ),
         ...     tags=[]
         ... )
-        >>> mock_content = ResourceContent(type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
+        >>> mock_content = ResourceContent(id=str(resource_id), type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
         >>>
         >>> # Mock service methods
-        >>> original_get_resource_by_uri = resource_service.get_resource_by_uri
+        >>> original_get_resource_by_id = resource_service.get_resource_by_id
         >>> original_read_resource = resource_service.read_resource
-        >>> resource_service.get_resource_by_uri = AsyncMock(return_value=mock_resource)
+        >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource)
         >>> resource_service.read_resource = AsyncMock(return_value=mock_content)
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_resource_success():
-        ...     result = await admin_get_resource(resource_uri, mock_db, mock_user)
-        ...     return isinstance(result, dict) and result['resource']['uri'] == resource_uri and result['content'].text == "Hello content" # Corrected to .text
+        ...     result = await admin_get_resource(resource_id, mock_db, mock_user)
+        ...     return isinstance(result, dict) and result['resource']['id'] == resource_id and result['content'].text == "Hello content" # Corrected to .text
         >>>
         >>> asyncio.run(test_admin_get_resource_success())
         True
         >>>
         >>> # Test resource not found
-        >>> resource_service.get_resource_by_uri = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
+        >>> resource_service.get_resource_by_id = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
         >>> async def test_admin_get_resource_not_found():
         ...     try:
-        ...         await admin_get_resource("nonexistent://uri", mock_db, mock_user)
+        ...         await admin_get_resource(999, mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Resource not found" in e.detail
@@ -6479,11 +6481,11 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         True
         >>>
         >>> # Test exception during content read (resource found but content fails)
-        >>> resource_service.get_resource_by_uri = AsyncMock(return_value=mock_resource) # Resource found
+        >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource) # Resource found
         >>> resource_service.read_resource = AsyncMock(side_effect=Exception("Content read error"))
         >>> async def test_admin_get_resource_content_error():
         ...     try:
-        ...         await admin_get_resource(resource_uri, mock_db, mock_user)
+        ...         await admin_get_resource(resource_id, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
         ...         return str(e) == "Content read error"
@@ -6492,18 +6494,18 @@ async def admin_get_resource(uri: str, db: Session = Depends(get_db), user=Depen
         True
         >>>
         >>> # Restore original methods
-        >>> resource_service.get_resource_by_uri = original_get_resource_by_uri
+        >>> resource_service.get_resource_by_id = original_get_resource_by_id
         >>> resource_service.read_resource = original_read_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for resource URI {uri}")
+    LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
-        resource = await resource_service.get_resource_by_uri(db, uri)
-        content = await resource_service.read_resource(db, uri)
+        resource = await resource_service.get_resource_by_id(db, resource_id)
+        content = await resource_service.read_resource(db, resource_id)
         return {"resource": resource.model_dump(by_alias=True), "content": content}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting resource {uri}: {e}")
+        LOGGER.error(f"Error getting resource {resource_id}: {e}")
         raise e
 
 
@@ -6596,6 +6598,9 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
         return JSONResponse(
             content={"message": "Add resource registered successfully!", "success": True},
@@ -6609,14 +6614,16 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
-
+        if isinstance(ex, ResourceURIConflictError):
+            LOGGER.error(f"ResourceURIConflictError in admin_add_resource: {ex}")
+            return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
         LOGGER.error(f"Error in admin_add_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/resources/{uri:path}/edit")
+@admin_router.post("/resources/{resource_id}/edit")
 async def admin_edit_resource(
-    uri: str,
+    resource_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -6631,7 +6638,7 @@ async def admin_edit_resource(
       - content
 
     Args:
-        uri: Resource URI.
+        resource_id: Resource ID.
         request: FastAPI request containing form data.
         db: Database session.
         user: Authenticated user.
@@ -6705,9 +6712,9 @@ async def admin_edit_resource(
         >>> # Reset mock
         >>> resource_service.update_resource = original_update_resource
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing resource URI {uri}")
+    LOGGER.debug(f"User {get_user_email(user)} is editing resource ID {resource_id}")
     form = await request.form()
-
+    LOGGER.info(f"Form data received for resource edit: {form}")
     visibility = str(form.get("visibility", "private"))
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -6716,17 +6723,19 @@ async def admin_edit_resource(
     try:
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         resource = ResourceUpdate(
-            name=str(form["name"]),
+            uri=str(form.get("uri", "")),
+            name=str(form.get("name", "")),
             description=str(form.get("description")),
             mime_type=str(form.get("mimeType")),
-            content=str(form["content"]),
+            content=str(form.get("content", "")),
             template=str(form.get("template")),
             tags=tags,
             visibility=visibility,
         )
+        LOGGER.info(f"ResourceUpdate object created: {resource}")
         await resource_service.update_resource(
             db,
-            uri,
+            resource_id,
             resource,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -6749,21 +6758,24 @@ async def admin_edit_resource(
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_resource: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
+        if isinstance(ex, ResourceURIConflictError):
+            LOGGER.error(f"ResourceURIConflictError in admin_edit_resource: {ex}")
+            return JSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_resource: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/resources/{uri:path}/delete")
-async def admin_delete_resource(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+@admin_router.post("/resources/{resource_id}/delete")
+async def admin_delete_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a resource via the admin UI.
 
-    This endpoint permanently removes a resource from the database using its URI.
+    This endpoint permanently removes a resource from the database using its resource ID.
     The operation is irreversible and should be used with caution. It requires
     user authentication and logs the deletion attempt.
 
     Args:
-        uri (str): The URI of the resource to delete.
+        resource_id (str): The ID of the resource to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -6808,18 +6820,18 @@ async def admin_delete_resource(uri: str, request: Request, db: Session = Depend
         True
         >>> resource_service.delete_resource = original_delete_resource
     """
+
     user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} is deleting resource URI {uri}")
+    LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
     error_message = None
     try:
-        await resource_service.delete_resource(db, uri, user_email=user_email)
+        await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting resource {uri}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting resource: {e}")
         error_message = "Failed to delete resource. Please try again."
-
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
@@ -6961,12 +6973,12 @@ async def admin_toggle_resource(
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
-@admin_router.get("/prompts/{name}")
-async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+@admin_router.get("/prompts/{prompt_id}")
+async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
-        name: Prompt name.
+        prompt_id: Prompt ID.
         db: Database session.
         user: Authenticated user.
 
@@ -7049,16 +7061,16 @@ async def admin_get_prompt(name: str, db: Session = Depends(get_db), user=Depend
         >>>
         >>> prompt_service.get_prompt_details = original_get_prompt_details
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for prompt name {name}")
+    LOGGER.info(f"User {get_user_email(user)} requested details for prompt ID {prompt_id}")
     try:
-        prompt_details = await prompt_service.get_prompt_details(db, name)
+        prompt_details = await prompt_service.get_prompt_details(db, prompt_id)
         prompt = PromptRead.model_validate(prompt_details)
         return prompt.model_dump(by_alias=True)
     except PromptNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting prompt {name}: {e}")
-        raise e
+        LOGGER.error(f"Error getting prompt {prompt_id}: {e}")
+        raise
 
 
 @admin_router.post("/prompts")
@@ -7151,6 +7163,9 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=visibility,
         )
         return JSONResponse(
             content={"message": "Prompt registered successfully!", "success": True},
@@ -7164,13 +7179,16 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_add_prompt: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
+        if isinstance(ex, PromptNameConflictError):
+            LOGGER.error(f"PromptNameConflictError in admin_add_prompt: {ex}")
+            return JSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_add_prompt: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/prompts/{name}/edit")
+@admin_router.post("/prompts/{prompt_id}/edit")
 async def admin_edit_prompt(
-    name: str,
+    prompt_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -7178,21 +7196,21 @@ async def admin_edit_prompt(
     """Edit a prompt via the admin UI.
 
     Expects form fields:
-      - name
-      - description (optional)
-      - template
-      - arguments (as a JSON string representing a list)
+        - name
+        - description (optional)
+        - template
+        - arguments (as a JSON string representing a list)
 
     Args:
-        name: Prompt name.
+        prompt_id: Prompt ID.
         request: FastAPI request containing form data.
         db: Database session.
         user: Authenticated user.
 
     Returns:
-         JSONResponse: A JSON response indicating success or failure of the server update operation.
+        JSONResponse: A JSON response indicating success or failure of the server update operation.
 
-        Examples:
+    Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
@@ -7240,15 +7258,18 @@ async def admin_edit_prompt(
         True
         >>> prompt_service.update_prompt = original_update_prompt
     """
-    LOGGER.debug(f"User {get_user_email(user)} is editing prompt name {name}")
+    LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
+    LOGGER.info(f"form data: {form}")
 
     visibility = str(form.get("visibility", "private"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
+    LOGGER.info(f"befor Verifying team for user {user_email} with team_id {team_id}")
     team_service = TeamManagementService(db)
     team_id = await team_service.verify_team_for_user(user_email, team_id)
+    LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
 
     args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
@@ -7269,7 +7290,7 @@ async def admin_edit_prompt(
         )
         await prompt_service.update_prompt(
             db,
-            name,
+            prompt_id,
             prompt,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -7292,21 +7313,24 @@ async def admin_edit_prompt(
             error_message = ErrorFormatter.format_database_error(ex)
             LOGGER.error(f"IntegrityError in admin_edit_prompt: {error_message}")
             return JSONResponse(status_code=409, content=error_message)
+        if isinstance(ex, PromptNameConflictError):
+            LOGGER.error(f"PromptNameConflictError in admin_edit_prompt: {ex}")
+            return JSONResponse(status_code=409, content={"message": str(ex), "success": False})
         LOGGER.error(f"Error in admin_edit_prompt: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/prompts/{name}/delete")
-async def admin_delete_prompt(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+@admin_router.post("/prompts/{prompt_id}/delete")
+async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a prompt via the admin UI.
 
-    This endpoint permanently deletes a prompt from the database using its name.
+    This endpoint permanently deletes a prompt from the database using its ID.
     Deletion is irreversible and requires authentication. All actions are logged
     for administrative auditing.
 
     Args:
-        name (str): The name of the prompt to delete.
+        prompt_id (str): The ID of the prompt to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -7352,17 +7376,16 @@ async def admin_delete_prompt(name: str, request: Request, db: Session = Depends
         >>> prompt_service.delete_prompt = original_delete_prompt
     """
     user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} is deleting prompt name {name}")
+    LOGGER.info(f"User {get_user_email(user)} is deleting prompt id {prompt_id}")
     error_message = None
     try:
-        await prompt_service.delete_prompt(db, name, user_email=user_email)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
     except PermissionError as e:
-        LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {name}: {e}")
+        LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {prompt_id}: {e}")
         error_message = str(e)
     except Exception as e:
         LOGGER.error(f"Error deleting prompt: {e}")
         error_message = "Failed to delete prompt. Please try again."
-
     form = await request.form()
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     root_path = request.scope.get("root_path", "")
@@ -9212,6 +9235,9 @@ async def admin_add_a2a_agent(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            team_id=team_id,
+            owner_email=user_email,
+            visibility=form.get("visibility", "private"),
         )
 
         return JSONResponse(

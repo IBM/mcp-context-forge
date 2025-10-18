@@ -119,6 +119,7 @@ class TestMCPTypes:
         # Text resource
         text_resource = ResourceContent(
             type="resource",
+            id="res1",
             uri="file:///example.txt",
             mime_type="text/plain",
             text="Example content",
@@ -132,6 +133,7 @@ class TestMCPTypes:
         # Binary resource
         binary_resource = ResourceContent(
             type="resource",
+            id="res2",
             uri="file:///example.bin",
             mime_type="application/octet-stream",
             blob=b"binary_data",
@@ -145,6 +147,7 @@ class TestMCPTypes:
         # Minimal required fields
         minimal = ResourceContent(
             type="resource",
+            id="res3",
             uri="file:///example",
         )
         assert minimal.type == "resource"

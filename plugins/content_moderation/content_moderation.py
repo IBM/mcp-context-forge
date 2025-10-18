@@ -555,7 +555,7 @@ Respond with JSON format:
 
                 if self._cfg.audit_decisions:
                     logger.info(
-                        f"Content moderation - Prompt: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
+                        f"Content moderation - Prompt: {payload.prompt_id}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
                     )
 
                 if result.action == ModerationAction.BLOCK:
@@ -576,11 +576,11 @@ Respond with JSON format:
                     )
                 elif result.modified_content:
                     # Modify the payload with redacted/transformed content
-                    modified_payload = PromptPrehookPayload(name=payload.name, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
+                    modified_payload = PromptPrehookPayload(prompt_id=payload.prompt_id, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
                     return PromptPrehookResult(modified_payload=modified_payload, metadata={"moderation_result": result.dict(), "content_modified": True})
 
             except Exception as e:
-                logger.error(f"Content moderation failed for prompt {payload.name}: {e}")
+                logger.error(f"Content moderation failed for prompt {payload.prompt_id}: {e}")
                 if self._cfg.fallback_on_error == ModerationAction.BLOCK:
                     return PromptPrehookResult(
                         continue_processing=False,

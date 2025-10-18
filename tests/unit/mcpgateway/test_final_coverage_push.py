@@ -67,6 +67,7 @@ def test_content_types():
     # Test ResourceContent
     resource = ResourceContent(
         type="resource",
+        id="res123",
         uri="/api/data",
         mime_type="application/json",
         text="Sample content"

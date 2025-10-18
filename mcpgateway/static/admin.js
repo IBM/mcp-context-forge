@@ -3452,12 +3452,12 @@ async function viewPrompt(promptName) {
 /**
  * SECURE: Edit Prompt function with validation
  */
-async function editPrompt(promptName) {
+async function editPrompt(promptId) {
     try {
-        console.log(`Editing prompt: ${promptName}`);
+        console.log(`Editing prompt: ${promptId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`,
+            `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}`,
         );
 
         if (!response.ok) {
@@ -3513,7 +3513,22 @@ async function editPrompt(promptName) {
         // Set form action and populate fields with validation
         const editForm = safeGetElement("edit-prompt-form");
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}/edit`;
+            editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}/edit`;
+            // Add or update hidden team_id input if present in URL
+            const teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (teamId) {
+                let teamInput = safeGetElement("edit-prompt-team-id");
+                if (!teamInput) {
+                    teamInput = document.createElement("input");
+                    teamInput.type = "hidden";
+                    teamInput.name = "team_id";
+                    teamInput.id = "edit-prompt-team-id";
+                    editForm.appendChild(teamInput);
+                }
+                teamInput.value = teamId;
+            }
         }
 
         // Validate prompt name
@@ -8009,7 +8024,13 @@ async function handlePromptFormSubmit(e) {
 async function handleEditPromptFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
+
     const formData = new FormData(form);
+    // Add team_id from URL if present (like handleEditToolFormSubmit)
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    if (teamId) {
+        formData.set("team_id", teamId);
+    }
 
     try {
         // Validate inputs

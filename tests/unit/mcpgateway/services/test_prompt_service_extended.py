@@ -141,7 +141,7 @@ class TestPromptServiceExtended:
         # Standard
         import inspect
         sig = inspect.signature(service.get_prompt)
-        assert 'name' in sig.parameters
+        assert 'prompt_id' in sig.parameters
         assert 'arguments' in sig.parameters
 
     @pytest.mark.asyncio
@@ -165,7 +165,7 @@ class TestPromptServiceExtended:
         # Standard
         import inspect
         sig = inspect.signature(service.update_prompt)
-        assert 'name' in sig.parameters
+        assert 'prompt_id' in sig.parameters
         assert 'prompt_update' in sig.parameters
 
     @pytest.mark.asyncio
@@ -218,7 +218,7 @@ class TestPromptServiceExtended:
         # Standard
         import inspect
         sig = inspect.signature(service.delete_prompt)
-        assert 'name' in sig.parameters
+        assert 'prompt_id' in sig.parameters
         assert 'db' in sig.parameters
 
     @pytest.mark.asyncio
@@ -245,7 +245,7 @@ class TestPromptServiceExtended:
         # Standard
         import inspect
         sig = inspect.signature(service.get_prompt)
-        assert 'name' in sig.parameters
+        assert 'prompt_id' in sig.parameters
         assert 'arguments' in sig.parameters
 
     @pytest.mark.asyncio
@@ -281,7 +281,7 @@ class TestPromptServiceExtended:
         # Standard
         import inspect
         sig = inspect.signature(service.get_prompt_details)
-        assert 'name' in sig.parameters
+        assert 'prompt_id' in sig.parameters
         assert 'include_inactive' in sig.parameters
 
     @pytest.mark.asyncio
