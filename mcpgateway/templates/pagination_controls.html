@@ -49,7 +49,7 @@
   },
 
   // Load page via HTMX
-  loadPage(page) {    
+  loadPage(page) {
     const url = new URL('{{ base_url }}', window.location.origin);
     url.searchParams.set('page', page);
     url.searchParams.set('per_page', this.perPage);
@@ -60,7 +60,7 @@
     url.searchParams.set('{{ key }}', '{{ value }}');
     {% endfor %}
     {% endif %}
-    
+
     // Trigger HTMX request - use innerHTML so we only replace tbody content (rows)
     // The OOB swap will handle the pagination controls separately
     htmx.ajax('GET', url.toString(), {
