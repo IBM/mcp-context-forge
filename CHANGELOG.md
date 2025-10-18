@@ -4,6 +4,68 @@
 
 ---
 
+## [0.9.0] - In Progress (Due: 2025-11-04) - REST Passthrough Enhancements & Advanced Tool Management
+
+### Overview
+
+This release focuses on **REST API Passthrough Capabilities** and **Advanced Tool Management** with enhanced configurability for REST integrations:
+
+- **🔌 REST Passthrough API Fields** - Comprehensive REST tool configuration with query/header mapping, timeouts, and plugin chains
+- **🎯 Advanced Tool Configuration** - Fine-grained control over REST tool behavior and request customization
+- **🔒 Security & Validation** - Enhanced validation for REST endpoints with allowlists and configurable timeouts
+
+### Added
+
+#### **🔌 REST Passthrough Configuration** (#746, #1273)
+* **Query & Header Mapping** - Configure dynamic query parameter and header mappings for REST tools
+* **Path Templates** - Support for URL path templates with variable substitution
+* **Timeout Configuration** - Per-tool timeout settings (default: 20000ms for REST passthrough)
+* **Endpoint Exposure Control** - Toggle passthrough endpoint visibility with `expose_passthrough` flag
+* **Host Allowlists** - Configure allowed upstream hosts/schemes for enhanced security
+* **Plugin Chain Support** - Pre and post-request plugin chains for REST tools
+* **Base URL Extraction** - Automatic extraction of base URL and path template from tool URLs
+* **Admin UI Integration** - "Advanced: Add Passthrough" button in tool creation form with dynamic field generation
+
+#### **🛡️ REST Tool Validation** (#1273)
+* **URL Structure Validation** - Ensures base URLs have valid scheme and netloc
+* **Path Template Validation** - Enforces leading slash in path templates
+* **Timeout Validation** - Validates timeout values are positive integers
+* **Allowlist Validation** - Regex-based validation for allowed hosts/schemes
+* **Plugin Chain Validation** - Restricts plugins to known safe plugins (deny_filter, rate_limit, pii_filter, response_shape, regex_filter, resource_filter)
+* **Integration Type Enforcement** - REST-specific fields only allowed for `integration_type='REST'`
+
+### Changed
+
+#### **📊 Database Schema** (#1273)
+* **New Tool Columns** - Added 9 new columns to tools table via Alembic migration `8a2934be50c0`:
+  - `base_url` - Base URL for REST passthrough
+  - `path_template` - Path template for URL construction
+  - `query_mapping` - JSON mapping for query parameters
+  - `header_mapping` - JSON mapping for headers
+  - `timeout_ms` - Request timeout in milliseconds
+  - `expose_passthrough` - Boolean flag to enable/disable passthrough
+  - `allowlist` - JSON array of allowed hosts/schemes
+  - `plugin_chain_pre` - Pre-request plugin chain
+  - `plugin_chain_post` - Post-request plugin chain
+
+#### **🔧 API Schemas** (#1273)
+* **ToolCreate Schema** - Enhanced with passthrough field validation and auto-extraction logic
+* **ToolUpdate Schema** - Updated with same validation logic for modifications
+* **ToolRead Schema** - Extended to expose passthrough configuration in API responses
+
+### Documentation
+
+* REST Passthrough API configuration guide (see `docs/docs/using/rest-passthrough.md`)
+* Updated tool configuration examples with passthrough fields
+* Admin UI usage documentation for advanced REST tool configuration
+
+### Issues Closed
+
+**REST Integration:**
+- Closes #746 - REST Passthrough API configuration fields
+
+---
+
 ## [0.8.0] - 2025-10-07 - Advanced OAuth, Plugin Ecosystem & MCP Registry
 
 ### Overview
