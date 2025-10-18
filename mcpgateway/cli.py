@@ -39,13 +39,14 @@ from __future__ import annotations
 # Standard
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import List, Optional
+
+import uvicorn
 
 # Third-Party
 from pydantic import ValidationError
-import uvicorn
 
 # First-Party
 from mcpgateway import __version__

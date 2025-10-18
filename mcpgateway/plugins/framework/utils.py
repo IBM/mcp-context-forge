@@ -10,8 +10,8 @@ plugins.
 """
 
 # Standard
-from functools import cache
 import importlib
+from functools import cache
 from types import ModuleType
 
 # First-Party

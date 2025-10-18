@@ -6,17 +6,17 @@ easily registered with one-click from the admin UI.
 """
 
 # Standard
-from datetime import datetime, timezone
 import logging
-from pathlib import Path
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 # Third-Party
 import httpx
+import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-import yaml
 
 # First-Party
 from mcpgateway.config import settings

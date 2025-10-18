@@ -21,22 +21,21 @@ gateway-specific extensions for federation support.
 
 # Standard
 import base64
-from datetime import datetime, timezone
-from enum import Enum
 import json
 import logging
 import re
+from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Self, Union
 
 # Third-Party
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, ValidationInfo, field_serializer, field_validator, model_validator
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.models import ImageContent
+from mcpgateway.models import ImageContent, ResourceContent, TextContent
 from mcpgateway.models import Prompt as MCPPrompt
 from mcpgateway.models import Resource as MCPResource
-from mcpgateway.models import ResourceContent, TextContent
 from mcpgateway.models import Tool as MCPTool
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field

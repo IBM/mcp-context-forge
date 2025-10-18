@@ -16,24 +16,23 @@ It handles:
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
 import os
-from string import Formatter
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 import uuid
+from datetime import datetime, timezone
+from string import Formatter
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import Float, and_, case, delete, desc, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import EmailTeam, PromptMetric, server_prompt_association
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptPosthookPayload, PromptPrehookPayload

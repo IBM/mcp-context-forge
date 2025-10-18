@@ -17,8 +17,8 @@ Examples:
 """
 
 # Standard
-from datetime import datetime, timezone
 import logging
+from datetime import datetime, timezone
 from typing import Generator, List, Optional
 
 # Third-Party

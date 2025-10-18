@@ -45,14 +45,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import codecs
-from contextlib import suppress
-from dataclasses import dataclass
 import errno
 import json
 import logging
 import os
 import signal
 import sys
+from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlencode
 

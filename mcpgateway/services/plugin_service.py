@@ -10,8 +10,8 @@ statistics, and configuration from the PluginManager.
 """
 
 # Standard
-from collections import defaultdict
 import logging
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 # First-Party

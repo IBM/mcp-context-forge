@@ -17,8 +17,8 @@ Examples:
 """
 
 # Standard
-from datetime import timedelta
 import secrets
+from datetime import timedelta
 from typing import List, Optional
 
 # Third-Party

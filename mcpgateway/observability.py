@@ -9,11 +9,11 @@ Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 """
 
 # Standard
-from contextlib import nullcontext
-from importlib import import_module as _im
 import logging
 import os
-from typing import Any, Callable, cast, Dict, Optional
+from contextlib import nullcontext
+from importlib import import_module as _im
+from typing import Any, Callable, Dict, Optional, cast
 
 # Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False

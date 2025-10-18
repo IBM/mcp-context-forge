@@ -22,9 +22,10 @@ import os
 import sys
 from typing import Any, Dict
 
+import uvicorn
+
 # Third-Party
 from mcp.server.fastmcp import FastMCP
-import uvicorn
 
 # First-Party
 from mcpgateway.plugins.framework import (

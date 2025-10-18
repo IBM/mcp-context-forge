@@ -116,23 +116,24 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
-from contextlib import suppress
 import json
 import logging
 import os
 import shlex
 import signal
 import sys
-from typing import Any, AsyncIterator, cast, Dict, List, Optional, Sequence, Tuple
-from urllib.parse import urlencode
 import uuid
+from contextlib import suppress
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple, cast
+from urllib.parse import urlencode
+
+import uvicorn
 
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
-import uvicorn
 
 try:
     # Third-Party
