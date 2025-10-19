@@ -44,6 +44,13 @@ class GrpcServiceNameConflictError(GrpcServiceError):
     """Raised when a gRPC service name conflicts with an existing one."""
 
     def __init__(self, name: str, is_active: bool = True, service_id: Optional[str] = None):
+        """Initialize the GrpcServiceNameConflictError.
+
+        Args:
+            name: The conflicting gRPC service name
+            is_active: Whether the conflicting service is currently active
+            service_id: The ID of the conflicting service, if known
+        """
         self.name = name
         self.is_active = is_active
         self.service_id = service_id
