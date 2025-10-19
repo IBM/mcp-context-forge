@@ -130,9 +130,9 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
-        "ix_email_auth_events_user_timestamp",
+        "ix_email_auth_events_user_email_timestamp",
         "email_auth_events",
-        ["email", "timestamp"],
+        ["user_email", "timestamp"],
         unique=False,
     )
 
@@ -140,7 +140,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Remove pagination indexes."""
     # Drop indexes in reverse order
-    op.drop_index("ix_email_auth_events_user_timestamp", table_name="email_auth_events")
+    op.drop_index("ix_email_auth_events_user_email_timestamp", table_name="email_auth_events")
     op.drop_index("ix_email_auth_events_timestamp_id", table_name="email_auth_events")
     op.drop_index("ix_email_api_tokens_user_email_created_at", table_name="email_api_tokens")
     op.drop_index("ix_email_api_tokens_created_at_id", table_name="email_api_tokens")
