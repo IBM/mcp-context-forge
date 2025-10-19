@@ -83,7 +83,7 @@
       <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
         <div class="relative group">
           {% set enabled = tool.enabled %}
-          {% set reachable = tool.gatewayReachable %}
+          {% set reachable = tool.reachable %}
           <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {% if enabled and reachable %}bg-green-100 text-green-800{% elif enabled %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
             {% if enabled and reachable %}
               Online
@@ -240,7 +240,7 @@
       <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
         <div class="relative group">
           {% set enabled = tool.enabled %}
-          {% set reachable = tool.gatewayReachable %}
+          {% set reachable = tool.reachable %}
           <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium {% if enabled and reachable %}bg-green-100 text-green-800{% elif enabled %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
             {% if enabled and reachable %}
               Online
