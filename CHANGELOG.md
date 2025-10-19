@@ -4,7 +4,6 @@
 
 ---
 
-<<<<<<< HEAD
 ## [0.9.0] - 2025-11-04 [WIP] - REST Passthrough, Multi-Tenancy Fixes & Platform Enhancements
 
 ### Overview
