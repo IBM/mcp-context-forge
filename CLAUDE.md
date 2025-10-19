@@ -49,6 +49,66 @@ make smoketest                    # End-to-end container testing
 . /home/cmihai/.venv/mcpgateway/bin/activate && pytest --cov-report=annotate tests/unit/mcpgateway/test_translate.py
 ```
 
+## Performance Configuration
+
+### Response Compression
+
+The gateway includes automatic response compression middleware (Brotli, Zstd, GZip) that reduces bandwidth usage by 30-70% for text-based responses (JSON, HTML, CSS, JS).
+
+**Configuration** (`.env.example`):
+```bash
+# Enable/disable compression
+COMPRESSION_ENABLED=true                 # Default: true
+
+# Minimum response size to compress (bytes)
+COMPRESSION_MINIMUM_SIZE=500             # Default: 500 bytes
+
+# Compression quality levels
+COMPRESSION_GZIP_LEVEL=6                 # GZip: 1-9 (default: 6 balanced)
+COMPRESSION_BROTLI_QUALITY=4             # Brotli: 0-11 (default: 4 balanced)
+COMPRESSION_ZSTD_LEVEL=3                 # Zstd: 1-22 (default: 3 fast)
+```
+
+**Algorithm Priority**: Brotli (best) > Zstd (fast) > GZip (universal)
+
+**Testing Compression** (requires running server):
+```bash
+# Start server
+make dev
+
+# Test Brotli compression (best compression ratio)
+curl -H "Accept-Encoding: br" http://localhost:8000/openapi.json -v 2>&1 | grep -i "content-encoding"
+# Should show: content-encoding: br
+
+# Test GZip compression (universal fallback)
+curl -H "Accept-Encoding: gzip" http://localhost:8000/openapi.json -v 2>&1 | grep -i "content-encoding"
+# Should show: content-encoding: gzip
+
+# Test Zstd compression (fastest)
+curl -H "Accept-Encoding: zstd" http://localhost:8000/openapi.json -v 2>&1 | grep -i "content-encoding"
+# Should show: content-encoding: zstd
+
+# Verify Vary header (for cache compatibility)
+curl -H "Accept-Encoding: br" http://localhost:8000/openapi.json -v 2>&1 | grep -i "vary"
+# Should show: vary: Accept-Encoding
+
+# Test minimum size threshold (small responses not compressed)
+curl -H "Accept-Encoding: br" http://localhost:8000/health -v 2>&1 | grep -i "content-encoding"
+# Should NOT show content-encoding (response too small)
+
+# Measure compression ratio
+curl -w "%{size_download}\n" -o /dev/null -s http://localhost:8000/openapi.json  # Uncompressed
+curl -H "Accept-Encoding: br" -w "%{size_download}\n" -o /dev/null -s http://localhost:8000/openapi.json  # Brotli
+```
+
+**Implementation Details**:
+- Middleware location: `mcpgateway/main.py:888-907`
+- Config settings: `mcpgateway/config.py:379-384`
+- Only compresses responses > `COMPRESSION_MINIMUM_SIZE` bytes
+- Automatically negotiates algorithm based on client `Accept-Encoding` header
+- Adds `Vary: Accept-Encoding` header for proper cache behavior
+- No client changes required (browsers handle decompression automatically)
+
 ## Architecture Overview
 
 ### Technology Stack
