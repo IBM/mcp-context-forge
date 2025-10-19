@@ -20,6 +20,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from typing import TypeVar
 
 # Third-Party
 import pytest
@@ -28,9 +29,15 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
-from mcpgateway.models import Message, PromptResult, Role
+from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
-from mcpgateway.services.prompt_service import PromptError, PromptNotFoundError, PromptService, PromptValidationError
+
+from mcpgateway.services.prompt_service import (
+    PromptError,
+    PromptNotFoundError,
+    PromptService,
+    PromptValidationError,
+)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -51,8 +58,8 @@ def mock_prompt():
 
     return prompt
 
-
-def _make_execute_result(*, scalar: Any = None, scalars_list: Optional[list] = None):
+_R = TypeVar("_R")
+def _make_execute_result(*, scalar: Any = _R | None, scalars_list: list[_R] | None = None) -> MagicMock:
     """
     Return a MagicMock that mimics the SQLAlchemy Result object:
 
@@ -199,7 +206,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add, test_db.commit, test_db.refresh = Mock(), Mock(), Mock()
         prompt_service._notify_prompt_added = AsyncMock()
-        test_db.commit.side_effect = IntegrityError(err_msg, None, None)
+        test_db.commit.side_effect = IntegrityError(err_msg, None, BaseException(None))
         pc = PromptCreate(name="fail", description="", template="ok", arguments=[])
         with pytest.raises(IntegrityError) as exc_info:
             await prompt_service.register_prompt(test_db, pc)
@@ -222,6 +229,7 @@ class TestPromptService:
         assert len(pr.messages) == 1
         msg: Message = pr.messages[0]
         assert msg.role == Role.USER
+        assert isinstance(msg.content, TextContent)
         assert msg.content.text == "Hello, Alice!"
 
     @pytest.mark.asyncio
@@ -302,7 +310,7 @@ class TestPromptService:
                 _make_execute_result(scalar=None),
             ]
         )
-        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: prompt.name", None, None))
+        test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: prompt.name", None, BaseException(None)))
         upd = PromptUpdate(name="other")
         with pytest.raises(IntegrityError) as exc_info:
             await prompt_service.update_prompt(test_db, 1, upd)
@@ -443,8 +451,8 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_publish_event_puts_in_all_queues(self, prompt_service):
-        q1 = asyncio.Queue()
-        q2 = asyncio.Queue()
+        q1 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
+        q2 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
         prompt_service._event_subscribers.extend([q1, q2])
         event = {"type": "test"}
         await prompt_service._publish_event(event)
@@ -455,7 +463,6 @@ class TestPromptService:
     #   Validation & Exception Handling
     # ──────────────────────────────────────────────────────────────────
 
-    @pytest.mark.asyncio
     def test_validate_template_raises(self, prompt_service):
         # Patch jinja_env.parse to raise
         prompt_service._jinja_env.parse = Mock(side_effect=Exception("bad"))
