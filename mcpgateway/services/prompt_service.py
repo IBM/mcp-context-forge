@@ -670,8 +670,21 @@ class PromptService:
             },
         ) as span:
             try:
-                # Ensure prompt_id is an int for database operations
-                prompt_id_int = int(prompt_id) if isinstance(prompt_id, str) else prompt_id
+                # Determine how to look up the prompt
+                prompt_id_int = None
+                prompt_name = None
+
+                if isinstance(prompt_id, int):
+                    prompt_id_int = prompt_id
+                elif isinstance(prompt_id, str):
+                    # Try to convert to int first (for backward compatibility with numeric string IDs)
+                    try:
+                        prompt_id_int = int(prompt_id)
+                    except ValueError:
+                        # Not a numeric string, treat as prompt name
+                        prompt_name = prompt_id
+                else:
+                    prompt_id_int = prompt_id
 
                 if self._plugin_manager:
                     if not request_id:
@@ -684,18 +697,40 @@ class PromptService:
                     # Use modified payload if provided
                     if pre_result.modified_payload:
                         payload = pre_result.modified_payload
-                        prompt_id_int = int(payload.prompt_id) if isinstance(payload.prompt_id, str) else payload.prompt_id
+                        # Re-parse the modified prompt_id
+                        if isinstance(payload.prompt_id, int):
+                            prompt_id_int = payload.prompt_id
+                            prompt_name = None
+                        elif isinstance(payload.prompt_id, str):
+                            try:
+                                prompt_id_int = int(payload.prompt_id)
+                                prompt_name = None
+                            except ValueError:
+                                prompt_name = payload.prompt_id
+                                prompt_id_int = None
                         arguments = payload.args
 
-                # Find prompt
-                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(DbPrompt.is_active)).scalar_one_or_none()
+                # Find prompt by ID or name
+                if prompt_id_int is not None:
+                    prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(DbPrompt.is_active)).scalar_one_or_none()
+                    search_key = prompt_id_int
+                else:
+                    # Look up by name (active prompts only)
+                    # Note: Team/owner scoping could be added here when user context is available
+                    prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.is_active)).scalar_one_or_none()
+                    search_key = prompt_name
 
                 if not prompt:
-                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(not_(DbPrompt.is_active))).scalar_one_or_none()
-                    if inactive_prompt:
-                        raise PromptNotFoundError(f"Prompt '{prompt_id_int}' exists but is inactive")
+                    # Check if an inactive prompt exists
+                    if prompt_id_int is not None:
+                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                    else:
+                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
 
-                    raise PromptNotFoundError(f"Prompt not found: {prompt_id_int}")
+                    if inactive_prompt:
+                        raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
+
+                    raise PromptNotFoundError(f"Prompt not found: {search_key}")
 
                 if not arguments:
                     result = PromptResult(
@@ -721,7 +756,7 @@ class PromptService:
 
                 if self._plugin_manager:
                     post_result, _ = await self._plugin_manager.prompt_post_fetch(
-                        payload=PromptPosthookPayload(prompt_id=str(prompt_id_int), result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
+                        payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
                     )
                     # Use modified payload if provided
                     result = post_result.modified_payload.result if post_result.modified_payload else result

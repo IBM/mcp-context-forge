@@ -3764,7 +3764,7 @@
                     <div class="grid grid-cols-2 gap-x-6 gap-y-0 max-w-48">
                       <!-- Row 1: Test -->
                       <button
-                        onclick="testPrompt('{{ prompt.name }}')"
+                        onclick="testPrompt('{{ prompt.id }}')"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
                         x-tooltip="'💡Test this prompt with sample arguments to see how it renders'"
                       >
@@ -8766,7 +8766,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         if (sectionType === 'tools') {
           buttons += `<button onclick="invokeTool('${item.name}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">Invoke</button>`;
         } else if (sectionType === 'prompts') {
-          buttons += `<button onclick="viewPrompt('${item.name}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
+          buttons += `<button onclick="viewPrompt('${item.id}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
         } else if (sectionType === 'servers') {
           buttons += `<button onclick="viewServer('${item.id}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
         }

@@ -15,8 +15,8 @@ using automatic service discovery through gRPC server reflection.
 import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-# Third-Party
 try:
+    # Third-Party
     from google.protobuf import descriptor_pool, json_format, message_factory
     from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
     import grpc
