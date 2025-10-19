@@ -131,9 +131,16 @@ except ImportError:
     GrpcServiceRead = None  # type: ignore
     GrpcServiceUpdate = None  # type: ignore
     GrpcService = None  # type: ignore
-    GrpcServiceError = Exception  # type: ignore
-    GrpcServiceNameConflictError = Exception  # type: ignore
-    GrpcServiceNotFoundError = Exception  # type: ignore
+
+    # Define placeholder exception classes that maintain the hierarchy
+    class GrpcServiceError(Exception):  # type: ignore
+        """Placeholder for GrpcServiceError when grpcio is not installed."""
+
+    class GrpcServiceNotFoundError(GrpcServiceError):  # type: ignore
+        """Placeholder for GrpcServiceNotFoundError when grpcio is not installed."""
+
+    class GrpcServiceNameConflictError(GrpcServiceError):  # type: ignore
+        """Placeholder for GrpcServiceNameConflictError when grpcio is not installed."""
 
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
@@ -9657,8 +9664,8 @@ async def admin_create_grpc_service(
         return JSONResponse(content=jsonable_encoder(result), status_code=201)
     except GrpcServiceNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    except Exception as e:
-        LOGGER.error(f"Error creating gRPC service: {e}")
+    except GrpcServiceError as e:
+        LOGGER.error(f"gRPC service error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -9726,6 +9733,9 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=404, detail=str(e))
     except GrpcServiceNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except GrpcServiceError as e:
+        LOGGER.error(f"gRPC service error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @admin_router.post("/grpc/{service_id}/toggle")
@@ -9815,6 +9825,7 @@ async def admin_reflect_grpc_service(
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except GrpcServiceError as e:
+        LOGGER.error(f"gRPC service error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
