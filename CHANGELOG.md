@@ -8,8 +8,9 @@
 
 ### Overview
 
-This release delivers **REST API Passthrough Capabilities**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
+This release delivers **REST API Passthrough Capabilities**, **API & UI Pagination**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
 
+- **📄 REST API & UI Pagination** - Comprehensive pagination support for all admin endpoints with HTMX-based UI and performance testing up to 10K records
 - **🔌 REST Passthrough API Fields** - Comprehensive REST tool configuration with query/header mapping, timeouts, and plugin chains
 - **🔐 Multi-Tenancy & RBAC Fixes** - Critical bug fixes for team management, API tokens, and resource access control
 - **🛠️ Developer Experience** - Support bundle generation, LLM chat interface, system metrics, and performance testing
@@ -18,6 +19,38 @@ This release delivers **REST API Passthrough Capabilities**, **Multi-Tenancy Bug
 - **🧪 Quality & Testing** - Complete build pipeline verification, enhanced linting, mutation testing, and fuzzing
 
 ### Added
+
+#### **📄 REST API and UI Pagination** (#1224, #1277)
+* **Paginated REST API Endpoints** - All admin API endpoints now support pagination with configurable page size
+  - `/admin/tools` endpoint returns paginated response with `data`, `pagination`, and `links` keys
+  - Maintains backward compatibility with legacy list format
+  - Configurable page size (1-500 items per page, default: 50)
+  - Total count and page metadata included in responses
+* **Database Indexes for Pagination** - New composite indexes for efficient paginated queries
+  - Indexes on `created_at` + `id` for tools, servers, resources, prompts, gateways
+  - Team-scoped indexes for multi-tenant pagination performance
+  - Auth events and API tokens indexed for audit log pagination
+* **UI Pagination with HTMX** - Seamless client-side pagination for admin UI
+  - New `/admin/tools/partial` endpoint for HTMX-based pagination
+  - Pagination controls with keyboard navigation support
+  - Tested with up to 10,000 tools for performance validation
+  - Tag filtering works within paginated results
+* **Pagination Configuration** - 11 new environment variables for fine-tuning pagination behavior
+  - `PAGINATION_DEFAULT_PAGE_SIZE` - Default items per page (default: 50)
+  - `PAGINATION_MAX_PAGE_SIZE` - Maximum allowed page size (default: 500)
+  - `PAGINATION_CURSOR_THRESHOLD` - Threshold for cursor-based pagination (default: 10000)
+  - `PAGINATION_CURSOR_ENABLED` - Enable cursor-based pagination (default: true)
+  - `PAGINATION_INCLUDE_LINKS` - Include navigation links in responses (default: true)
+  - Additional settings for sort order, caching, and offset limits
+* **Pagination Utilities** - New `mcpgateway/utils/pagination.py` module with reusable pagination helpers
+  - Offset-based pagination for simple use cases (<10K records)
+  - Cursor-based pagination for large datasets (>10K records)
+  - Automatic strategy selection based on result set size
+  - Navigation link generation with query parameter support
+* **Comprehensive Test Coverage** - 1,089+ lines of pagination tests
+  - Integration tests for paginated endpoints
+  - Unit tests for pagination utilities
+  - Performance validation with large datasets
 
 #### **🔌 REST Passthrough Configuration** (#746, #1273)
 * **Query & Header Mapping** - Configure dynamic query parameter and header mappings for REST tools
