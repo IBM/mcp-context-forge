@@ -259,7 +259,7 @@ class ClamAVRemotePlugin(Plugin):
                             continue_processing=False,
                             violation=PluginViolation(
                                 reason="ClamAV detection",
-                                description=f"Malware detected in prompt output: {payload.name}",
+                                description=f"Malware detected in prompt output: {payload.prompt_id}",
                                 code="CLAMAV_INFECTED",
                                 details={"detail": detail},
                             ),

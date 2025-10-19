@@ -124,12 +124,12 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginCondition, PromptPrehookPayload, GlobalContext
-        >>> payload = PromptPrehookPayload(name="greeting", args={})
-        >>> cond = PluginCondition(prompts={"greeting"})
+        >>> payload = PromptPrehookPayload(prompt_id="id1", args={})
+        >>> cond = PluginCondition(prompts={"id1"})
         >>> ctx = GlobalContext(request_id="req1")
         >>> pre_prompt_matches(payload, [cond], ctx)
         True
-        >>> payload2 = PromptPrehookPayload(name="other", args={})
+        >>> payload2 = PromptPrehookPayload(prompt_id="id2", args={})
         >>> pre_prompt_matches(payload2, [cond], ctx)
         False
     """
@@ -138,7 +138,7 @@ def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCon
         if not matches(condition, context):
             current_result = False
 
-        if condition.prompts and payload.name not in condition.prompts:
+        if condition.prompts and payload.prompt_id not in condition.prompts:
             current_result = False
         if current_result:
             return True
@@ -163,7 +163,7 @@ def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginC
         if not matches(condition, context):
             current_result = False
 
-        if condition.prompts and payload.name not in condition.prompts:
+        if condition.prompts and payload.prompt_id not in condition.prompts:
             current_result = False
         if current_result:
             return True
@@ -294,8 +294,8 @@ def post_resource_matches(payload: ResourcePostFetchPayload, conditions: list[Pl
     Examples:
         >>> from mcpgateway.plugins.framework import PluginCondition, ResourcePostFetchPayload, GlobalContext
         >>> from mcpgateway.models import ResourceContent
-        >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Test")
-        >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
+        >>> content = ResourceContent(type="resource", id="123", uri="file:///data.txt", text="Test")
+        >>> payload = ResourcePostFetchPayload(id="123",uri="file:///data.txt", content=content)
         >>> cond = PluginCondition(resources={"file:///data.txt"})
         >>> ctx = GlobalContext(request_id="req1")
         >>> post_resource_matches(payload, [cond], ctx)

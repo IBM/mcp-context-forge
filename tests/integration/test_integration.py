@@ -330,10 +330,11 @@ class TestIntegrationScenarios:
         resp_create = test_client.post("/resources/", json=create_body, headers=auth_headers)
         assert resp_create.status_code == 200
         mock_register.assert_awaited_once()
+        resource_id = resp_create.json()["id"]
 
         # read content
-        mock_read.return_value = ResourceContent(type="resource", uri=MOCK_RESOURCE.uri, mime_type="text/plain", text="Hello")
-        resp_read = test_client.get(f"/resources/{RESOURCE_URI_ESC}", headers=auth_headers)
+        mock_read.return_value = ResourceContent(type="resource", id=str(resource_id), uri=MOCK_RESOURCE.uri, mime_type="text/plain", text="Hello")
+        resp_read = test_client.get(f"/resources/{resource_id}", headers=auth_headers)
         assert resp_read.status_code == 200
         assert resp_read.json()["text"] == "Hello"
         mock_read.assert_awaited_once()

@@ -18,6 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 # Third-Party
 import httpx
 from sqlalchemy import and_, case, delete, desc, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -27,6 +28,7 @@ from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.create_slug import slugify
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -70,7 +72,7 @@ class A2AAgentNotFoundError(A2AAgentError):
 class A2AAgentNameConflictError(A2AAgentError):
     """Raised when an A2A agent name conflicts with an existing one."""
 
-    def __init__(self, name: str, is_active: bool = True, agent_id: Optional[str] = None):
+    def __init__(self, name: str, is_active: bool = True, agent_id: Optional[str] = None, visibility: Optional[str] = "public"):
         """Initialize an A2AAgentNameConflictError exception.
 
         Creates an exception that indicates an agent name conflict, with additional
@@ -80,6 +82,7 @@ class A2AAgentNameConflictError(A2AAgentError):
             name: The agent name that caused the conflict.
             is_active: Whether the conflicting agent is currently active.
             agent_id: The ID of the conflicting agent, if known.
+            visibility: The visibility level of the conflicting agent (private, team, public).
 
         Examples:
             >>> error = A2AAgentNameConflictError("test-agent")
@@ -106,7 +109,7 @@ class A2AAgentNameConflictError(A2AAgentError):
         self.name = name
         self.is_active = is_active
         self.agent_id = agent_id
-        message = f"A2A Agent already exists with name: {name}"
+        message = f"{visibility.capitalize()} A2A Agent already exists with name: {name}"
         if not is_active:
             message += f" (currently inactive, ID: {agent_id})"
         super().__init__(message)
@@ -170,55 +173,78 @@ class A2AAgentService:
 
         Raises:
             A2AAgentNameConflictError: If an agent with the same name already exists.
+            IntegrityError: If a database integrity error occurs.
+            A2AAgentError: For other errors during registration.
         """
-        # Check for existing agent with same name
-        existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name)
-        existing_agent = db.execute(existing_query).scalar_one_or_none()
+        try:
+            agent_data.slug = slugify(agent_data.name)
+            # Check for existing server with the same slug within the same team or public scope
+            if visibility.lower() == "public":
+                logger.info(f"visibility.lower(): {visibility.lower()}")
+                logger.info(f"agent_data.name: {agent_data.name}")
+                logger.info(f"agent_data.slug: {agent_data.slug}")
+                # Check for existing public a2a agent with the same slug
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                if existing_agent:
+                    raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+            elif visibility.lower() == "team" and team_id:
+                # Check for existing team a2a agent with the same slug
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                if existing_agent:
+                    raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
-        if existing_agent:
-            raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
+            # Create new agent
+            new_agent = DbA2AAgent(
+                name=agent_data.name,
+                slug=agent_data.slug,
+                description=agent_data.description,
+                endpoint_url=agent_data.endpoint_url,
+                agent_type=agent_data.agent_type,
+                protocol_version=agent_data.protocol_version,
+                capabilities=agent_data.capabilities,
+                config=agent_data.config,
+                auth_type=agent_data.auth_type,
+                auth_value=agent_data.auth_value,  # This should be encrypted in practice
+                tags=agent_data.tags,
+                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
+                team_id=getattr(agent_data, "team_id", None) or team_id,
+                owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
+                visibility=getattr(agent_data, "visibility", None) or visibility,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+                import_batch_id=import_batch_id,
+                federation_source=federation_source,
+            )
 
-        # Create new agent
-        new_agent = DbA2AAgent(
-            name=agent_data.name,
-            description=agent_data.description,
-            endpoint_url=agent_data.endpoint_url,
-            agent_type=agent_data.agent_type,
-            protocol_version=agent_data.protocol_version,
-            capabilities=agent_data.capabilities,
-            config=agent_data.config,
-            auth_type=agent_data.auth_type,
-            auth_value=agent_data.auth_value,  # This should be encrypted in practice
-            tags=agent_data.tags,
-            # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-            team_id=getattr(agent_data, "team_id", None) or team_id,
-            owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
-            visibility=getattr(agent_data, "visibility", None) or visibility,
-            created_by=created_by,
-            created_from_ip=created_from_ip,
-            created_via=created_via,
-            created_user_agent=created_user_agent,
-            import_batch_id=import_batch_id,
-            federation_source=federation_source,
-        )
+            db.add(new_agent)
+            db.commit()
+            db.refresh(new_agent)
 
-        db.add(new_agent)
-        db.commit()
-        db.refresh(new_agent)
+            # Automatically create a tool for the A2A agent if not already present
+            tool_service = ToolService()
+            await tool_service.create_tool_from_a2a_agent(
+                db=db,
+                agent=new_agent,
+                created_by=created_by,
+                created_from_ip=created_from_ip,
+                created_via=created_via,
+                created_user_agent=created_user_agent,
+            )
 
-        # Automatically create a tool for the A2A agent if not already present
-        tool_service = ToolService()
-        await tool_service.create_tool_from_a2a_agent(
-            db=db,
-            agent=new_agent,
-            created_by=created_by,
-            created_from_ip=created_from_ip,
-            created_via=created_via,
-            created_user_agent=created_user_agent,
-        )
-
-        logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
-        return self._db_to_schema(new_agent)
+            logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
+            return self._db_to_schema(new_agent)
+        except A2AAgentNameConflictError as ie:
+            db.rollback()
+            raise ie
+        except IntegrityError as ie:
+            db.rollback()
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
+        except Exception as e:
+            db.rollback()
+            raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
 
     async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
         """List A2A agents with optional filtering.
@@ -396,6 +422,8 @@ class A2AAgentService:
             A2AAgentNotFoundError: If the agent is not found.
             PermissionError: If user doesn't own the agent.
             A2AAgentNameConflictError: If name conflicts with another agent.
+            A2AAgentError: For other errors during update.
+            IntegrityError: If a database integrity error occurs.
         """
         try:
             query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
@@ -412,15 +440,21 @@ class A2AAgentService:
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, agent):
                     raise PermissionError("Only the owner can update this agent")
-
             # Check for name conflict if name is being updated
             if agent_data.name and agent_data.name != agent.name:
-                existing_query = select(DbA2AAgent).where(DbA2AAgent.name == agent_data.name, DbA2AAgent.id != agent_id)
-                existing_agent = db.execute(existing_query).scalar_one_or_none()
-
-                if existing_agent:
-                    raise A2AAgentNameConflictError(name=agent_data.name, is_active=existing_agent.enabled, agent_id=existing_agent.id)
-
+                visibility = agent_data.visibility or agent.visibility
+                team_id = agent_data.team_id or agent.team_id
+                # Check for existing server with the same slug within the same team or public scope
+                if visibility.lower() == "public":
+                    # Check for existing public a2a agent with the same slug
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                    if existing_agent:
+                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+                elif visibility.lower() == "team" and team_id:
+                    # Check for existing team a2a agent with the same slug
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                    if existing_agent:
+                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             # Update fields
             update_data = agent_data.model_dump(exclude_unset=True)
             for field, value in update_data.items():
@@ -447,6 +481,19 @@ class A2AAgentService:
         except PermissionError:
             db.rollback()
             raise
+        except A2AAgentNameConflictError as ie:
+            db.rollback()
+            raise ie
+        except A2AAgentNotFoundError as nf:
+            db.rollback()
+            raise nf
+        except IntegrityError as ie:
+            db.rollback()
+            logger.error(f"IntegrityErrors in group: {ie}")
+            raise ie
+        except Exception as e:
+            db.rollback()
+            raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
 
     async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
         """Toggle the activation status of an A2A agent.

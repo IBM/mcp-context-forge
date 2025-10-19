@@ -769,26 +769,26 @@ class PromptPrehookPayload(BaseModel):
     """A prompt payload for a prompt prehook.
 
     Attributes:
-        name (str): The name of the prompt template.
+        prompt_id (str): The ID of the prompt template.
         args (dic[str,str]): The prompt template arguments.
 
     Examples:
-        >>> payload = PromptPrehookPayload(name="test_prompt", args={"user": "alice"})
-        >>> payload.name
-        'test_prompt'
+        >>> payload = PromptPrehookPayload(prompt_id="123", args={"user": "alice"})
+        >>> payload.prompt_id
+        '123'
         >>> payload.args
         {'user': 'alice'}
-        >>> payload2 = PromptPrehookPayload(name="empty")
+        >>> payload2 = PromptPrehookPayload(prompt_id="empty")
         >>> payload2.args
         {}
-        >>> p = PromptPrehookPayload(name="greeting", args={"name": "Bob", "time": "morning"})
-        >>> p.name
-        'greeting'
+        >>> p = PromptPrehookPayload(prompt_id="123", args={"name": "Bob", "time": "morning"})
+        >>> p.prompt_id
+        '123'
         >>> p.args["name"]
         'Bob'
     """
 
-    name: str
+    prompt_id: str
     args: Optional[dict[str, str]] = Field(default_factory=dict)
 
 
@@ -796,27 +796,27 @@ class PromptPosthookPayload(BaseModel):
     """A prompt payload for a prompt posthook.
 
     Attributes:
-        name (str): The prompt name.
+        prompt_id (str): The prompt ID.
         result (PromptResult): The prompt after its template is rendered.
 
      Examples:
         >>> from mcpgateway.models import PromptResult, Message, TextContent
         >>> msg = Message(role="user", content=TextContent(type="text", text="Hello World"))
         >>> result = PromptResult(messages=[msg])
-        >>> payload = PromptPosthookPayload(name="greeting", result=result)
-        >>> payload.name
-        'greeting'
+        >>> payload = PromptPosthookPayload(prompt_id="123", result=result)
+        >>> payload.prompt_id
+        '123'
         >>> payload.result.messages[0].content.text
         'Hello World'
         >>> from mcpgateway.models import PromptResult, Message, TextContent
         >>> msg = Message(role="assistant", content=TextContent(type="text", text="Test output"))
         >>> r = PromptResult(messages=[msg])
-        >>> p = PromptPosthookPayload(name="test", result=r)
-        >>> p.name
-        'test'
+        >>> p = PromptPosthookPayload(prompt_id="123", result=r)
+        >>> p.prompt_id
+        '123'
     """
 
-    name: str
+    prompt_id: str
     result: PromptResult
 
 
@@ -1096,7 +1096,7 @@ class ResourcePostFetchPayload(BaseModel):
 
     Examples:
         >>> from mcpgateway.models import ResourceContent
-        >>> content = ResourceContent(type="resource", uri="file:///data.txt",
+        >>> content = ResourceContent(type="resource", id="res-1", uri="file:///data.txt",
         ...     text="Hello World")
         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
         >>> payload.uri
@@ -1104,7 +1104,7 @@ class ResourcePostFetchPayload(BaseModel):
         >>> payload.content.text
         'Hello World'
         >>> from mcpgateway.models import ResourceContent
-        >>> resource_content = ResourceContent(type="resource", uri="test://resource", text="Test data")
+    >>> resource_content = ResourceContent(type="resource", id="res-2", uri="test://resource", text="Test data")
         >>> p = ResourcePostFetchPayload(uri="test://resource", content=resource_content)
         >>> p.uri
         'test://resource'

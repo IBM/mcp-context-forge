@@ -64,7 +64,7 @@ async def test_manager_timeout_handling():
         plugin_ref = PluginRef(timeout_plugin)
         mock_get.return_value = [plugin_ref]
 
-        prompt = PromptPrehookPayload(name="test", args={})
+        prompt = PromptPrehookPayload(prompt_id="test", args={})
         global_context = GlobalContext(request_id="1")
 
         escaped_regex = re.escape("Plugin TimeoutPlugin exceeded 0.01s timeout")
@@ -114,7 +114,7 @@ async def test_manager_exception_handling():
         plugin_ref = PluginRef(error_plugin)
         mock_get.return_value = [plugin_ref]
 
-        prompt = PromptPrehookPayload(name="test", args={})
+        prompt = PromptPrehookPayload(prompt_id="test", args={})
         global_context = GlobalContext(request_id="1")
 
         escaped_regex = re.escape("RuntimeError('Plugin error!')")
@@ -205,7 +205,7 @@ async def test_manager_condition_filtering():
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 
-        prompt = PromptPrehookPayload(name="test", args={})
+        prompt = PromptPrehookPayload(prompt_id="test", args={})
 
         # Test with matching server_id
         global_context = GlobalContext(request_id="1", server_id="server1")
@@ -217,7 +217,7 @@ async def test_manager_condition_filtering():
         assert result.modified_payload.args.get("modified") == "yes"
 
         # Test with non-matching server_id
-        prompt2 = PromptPrehookPayload(name="test", args={})
+        prompt2 = PromptPrehookPayload(prompt_id="test", args={})
         global_context2 = GlobalContext(request_id="2", server_id="server2")
         result2, _ = await manager.prompt_pre_fetch(prompt2, global_context=global_context2)
 
@@ -255,7 +255,7 @@ async def test_manager_metadata_aggregation():
         refs = [PluginRef(plugin1), PluginRef(plugin2)]
         mock_get.return_value = refs
 
-        prompt = PromptPrehookPayload(name="test", args={})
+        prompt = PromptPrehookPayload(prompt_id="test", args={})
         global_context = GlobalContext(request_id="1")
 
         result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
@@ -299,7 +299,7 @@ async def test_manager_local_context_persistence():
         mock_post.return_value = [plugin_ref]
 
         # First call to pre_fetch
-        prompt = PromptPrehookPayload(name="test", args={})
+        prompt = PromptPrehookPayload(prompt_id="test", args={})
         global_context = GlobalContext(request_id="1")
 
         result_pre, contexts = await manager.prompt_pre_fetch(prompt, global_context=global_context)
@@ -308,7 +308,7 @@ async def test_manager_local_context_persistence():
         # Call to post_fetch with same contexts
         message = Message(content=TextContent(type="text", text="Original"), role=Role.USER)
         prompt_result = PromptResult(messages=[message])
-        post_payload = PromptPosthookPayload(name="test", result=prompt_result)
+        post_payload = PromptPosthookPayload(prompt_id="test", result=prompt_result)
 
         result_post, _ = await manager.prompt_post_fetch(post_payload, global_context=global_context, local_contexts=contexts)
 
@@ -341,7 +341,7 @@ async def test_manager_plugin_blocking():
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 
-        prompt = PromptPrehookPayload(name="test", args={"text": "bad content"})
+        prompt = PromptPrehookPayload(prompt_id="test", args={"text": "bad content"})
         global_context = GlobalContext(request_id="1")
 
         result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
@@ -391,7 +391,7 @@ async def test_manager_plugin_permissive_blocking():
         plugin_ref = PluginRef(plugin)
         mock_get.return_value = [plugin_ref]
 
-        prompt = PromptPrehookPayload(name="test", args={"text": "content"})
+        prompt = PromptPrehookPayload(prompt_id="test", args={"text": "content"})
         global_context = GlobalContext(request_id="1")
 
         result, _ = await manager.prompt_pre_fetch(prompt, global_context=global_context)
@@ -441,7 +441,7 @@ async def test_manager_payload_size_validation():
 
     # Test large args payload (covers line 252)
     large_data = "x" * (MAX_PAYLOAD_SIZE + 1)
-    large_prompt = PromptPrehookPayload(name="test", args={"large": large_data})
+    large_prompt = PromptPrehookPayload(prompt_id="test", args={"large": large_data})
 
     # Should raise PayloadSizeError for large args
     with pytest.raises(PayloadSizeError, match="Payload size .* exceeds limit"):
@@ -454,7 +454,7 @@ async def test_manager_payload_size_validation():
     large_text = "y" * (MAX_PAYLOAD_SIZE + 1)
     message = Message(role=Role.USER, content=TextContent(type="text", text=large_text))
     large_result = PromptResult(messages=[message])
-    large_post_payload = PromptPosthookPayload(name="test", result=large_result)
+    large_post_payload = PromptPosthookPayload(prompt_id="test", result=large_result)
 
     # Should raise PayloadSizeError for large result
     executor2 = PluginExecutor[PromptPosthookPayload]()
@@ -625,7 +625,7 @@ async def test_base_plugin_coverage():
 
     # Test NotImplementedError for prompt_pre_fetch (covers lines 151-155)
     context = PluginContext(global_context=GlobalContext(request_id="test"))
-    payload = PromptPrehookPayload(name="test", args={})
+    payload = PromptPrehookPayload(prompt_id="test", args={})
 
     with pytest.raises(NotImplementedError, match="'prompt_pre_fetch' not implemented"):
         await plugin.prompt_pre_fetch(payload, context)
@@ -633,7 +633,7 @@ async def test_base_plugin_coverage():
     # Test NotImplementedError for prompt_post_fetch (covers lines 167-171)
     message = Message(role=Role.USER, content=TextContent(type="text", text="test"))
     result = PromptResult(messages=[message])
-    post_payload = PromptPosthookPayload(name="test", result=result)
+    post_payload = PromptPosthookPayload(prompt_id="test", result=result)
 
     with pytest.raises(NotImplementedError, match="'prompt_post_fetch' not implemented"):
         await plugin.prompt_post_fetch(post_payload, context)

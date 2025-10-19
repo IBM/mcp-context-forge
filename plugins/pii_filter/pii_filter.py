@@ -464,7 +464,7 @@ class PIIFilterPlugin(Plugin):
 
         # Return modified payload if PII was masked
         if all_detections:
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=modified_args))
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=modified_args))
 
         return PromptPrehookResult()
 
