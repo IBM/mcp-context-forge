@@ -4,7 +4,7 @@
 
 ---
 
-## [0.9.0] - 2025-10-18 - REST Passthrough, Multi-Tenancy Fixes & Platform Enhancements
+## [0.9.0] - 2025-11-04 [WIP] - REST Passthrough, Multi-Tenancy Fixes & Platform Enhancements
 
 ### Overview
 
@@ -76,16 +76,18 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
   - API endpoint: `GET /admin/support-bundle/generate?log_lines=1000`
   - Admin UI: "Download Support Bundle" button in Diagnostics tab
   - Automatic sanitization of secrets (passwords, tokens, API keys)
-* **LLM Chat Interface** (#1202, #1200) - Built-in MCP client with LLM chat service for virtual servers
+* **LLM Chat Interface** (#1202, #1200, #1236) - Built-in MCP client with LLM chat service for virtual servers
   - Agent-enabled tool orchestration with MCP protocol integration
-  - Session consistency using Redis for persistent conversations
+  - **Redis-based session consistency** (#1236) for multi-worker distributed environments
+  - Concurrent user management with worker coordination and session isolation
+  - Prevents race conditions via Redis locks and TTLs
   - Direct testing of virtual servers and tools from the Admin UI
 * **System Statistics in Metrics** (#1228, #1232) - Comprehensive system monitoring in metrics page
   - CPU, memory, disk usage, and network statistics
   - Process information and resource consumption
   - System health indicators for production monitoring
 * **Performance Testing Framework** (#1203, #1204, #1226) - Load testing and benchmarking capabilities
-  - Production-scale load data generator for multi-tenant testing (#1225)
+  - Production-scale load data generator for multi-tenant testing (#1225, #1226)
   - Benchmark MCP server for performance analysis (#1219, #1220, #1221)
   - Fixed TokenUsageLog SQLite bug in load testing framework
 * **Metrics Export Enhancement** (#1218) - Export all metrics data for external analysis and integration
@@ -160,6 +162,19 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Bandit Security Scan** (#1244) - Fixed all bandit security warnings
 * **Test Warnings & Mypy Issues** (#1268) - Fixed test warnings and mypy type issues
 
+#### **🧪 Test Reliability & Quality Improvements** (#1281, #1283, #1284)
+* **Gateway Test Stability** (#1281) - Fixed gateway test failures and eliminated warnings
+  - Integrated pytest-httpx for cleaner HTTP mocking (eliminated manual mock complexity)
+  - Eliminated RuntimeWarnings from improper async context manager mocking
+  - Added url-normalize library for consistent URL normalization
+  - Reduced test file complexity by 388 lines (942 → 554 lines)
+  - Consolidated validation tests into parameterized test cases
+* **Logger Test Reliability** (#1283, #1284) - Resolved intermittent logger capture failures
+  - Scoped logger configuration to specific loggers to prevent inter-test conflicts (#1283)
+  - Fixed email verification logic error in auth.py (email_verified_at vs is_email_verified) (#1283)
+  - Fixed caplog logger name specification for reliable debug message capture (#1284)
+  - Added proper type hints and improved type safety across test suite
+
 #### **🐳 Container & Deployment Fixes**
 * **Gateway Registration on MacOS** (#625) - Fixed gateway registration and tool invocation on MacOS
 * **Non-root Container Users** (#1231) - Added non-root user to scratch Go containers
@@ -167,7 +182,23 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 
 ### Changed
 
-#### **📊 Database Schema** (#1273)
+#### **🗄️ Database Schema & Multi-Tenancy Enhancements** (#1246, #1273)
+
+**Scoped Uniqueness for Multi-Tenant Resources** (#1246):
+* **Enforced team-scoped uniqueness constraints** for improved multi-tenancy isolation
+  - Prompts: unique within `(team_id, owner_email, name)` - prevents naming conflicts across teams
+  - Resources: unique within `(team_id, owner_email, uri)` - ensures URI uniqueness per team/owner
+  - A2A Agents: unique within `(team_id, owner_email, slug)` - team-scoped agent identifiers
+  - Dropped legacy single-column unique constraints (name, uri) for multi-tenant compatibility
+* **ID-Based Resource Endpoints** (#1184) - All prompt and resource endpoints now use unique IDs for lookup
+  - Prevents naming conflicts across teams and owners
+  - Enhanced API security and consistency
+  - Migration compatible with SQLite, MySQL, and PostgreSQL
+* **Enhanced Prompt Editing** (#1180) - Prompt edit form now correctly includes team_id in form data
+* **Plugin Hook Updates** - PromptPrehookPayload and PromptPosthookPayload now use prompt_id instead of name
+* **Resource Content Schema** - ResourceContent now includes id field for unique identification
+
+**REST Passthrough Configuration** (#1273):
 * **New Tool Columns** - Added 9 new columns to tools table via Alembic migration `8a2934be50c0`:
   - `base_url` - Base URL for REST passthrough
   - `path_template` - Path template for URL construction
@@ -189,10 +220,16 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **OAUTH_DEFAULT_TIMEOUT** - New configuration for OAuth provider timeouts
 * **Environment Variables** - Comprehensive cleanup and documentation updates
 
-#### **🧹 Code Quality Improvements** (#1233)
-* **CONTRIBUTING.md Cleanup** - Simplified contribution guidelines
-* **Lint-smart Makefile Fix** - Fixed syntax error in lint-smart target
-* **Plugin Linting** - Comprehensive linting across all plugins with automated fixes
+#### **🧹 Code Quality & Developer Experience Improvements** (#1271, #1233)
+* **Consolidated Linting Configuration** (#1271) - Single source of truth for all Python linting tools
+  - Migrated ruff and interrogate configs from separate files into pyproject.toml
+  - Enhanced ruff with import sorting checks (I) and docstring presence checks (D1)
+  - Unified pre-commit hooks to match CI/CD pipeline enforcement
+  - Reduced configuration sprawl: removed `.ruff.toml` and `.interrogaterc`
+  - Better IDE integration with comprehensive real-time linting
+* **CONTRIBUTING.md Cleanup** (#1233) - Simplified contribution guidelines
+* **Lint-smart Makefile Fix** (#1233) - Fixed syntax error in lint-smart target
+* **Plugin Linting** (#1240) - Comprehensive linting across all plugins with automated fixes
 * **Deprecation Removal** - Removed all deprecated Pydantic v1 patterns
 
 ### Security
@@ -228,6 +265,10 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - Closes #969 - Backend Multi-Tenancy Issues - Critical bugs and missing features
 - Closes #959 - Unable to Re-add Team Member Due to Unique Constraint
 - Closes #958 - Incomplete Visibility Implementation
+- Closes #945 - Scoped uniqueness for prompts, resources, and A2A agents
+- Closes #1180 - Prompt editing to include team_id in form data
+- Closes #1184 - Prompt and resource endpoints to use unique IDs instead of name/URI
+- Closes #1222 - Already addressed as part of #945
 - Closes #1248 - RBAC Vulnerability: Unauthorized Access to Resource Status Toggling
 - Closes #1209 - Finalize RBAC/ABAC implementation for Ownership Checks on Public Resources
 
@@ -256,6 +297,9 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - Closes #1225 - Production-Scale Load Data Generator for Multi-Tenant Testing
 - Closes #1219 - Benchmark MCP Server for Load Testing and Performance Analysis
 - Closes #1203 - Performance Testing & Benchmarking Framework
+
+**Code Quality & Developer Experience:**
+- Closes #1271 - Consolidated linting configuration in pyproject.toml
 
 **Plugin Framework:**
 - Closes #1196 - Plugin client server mTLS support
