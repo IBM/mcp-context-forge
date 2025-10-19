@@ -53,9 +53,6 @@ dependencies = [
     "cryptography>=46.0.2",
     "fastapi>=0.118.0",
     "filelock>=3.19.1",
-    "grpcio>=1.62.0,<1.68.0",
-    "grpcio-reflection>=1.62.0,<1.68.0",
-    "grpcio-tools>=1.62.0,<1.68.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -66,7 +63,6 @@ dependencies = [
     "mcp>=1.16.0",
     "oauthlib>=3.3.1",
     "parse>=1.20.2",
-    "protobuf>=4.25.0",
     "psutil>=7.1.0",
     "pydantic>=2.11.10",
     "pydantic[email]>=2.11.10",
@@ -213,6 +209,15 @@ aiosqlite = [
 # Async PostgreSQL driver (optional)
 asyncpg = [
     "asyncpg>=0.30.0",
+]
+
+# gRPC Support (EXPERIMENTAL - optional, disabled by default)
+# Install with: pip install mcp-contextforge-gateway[grpc]
+grpc = [
+    "grpcio>=1.62.0,<1.68.0",
+    "grpcio-reflection>=1.62.0,<1.68.0",
+    "grpcio-tools>=1.62.0,<1.68.0",
+    "protobuf>=4.25.0",
 ]
 
 # UI Testing

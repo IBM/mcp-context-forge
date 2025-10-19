@@ -334,8 +334,8 @@ class Settings(BaseSettings):
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
 
-    # gRPC Support Configuration
-    mcpgateway_grpc_enabled: bool = Field(default=True, description="Enable gRPC to MCP translation support")
+    # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
+    mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
     mcpgateway_grpc_reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection by default")
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")

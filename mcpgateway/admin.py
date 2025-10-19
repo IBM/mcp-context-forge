@@ -70,9 +70,6 @@ from mcpgateway.schemas import (
     GatewayUpdate,
     GlobalConfigRead,
     GlobalConfigUpdate,
-    GrpcServiceCreate,
-    GrpcServiceRead,
-    GrpcServiceUpdate,
     PaginationMeta,
     PluginDetail,
     PluginListResponse,
@@ -98,7 +95,6 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
-from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNameConflictError, GrpcServiceNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -120,6 +116,23 @@ from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
+
+# Conditional imports for gRPC support (only if grpcio is installed)
+try:
+    from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
+    from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNameConflictError, GrpcServiceNotFoundError
+
+    GRPC_AVAILABLE = True
+except ImportError:
+    GRPC_AVAILABLE = False
+    # Define placeholder types to avoid NameError
+    GrpcServiceCreate = None  # type: ignore
+    GrpcServiceRead = None  # type: ignore
+    GrpcServiceUpdate = None  # type: ignore
+    GrpcService = None  # type: ignore
+    GrpcServiceError = Exception  # type: ignore
+    GrpcServiceNameConflictError = Exception  # type: ignore
+    GrpcServiceNotFoundError = Exception  # type: ignore
 
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
@@ -185,8 +198,8 @@ export_service: ExportService = ExportService()
 import_service: ImportService = ImportService()
 # Initialize A2A service only if A2A features are enabled
 a2a_service: Optional[A2AAgentService] = A2AAgentService() if settings.mcpgateway_a2a_enabled else None
-# Initialize gRPC service only if gRPC features are enabled
-grpc_service_mgr: Optional[GrpcService] = GrpcService() if settings.mcpgateway_grpc_enabled else None
+# Initialize gRPC service only if gRPC features are enabled AND grpcio is installed
+grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_enabled and GRPC_AVAILABLE and GrpcService is not None) else None
 
 # Set up basic authentication
 
@@ -2387,10 +2400,10 @@ async def admin_ui(
         a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
         a2a_agents = _to_dict_and_filter(a2a_agents) if isinstance(a2a_agents, (list, tuple)) else a2a_agents
 
-    # Load gRPC services if enabled
+    # Load gRPC services if enabled and available
     grpc_services = []
     try:
-        if grpc_service_mgr and settings.mcpgateway_grpc_enabled:
+        if GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
             grpc_services_raw = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
@@ -2426,7 +2439,7 @@ async def admin_ui(
             "gateway_tool_name_separator": settings.gateway_tool_name_separator,
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
-            "grpc_enabled": settings.mcpgateway_grpc_enabled,
+            "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
             "current_user": get_user_email(user),
@@ -9603,10 +9616,10 @@ async def admin_list_grpc_services(
         List of gRPC services
 
     Raises:
-        HTTPException: If gRPC support is disabled
+        HTTPException: If gRPC support is disabled or not available
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     user_email = get_user_email(user)
     return await grpc_service_mgr.list_services(db, include_inactive, user_email, team_id)
@@ -9633,8 +9646,8 @@ async def admin_create_grpc_service(
     Raises:
         HTTPException: If gRPC support is disabled or creation fails
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
         metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
@@ -9667,8 +9680,8 @@ async def admin_get_grpc_service(
     Raises:
         HTTPException: If gRPC support is disabled or service not found
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
         user_email = get_user_email(user)
@@ -9700,8 +9713,8 @@ async def admin_update_grpc_service(
     Raises:
         HTTPException: If gRPC support is disabled or update fails
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
         metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
@@ -9733,8 +9746,8 @@ async def admin_toggle_grpc_service(
     Raises:
         HTTPException: If gRPC support is disabled or toggle fails
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
         service = await grpc_service_mgr.get_service(db, service_id)
@@ -9763,8 +9776,8 @@ async def admin_delete_grpc_service(
     Raises:
         HTTPException: If gRPC support is disabled or deletion fails
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
         await grpc_service_mgr.delete_service(db, service_id)
@@ -9792,8 +9805,8 @@ async def admin_reflect_grpc_service(
     Raises:
         HTTPException: If gRPC support is disabled or reflection fails
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
         result = await grpc_service_mgr.reflect_service(db, service_id)
@@ -9823,8 +9836,8 @@ async def admin_get_grpc_methods(
     Raises:
         HTTPException: If gRPC support is disabled or service not found
     """
-    if not settings.mcpgateway_grpc_enabled:
-        raise HTTPException(status_code=404, detail="gRPC support is disabled")
+    if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
+        raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
         methods = await grpc_service_mgr.get_service_methods(db, service_id)

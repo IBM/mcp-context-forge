@@ -16,6 +16,17 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
+# Check if gRPC is available
+try:
+    import grpc  # noqa: F401
+
+    GRPC_AVAILABLE = True
+except ImportError:
+    GRPC_AVAILABLE = False
+
+# Skip all tests in this module if gRPC is not available
+pytestmark = pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
+
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
