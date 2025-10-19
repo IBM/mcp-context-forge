@@ -178,6 +178,11 @@ class ContentModerationPlugin(Plugin):
     """Plugin for advanced content moderation using multiple AI providers."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize content moderation plugin with configuration.
+
+        Args:
+            config: Plugin configuration containing moderation settings.
+        """
         super().__init__(config)
         self._cfg = ContentModerationConfig(**(config.config or {}))
         self._client = httpx.AsyncClient()
@@ -540,7 +545,7 @@ Respond with JSON format:
 
         return [text for text in texts if len(text.strip()) > 3]  # Filter very short texts
 
-    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, _context: PluginContext) -> PromptPrehookResult:
         """Moderate prompt content before fetching."""
         texts = await self._extract_text_content(payload)
 
@@ -584,7 +589,7 @@ Respond with JSON format:
 
         return PromptPrehookResult()
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, _context: PluginContext) -> ToolPreInvokeResult:
         """Moderate tool arguments before invocation."""
         texts = await self._extract_text_content(payload)
 
@@ -623,7 +628,7 @@ Respond with JSON format:
 
         return ToolPreInvokeResult(metadata={"moderation_checked": True})
 
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, _context: PluginContext) -> ToolPostInvokeResult:
         """Moderate tool output after invocation."""
         # Extract text from tool results
         result_text = ""
@@ -674,7 +679,7 @@ Respond with JSON format:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Async context manager exit - cleanup HTTP client."""
         if hasattr(self, "_client"):
             await self._client.aclose()
