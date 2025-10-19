@@ -19,8 +19,10 @@ from mcpgateway.plugins.framework.models import (
     PluginViolation,
     PromptPrehookPayload,
     ToolPostInvokePayload,
+    ToolPreInvokePayload,
 )
 from plugins.webhook_notification.webhook_notification import (
+    AuthenticationType,
     EventType,
     WebhookNotificationPlugin,
 )
@@ -59,7 +61,14 @@ def _create_plugin(config_dict=None) -> WebhookNotificationPlugin:
 
 def _create_context(user="testuser", request_id="req-123") -> PluginContext:
     """Helper to create plugin context."""
-    return PluginContext(global_context=GlobalContext(request_id=request_id, user=user, tenant_id="tenant-abc", server_id="server-xyz"))
+    return PluginContext(
+        global_context=GlobalContext(
+            request_id=request_id,
+            user=user,
+            tenant_id="tenant-abc",
+            server_id="server-xyz"
+        )
+    )
 
 
 class TestWebhookNotificationPlugin:
@@ -79,7 +88,11 @@ class TestWebhookNotificationPlugin:
         plugin = _create_plugin()
 
         template = '{"event": "{{event}}", "user": "{{user}}", "timestamp": "{{timestamp}}"}'
-        context_vars = {"event": "test_event", "user": "testuser", "timestamp": "2025-01-15T10:30:45.123Z"}
+        context_vars = {
+            "event": "test_event",
+            "user": "testuser",
+            "timestamp": "2025-01-15T10:30:45.123Z"
+        }
 
         result = await plugin._render_template(template, context_vars)
         parsed = json.loads(result)
@@ -103,7 +116,7 @@ class TestWebhookNotificationPlugin:
         assert len(signature) > 10  # Basic length check
 
     @pytest.mark.asyncio
-    @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
+    @patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient')
     async def test_webhook_delivery_success(self, mock_client_class):
         """Test successful webhook delivery."""
         # Setup mocks
@@ -119,7 +132,12 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
         webhook = plugin._cfg.webhooks[0]
 
-        await plugin._send_webhook(webhook=webhook, event=EventType.TOOL_SUCCESS, context=context, metadata={"tool_name": "test_tool"})
+        await plugin._send_webhook(
+            webhook=webhook,
+            event=EventType.TOOL_SUCCESS,
+            context=context,
+            metadata={"tool_name": "test_tool"}
+        )
 
         # Verify webhook was called
         mock_client.post.assert_called_once()
@@ -130,7 +148,7 @@ class TestWebhookNotificationPlugin:
         assert call_args[1]["headers"]["Content-Type"] == "application/json"
 
     @pytest.mark.asyncio
-    @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
+    @patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient')
     async def test_webhook_delivery_with_bearer_auth(self, mock_client_class):
         """Test webhook delivery with bearer token authentication."""
         mock_client = AsyncMock()
@@ -144,7 +162,10 @@ class TestWebhookNotificationPlugin:
                 {
                     "url": "https://hooks.example.com/webhook",
                     "events": ["tool_success"],
-                    "authentication": {"type": "bearer", "token": "test-token-123"},
+                    "authentication": {
+                        "type": "bearer",
+                        "token": "test-token-123"
+                    },
                     "retry_attempts": 1,
                     "enabled": True,
                 }
@@ -157,7 +178,11 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
         webhook = plugin._cfg.webhooks[0]
 
-        await plugin._send_webhook(webhook=webhook, event=EventType.TOOL_SUCCESS, context=context)
+        await plugin._send_webhook(
+            webhook=webhook,
+            event=EventType.TOOL_SUCCESS,
+            context=context
+        )
 
         # Verify Authorization header was set
         call_args = mock_client.post.call_args
@@ -166,7 +191,7 @@ class TestWebhookNotificationPlugin:
         assert headers["Authorization"] == "Bearer test-token-123"
 
     @pytest.mark.asyncio
-    @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
+    @patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient')
     async def test_webhook_delivery_with_api_key_auth(self, mock_client_class):
         """Test webhook delivery with API key authentication."""
         mock_client = AsyncMock()
@@ -180,7 +205,11 @@ class TestWebhookNotificationPlugin:
                 {
                     "url": "https://hooks.example.com/webhook",
                     "events": ["tool_success"],
-                    "authentication": {"type": "api_key", "api_key": "test-api-key", "api_key_header": "X-API-Key"},
+                    "authentication": {
+                        "type": "api_key",
+                        "api_key": "test-api-key",
+                        "api_key_header": "X-API-Key"
+                    },
                     "retry_attempts": 1,
                     "enabled": True,
                 }
@@ -193,7 +222,11 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
         webhook = plugin._cfg.webhooks[0]
 
-        await plugin._send_webhook(webhook=webhook, event=EventType.TOOL_SUCCESS, context=context)
+        await plugin._send_webhook(
+            webhook=webhook,
+            event=EventType.TOOL_SUCCESS,
+            context=context
+        )
 
         # Verify API key header was set
         call_args = mock_client.post.call_args
@@ -202,7 +235,7 @@ class TestWebhookNotificationPlugin:
         assert headers["X-API-Key"] == "test-api-key"
 
     @pytest.mark.asyncio
-    @patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient")
+    @patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient')
     async def test_webhook_delivery_retry_on_failure(self, mock_client_class):
         """Test webhook retry logic on failure."""
         mock_client = AsyncMock()
@@ -230,7 +263,11 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
         webhook = plugin._cfg.webhooks[0]
 
-        await plugin._send_webhook(webhook=webhook, event=EventType.TOOL_SUCCESS, context=context)
+        await plugin._send_webhook(
+            webhook=webhook,
+            event=EventType.TOOL_SUCCESS,
+            context=context
+        )
 
         # Verify webhook was retried (1 initial + 3 retries = 4 total calls)
         assert mock_client.post.call_count == 4
@@ -241,13 +278,23 @@ class TestWebhookNotificationPlugin:
         plugin = _create_plugin()
 
         # Test rate limit violation
-        rate_limit_violation = PluginViolation(reason="Rate limit exceeded", description="Too many requests", code="RATE_LIMIT", details={})
+        rate_limit_violation = PluginViolation(
+            reason="Rate limit exceeded",
+            description="Too many requests",
+            code="RATE_LIMIT",
+            details={}
+        )
 
         event_type = plugin._determine_event_type(rate_limit_violation)
         assert event_type == EventType.RATE_LIMIT_EXCEEDED
 
         # Test PII violation
-        pii_violation = PluginViolation(reason="PII detected in content", description="Email found", code="PII_DETECTED", details={})
+        pii_violation = PluginViolation(
+            reason="PII detected in content",
+            description="Email found",
+            code="PII_DETECTED",
+            details={}
+        )
 
         event_type = plugin._determine_event_type(pii_violation)
         assert event_type == EventType.PII_DETECTED
@@ -257,13 +304,16 @@ class TestWebhookNotificationPlugin:
         assert event_type == EventType.TOOL_SUCCESS
 
     @pytest.mark.asyncio
-    @patch("plugins.webhook_notification.webhook_notification.WebhookNotificationPlugin._notify_webhooks")
+    @patch('plugins.webhook_notification.webhook_notification.WebhookNotificationPlugin._notify_webhooks')
     async def test_tool_post_invoke_hook(self, mock_notify):
         """Test tool_post_invoke hook triggers notification."""
         plugin = _create_plugin()
         context = _create_context()
 
-        payload = ToolPostInvokePayload(name="test_tool", result={"success": True, "data": "test result"})
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            result={"success": True, "data": "test result"}
+        )
 
         result = await plugin.tool_post_invoke(payload, context)
 
@@ -289,7 +339,7 @@ class TestWebhookNotificationPlugin:
                     "events": ["tool_success"],  # Only tool success
                     "authentication": {"type": "none"},
                     "enabled": True,
-                },
+                }
             ]
         }
 
@@ -301,7 +351,10 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
 
         # Send a tool success event
-        await plugin._notify_webhooks(event=EventType.TOOL_SUCCESS, context=context)
+        await plugin._notify_webhooks(
+            event=EventType.TOOL_SUCCESS,
+            context=context
+        )
 
         # Verify only the second webhook (tool_success) was called
         assert plugin._send_webhook.call_count == 2  # Both webhooks checked
@@ -334,7 +387,11 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
         webhook = plugin._cfg.webhooks[0]
 
-        await plugin._send_webhook(webhook=webhook, event=EventType.TOOL_SUCCESS, context=context)
+        await plugin._send_webhook(
+            webhook=webhook,
+            event=EventType.TOOL_SUCCESS,
+            context=context
+        )
 
         # Verify no HTTP calls were made
         plugin._client.post.assert_not_called()
@@ -344,11 +401,18 @@ class TestWebhookNotificationPlugin:
         """Test custom payload templates are used correctly."""
         custom_template = '{"custom": "{{event}}", "user": "{{user}}"}'
 
-        config = {"payload_templates": {"tool_success": custom_template}}
+        config = {
+            "payload_templates": {
+                "tool_success": custom_template
+            }
+        }
 
         plugin = _create_plugin(config)
 
-        context_vars = {"event": "tool_success", "user": "testuser"}
+        context_vars = {
+            "event": "tool_success",
+            "user": "testuser"
+        }
 
         result = await plugin._render_template(custom_template, context_vars)
         parsed = json.loads(result)
@@ -363,7 +427,7 @@ class TestWebhookNotificationPlugin:
 
         config = {
             "include_payload_data": True,
-            "max_payload_size": 100,  # Small limit
+            "max_payload_size": 100  # Small limit
         }
 
         plugin = _create_plugin(config)
@@ -375,7 +439,12 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
         webhook = plugin._cfg.webhooks[0]
 
-        await plugin._send_webhook(webhook=webhook, event=EventType.TOOL_SUCCESS, context=context, payload_data=large_payload)
+        await plugin._send_webhook(
+            webhook=webhook,
+            event=EventType.TOOL_SUCCESS,
+            context=context,
+            payload_data=large_payload
+        )
 
         # Verify webhook was still sent (payload should be excluded due to size)
         plugin._client.post.assert_called_once()
@@ -387,7 +456,7 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
 
         # Test pre-hook
-        pre_payload = PromptPrehookPayload(name="test_prompt", args={})
+        pre_payload = PromptPrehookPayload(prompt_id="test_prompt", args={})
         pre_result = await plugin.prompt_pre_fetch(pre_payload, context)
         assert pre_result.continue_processing is True
 
@@ -395,8 +464,10 @@ class TestWebhookNotificationPlugin:
         plugin._notify_webhooks = AsyncMock()
 
         from mcpgateway.plugins.framework.models import PromptPosthookPayload, PromptResult
-
-        post_payload = PromptPosthookPayload(name="test_prompt", result=PromptResult(messages=[]))
+        post_payload = PromptPosthookPayload(
+            prompt_id="test_prompt",
+            result=PromptResult(messages=[])
+        )
         post_result = await plugin.prompt_post_fetch(post_payload, context)
         assert post_result.continue_processing is True
 

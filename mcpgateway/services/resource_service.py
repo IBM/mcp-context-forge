@@ -396,9 +396,9 @@ class ResourceService:
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
-        except ResourceURIConflictError as re:
+        except ResourceURIConflictError as rce:
             logger.error(f"ResourceURIConflictError in group: {resource.uri}")
-            raise re
+            raise rce
         except Exception as e:
             db.rollback()
             raise ResourceError(f"Failed to register resource: {str(e)}")
@@ -636,7 +636,7 @@ class ResourceService:
         db.add(metric)
         db.commit()
 
-    async def read_resource(self, db: Session, resource_id: str, request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
+    async def read_resource(self, db: Session, resource_id: Union[int, str], request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 
         Args:
@@ -709,7 +709,7 @@ class ResourceService:
                 contexts = None
 
                 # Call pre-fetch hooks if plugin manager is available
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and ("://" in uri))
+                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
                 if plugin_eligible:
                     # Initialize plugin manager if needed
                     # pylint: disable=protected-access
@@ -967,7 +967,7 @@ class ResourceService:
     async def update_resource(
         self,
         db: Session,
-        resource_id: str,
+        resource_id: Union[int, str],
         resource_update: ResourceUpdate,
         modified_by: Optional[str] = None,
         modified_from_ip: Optional[str] = None,
@@ -1113,7 +1113,7 @@ class ResourceService:
                 raise e
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
-    async def delete_resource(self, db: Session, resource_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None) -> None:
         """
         Delete a resource.
 

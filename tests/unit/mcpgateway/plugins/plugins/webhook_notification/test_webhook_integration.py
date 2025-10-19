@@ -17,6 +17,7 @@ from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     ToolPostInvokePayload,
+    PluginViolation,
 )
 
 
@@ -54,7 +55,7 @@ plugin_dirs: []
         config_path.write_text(config_content)
 
         # Mock HTTP client for webhook delivery
-        with patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient") as mock_client_class:
+        with patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -67,9 +68,17 @@ plugin_dirs: []
 
             try:
                 # Create test context and payload
-                context = GlobalContext(request_id="test-req-123", user="testuser@example.com", tenant_id="test-tenant", server_id="test-server")
+                context = GlobalContext(
+                    request_id="test-req-123",
+                    user="testuser@example.com",
+                    tenant_id="test-tenant",
+                    server_id="test-server"
+                )
 
-                payload = ToolPostInvokePayload(name="search_tool", result={"status": "success", "results": ["item1", "item2"]})
+                payload = ToolPostInvokePayload(
+                    name="search_tool",
+                    result={"status": "success", "results": ["item1", "item2"]}
+                )
 
                 # Execute tool post-invoke hook
                 result, final_context = await manager.tool_post_invoke(payload, context)
@@ -141,7 +150,7 @@ plugin_dirs: []
         config_path.write_text(config_content)
 
         # Mock HTTP client
-        with patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient") as mock_client_class:
+        with patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -156,8 +165,10 @@ plugin_dirs: []
 
                 # Create payload with forbidden word that will trigger deny filter
                 from mcpgateway.plugins.framework.models import PromptPrehookPayload
-
-                payload = PromptPrehookPayload(name="test_prompt", args={"query": "this contains forbidden word"})
+                payload = PromptPrehookPayload(
+                    prompt_id="test_prompt",
+                    args={"query": "this contains forbidden word"}
+                )
 
                 # Execute - should be blocked by deny filter
                 result, final_context = await manager.prompt_pre_fetch(payload, context)
@@ -218,7 +229,7 @@ plugin_dirs: []
         config_path = Path(tmp_dir) / "test_config.yaml"
         config_path.write_text(config_content)
 
-        with patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient") as mock_client_class:
+        with patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -231,7 +242,10 @@ plugin_dirs: []
             try:
                 context = GlobalContext(request_id="multi-webhook-test", user="testuser")
 
-                payload = ToolPostInvokePayload(name="analytics_tool", result={"processed": 100, "errors": 0})
+                payload = ToolPostInvokePayload(
+                    name="analytics_tool",
+                    result={"processed": 100, "errors": 0}
+                )
 
                 # Execute hook
                 result, final_context = await manager.tool_post_invoke(payload, context)
@@ -309,7 +323,7 @@ plugin_dirs: []
         config_path = Path(tmp_dir) / "test_config.yaml"
         config_path.write_text(config_content)
 
-        with patch("plugins.webhook_notification.webhook_notification.httpx.AsyncClient") as mock_client_class:
+        with patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -322,7 +336,10 @@ plugin_dirs: []
             try:
                 context = GlobalContext(request_id="template-test", user="template_user")
 
-                payload = ToolPostInvokePayload(name="custom_tool", result={"data": "test"})
+                payload = ToolPostInvokePayload(
+                    name="custom_tool",
+                    result={"data": "test"}
+                )
 
                 await manager.tool_post_invoke(payload, context)
 

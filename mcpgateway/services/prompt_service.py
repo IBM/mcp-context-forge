@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import os
 from string import Formatter
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
 
 # Third-Party
@@ -612,7 +612,7 @@ class PromptService:
     async def get_prompt(
         self,
         db: Session,
-        prompt_id: str,
+        prompt_id: Union[int, str],
         arguments: Optional[Dict[str, str]] = None,
         user: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -670,29 +670,32 @@ class PromptService:
             },
         ) as span:
             try:
+                # Ensure prompt_id is an int for database operations
+                prompt_id_int = int(prompt_id) if isinstance(prompt_id, str) else prompt_id
+
                 if self._plugin_manager:
                     if not request_id:
                         request_id = uuid.uuid4().hex
                     global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
                     pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(
-                        payload=PromptPrehookPayload(prompt_id=prompt_id, args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
+                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
                     )
 
                     # Use modified payload if provided
                     if pre_result.modified_payload:
                         payload = pre_result.modified_payload
-                        prompt_id = payload.prompt_id
+                        prompt_id_int = int(payload.prompt_id) if isinstance(payload.prompt_id, str) else payload.prompt_id
                         arguments = payload.args
 
                 # Find prompt
-                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.is_active)).scalar_one_or_none()
+                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(DbPrompt.is_active)).scalar_one_or_none()
 
                 if not prompt:
-                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(not_(DbPrompt.is_active))).scalar_one_or_none()
                     if inactive_prompt:
-                        raise PromptNotFoundError(f"Prompt '{prompt_id}' exists but is inactive")
+                        raise PromptNotFoundError(f"Prompt '{prompt_id_int}' exists but is inactive")
 
-                    raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
+                    raise PromptNotFoundError(f"Prompt not found: {prompt_id_int}")
 
                 if not arguments:
                     result = PromptResult(
@@ -718,7 +721,7 @@ class PromptService:
 
                 if self._plugin_manager:
                     post_result, _ = await self._plugin_manager.prompt_post_fetch(
-                        payload=PromptPosthookPayload(prompt_id=prompt_id, result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
+                        payload=PromptPosthookPayload(prompt_id=str(prompt_id_int), result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
                     )
                     # Use modified payload if provided
                     result = post_result.modified_payload.result if post_result.modified_payload else result
@@ -748,7 +751,7 @@ class PromptService:
     async def update_prompt(
         self,
         db: Session,
-        prompt_id,
+        prompt_id: Union[int, str],
         prompt_update: PromptUpdate,
         modified_by: Optional[str] = None,
         modified_from_ip: Optional[str] = None,
@@ -962,7 +965,7 @@ class PromptService:
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
 
     # Get prompt details for admin ui
-    async def get_prompt_details(self, db: Session, prompt_id: str, include_inactive: bool = False) -> Dict[str, Any]:
+    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """
         Get prompt details by ID.
 
@@ -998,7 +1001,7 @@ class PromptService:
         prompt.team = self._get_team_name(db, prompt.team_id)
         return self._convert_db_prompt(prompt)
 
-    async def delete_prompt(self, db: Session, prompt_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None) -> None:
         """
         Delete a prompt template by its ID.
 

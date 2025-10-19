@@ -1,7 +1,8 @@
+# -*- coding: utf-8 -*-
 """unique const changes for prompt and resource
 
 Revision ID: e5a59c16e041
-Revises: 9c99ec6872ed
+Revises: 8a2934be50c0
 Create Date: 2025-10-15 11:20:53.888488
 
 """
@@ -15,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "e5a59c16e041"
-down_revision: Union[str, Sequence[str], None] = "9c99ec6872ed"
+down_revision: Union[str, Sequence[str], None] = "8a2934be50c0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

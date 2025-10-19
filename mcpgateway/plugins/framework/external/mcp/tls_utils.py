@@ -79,6 +79,9 @@ def create_ssl_context(tls_config: MCPClientTLSConfig, plugin_name: str) -> ssl.
         # - Automatic expiration checking (notBefore/notAfter per RFC 5280)
         ssl_context = ssl.create_default_context()
 
+        # Enforce TLS 1.2 or higher for security
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+
         if not tls_config.verify:
             # Disable certificate verification (not recommended for production)
             logger.warning(f"Certificate verification disabled for plugin '{plugin_name}'. This is not recommended for production use.")

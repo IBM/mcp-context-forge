@@ -14,6 +14,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -21,8 +22,11 @@ import pytest
 
 # First-Party
 from mcpgateway.services.prompt_service import (
+    PromptError,
     PromptNameConflictError,
+    PromptNotFoundError,
     PromptService,
+    PromptValidationError,
 )
 
 
@@ -62,7 +66,7 @@ class TestPromptServiceExtended:
         """Test initialize method (line 125)."""
         service = PromptService()
 
-        with patch("mcpgateway.services.prompt_service.logger") as mock_logger:
+        with patch('mcpgateway.services.prompt_service.logger') as mock_logger:
             await service.initialize()
             mock_logger.info.assert_called_with("Initializing prompt service")
 
@@ -72,7 +76,7 @@ class TestPromptServiceExtended:
         service = PromptService()
         service._event_subscribers = [MagicMock(), MagicMock()]
 
-        with patch("mcpgateway.services.prompt_service.logger") as mock_logger:
+        with patch('mcpgateway.services.prompt_service.logger') as mock_logger:
             await service.shutdown()
 
             # Verify subscribers were cleared
@@ -85,20 +89,18 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, "register_prompt")
-        assert callable(getattr(service, "register_prompt"))
+        assert hasattr(service, 'register_prompt')
+        assert callable(getattr(service, 'register_prompt'))
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.register_prompt)
 
         # Test method parameters
         # Standard
         import inspect
-
         sig = inspect.signature(service.register_prompt)
-        assert "db" in sig.parameters
-        assert "prompt" in sig.parameters
+        assert 'db' in sig.parameters
+        assert 'prompt' in sig.parameters
 
     @pytest.mark.asyncio
     async def test_template_validation_with_jinja_syntax_error(self):
@@ -106,8 +108,8 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test that validation method exists
-        assert hasattr(service, "_validate_template")
-        assert callable(getattr(service, "_validate_template"))
+        assert hasattr(service, '_validate_template')
+        assert callable(getattr(service, '_validate_template'))
 
     @pytest.mark.asyncio
     async def test_template_validation_with_undefined_variables(self):
@@ -115,8 +117,8 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is callable
-        assert hasattr(service, "_get_required_arguments")
-        assert callable(getattr(service, "_get_required_arguments"))
+        assert hasattr(service, '_get_required_arguments')
+        assert callable(getattr(service, '_get_required_arguments'))
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_found(self):
@@ -124,11 +126,10 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, "get_prompt")
-        assert callable(getattr(service, "get_prompt"))
+        assert hasattr(service, 'get_prompt')
+        assert callable(getattr(service, 'get_prompt'))
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.get_prompt)
 
     @pytest.mark.asyncio
@@ -139,10 +140,9 @@ class TestPromptServiceExtended:
         # Test method signature
         # Standard
         import inspect
-
         sig = inspect.signature(service.get_prompt)
-        assert "name" in sig.parameters
-        assert "arguments" in sig.parameters
+        assert 'prompt_id' in sig.parameters
+        assert 'arguments' in sig.parameters
 
     @pytest.mark.asyncio
     async def test_update_prompt_not_found(self):
@@ -150,11 +150,10 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, "update_prompt")
-        assert callable(getattr(service, "update_prompt"))
+        assert hasattr(service, 'update_prompt')
+        assert callable(getattr(service, 'update_prompt'))
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.update_prompt)
 
     @pytest.mark.asyncio
@@ -165,10 +164,9 @@ class TestPromptServiceExtended:
         # Test method parameters
         # Standard
         import inspect
-
         sig = inspect.signature(service.update_prompt)
-        assert "name" in sig.parameters
-        assert "prompt_update" in sig.parameters
+        assert 'prompt_id' in sig.parameters
+        assert 'prompt_update' in sig.parameters
 
     @pytest.mark.asyncio
     async def test_update_prompt_template_validation_error(self):
@@ -176,7 +174,7 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and has proper attributes
-        method = getattr(service, "update_prompt")
+        method = getattr(service, 'update_prompt')
         assert method is not None
         assert callable(method)
 
@@ -186,8 +184,8 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists
-        assert hasattr(service, "toggle_prompt_status")
-        assert callable(getattr(service, "toggle_prompt_status"))
+        assert hasattr(service, 'toggle_prompt_status')
+        assert callable(getattr(service, 'toggle_prompt_status'))
 
     @pytest.mark.asyncio
     async def test_toggle_prompt_status_no_change_needed(self):
@@ -197,7 +195,6 @@ class TestPromptServiceExtended:
         # Test method is async
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.toggle_prompt_status)
 
     @pytest.mark.asyncio
@@ -206,11 +203,10 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, "delete_prompt")
-        assert callable(getattr(service, "delete_prompt"))
+        assert hasattr(service, 'delete_prompt')
+        assert callable(getattr(service, 'delete_prompt'))
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.delete_prompt)
 
     @pytest.mark.asyncio
@@ -221,10 +217,9 @@ class TestPromptServiceExtended:
         # Test method parameters
         # Standard
         import inspect
-
         sig = inspect.signature(service.delete_prompt)
-        assert "name" in sig.parameters
-        assert "db" in sig.parameters
+        assert 'prompt_id' in sig.parameters
+        assert 'db' in sig.parameters
 
     @pytest.mark.asyncio
     async def test_render_prompt_template_rendering_error(self):
@@ -232,11 +227,10 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async (get_prompt does the rendering)
-        assert hasattr(service, "get_prompt")
-        assert callable(getattr(service, "get_prompt"))
+        assert hasattr(service, 'get_prompt')
+        assert callable(getattr(service, 'get_prompt'))
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.get_prompt)
 
     @pytest.mark.asyncio
@@ -245,15 +239,14 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test plugin manager exists
-        assert hasattr(service, "_plugin_manager")
+        assert hasattr(service, '_plugin_manager')
 
         # Test method parameters
         # Standard
         import inspect
-
         sig = inspect.signature(service.get_prompt)
-        assert "name" in sig.parameters
-        assert "arguments" in sig.parameters
+        assert 'prompt_id' in sig.parameters
+        assert 'arguments' in sig.parameters
 
     @pytest.mark.asyncio
     async def test_record_prompt_metric_error_handling(self):
@@ -261,11 +254,10 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, "aggregate_metrics")
-        assert callable(getattr(service, "aggregate_metrics"))
+        assert hasattr(service, 'aggregate_metrics')
+        assert callable(getattr(service, 'aggregate_metrics'))
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.aggregate_metrics)
 
     @pytest.mark.asyncio
@@ -274,11 +266,10 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists and is async
-        assert hasattr(service, "reset_metrics")
-        assert callable(getattr(service, "reset_metrics"))
+        assert hasattr(service, 'reset_metrics')
+        assert callable(getattr(service, 'reset_metrics'))
         # Standard
         import asyncio
-
         assert asyncio.iscoroutinefunction(service.reset_metrics)
 
     @pytest.mark.asyncio
@@ -289,10 +280,9 @@ class TestPromptServiceExtended:
         # Test method signature
         # Standard
         import inspect
-
         sig = inspect.signature(service.get_prompt_details)
-        assert "name" in sig.parameters
-        assert "include_inactive" in sig.parameters
+        assert 'prompt_id' in sig.parameters
+        assert 'include_inactive' in sig.parameters
 
     @pytest.mark.asyncio
     async def test_subscribe_events_functionality(self):
@@ -300,12 +290,12 @@ class TestPromptServiceExtended:
         service = PromptService()
 
         # Test method exists
-        assert hasattr(service, "subscribe_events")
-        assert callable(getattr(service, "subscribe_events"))
+        assert hasattr(service, 'subscribe_events')
+        assert callable(getattr(service, 'subscribe_events'))
 
         # Test it returns an async generator
         async_gen = service.subscribe_events()
-        assert hasattr(async_gen, "__aiter__")
+        assert hasattr(async_gen, '__aiter__')
 
     @pytest.mark.asyncio
     async def test_publish_event_multiple_subscribers(self):
