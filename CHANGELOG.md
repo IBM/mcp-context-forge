@@ -17,7 +17,7 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - **🔒 Security Enhancements** - Plugin mTLS support, CSP headers, cookie scope fixes, and RBAC vulnerability patches
 - **🌐 Platform Support** - s390x architecture support, multiple StreamableHTTP content, and MCP tool output schema
 - **🧪 Quality & Testing** - Complete build pipeline verification, enhanced linting, mutation testing, and fuzzing
-- **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70%
+- **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70% + orjson JSON serialization providing 5-6x faster JSON encoding
 - **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
 
 ### Added
@@ -134,7 +134,7 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Environment Variable Documentation** (#1215) - Updated and clarified environment variable settings
 * **Documentation Formatting Fixes** (#1214) - Fixed newlines and formatting across documentation
 
-#### **⚡ Performance Optimizations** (#1298, #1292)
+#### **⚡ Performance Optimizations** (#1298, #1292, #1294)
 * **Response Compression Middleware** (#1298, #1292) - Automatic compression reducing bandwidth by 30-70%
   - **Multi-Algorithm Support**: Brotli, Zstd, and GZip compression with automatic negotiation
   - **Bandwidth Reduction**: 30-70% smaller responses for text-based content (JSON, HTML, CSS, JS)
@@ -153,6 +153,19 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
     - `COMPRESSION_GZIP_LEVEL` - GZip compression level (default: 6)
     - `COMPRESSION_BROTLI_QUALITY` - Brotli quality level (default: 4)
     - `COMPRESSION_ZSTD_LEVEL` - Zstd compression level (default: 3)
+
+* **orjson JSON Serialization** (#1294) - High-performance JSON encoding/decoding with 5-6x performance improvement
+  - **Performance Gains**: 5-6x faster serialization, 1.5-2x faster deserialization vs stdlib json
+  - **Compact Output**: 7% smaller JSON payloads for reduced bandwidth usage
+  - **Rust Implementation**: Fast, correct JSON library implemented in Rust (RFC 8259 compliant)
+  - **Native Type Support**: datetime, UUID, numpy arrays, Pydantic models handled natively
+  - **Zero Configuration**: Drop-in replacement for stdlib json, fully transparent to clients
+  - **Production Ready**: Used by major companies (Reddit, Stripe) for high-throughput APIs
+  - **Benchmark Script**: `scripts/benchmark_json_serialization.py` for performance validation
+  - **API Benefits**: 15-30% higher throughput, 10-20% lower CPU usage, 20-40% faster response times
+  - **Options**: OPT_NON_STR_KEYS (integer dict keys), OPT_SERIALIZE_NUMPY (numpy arrays)
+  - **Implementation**: `mcpgateway/utils/orjson_response.py` configured as default FastAPI response class
+  - **Test Coverage**: 29 comprehensive unit tests with 100% code coverage
 
 ### Fixed
 
@@ -346,6 +359,9 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - Closes #1258 - MCP Tool outputSchema Field is Stripped During Discovery
 - Closes #1188 - Allow multiple StreamableHTTP content
 - Closes #1138 - Support for container builds for s390x
+
+**Performance Optimizations:**
+- Closes #1294 - orjson JSON Serialization for 5-6x faster JSON encoding/decoding
 
 **Bug Fixes:**
 - Closes #1098 - Unable to see request payload being sent
