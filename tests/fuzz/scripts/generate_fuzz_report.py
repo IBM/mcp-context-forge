@@ -7,25 +7,18 @@ Authors: Mihai Criveti
 
 Generate comprehensive fuzzing report for MCP Gateway.
 """
+
 # Standard
 from datetime import datetime
 import json
-import os
 from pathlib import Path
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 
 def collect_hypothesis_stats() -> Dict[str, Any]:
     """Collect Hypothesis test statistics."""
-    stats = {
-        "tool": "hypothesis",
-        "status": "unknown",
-        "tests_run": 0,
-        "examples_generated": 0,
-        "failures": 0,
-        "errors": []
-    }
+    stats = {"tool": "hypothesis", "status": "unknown", "tests_run": 0, "examples_generated": 0, "failures": 0, "errors": []}
 
     # Look for pytest output or hypothesis database
     hypothesis_db = Path(".hypothesis")
@@ -42,14 +35,7 @@ def collect_hypothesis_stats() -> Dict[str, Any]:
 
 def collect_atheris_results() -> Dict[str, Any]:
     """Collect Atheris fuzzing results."""
-    results = {
-        "tool": "atheris",
-        "status": "unknown",
-        "fuzzers_run": 0,
-        "total_executions": 0,
-        "crashes_found": 0,
-        "artifacts": []
-    }
+    results = {"tool": "atheris", "status": "unknown", "fuzzers_run": 0, "total_executions": 0, "crashes_found": 0, "artifacts": []}
 
     # Use relative path from script location to project root
     project_root = Path(__file__).parent.parent.parent.parent
@@ -73,14 +59,7 @@ def collect_atheris_results() -> Dict[str, Any]:
 
 def collect_schemathesis_results() -> Dict[str, Any]:
     """Collect Schemathesis API fuzzing results."""
-    results = {
-        "tool": "schemathesis",
-        "status": "unknown",
-        "endpoints_tested": 0,
-        "total_requests": 0,
-        "failures": 0,
-        "checks_passed": 0
-    }
+    results = {"tool": "schemathesis", "status": "unknown", "endpoints_tested": 0, "total_requests": 0, "failures": 0, "checks_passed": 0}
 
     # Use relative path from script location to project root
     project_root = Path(__file__).parent.parent.parent.parent
@@ -123,16 +102,9 @@ def collect_security_test_results() -> Dict[str, Any]:
     results = {
         "tool": "security_tests",
         "status": "unknown",
-        "test_categories": [
-            "sql_injection",
-            "xss_prevention",
-            "path_traversal",
-            "command_injection",
-            "header_injection",
-            "authentication_bypass"
-        ],
+        "test_categories": ["sql_injection", "xss_prevention", "path_traversal", "command_injection", "header_injection", "authentication_bypass"],
         "tests_run": 0,
-        "vulnerabilities_found": 0
+        "vulnerabilities_found": 0,
     }
 
     # This would be populated by pytest results
@@ -144,10 +116,7 @@ def collect_security_test_results() -> Dict[str, Any]:
 
 def collect_corpus_stats() -> Dict[str, Any]:
     """Collect corpus statistics."""
-    stats = {
-        "total_files": 0,
-        "categories": {}
-    }
+    stats = {"total_files": 0, "categories": {}}
 
     # Use relative path from script location to project root
     project_root = Path(__file__).parent.parent.parent.parent
@@ -165,19 +134,10 @@ def collect_corpus_stats() -> Dict[str, Any]:
 
 def collect_coverage_info() -> Dict[str, Any]:
     """Collect code coverage information."""
-    coverage_info = {
-        "available": False,
-        "percentage": 0,
-        "lines_covered": 0,
-        "lines_total": 0
-    }
+    coverage_info = {"available": False, "percentage": 0, "lines_covered": 0, "lines_total": 0}
 
     # Look for coverage files
-    coverage_files = [
-        ".coverage",
-        "coverage.xml",
-        "htmlcov/index.html"
-    ]
+    coverage_files = [".coverage", "coverage.xml", "htmlcov/index.html"]
 
     for coverage_file in coverage_files:
         if Path(coverage_file).exists():
@@ -189,13 +149,7 @@ def collect_coverage_info() -> Dict[str, Any]:
 
 def generate_summary(report_data: Dict[str, Any]) -> Dict[str, Any]:
     """Generate executive summary of fuzzing results."""
-    summary = {
-        "total_tools": 0,
-        "tools_completed": 0,
-        "critical_issues": 0,
-        "recommendations": [],
-        "overall_status": "unknown"
-    }
+    summary = {"total_tools": 0, "tools_completed": 0, "critical_issues": 0, "recommendations": [], "overall_status": "unknown"}
 
     tools = ["hypothesis", "atheris", "schemathesis", "security_tests"]
     summary["total_tools"] = len(tools)
@@ -280,7 +234,7 @@ def generate_markdown_report(report_data: Dict[str, Any]) -> str:
         md += f"""### Atheris Coverage-Guided Fuzzing
 - **Status:** {ath["status"]}
 - **Fuzzers Run:** {ath["fuzzers_run"]}
-- **Crashes Found:** {ath["crashes_found"]} {'🚨' if ath["crashes_found"] > 0 else '✅'}
+- **Crashes Found:** {ath["crashes_found"]} {"🚨" if ath["crashes_found"] > 0 else "✅"}
 - **Artifacts:** {len(ath["artifacts"])}
 
 """
@@ -297,7 +251,7 @@ def generate_markdown_report(report_data: Dict[str, Any]) -> str:
 - **Status:** {sch["status"]}
 - **Endpoints Tested:** {sch["endpoints_tested"]}
 - **Total Requests:** {sch["total_requests"]}
-- **Failures:** {sch["failures"]} {'⚠️' if sch["failures"] > 0 else '✅'}
+- **Failures:** {sch["failures"]} {"⚠️" if sch["failures"] > 0 else "✅"}
 - **Checks Passed:** {sch["checks_passed"]}
 
 """
@@ -323,7 +277,7 @@ def generate_markdown_report(report_data: Dict[str, Any]) -> str:
         for category, count in corpus["categories"].items():
             md += f"- **{category}:** {count} files\n"
 
-    md += f"\n---\n*Report generated by MCP Gateway Fuzz Testing Suite*"
+    md += "\n---\n*Report generated by MCP Gateway Fuzz Testing Suite*"
 
     return md
 
@@ -334,17 +288,13 @@ def main():
 
     # Collect data from all fuzzing tools
     report_data = {
-        "metadata": {
-            "timestamp": datetime.now().isoformat(),
-            "version": "1.0",
-            "generator": "MCP Gateway Fuzz Report"
-        },
+        "metadata": {"timestamp": datetime.now().isoformat(), "version": "1.0", "generator": "MCP Gateway Fuzz Report"},
         "hypothesis": collect_hypothesis_stats(),
         "atheris": collect_atheris_results(),
         "schemathesis": collect_schemathesis_results(),
         "security_tests": collect_security_test_results(),
         "corpus": collect_corpus_stats(),
-        "coverage": collect_coverage_info()
+        "coverage": collect_coverage_info(),
     }
 
     # Generate summary
@@ -368,29 +318,29 @@ def main():
 
     # Print summary to console
     summary = report_data["summary"]
-    print(f"\n🎯 Fuzzing Report Summary:")
+    print("\n🎯 Fuzzing Report Summary:")
     print(f"📊 Overall Status: {summary['overall_status']}")
     print(f"🔧 Tools Completed: {summary['tools_completed']}/{summary['total_tools']}")
     print(f"🚨 Critical Issues: {summary['critical_issues']}")
 
     if summary["recommendations"]:
-        print(f"\n💡 Key Recommendations:")
+        print("\n💡 Key Recommendations:")
         for rec in summary["recommendations"][:3]:  # Show first 3
             print(f"   {rec}")
 
-    print(f"\n📁 Reports saved:")
+    print("\n📁 Reports saved:")
     print(f"   📄 JSON: {json_report_file}")
     print(f"   📝 Markdown: {md_report_file}")
 
     # Exit with appropriate code
     if summary["critical_issues"] > 0:
-        print(f"\n❌ Exiting with error code due to critical issues")
+        print("\n❌ Exiting with error code due to critical issues")
         sys.exit(1)
     elif summary["tools_completed"] == 0:
-        print(f"\n⚠️ Exiting with warning - no tools completed")
+        print("\n⚠️ Exiting with warning - no tools completed")
         sys.exit(2)
     else:
-        print(f"\n✅ Fuzzing report generation completed successfully")
+        print("\n✅ Fuzzing report generation completed successfully")
         sys.exit(0)
 
 

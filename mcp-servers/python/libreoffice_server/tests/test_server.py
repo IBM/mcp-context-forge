@@ -8,8 +8,7 @@ Tests for LibreOffice MCP Server (FastMCP).
 """
 
 import pytest
-import tempfile
-from pathlib import Path
+
 from libreoffice_server.server_fastmcp import converter
 
 

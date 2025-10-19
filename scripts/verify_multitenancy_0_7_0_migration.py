@@ -18,7 +18,6 @@ Usage:
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add project root to Python path
@@ -27,9 +26,24 @@ sys.path.insert(0, str(project_root))
 
 try:
     from mcpgateway.db import (
-        SessionLocal, EmailUser, EmailTeam, EmailTeamMember,
-        Server, Tool, Resource, Prompt, Gateway, A2AAgent, Role, UserRole,
-        EmailApiToken, TokenUsageLog, TokenRevocation, SSOProvider, SSOAuthSession, PendingUserApproval
+        SessionLocal,
+        EmailUser,
+        EmailTeam,
+        EmailTeamMember,
+        Server,
+        Tool,
+        Resource,
+        Prompt,
+        Gateway,
+        A2AAgent,
+        Role,
+        UserRole,
+        EmailApiToken,
+        TokenUsageLog,
+        TokenRevocation,
+        SSOProvider,
+        SSOAuthSession,
+        PendingUserApproval,
     )
     from mcpgateway.config import settings
     from sqlalchemy import text, inspect
@@ -50,14 +64,10 @@ def verify_migration():
 
     try:
         with SessionLocal() as db:
-
             # 1. Check admin user exists
             print("\n📋 1. ADMIN USER CHECK")
             admin_email = settings.platform_admin_email
-            admin_user = db.query(EmailUser).filter(
-                EmailUser.email == admin_email,
-                EmailUser.is_admin == True
-            ).first()
+            admin_user = db.query(EmailUser).filter(EmailUser.email == admin_email, EmailUser.is_admin == True).first()
 
             if admin_user:
                 print(f"   ✅ Admin user found: {admin_user.email}")
@@ -71,11 +81,7 @@ def verify_migration():
             # 2. Check personal team exists
             print("\n🏢 2. PERSONAL TEAM CHECK")
             if admin_user:
-                personal_team = db.query(EmailTeam).filter(
-                    EmailTeam.created_by == admin_user.email,
-                    EmailTeam.is_personal == True,
-                    EmailTeam.is_active == True
-                ).first()
+                personal_team = db.query(EmailTeam).filter(EmailTeam.created_by == admin_user.email, EmailTeam.is_personal == True, EmailTeam.is_active == True).first()
 
                 if personal_team:
                     print(f"   ✅ Personal team found: {personal_team.name}")
@@ -91,22 +97,11 @@ def verify_migration():
 
             # 3. Check resource assignments
             print("\n📦 3. RESOURCE ASSIGNMENT CHECK")
-            resource_types = [
-                ("Servers", Server),
-                ("Tools", Tool),
-                ("Resources", Resource),
-                ("Prompts", Prompt),
-                ("Gateways", Gateway),
-                ("A2A Agents", A2AAgent)
-            ]
+            resource_types = [("Servers", Server), ("Tools", Tool), ("Resources", Resource), ("Prompts", Prompt), ("Gateways", Gateway), ("A2A Agents", A2AAgent)]
 
             for resource_name, resource_model in resource_types:
                 total_count = db.query(resource_model).count()
-                assigned_count = db.query(resource_model).filter(
-                    resource_model.team_id != None,
-                    resource_model.owner_email != None,
-                    resource_model.visibility != None
-                ).count()
+                assigned_count = db.query(resource_model).filter(resource_model.team_id != None, resource_model.owner_email != None, resource_model.visibility != None).count()
                 unassigned_count = total_count - assigned_count
 
                 print(f"   {resource_name}:")
@@ -119,14 +114,10 @@ def verify_migration():
                     success = False
 
                     # Show details of unassigned resources
-                    unassigned = db.query(resource_model).filter(
-                        (resource_model.team_id == None) |
-                        (resource_model.owner_email == None) |
-                        (resource_model.visibility == None)
-                    ).limit(3).all()
+                    unassigned = db.query(resource_model).filter((resource_model.team_id == None) | (resource_model.owner_email == None) | (resource_model.visibility == None)).limit(3).all()
 
                     for resource in unassigned:
-                        name = getattr(resource, 'name', 'Unknown')
+                        name = getattr(resource, "name", "Unknown")
                         print(f"         - {name} (ID: {resource.id})")
                         print(f"           team_id: {getattr(resource, 'team_id', 'N/A')}")
                         print(f"           owner_email: {getattr(resource, 'owner_email', 'N/A')}")
@@ -139,12 +130,12 @@ def verify_migration():
                 print("\n👁️  4. VISIBILITY DISTRIBUTION")
 
                 for resource_name, resource_model in resource_types:
-                    if hasattr(resource_model, 'visibility'):
+                    if hasattr(resource_model, "visibility"):
                         visibility_counts = {}
                         resources = db.query(resource_model).all()
 
                         for resource in resources:
-                            vis = getattr(resource, 'visibility', 'unknown')
+                            vis = getattr(resource, "visibility", "unknown")
                             visibility_counts[vis] = visibility_counts.get(vis, 0) + 1
 
                         print(f"   {resource_name}:")
@@ -160,10 +151,21 @@ def verify_migration():
 
             # Expected multitenancy tables from migration
             expected_auth_tables = {
-                'email_users', 'email_auth_events', 'email_teams', 'email_team_members',
-                'email_team_invitations', 'email_team_join_requests', 'pending_user_approvals',
-                'email_api_tokens', 'token_usage_logs', 'token_revocations',
-                'sso_providers', 'sso_auth_sessions', 'roles', 'user_roles', 'permission_audit_log'
+                "email_users",
+                "email_auth_events",
+                "email_teams",
+                "email_team_members",
+                "email_team_invitations",
+                "email_team_join_requests",
+                "pending_user_approvals",
+                "email_api_tokens",
+                "token_usage_logs",
+                "token_revocations",
+                "sso_providers",
+                "sso_auth_sessions",
+                "roles",
+                "user_roles",
+                "permission_audit_log",
             }
 
             missing_tables = expected_auth_tables - existing_tables
@@ -224,31 +226,27 @@ def verify_migration():
                 success = False
 
             # Verify resource models have team attributes
-            resource_models = [
-                ("Server", Server),
-                ("Tool", Tool),
-                ("Resource", Resource),
-                ("Prompt", Prompt),
-                ("Gateway", Gateway),
-                ("A2AAgent", A2AAgent)
-            ]
+            resource_models = [("Server", Server), ("Tool", Tool), ("Resource", Resource), ("Prompt", Prompt), ("Gateway", Gateway), ("A2AAgent", A2AAgent)]
 
             for model_name, model_class in resource_models:
                 try:
                     # Check if model has team attributes
                     sample = db.query(model_class).first()
                     if sample:
-                        has_team_id = hasattr(sample, 'team_id')
-                        has_owner_email = hasattr(sample, 'owner_email')
-                        has_visibility = hasattr(sample, 'visibility')
+                        has_team_id = hasattr(sample, "team_id")
+                        has_owner_email = hasattr(sample, "owner_email")
+                        has_visibility = hasattr(sample, "visibility")
 
                         if has_team_id and has_owner_email and has_visibility:
                             print(f"   ✅ {model_name}: has multitenancy attributes")
                         else:
                             missing_attrs = []
-                            if not has_team_id: missing_attrs.append('team_id')
-                            if not has_owner_email: missing_attrs.append('owner_email')
-                            if not has_visibility: missing_attrs.append('visibility')
+                            if not has_team_id:
+                                missing_attrs.append("team_id")
+                            if not has_owner_email:
+                                missing_attrs.append("owner_email")
+                            if not has_visibility:
+                                missing_attrs.append("visibility")
                             print(f"   ❌ {model_name}: missing {missing_attrs}")
                             success = False
                     else:
@@ -267,23 +265,20 @@ def verify_migration():
             # 6. Team membership check
             print("\n👥 6. TEAM MEMBERSHIP CHECK")
             if admin_user and personal_team:
-                membership = db.query(EmailTeamMember).filter(
-                    EmailTeamMember.team_id == personal_team.id,
-                    EmailTeamMember.user_email == admin_user.email,
-                    EmailTeamMember.is_active == True
-                ).first()
+                membership = db.query(EmailTeamMember).filter(EmailTeamMember.team_id == personal_team.id, EmailTeamMember.user_email == admin_user.email, EmailTeamMember.is_active == True).first()
 
                 if membership:
-                    print(f"   ✅ Admin is member of personal team")
+                    print("   ✅ Admin is member of personal team")
                     print(f"      Role: {membership.role}")
                     print(f"      Joined: {membership.joined_at}")
                 else:
-                    print(f"   ❌ Admin is not a member of personal team")
+                    print("   ❌ Admin is not a member of personal team")
                     success = False
 
     except Exception as e:
         print(f"\n❌ Verification failed with error: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -293,15 +288,15 @@ def verify_migration():
         print("\n✅ All checks passed. Your migration completed successfully.")
         print("✅ Old servers should now be visible in the Virtual Servers list.")
         print("✅ Resources are properly assigned to teams with appropriate visibility.")
-        print(f"\n🚀 You can now access the admin UI at: /admin")
+        print("\n🚀 You can now access the admin UI at: /admin")
         print(f"📧 Login with admin email: {settings.platform_admin_email}")
         return True
     else:
         print("❌ MIGRATION VERIFICATION: FAILED!")
         print("\n⚠️  Some issues were detected. Please check the details above.")
         print("💡 You may need to re-run the migration or check your configuration.")
-        print(f"\n📋 To re-run migration: python3 -m mcpgateway.bootstrap_db")
-        print(f"🔧 Make sure PLATFORM_ADMIN_EMAIL is set in your .env file")
+        print("\n📋 To re-run migration: python3 -m mcpgateway.bootstrap_db")
+        print("🔧 Make sure PLATFORM_ADMIN_EMAIL is set in your .env file")
         return False
 
 

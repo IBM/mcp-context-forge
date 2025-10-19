@@ -8,6 +8,7 @@ Tests for Mermaid MCP Server (FastMCP).
 """
 
 import pytest
+
 from mermaid_server.server_fastmcp import processor
 
 
@@ -17,8 +18,7 @@ def test_create_flowchart():
         pytest.skip("Mermaid processor not available")
 
     result = processor.create_flowchart(
-        nodes=["A", "B", "C"],
-        edges=[("A", "B", "Step 1"), ("B", "C", "Step 2")]
+        nodes=["A", "B", "C"], edges=[("A", "B", "Step 1"), ("B", "C", "Step 2")]
     )
 
     assert result["success"] is True
@@ -31,8 +31,7 @@ def test_create_sequence_diagram():
         pytest.skip("Mermaid processor not available")
 
     result = processor.create_sequence_diagram(
-        participants=["Alice", "Bob"],
-        messages=[("Alice", "Bob", "Hello")]
+        participants=["Alice", "Bob"], messages=[("Alice", "Bob", "Hello")]
     )
 
     assert result["success"] is True
@@ -46,12 +45,7 @@ def test_create_gantt_chart():
 
     result = processor.create_gantt_chart(
         title="Project",
-        tasks=[{
-            "id": "task1",
-            "name": "Task 1",
-            "start": "2024-01-01",
-            "duration": "5d"
-        }]
+        tasks=[{"id": "task1", "name": "Task 1", "start": "2024-01-01", "duration": "5d"}],
     )
 
     assert result["success"] is True

@@ -164,7 +164,7 @@ def run_shell(
             if verbose:
                 continue
             spinner = next(_spinner_cycle)
-            header = f"{spinner} {desc} (elapsed {time.time()-start:4.0f}s)"
+            header = f"{spinner} {desc} (elapsed {time.time() - start:4.0f}s)"
             pane_lines = list(tail_buf)
             pane_height = len(pane_lines) + 2
             sys.stdout.write(f"\x1b[{pane_height}F\x1b[J")  # rewind & clear
@@ -180,7 +180,7 @@ def run_shell(
         proc.wait()
 
     if not verbose:  # clear final pane
-        sys.stdout.write(f"\x1b[{min(len(tail_buf)+2, tail+2)}F\x1b[J")
+        sys.stdout.write(f"\x1b[{min(len(tail_buf) + 2, tail + 2)}F\x1b[J")
         sys.stdout.flush()
 
     globals()["_PREV_CMD_OUTPUT"] = "\n".join(full_buf)  # for show_last()

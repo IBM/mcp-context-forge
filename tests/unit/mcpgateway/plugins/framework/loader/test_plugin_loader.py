@@ -56,7 +56,7 @@ async def test_plugin_loader_load():
     assert plugin.hooks[1] == "prompt_post_fetch"
 
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
-    prompt = PromptPrehookPayload(name="test_prompt", args = {"user": "What a crapshow!"})
+    prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"user": "What a crapshow!"})
     result = await plugin.prompt_pre_fetch(prompt, context=context)
     assert len(result.modified_payload.args) == 1
     assert result.modified_payload.args["user"] == "What a yikesshow!"
@@ -64,7 +64,7 @@ async def test_plugin_loader_load():
     message = Message(content=TextContent(type="text", text="What the crud?"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
 
-    payload_result = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+    payload_result = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
 
     result = await plugin.prompt_post_fetch(payload_result, context)
     assert len(result.modified_payload.result.messages) == 1

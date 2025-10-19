@@ -8,8 +8,7 @@ Simple tests to boost coverage to 75%.
 """
 
 # Standard
-import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Third-Party
 import pytest
@@ -41,18 +40,10 @@ async def test_export_command_basic_structure():
     from mcpgateway.cli_export_import import export_command
 
     # Create minimal args structure
-    args = argparse.Namespace(
-        types=None,
-        exclude_types=None,
-        tags=None,
-        include_inactive=False,
-        include_dependencies=True,
-        output=None,
-        verbose=False
-    )
+    args = argparse.Namespace(types=None, exclude_types=None, tags=None, include_inactive=False, include_dependencies=True, output=None, verbose=False)
 
     # Mock everything to prevent actual execution
-    with patch('mcpgateway.cli_export_import.make_authenticated_request') as mock_request:
+    with patch("mcpgateway.cli_export_import.make_authenticated_request") as mock_request:
         mock_request.side_effect = Exception("Mocked to prevent execution")
 
         with pytest.raises(SystemExit):  # Function calls sys.exit(1) on error
@@ -71,22 +62,15 @@ async def test_import_command_basic_structure():
     from mcpgateway.cli_export_import import import_command
 
     # Create test file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
         json.dump({"version": "2025-03-26", "entities": {}}, f)
         temp_file = f.name
 
     # Create minimal args structure
-    args = argparse.Namespace(
-        input_file=temp_file,
-        conflict_strategy='update',
-        dry_run=False,
-        rekey_secret=None,
-        include=None,
-        verbose=False
-    )
+    args = argparse.Namespace(input_file=temp_file, conflict_strategy="update", dry_run=False, rekey_secret=None, include=None, verbose=False)
 
     # Mock everything to prevent actual execution
-    with patch('mcpgateway.cli_export_import.make_authenticated_request') as mock_request:
+    with patch("mcpgateway.cli_export_import.make_authenticated_request") as mock_request:
         mock_request.side_effect = Exception("Mocked to prevent execution")
 
         with pytest.raises(SystemExit):  # Function calls sys.exit(1) on error
@@ -100,8 +84,8 @@ def test_cli_export_import_constants():
 
     # Test logger exists
     assert logger is not None
-    assert hasattr(logger, 'info')
-    assert hasattr(logger, 'error')
+    assert hasattr(logger, "info")
+    assert hasattr(logger, "error")
 
 
 @pytest.mark.asyncio
@@ -111,7 +95,7 @@ async def test_make_authenticated_request_structure():
     from mcpgateway.cli_export_import import make_authenticated_request
 
     # Mock auth token to return None (no auth configured)
-    with patch('mcpgateway.cli_export_import.get_auth_token', return_value=None):
+    with patch("mcpgateway.cli_export_import.get_auth_token", return_value=None):
         with pytest.raises(AuthenticationError):
             await make_authenticated_request("GET", "/test")
 
@@ -125,18 +109,12 @@ def test_import_command_file_not_found():
     from mcpgateway.cli_export_import import import_command
 
     # Args with non-existent file
-    args = argparse.Namespace(
-        input_file="/nonexistent/file.json",
-        conflict_strategy='update',
-        dry_run=False,
-        rekey_secret=None,
-        include=None,
-        verbose=False
-    )
+    args = argparse.Namespace(input_file="/nonexistent/file.json", conflict_strategy="update", dry_run=False, rekey_secret=None, include=None, verbose=False)
 
     # Should exit with error
     # Standard
     import asyncio
+
     with pytest.raises(SystemExit) as exc_info:
         asyncio.run(import_command(args))
 
@@ -149,12 +127,12 @@ def test_cli_module_imports():
     import mcpgateway.cli_export_import as cli_module
 
     # Test required functions exist
-    assert hasattr(cli_module, 'create_parser')
-    assert hasattr(cli_module, 'get_auth_token')
-    assert hasattr(cli_module, 'export_command')
-    assert hasattr(cli_module, 'import_command')
-    assert hasattr(cli_module, 'main_with_subcommands')
+    assert hasattr(cli_module, "create_parser")
+    assert hasattr(cli_module, "get_auth_token")
+    assert hasattr(cli_module, "export_command")
+    assert hasattr(cli_module, "import_command")
+    assert hasattr(cli_module, "main_with_subcommands")
 
     # Test required classes exist
-    assert hasattr(cli_module, 'AuthenticationError')
-    assert hasattr(cli_module, 'CLIError')
+    assert hasattr(cli_module, "AuthenticationError")
+    assert hasattr(cli_module, "CLIError")

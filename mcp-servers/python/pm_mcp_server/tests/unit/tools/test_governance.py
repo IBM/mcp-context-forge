@@ -7,6 +7,7 @@ Authors: Mihai Criveti
 
 Module documentation...
 """
+
 from pm_mcp_server.schemata import ChangeRequest, EarnedValueInput, RiskEntry
 from pm_mcp_server.tools import governance
 
@@ -24,8 +25,16 @@ def test_risk_register_ranks_highest_severity():
 def test_change_request_tracker_sums_impacts():
     result = governance.change_request_tracker(
         [
-            ChangeRequest(id="CR1", description="Extend scope", schedule_impact_days=3, cost_impact=2000),
-            ChangeRequest(id="CR2", description="Refactor", schedule_impact_days=-1, cost_impact=-500, status="Approved"),
+            ChangeRequest(
+                id="CR1", description="Extend scope", schedule_impact_days=3, cost_impact=2000
+            ),
+            ChangeRequest(
+                id="CR2",
+                description="Refactor",
+                schedule_impact_days=-1,
+                cost_impact=-500,
+                status="Approved",
+            ),
         ]
     )
     assert result["count"] == 2

@@ -166,7 +166,7 @@ plugin_dirs: []
                 # Create payload with forbidden word that will trigger deny filter
                 from mcpgateway.plugins.framework.models import PromptPrehookPayload
                 payload = PromptPrehookPayload(
-                    name="test_prompt",
+                    prompt_id="test_prompt",
                     args={"query": "this contains forbidden word"}
                 )
 

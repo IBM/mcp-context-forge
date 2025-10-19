@@ -9,7 +9,6 @@ Tests for export service implementation.
 
 # Standard
 from datetime import datetime, timezone
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -25,42 +24,21 @@ from mcpgateway.utils.services_auth import encode_auth
 def create_default_server_metrics():
     """Create default ServerMetrics for testing."""
     return ServerMetrics(
-        total_executions=0,
-        successful_executions=0,
-        failed_executions=0,
-        failure_rate=0.0,
-        min_response_time=None,
-        max_response_time=None,
-        avg_response_time=None,
-        last_execution_time=None
+        total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
     )
 
 
 def create_default_prompt_metrics():
     """Create default PromptMetrics for testing."""
     return PromptMetrics(
-        total_executions=0,
-        successful_executions=0,
-        failed_executions=0,
-        failure_rate=0.0,
-        min_response_time=None,
-        max_response_time=None,
-        avg_response_time=None,
-        last_execution_time=None
+        total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
     )
 
 
 def create_default_resource_metrics():
     """Create default ResourceMetrics for testing."""
     return ResourceMetrics(
-        total_executions=0,
-        successful_executions=0,
-        failed_executions=0,
-        failure_rate=0.0,
-        min_response_time=None,
-        max_response_time=None,
-        avg_response_time=None,
-        last_execution_time=None
+        total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
     )
 
 
@@ -87,7 +65,6 @@ def mock_db():
 def sample_tool():
     """Create a sample tool for testing."""
     # First-Party
-    from mcpgateway.schemas import ToolMetrics
     return ToolRead(
         id="tool1",
         original_name="test_tool",
@@ -109,18 +86,11 @@ def sample_tool():
         gateway_id=None,
         execution_count=0,
         metrics=ToolMetrics(
-            total_executions=0,
-            successful_executions=0,
-            failed_executions=0,
-            failure_rate=0.0,
-            min_response_time=None,
-            max_response_time=None,
-            avg_response_time=None,
-            last_execution_time=None
+            total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
         ),
         gateway_slug="",
         custom_name_slug="test_tool",
-        tags=["api", "test"]
+        tags=["api", "test"],
     )
 
 
@@ -148,7 +118,7 @@ def sample_gateway():
         auth_header_value=None,
         tags=["gateway", "test"],
         slug="test_gateway",
-        passthrough_headers=None
+        passthrough_headers=None,
     )
 
 
@@ -164,10 +134,7 @@ async def test_export_configuration_basic(export_service, mock_db, sample_tool, 
     export_service.root_service.list_roots.return_value = []
 
     # Execute export
-    result = await export_service.export_configuration(
-        db=mock_db,
-        exported_by="test_user"
-    )
+    result = await export_service.export_configuration(db=mock_db, exported_by="test_user")
 
     # Validate result structure
     assert "version" in result
@@ -203,21 +170,11 @@ async def test_export_configuration_with_filters(export_service, mock_db):
     export_service.root_service.list_roots.return_value = []
 
     # Execute export with filters
-    result = await export_service.export_configuration(
-        db=mock_db,
-        include_types=["tools", "gateways"],
-        tags=["production"],
-        include_inactive=True,
-        exported_by="test_user"
-    )
+    result = await export_service.export_configuration(db=mock_db, include_types=["tools", "gateways"], tags=["production"], include_inactive=True, exported_by="test_user")
 
     # Verify service calls with filters
-    export_service.tool_service.list_tools.assert_called_once_with(
-        mock_db, tags=["production"], include_inactive=True
-    )
-    export_service.gateway_service.list_gateways.assert_called_once_with(
-        mock_db, include_inactive=True
-    )
+    export_service.tool_service.list_tools.assert_called_once_with(mock_db, tags=["production"], include_inactive=True)
+    export_service.gateway_service.list_gateways.assert_called_once_with(mock_db, include_inactive=True)
 
     # Should not call other services
     export_service.server_service.list_servers.assert_not_called()
@@ -240,16 +197,10 @@ async def test_export_selective(export_service, mock_db, sample_tool):
     export_service.tool_service.get_tool.return_value = sample_tool
     export_service.tool_service.list_tools.return_value = [sample_tool]
 
-    entity_selections = {
-        "tools": ["tool1"]
-    }
+    entity_selections = {"tools": ["tool1"]}
 
     # Execute selective export
-    result = await export_service.export_selective(
-        db=mock_db,
-        entity_selections=entity_selections,
-        exported_by="test_user"
-    )
+    result = await export_service.export_selective(db=mock_db, entity_selections=entity_selections, exported_by="test_user")
 
     # Validate result
     assert "entities" in result
@@ -267,34 +218,61 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
     """Test that export filters out MCP tools from gateways."""
     # Create a mix of tools
     # First-Party
-    from mcpgateway.schemas import ToolMetrics
 
     local_tool = ToolRead(
-        id="tool1", original_name="local_tool", name="local_tool",
+        id="tool1",
+        original_name="local_tool",
+        name="local_tool",
         custom_name="local_tool",
-        url="https://api.example.com", description="Local REST tool", integration_type="REST", request_type="GET",
-        headers={}, input_schema={}, annotations={}, jsonpath_filter="",
-        auth=None, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, gateway_id=None, execution_count=0,
+        url="https://api.example.com",
+        description="Local REST tool",
+        integration_type="REST",
+        request_type="GET",
+        headers={},
+        input_schema={},
+        annotations={},
+        jsonpath_filter="",
+        auth=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        gateway_id=None,
+        execution_count=0,
         metrics=ToolMetrics(
-            total_executions=0, successful_executions=0, failed_executions=0,
-            failure_rate=0.0, min_response_time=None, max_response_time=None,
-            avg_response_time=None, last_execution_time=None
-        ), gateway_slug="", custom_name_slug="local_tool", tags=[]
+            total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
+        ),
+        gateway_slug="",
+        custom_name_slug="local_tool",
+        tags=[],
     )
 
     mcp_tool = ToolRead(
-        id="tool2", original_name="mcp_tool", name="gw1-mcp_tool",
+        id="tool2",
+        original_name="mcp_tool",
+        name="gw1-mcp_tool",
         custom_name="mcp_tool",
-        url="https://gateway.example.com", description="MCP tool from gateway", integration_type="MCP", request_type="SSE",
-        headers={}, input_schema={}, annotations={}, jsonpath_filter="",
-        auth=None, created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, gateway_id="gw1", execution_count=0,
+        url="https://gateway.example.com",
+        description="MCP tool from gateway",
+        integration_type="MCP",
+        request_type="SSE",
+        headers={},
+        input_schema={},
+        annotations={},
+        jsonpath_filter="",
+        auth=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        gateway_id="gw1",
+        execution_count=0,
         metrics=ToolMetrics(
-            total_executions=0, successful_executions=0, failed_executions=0,
-            failure_rate=0.0, min_response_time=None, max_response_time=None,
-            avg_response_time=None, last_execution_time=None
-        ), gateway_slug="gw1", custom_name_slug="mcp_tool", tags=[]
+            total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
+        ),
+        gateway_slug="gw1",
+        custom_name_slug="mcp_tool",
+        tags=[],
     )
 
     export_service.tool_service.list_tools.return_value = [local_tool, mcp_tool]
@@ -320,7 +298,7 @@ async def test_export_validation_error(export_service, mock_db):
     export_service.root_service.list_roots.return_value = []
 
     # Mock validation to fail
-    with patch.object(export_service, '_validate_export_data') as mock_validate:
+    with patch.object(export_service, "_validate_export_data") as mock_validate:
         mock_validate.side_effect = ExportValidationError("Test validation error")
 
         with pytest.raises(ExportError) as excinfo:
@@ -332,13 +310,7 @@ async def test_export_validation_error(export_service, mock_db):
 @pytest.mark.asyncio
 async def test_validate_export_data_success(export_service):
     """Test successful export data validation."""
-    valid_data = {
-        "version": "2025-03-26",
-        "exported_at": "2025-01-01T00:00:00Z",
-        "exported_by": "test_user",
-        "entities": {"tools": []},
-        "metadata": {"entity_counts": {"tools": 0}}
-    }
+    valid_data = {"version": "2025-03-26", "exported_at": "2025-01-01T00:00:00Z", "exported_by": "test_user", "entities": {"tools": []}, "metadata": {"entity_counts": {"tools": 0}}}
 
     # Should not raise any exception
     export_service._validate_export_data(valid_data)
@@ -366,7 +338,7 @@ async def test_validate_export_data_invalid_entities(export_service):
         "exported_at": "2025-01-01T00:00:00Z",
         "exported_by": "test_user",
         "entities": "not_a_dict",  # Should be a dict
-        "metadata": {"entity_counts": {}}
+        "metadata": {"entity_counts": {}},
     }
 
     with pytest.raises(ExportValidationError) as excinfo:
@@ -378,17 +350,7 @@ async def test_validate_export_data_invalid_entities(export_service):
 @pytest.mark.asyncio
 async def test_extract_dependencies(export_service, mock_db):
     """Test dependency extraction between entities."""
-    entities = {
-        "servers": [
-            {"name": "server1", "tool_ids": ["tool1", "tool2"]},
-            {"name": "server2", "tool_ids": ["tool3"]}
-        ],
-        "tools": [
-            {"name": "tool1"},
-            {"name": "tool2"},
-            {"name": "tool3"}
-        ]
-    }
+    entities = {"servers": [{"name": "server1", "tool_ids": ["tool1", "tool2"]}, {"name": "server2", "tool_ids": ["tool3"]}], "tools": [{"name": "tool1"}, {"name": "tool2"}, {"name": "tool3"}]}
 
     dependencies = await export_service._extract_dependencies(mock_db, entities)
 
@@ -402,7 +364,7 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
     """Test export handling of masked authentication data."""
     # First-Party
     from mcpgateway.config import settings
-    from mcpgateway.schemas import AuthenticationValues, ToolMetrics, ToolRead
+    from mcpgateway.schemas import AuthenticationValues, ToolRead
 
     # Create tool with masked auth data
     tool_with_masked_auth = ToolRead(
@@ -420,7 +382,7 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
         jsonpath_filter="",
         auth=AuthenticationValues(
             auth_type="bearer",
-            auth_value=settings.masked_auth_value  # Masked value
+            auth_value=settings.masked_auth_value,  # Masked value
         ),
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -429,18 +391,11 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
         gateway_id=None,
         execution_count=0,
         metrics=ToolMetrics(
-            total_executions=0,
-            successful_executions=0,
-            failed_executions=0,
-            failure_rate=0.0,
-            min_response_time=None,
-            max_response_time=None,
-            avg_response_time=None,
-            last_execution_time=None
+            total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
         ),
         gateway_slug="",
         custom_name_slug="test_tool",
-        tags=[]
+        tags=[],
     )
 
     # Mock service and database
@@ -481,10 +436,7 @@ async def test_export_empty_entities(export_service, mock_db):
     export_service.resource_service.list_resources.return_value = []
     export_service.root_service.list_roots.return_value = []
 
-    result = await export_service.export_configuration(
-        db=mock_db,
-        exported_by="test_user"
-    )
+    result = await export_service.export_configuration(db=mock_db, exported_by="test_user")
 
     # All entity counts should be zero
     entity_counts = result["metadata"]["entity_counts"]
@@ -508,11 +460,7 @@ async def test_export_with_exclude_types(export_service, mock_db):
     export_service.resource_service.list_resources.return_value = []
     export_service.root_service.list_roots.return_value = []
 
-    result = await export_service.export_configuration(
-        db=mock_db,
-        exclude_types=["servers", "prompts"],
-        exported_by="test_user"
-    )
+    result = await export_service.export_configuration(db=mock_db, exclude_types=["servers", "prompts"], exported_by="test_user")
 
     # Excluded types should not be in entities
     entities = result["entities"]
@@ -530,14 +478,9 @@ async def test_export_with_exclude_types(export_service, mock_db):
 async def test_export_roots_functionality(export_service):
     """Test root export functionality."""
     # First-Party
-    from mcpgateway.models import Root
 
     # Mock root service
-    mock_roots = [
-        Root(uri="file:///workspace", name="Workspace"),
-        Root(uri="file:///tmp", name="Temp"),
-        Root(uri="http://example.com/api", name="API")
-    ]
+    mock_roots = [Root(uri="file:///workspace", name="Workspace"), Root(uri="file:///tmp", name="Temp"), Root(uri="http://example.com/api", name="API")]
     export_service.root_service.list_roots.return_value = mock_roots
 
     # Execute export
@@ -564,28 +507,21 @@ async def test_export_with_include_inactive(export_service, mock_db):
     export_service.resource_service.list_resources.return_value = []
     export_service.root_service.list_roots.return_value = []
 
-    result = await export_service.export_configuration(
-        db=mock_db,
-        include_inactive=True,
-        exported_by="test_user"
-    )
+    result = await export_service.export_configuration(db=mock_db, include_inactive=True, exported_by="test_user")
 
     # Verify include_inactive flag is recorded
     export_options = result["metadata"]["export_options"]
     assert export_options["include_inactive"] == True
 
     # Verify service calls included the flag
-    export_service.tool_service.list_tools.assert_called_with(
-        mock_db, tags=None, include_inactive=True
-    )
+    export_service.tool_service.list_tools.assert_called_with(mock_db, tags=None, include_inactive=True)
 
 
 @pytest.mark.asyncio
 async def test_export_tools_with_non_masked_auth(export_service, mock_db):
     """Test export tools with non-masked authentication data."""
     # First-Party
-    from mcpgateway.config import settings
-    from mcpgateway.schemas import AuthenticationValues, ToolMetrics, ToolRead
+    from mcpgateway.schemas import AuthenticationValues, ToolRead
 
     # Create tool with non-masked auth data
     tool_with_auth = ToolRead(
@@ -604,7 +540,7 @@ async def test_export_tools_with_non_masked_auth(export_service, mock_db):
         jsonpath_filter="",
         auth=AuthenticationValues(
             auth_type="bearer",
-            auth_value="encrypted_auth_value"  # Not masked
+            auth_value="encrypted_auth_value",  # Not masked
         ),
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -613,18 +549,11 @@ async def test_export_tools_with_non_masked_auth(export_service, mock_db):
         gateway_id=None,
         execution_count=0,
         metrics=ToolMetrics(
-            total_executions=0,
-            successful_executions=0,
-            failed_executions=0,
-            failure_rate=0.0,
-            min_response_time=None,
-            max_response_time=None,
-            avg_response_time=None,
-            last_execution_time=None
+            total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
         ),
         gateway_slug="",
         custom_name_slug="test_tool",
-        tags=[]
+        tags=[],
     )
 
     export_service.tool_service.list_tools.return_value = [tool_with_auth]
@@ -643,28 +572,54 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
     """Test gateway export with tag filtering."""
     # Create gateways with different tags
     gateway_with_matching_tags = GatewayRead(
-        id="gw1", name="gateway_with_tags", url="https://gateway1.example.com",
-        description="Gateway with tags", transport="SSE", capabilities={},
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, last_seen=datetime.now(timezone.utc),
-        auth_type=None, auth_value=None, auth_username=None, auth_password=None,
-        auth_token=None, auth_header_key=None, auth_header_value=None,
-        tags=["production", "api"], slug="gateway_with_tags", passthrough_headers=None
+        id="gw1",
+        name="gateway_with_tags",
+        url="https://gateway1.example.com",
+        description="Gateway with tags",
+        transport="SSE",
+        capabilities={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        last_seen=datetime.now(timezone.utc),
+        auth_type=None,
+        auth_value=None,
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_header_key=None,
+        auth_header_value=None,
+        tags=["production", "api"],
+        slug="gateway_with_tags",
+        passthrough_headers=None,
     )
 
     gateway_without_matching_tags = GatewayRead(
-        id="gw2", name="gateway_no_tags", url="https://gateway2.example.com",
-        description="Gateway without matching tags", transport="SSE", capabilities={},
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, last_seen=datetime.now(timezone.utc),
-        auth_type=None, auth_value=None, auth_username=None, auth_password=None,
-        auth_token=None, auth_header_key=None, auth_header_value=None,
-        tags=["test", "dev"], slug="gateway_no_tags", passthrough_headers=None
+        id="gw2",
+        name="gateway_no_tags",
+        url="https://gateway2.example.com",
+        description="Gateway without matching tags",
+        transport="SSE",
+        capabilities={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        last_seen=datetime.now(timezone.utc),
+        auth_type=None,
+        auth_value=None,
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_header_key=None,
+        auth_header_value=None,
+        tags=["test", "dev"],
+        slug="gateway_no_tags",
+        passthrough_headers=None,
     )
 
-    export_service.gateway_service.list_gateways.return_value = [
-        gateway_with_matching_tags, gateway_without_matching_tags
-    ]
+    export_service.gateway_service.list_gateways.return_value = [gateway_with_matching_tags, gateway_without_matching_tags]
 
     # Execute export with tag filter
     gateways = await export_service._export_gateways(mock_db, ["production"], False)
@@ -682,14 +637,27 @@ async def test_export_gateways_with_masked_auth(export_service, mock_db):
 
     # Create gateway with masked auth
     gateway_with_masked_auth = GatewayRead(
-        id="gw1", name="test_gateway", url="https://gateway.example.com",
-        description="Test gateway", transport="SSE", capabilities={},
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, last_seen=datetime.now(timezone.utc),
-        auth_type="bearer", auth_value=settings.masked_auth_value,
-        auth_username=None, auth_password=None, auth_token=None,
-        auth_header_key=None, auth_header_value=None, tags=[],
-        slug="test_gateway", passthrough_headers=None
+        id="gw1",
+        name="test_gateway",
+        url="https://gateway.example.com",
+        description="Test gateway",
+        transport="SSE",
+        capabilities={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        last_seen=datetime.now(timezone.utc),
+        auth_type="bearer",
+        auth_value=settings.masked_auth_value,
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_header_key=None,
+        auth_header_value=None,
+        tags=[],
+        slug="test_gateway",
+        passthrough_headers=None,
     )
 
     export_service.gateway_service.list_gateways.return_value = [gateway_with_masked_auth]
@@ -713,14 +681,27 @@ async def test_export_gateways_with_non_masked_auth(export_service, mock_db):
     """Test gateway export with non-masked authentication data."""
     # Create gateway with non-masked auth - provide proper bearer token format
     gateway_with_auth = GatewayRead(
-        id="gw1", name="test_gateway", url="https://gateway.example.com",
-        description="Test gateway", transport="SSE", capabilities={},
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, last_seen=datetime.now(timezone.utc),
-        auth_type="bearer", auth_value=encode_auth({"Authorization": "Bearer test_token_123"}),
-        auth_username=None, auth_password=None, auth_token="test_token_123",
-        auth_header_key=None, auth_header_value=None, tags=[],
-        slug="test_gateway", passthrough_headers=None
+        id="gw1",
+        name="test_gateway",
+        url="https://gateway.example.com",
+        description="Test gateway",
+        transport="SSE",
+        capabilities={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        last_seen=datetime.now(timezone.utc),
+        auth_type="bearer",
+        auth_value=encode_auth({"Authorization": "Bearer test_token_123"}),
+        auth_username=None,
+        auth_password=None,
+        auth_token="test_token_123",
+        auth_header_key=None,
+        auth_header_value=None,
+        tags=[],
+        slug="test_gateway",
+        passthrough_headers=None,
     )
     # Manually set auth_value to bypass encryption
     gateway_with_auth.auth_value = "encrypted_auth_value"
@@ -851,7 +832,7 @@ async def test_validate_export_data_empty_version(export_service):
         "exported_at": "2025-01-01T00:00:00Z",
         "exported_by": "test_user",
         "entities": {},
-        "metadata": {"entity_counts": {}}
+        "metadata": {"entity_counts": {}},
     }
 
     with pytest.raises(ExportValidationError) as excinfo:
@@ -868,7 +849,7 @@ async def test_validate_export_data_invalid_metadata(export_service):
         "exported_at": "2025-01-01T00:00:00Z",
         "exported_by": "test_user",
         "entities": {},
-        "metadata": {"entity_counts": "not_a_dict"}  # Should be dict
+        "metadata": {"entity_counts": "not_a_dict"},  # Should be dict
     }
 
     with pytest.raises(ExportValidationError) as excinfo:
@@ -881,51 +862,101 @@ async def test_validate_export_data_invalid_metadata(export_service):
 async def test_export_selective_all_entity_types(export_service, mock_db):
     """Test selective export with all entity types."""
     # First-Party
-    from mcpgateway.schemas import GatewayRead, PromptRead, ResourceRead, ServerRead, ToolMetrics, ToolRead
+    from mcpgateway.schemas import GatewayRead, ToolRead
 
     # Mock entities for each type
     sample_tool = ToolRead(
-        id="tool1", original_name="test_tool", name="test_tool", custom_name="test_tool",
-        displayName="Test Tool", url="https://api.example.com", description="Test tool",
-        integration_type="REST", request_type="GET", headers={}, input_schema={},
-        annotations={}, jsonpath_filter="", auth=None,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, gateway_id=None, execution_count=0,
-        metrics=ToolMetrics(total_executions=0, successful_executions=0, failed_executions=0,
-                           failure_rate=0.0, min_response_time=None, max_response_time=None,
-                           avg_response_time=None, last_execution_time=None),
-        gateway_slug="", custom_name_slug="test_tool", tags=[]
+        id="tool1",
+        original_name="test_tool",
+        name="test_tool",
+        custom_name="test_tool",
+        displayName="Test Tool",
+        url="https://api.example.com",
+        description="Test tool",
+        integration_type="REST",
+        request_type="GET",
+        headers={},
+        input_schema={},
+        annotations={},
+        jsonpath_filter="",
+        auth=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        gateway_id=None,
+        execution_count=0,
+        metrics=ToolMetrics(
+            total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=None, max_response_time=None, avg_response_time=None, last_execution_time=None
+        ),
+        gateway_slug="",
+        custom_name_slug="test_tool",
+        tags=[],
     )
 
     sample_gateway = GatewayRead(
-        id="gw1", name="test_gateway", url="https://gateway.example.com",
-        description="Test gateway", transport="SSE", capabilities={},
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, last_seen=datetime.now(timezone.utc),
-        auth_type=None, auth_value=None, auth_username=None, auth_password=None,
-        auth_token=None, auth_header_key=None, auth_header_value=None,
-        tags=[], slug="test_gateway", passthrough_headers=None
+        id="gw1",
+        name="test_gateway",
+        url="https://gateway.example.com",
+        description="Test gateway",
+        transport="SSE",
+        capabilities={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        last_seen=datetime.now(timezone.utc),
+        auth_type=None,
+        auth_value=None,
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_header_key=None,
+        auth_header_value=None,
+        tags=[],
+        slug="test_gateway",
+        passthrough_headers=None,
     )
 
     sample_server = ServerRead(
-        id="server1", name="test_server", description="Test server",
-        icon=None, associated_tools=[], associated_a2a_agents=[], is_active=True,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        metrics=create_default_server_metrics(), tags=[]
+        id="server1",
+        name="test_server",
+        description="Test server",
+        icon=None,
+        associated_tools=[],
+        associated_a2a_agents=[],
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        metrics=create_default_server_metrics(),
+        tags=[],
     )
 
     sample_prompt = PromptRead(
-        id=1, name="test_prompt", template="Test template",
-        description="Test prompt", arguments=[], is_active=True,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        metrics=create_default_prompt_metrics(), tags=[]
+        id=1,
+        name="test_prompt",
+        template="Test template",
+        description="Test prompt",
+        arguments=[],
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        metrics=create_default_prompt_metrics(),
+        tags=[],
     )
 
     sample_resource = ResourceRead(
-        id=1, name="test_resource", uri="file:///test.txt",
-        description="Test resource", mime_type="text/plain", size=None, is_active=True,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        metrics=create_default_resource_metrics(), tags=[]
+        id=1,
+        name="test_resource",
+        uri="file:///test.txt",
+        description="Test resource",
+        mime_type="text/plain",
+        size=None,
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        metrics=create_default_resource_metrics(),
+        tags=[],
     )
 
     # Setup mocks for selective export
@@ -941,24 +972,14 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
 
     # First-Party
     from mcpgateway.models import Root
+
     mock_roots = [Root(uri="file:///workspace", name="Workspace")]
     export_service.root_service.list_roots.return_value = mock_roots
 
-    entity_selections = {
-        "tools": ["tool1"],
-        "gateways": ["gw1"],
-        "servers": ["server1"],
-        "prompts": ["test_prompt"],
-        "resources": ["file:///test.txt"],
-        "roots": ["file:///workspace"]
-    }
+    entity_selections = {"tools": ["tool1"], "gateways": ["gw1"], "servers": ["server1"], "prompts": ["test_prompt"], "resources": ["file:///test.txt"], "roots": ["file:///workspace"]}
 
     # Execute selective export
-    result = await export_service.export_selective(
-        db=mock_db,
-        entity_selections=entity_selections,
-        exported_by="test_user"
-    )
+    result = await export_service.export_selective(db=mock_db, entity_selections=entity_selections, exported_by="test_user")
 
     # Verify result structure
     assert "entities" in result
@@ -994,13 +1015,27 @@ async def test_export_selected_tools_error_handling(export_service, mock_db):
 async def test_export_selected_gateways(export_service, mock_db):
     """Test selective gateway export."""
     sample_gateway = GatewayRead(
-        id="gw1", name="test_gateway", url="https://gateway.example.com",
-        description="Test gateway", transport="SSE", capabilities={},
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        enabled=True, reachable=True, last_seen=datetime.now(timezone.utc),
-        auth_type=None, auth_value=None, auth_username=None, auth_password=None,
-        auth_token=None, auth_header_key=None, auth_header_value=None,
-        tags=[], slug="test_gateway", passthrough_headers=None
+        id="gw1",
+        name="test_gateway",
+        url="https://gateway.example.com",
+        description="Test gateway",
+        transport="SSE",
+        capabilities={},
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        enabled=True,
+        reachable=True,
+        last_seen=datetime.now(timezone.utc),
+        auth_type=None,
+        auth_value=None,
+        auth_username=None,
+        auth_password=None,
+        auth_token=None,
+        auth_header_key=None,
+        auth_header_value=None,
+        tags=[],
+        slug="test_gateway",
+        passthrough_headers=None,
     )
 
     export_service.gateway_service.get_gateway.return_value = sample_gateway
@@ -1027,13 +1062,19 @@ async def test_export_selected_gateways_error_handling(export_service, mock_db):
 async def test_export_selected_servers(export_service, mock_db):
     """Test selective server export."""
     # First-Party
-    from mcpgateway.schemas import ServerRead
 
     sample_server = ServerRead(
-        id="server1", name="test_server", description="Test server",
-        icon=None, associated_tools=[], associated_a2a_agents=[], is_active=True,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        metrics=create_default_server_metrics(), tags=[]
+        id="server1",
+        name="test_server",
+        description="Test server",
+        icon=None,
+        associated_tools=[],
+        associated_a2a_agents=[],
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        metrics=create_default_server_metrics(),
+        tags=[],
     )
 
     export_service.server_service.get_server.return_value = sample_server
@@ -1060,13 +1101,18 @@ async def test_export_selected_servers_error_handling(export_service, mock_db):
 async def test_export_selected_prompts(export_service, mock_db):
     """Test selective prompt export."""
     # First-Party
-    from mcpgateway.schemas import PromptRead
 
     sample_prompt = PromptRead(
-        id=1, name="test_prompt", template="Test template",
-        description="Test prompt", arguments=[], is_active=True,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        metrics=create_default_prompt_metrics(), tags=[]
+        id=1,
+        name="test_prompt",
+        template="Test template",
+        description="Test prompt",
+        arguments=[],
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        metrics=create_default_prompt_metrics(),
+        tags=[],
     )
 
     export_service.prompt_service.get_prompt.return_value = sample_prompt
@@ -1093,13 +1139,19 @@ async def test_export_selected_prompts_error_handling(export_service, mock_db):
 async def test_export_selected_resources(export_service, mock_db):
     """Test selective resource export."""
     # First-Party
-    from mcpgateway.schemas import ResourceRead
 
     sample_resource = ResourceRead(
-        id=1, name="test_resource", uri="file:///test.txt",
-        description="Test resource", mime_type="text/plain", size=None, is_active=True,
-        created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        metrics=create_default_resource_metrics(), tags=[]
+        id=1,
+        name="test_resource",
+        uri="file:///test.txt",
+        description="Test resource",
+        mime_type="text/plain",
+        size=None,
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        metrics=create_default_resource_metrics(),
+        tags=[],
     )
 
     export_service.resource_service.list_resources.return_value = [sample_resource]
@@ -1125,21 +1177,14 @@ async def test_export_selected_resources_error_handling(export_service, mock_db)
 async def test_export_selected_roots(export_service):
     """Test selective root export."""
     # First-Party
-    from mcpgateway.models import Root
 
-    mock_roots = [
-        Root(uri="file:///workspace", name="Workspace"),
-        Root(uri="file:///tmp", name="Temp")
-    ]
+    mock_roots = [Root(uri="file:///workspace", name="Workspace"), Root(uri="file:///tmp", name="Temp")]
 
     export_service.root_service.list_roots.return_value = mock_roots
 
     # Mock the _export_roots method to return expected data
     async def mock_export_roots():
-        return [
-            {"uri": "file:///workspace", "name": "Workspace"},
-            {"uri": "file:///tmp", "name": "Temp"}
-        ]
+        return [{"uri": "file:///workspace", "name": "Workspace"}, {"uri": "file:///tmp", "name": "Temp"}]
 
     export_service._export_roots = mock_export_roots
 

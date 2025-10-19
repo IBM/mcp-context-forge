@@ -119,14 +119,7 @@ class DockerComposeGenerator:
         with open(self.config_file) as f:
             return yaml.safe_load(f)
 
-    def generate(
-        self,
-        infrastructure_profile: str,
-        server_profile: str = "standard",
-        postgres_version: str = None,
-        instances: int = None,
-        output_file: Path = None
-    ) -> str:
+    def generate(self, infrastructure_profile: str, server_profile: str = "standard", postgres_version: str = None, instances: int = None, output_file: Path = None) -> str:
         """
         Generate docker-compose.yml content
 
@@ -141,18 +134,18 @@ class DockerComposeGenerator:
             Generated docker-compose.yml content
         """
         # Get profiles
-        infra = self.config.get('infrastructure_profiles', {}).get(infrastructure_profile)
+        infra = self.config.get("infrastructure_profiles", {}).get(infrastructure_profile)
         if not infra:
             raise ValueError(f"Infrastructure profile '{infrastructure_profile}' not found")
 
-        server = self.config.get('server_profiles', {}).get(server_profile)
+        server = self.config.get("server_profiles", {}).get(server_profile)
         if not server:
             raise ValueError(f"Server profile '{server_profile}' not found")
 
         # Override values if provided
-        pg_version = postgres_version or infra.get('postgres_version', '17-alpine')
-        num_instances = instances or infra.get('gateway_instances', 1)
-        redis_enabled = infra.get('redis_enabled', False)
+        pg_version = postgres_version or infra.get("postgres_version", "17-alpine")
+        num_instances = instances or infra.get("gateway_instances", 1)
+        redis_enabled = infra.get("redis_enabled", False)
 
         # Generate PostgreSQL configuration commands
         postgres_commands = self._generate_postgres_config(infra)
@@ -166,9 +159,7 @@ class DockerComposeGenerator:
             redis_volume = "  redis_data:"
 
         # Generate gateway services
-        gateway_services = self._generate_gateway_services(
-            num_instances, server, redis_enabled
-        )
+        gateway_services = self._generate_gateway_services(num_instances, server, redis_enabled)
 
         # Generate load balancer if multiple instances
         load_balancer = ""
@@ -184,13 +175,13 @@ class DockerComposeGenerator:
             redis_service=redis_service,
             gateway_services=gateway_services,
             load_balancer=load_balancer,
-            redis_volume=redis_volume
+            redis_volume=redis_volume,
         )
 
         # Write to file if specified
         if output_file:
             output_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(output_file, 'w') as f:
+            with open(output_file, "w") as f:
                 f.write(compose_content)
             print(f"✅ Generated: {output_file}")
 
@@ -201,13 +192,13 @@ class DockerComposeGenerator:
         commands = []
 
         pg_configs = {
-            'shared_buffers': 'postgres_shared_buffers',
-            'effective_cache_size': 'postgres_effective_cache_size',
-            'max_connections': 'postgres_max_connections',
-            'work_mem': 'postgres_work_mem',
-            'maintenance_work_mem': 'postgres_maintenance_work_mem',
-            'random_page_cost': 'postgres_random_page_cost',
-            'effective_io_concurrency': 'postgres_effective_io_concurrency',
+            "shared_buffers": "postgres_shared_buffers",
+            "effective_cache_size": "postgres_effective_cache_size",
+            "max_connections": "postgres_max_connections",
+            "work_mem": "postgres_work_mem",
+            "maintenance_work_mem": "postgres_maintenance_work_mem",
+            "random_page_cost": "postgres_random_page_cost",
+            "effective_io_concurrency": "postgres_effective_io_concurrency",
         }
 
         for pg_param, config_key in pg_configs.items():
@@ -215,31 +206,26 @@ class DockerComposeGenerator:
                 value = infra[config_key]
                 commands.append(f'      - "-c"\n      - "{pg_param}={value}"')
 
-        return '\n'.join(commands) if commands else ''
+        return "\n".join(commands) if commands else ""
 
     def _generate_redis_config(self, infra: Dict) -> str:
         """Generate Redis configuration arguments"""
         config_parts = []
 
-        if 'redis_maxmemory' in infra:
+        if "redis_maxmemory" in infra:
             config_parts.append(f" --maxmemory {infra['redis_maxmemory']}")
 
-        if 'redis_maxmemory_policy' in infra:
+        if "redis_maxmemory_policy" in infra:
             config_parts.append(f" --maxmemory-policy {infra['redis_maxmemory_policy']}")
 
-        return ''.join(config_parts)
+        return "".join(config_parts)
 
-    def _generate_gateway_services(
-        self,
-        num_instances: int,
-        server_profile: Dict,
-        redis_enabled: bool
-    ) -> str:
+    def _generate_gateway_services(self, num_instances: int, server_profile: Dict, redis_enabled: bool) -> str:
         """Generate gateway service definitions"""
         services = []
 
         for i in range(num_instances):
-            instance_suffix = f"_{i+1}" if num_instances > 1 else ""
+            instance_suffix = f"_{i + 1}" if num_instances > 1 else ""
             port_mapping = "4444" if num_instances == 1 else f"{4444 + i}"
 
             redis_url = ""
@@ -255,31 +241,29 @@ class DockerComposeGenerator:
             service = GATEWAY_SERVICE_TEMPLATE.format(
                 instance_suffix=instance_suffix,
                 redis_url=redis_url,
-                gunicorn_workers=server_profile.get('gunicorn_workers', 4),
-                gunicorn_threads=server_profile.get('gunicorn_threads', 4),
-                gunicorn_timeout=server_profile.get('gunicorn_timeout', 120),
-                db_pool_size=server_profile.get('db_pool_size', 20),
-                db_pool_max_overflow=server_profile.get('db_pool_max_overflow', 40),
-                db_pool_timeout=server_profile.get('db_pool_timeout', 30),
+                gunicorn_workers=server_profile.get("gunicorn_workers", 4),
+                gunicorn_threads=server_profile.get("gunicorn_threads", 4),
+                gunicorn_timeout=server_profile.get("gunicorn_timeout", 120),
+                db_pool_size=server_profile.get("db_pool_size", 20),
+                db_pool_max_overflow=server_profile.get("db_pool_max_overflow", 40),
+                db_pool_timeout=server_profile.get("db_pool_timeout", 30),
                 redis_pool=redis_pool,
                 port_mapping=port_mapping,
-                redis_depends=redis_depends
+                redis_depends=redis_depends,
             )
 
             services.append(service)
 
-        return '\n'.join(services)
+        return "\n".join(services)
 
     def _generate_load_balancer(self, num_instances: int) -> str:
         """Generate nginx load balancer service"""
         depends = []
         for i in range(num_instances):
-            suffix = f"_{i+1}"
-            depends.append(f'      - gateway{suffix}')
+            suffix = f"_{i + 1}"
+            depends.append(f"      - gateway{suffix}")
 
-        return NGINX_LOAD_BALANCER.format(
-            nginx_depends='\n'.join(depends)
-        )
+        return NGINX_LOAD_BALANCER.format(nginx_depends="\n".join(depends))
 
     def _generate_nginx_config(self, num_instances: int, output_file: Path):
         """Generate nginx.conf for load balancing"""
@@ -288,8 +272,8 @@ class DockerComposeGenerator:
 
         upstreams = []
         for i in range(num_instances):
-            suffix = f"_{i+1}"
-            upstreams.append(f'        server gateway{suffix}:4444;')
+            suffix = f"_{i + 1}"
+            upstreams.append(f"        server gateway{suffix}:4444;")
 
         nginx_conf = f"""events {{
     worker_connections 1024;
@@ -327,52 +311,21 @@ http {{
 }}
 """
 
-        nginx_file = output_file.parent / 'nginx.conf'
-        with open(nginx_file, 'w') as f:
+        nginx_file = output_file.parent / "nginx.conf"
+        with open(nginx_file, "w") as f:
             f.write(nginx_conf)
         print(f"✅ Generated: {nginx_file}")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description='Generate docker-compose.yml from infrastructure profiles'
-    )
-    parser.add_argument(
-        '--config',
-        type=Path,
-        default=Path('config.yaml'),
-        help='Configuration file path'
-    )
-    parser.add_argument(
-        '--infrastructure',
-        required=True,
-        help='Infrastructure profile name'
-    )
-    parser.add_argument(
-        '--server-profile',
-        default='standard',
-        help='Server profile name'
-    )
-    parser.add_argument(
-        '--postgres-version',
-        help='PostgreSQL version (e.g., 17-alpine)'
-    )
-    parser.add_argument(
-        '--instances',
-        type=int,
-        help='Number of gateway instances'
-    )
-    parser.add_argument(
-        '--output',
-        type=Path,
-        default=Path('docker-compose.perf.yml'),
-        help='Output file path'
-    )
-    parser.add_argument(
-        '--list-profiles',
-        action='store_true',
-        help='List available profiles and exit'
-    )
+    parser = argparse.ArgumentParser(description="Generate docker-compose.yml from infrastructure profiles")
+    parser.add_argument("--config", type=Path, default=Path("config.yaml"), help="Configuration file path")
+    parser.add_argument("--infrastructure", required=True, help="Infrastructure profile name")
+    parser.add_argument("--server-profile", default="standard", help="Server profile name")
+    parser.add_argument("--postgres-version", help="PostgreSQL version (e.g., 17-alpine)")
+    parser.add_argument("--instances", type=int, help="Number of gateway instances")
+    parser.add_argument("--output", type=Path, default=Path("docker-compose.perf.yml"), help="Output file path")
+    parser.add_argument("--list-profiles", action="store_true", help="List available profiles and exit")
 
     args = parser.parse_args()
 
@@ -381,33 +334,27 @@ def main():
 
         if args.list_profiles:
             print("\n=== Infrastructure Profiles ===")
-            for name, profile in generator.config.get('infrastructure_profiles', {}).items():
-                desc = profile.get('description', 'No description')
-                instances = profile.get('gateway_instances', 1)
-                pg_version = profile.get('postgres_version', 'N/A')
+            for name, profile in generator.config.get("infrastructure_profiles", {}).items():
+                desc = profile.get("description", "No description")
+                instances = profile.get("gateway_instances", 1)
+                pg_version = profile.get("postgres_version", "N/A")
                 print(f"  {name:20} - {desc}")
                 print(f"    {'':20}   Instances: {instances}, PostgreSQL: {pg_version}")
 
             print("\n=== Server Profiles ===")
-            for name, profile in generator.config.get('server_profiles', {}).items():
-                desc = profile.get('description', 'No description')
-                workers = profile.get('gunicorn_workers', 'N/A')
-                threads = profile.get('gunicorn_threads', 'N/A')
+            for name, profile in generator.config.get("server_profiles", {}).items():
+                desc = profile.get("description", "No description")
+                workers = profile.get("gunicorn_workers", "N/A")
+                threads = profile.get("gunicorn_threads", "N/A")
                 print(f"  {name:20} - {desc}")
                 print(f"    {'':20}   Workers: {workers}, Threads: {threads}")
 
             return 0
 
         # Generate docker-compose
-        generator.generate(
-            infrastructure_profile=args.infrastructure,
-            server_profile=args.server_profile,
-            postgres_version=args.postgres_version,
-            instances=args.instances,
-            output_file=args.output
-        )
+        generator.generate(infrastructure_profile=args.infrastructure, server_profile=args.server_profile, postgres_version=args.postgres_version, instances=args.instances, output_file=args.output)
 
-        print(f"\n✅ Successfully generated docker-compose configuration")
+        print("\n✅ Successfully generated docker-compose configuration")
         print(f"   Infrastructure: {args.infrastructure}")
         print(f"   Server Profile: {args.server_profile}")
         print(f"   Output: {args.output}")
@@ -419,5 +366,5 @@ def main():
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

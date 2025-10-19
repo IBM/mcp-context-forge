@@ -4,9 +4,9 @@ Dataset storage and management functionality.
 """
 
 # Standard
-from datetime import datetime
 import hashlib
 import logging
+from datetime import datetime
 from typing import Any
 
 # Third-Party
@@ -169,10 +169,14 @@ class DatasetManager:
             "dataset_count": len(self._datasets),
             "dataset_sizes_mb": {k: v / 1024 / 1024 for k, v in dataset_sizes.items()},
             "max_memory_mb": self.max_memory_mb,
-            "utilization_percent": (total_memory / 1024 / 1024) / self.max_memory_mb * 100,
+            "utilization_percent": (total_memory / 1024 / 1024)
+            / self.max_memory_mb
+            * 100,
         }
 
-    def _generate_dataset_id(self, dataset: pd.DataFrame, source: str | None = None) -> str:
+    def _generate_dataset_id(
+        self, dataset: pd.DataFrame, source: str | None = None
+    ) -> str:
         """
         Generate a unique dataset ID based on content hash.
 
@@ -210,7 +214,9 @@ class DatasetManager:
             return
 
         # Find least recently accessed dataset
-        lru_dataset_id = min(self._access_times.keys(), key=lambda x: self._access_times[x])
+        lru_dataset_id = min(
+            self._access_times.keys(), key=lambda x: self._access_times[x]
+        )
 
         logger.info(f"Evicting least recently used dataset: {lru_dataset_id}")
         self.remove_dataset(lru_dataset_id)

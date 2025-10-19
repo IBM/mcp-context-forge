@@ -12,23 +12,16 @@ Supports slide creation, text formatting, shapes, images, tables, and charts.
 Powered by FastMCP for enhanced type safety and automatic validation.
 """
 
-import base64
 import logging
-import os
 import sys
 import uuid
-from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastmcp import FastMCP
 from pptx import Presentation
-from pptx.chart.data import CategoryChartData
-from pptx.dml.color import RGBColor
-from pptx.enum.chart import XL_CHART_TYPE
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
-from pptx.util import Inches, Pt
+from pptx.util import Inches
 from pydantic import Field
 
 # Configure logging to stderr to avoid MCP protocol interference
@@ -48,12 +41,13 @@ class PresentationManager:
 
     def __init__(self):
         """Initialize the presentation manager."""
-        self.presentations: Dict[str, Presentation] = {}
+        self.presentations: dict[str, Presentation] = {}
         self.work_dir = Path("/tmp/pptx_server")
         self.work_dir.mkdir(exist_ok=True)
 
-    def create_presentation(self, title: Optional[str] = None,
-                           subtitle: Optional[str] = None) -> Dict[str, Any]:
+    def create_presentation(
+        self, title: str | None = None, subtitle: str | None = None
+    ) -> dict[str, Any]:
         """Create a new PowerPoint presentation."""
         try:
             prs = Presentation()
@@ -78,15 +72,19 @@ class PresentationManager:
                 "presentation_id": pres_id,
                 "file_path": str(file_path),
                 "slide_count": len(prs.slides),
-                "message": "Presentation created successfully"
+                "message": "Presentation created successfully",
             }
         except Exception as e:
             logger.error(f"Error creating presentation: {e}")
             return {"success": False, "error": str(e)}
 
-    def add_slide(self, presentation_id: str, layout_index: int = 1,
-                  title: Optional[str] = None,
-                  content: Optional[str] = None) -> Dict[str, Any]:
+    def add_slide(
+        self,
+        presentation_id: str,
+        layout_index: int = 1,
+        title: str | None = None,
+        content: str | None = None,
+    ) -> dict[str, Any]:
         """Add a new slide to the presentation."""
         try:
             if presentation_id not in self.presentations:
@@ -120,14 +118,13 @@ class PresentationManager:
                 "success": True,
                 "slide_index": len(prs.slides) - 1,
                 "total_slides": len(prs.slides),
-                "message": "Slide added successfully"
+                "message": "Slide added successfully",
             }
         except Exception as e:
             logger.error(f"Error adding slide: {e}")
             return {"success": False, "error": str(e)}
 
-    def set_slide_title(self, presentation_id: str, slide_index: int,
-                       title: str) -> Dict[str, Any]:
+    def set_slide_title(self, presentation_id: str, slide_index: int, title: str) -> dict[str, Any]:
         """Set the title of a specific slide."""
         try:
             if presentation_id not in self.presentations:
@@ -153,14 +150,15 @@ class PresentationManager:
                 "success": True,
                 "slide_index": slide_index,
                 "title": title,
-                "message": "Slide title updated successfully"
+                "message": "Slide title updated successfully",
             }
         except Exception as e:
             logger.error(f"Error setting slide title: {e}")
             return {"success": False, "error": str(e)}
 
-    def set_slide_content(self, presentation_id: str, slide_index: int,
-                         content: str) -> Dict[str, Any]:
+    def set_slide_content(
+        self, presentation_id: str, slide_index: int, content: str
+    ) -> dict[str, Any]:
         """Set the main content of a specific slide."""
         try:
             if presentation_id not in self.presentations:
@@ -191,15 +189,22 @@ class PresentationManager:
             return {
                 "success": True,
                 "slide_index": slide_index,
-                "message": "Slide content updated successfully"
+                "message": "Slide content updated successfully",
             }
         except Exception as e:
             logger.error(f"Error setting slide content: {e}")
             return {"success": False, "error": str(e)}
 
-    def add_text_box(self, presentation_id: str, slide_index: int,
-                     text: str, left: float, top: float,
-                     width: float, height: float) -> Dict[str, Any]:
+    def add_text_box(
+        self,
+        presentation_id: str,
+        slide_index: int,
+        text: str,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> dict[str, Any]:
         """Add a text box to a slide."""
         try:
             if presentation_id not in self.presentations:
@@ -226,16 +231,22 @@ class PresentationManager:
             return {
                 "success": True,
                 "slide_index": slide_index,
-                "message": "Text box added successfully"
+                "message": "Text box added successfully",
             }
         except Exception as e:
             logger.error(f"Error adding text box: {e}")
             return {"success": False, "error": str(e)}
 
-    def add_image(self, presentation_id: str, slide_index: int,
-                  image_path: str, left: float, top: float,
-                  width: Optional[float] = None,
-                  height: Optional[float] = None) -> Dict[str, Any]:
+    def add_image(
+        self,
+        presentation_id: str,
+        slide_index: int,
+        image_path: str,
+        left: float,
+        top: float,
+        width: float | None = None,
+        height: float | None = None,
+    ) -> dict[str, Any]:
         """Add an image to a slide."""
         try:
             if presentation_id not in self.presentations:
@@ -254,8 +265,7 @@ class PresentationManager:
             # Add image
             if width and height:
                 pic = slide.shapes.add_picture(
-                    image_path, Inches(left), Inches(top),
-                    Inches(width), Inches(height)
+                    image_path, Inches(left), Inches(top), Inches(width), Inches(height)
                 )
             elif width:
                 pic = slide.shapes.add_picture(
@@ -266,9 +276,7 @@ class PresentationManager:
                     image_path, Inches(left), Inches(top), height=Inches(height)
                 )
             else:
-                pic = slide.shapes.add_picture(
-                    image_path, Inches(left), Inches(top)
-                )
+                pic = slide.shapes.add_picture(image_path, Inches(left), Inches(top))
 
             # Save presentation
             file_path = self.work_dir / f"{presentation_id}.pptx"
@@ -277,15 +285,22 @@ class PresentationManager:
             return {
                 "success": True,
                 "slide_index": slide_index,
-                "message": "Image added successfully"
+                "message": "Image added successfully",
             }
         except Exception as e:
             logger.error(f"Error adding image: {e}")
             return {"success": False, "error": str(e)}
 
-    def add_shape(self, presentation_id: str, slide_index: int,
-                  shape_type: str, left: float, top: float,
-                  width: float, height: float) -> Dict[str, Any]:
+    def add_shape(
+        self,
+        presentation_id: str,
+        slide_index: int,
+        shape_type: str,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> dict[str, Any]:
         """Add a shape to a slide."""
         try:
             if presentation_id not in self.presentations:
@@ -306,7 +321,7 @@ class PresentationManager:
                 "diamond": MSO_SHAPE.DIAMOND,
                 "star": MSO_SHAPE.STAR_5_POINT,
                 "arrow": MSO_SHAPE.RIGHT_ARROW,
-                "rounded_rectangle": MSO_SHAPE.ROUNDED_RECTANGLE
+                "rounded_rectangle": MSO_SHAPE.ROUNDED_RECTANGLE,
             }
 
             if shape_type not in shape_map:
@@ -314,9 +329,7 @@ class PresentationManager:
 
             # Add shape
             shape = slide.shapes.add_shape(
-                shape_map[shape_type],
-                Inches(left), Inches(top),
-                Inches(width), Inches(height)
+                shape_map[shape_type], Inches(left), Inches(top), Inches(width), Inches(height)
             )
 
             # Save presentation
@@ -327,15 +340,23 @@ class PresentationManager:
                 "success": True,
                 "slide_index": slide_index,
                 "shape_type": shape_type,
-                "message": "Shape added successfully"
+                "message": "Shape added successfully",
             }
         except Exception as e:
             logger.error(f"Error adding shape: {e}")
             return {"success": False, "error": str(e)}
 
-    def add_table(self, presentation_id: str, slide_index: int,
-                  rows: int, cols: int, left: float, top: float,
-                  width: float, height: float) -> Dict[str, Any]:
+    def add_table(
+        self,
+        presentation_id: str,
+        slide_index: int,
+        rows: int,
+        cols: int,
+        left: float,
+        top: float,
+        width: float,
+        height: float,
+    ) -> dict[str, Any]:
         """Add a table to a slide."""
         try:
             if presentation_id not in self.presentations:
@@ -350,9 +371,7 @@ class PresentationManager:
 
             # Add table
             table = slide.shapes.add_table(
-                rows, cols,
-                Inches(left), Inches(top),
-                Inches(width), Inches(height)
+                rows, cols, Inches(left), Inches(top), Inches(width), Inches(height)
             ).table
 
             # Save presentation
@@ -364,14 +383,15 @@ class PresentationManager:
                 "slide_index": slide_index,
                 "rows": rows,
                 "cols": cols,
-                "message": "Table added successfully"
+                "message": "Table added successfully",
             }
         except Exception as e:
             logger.error(f"Error adding table: {e}")
             return {"success": False, "error": str(e)}
 
-    def save_presentation(self, presentation_id: str,
-                         output_path: Optional[str] = None) -> Dict[str, Any]:
+    def save_presentation(
+        self, presentation_id: str, output_path: str | None = None
+    ) -> dict[str, Any]:
         """Save the presentation to a file."""
         try:
             if presentation_id not in self.presentations:
@@ -395,13 +415,13 @@ class PresentationManager:
                 "file_path": str(file_path),
                 "file_size": file_path.stat().st_size,
                 "slide_count": len(prs.slides),
-                "message": "Presentation saved successfully"
+                "message": "Presentation saved successfully",
             }
         except Exception as e:
             logger.error(f"Error saving presentation: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_presentation_info(self, presentation_id: str) -> Dict[str, Any]:
+    def get_presentation_info(self, presentation_id: str) -> dict[str, Any]:
         """Get information about a presentation."""
         try:
             if presentation_id not in self.presentations:
@@ -415,7 +435,7 @@ class PresentationManager:
                     "index": i,
                     "has_title": slide.shapes.title is not None,
                     "shape_count": len(slide.shapes),
-                    "layout_name": slide.slide_layout.name
+                    "layout_name": slide.slide_layout.name,
                 }
                 if slide.shapes.title:
                     slide_info["title"] = slide.shapes.title.text
@@ -427,13 +447,13 @@ class PresentationManager:
                 "slide_count": len(prs.slides),
                 "slides": slides_info,
                 "slide_width": prs.slide_width,
-                "slide_height": prs.slide_height
+                "slide_height": prs.slide_height,
             }
         except Exception as e:
             logger.error(f"Error getting presentation info: {e}")
             return {"success": False, "error": str(e)}
 
-    def delete_slide(self, presentation_id: str, slide_index: int) -> Dict[str, Any]:
+    def delete_slide(self, presentation_id: str, slide_index: int) -> dict[str, Any]:
         """Delete a slide from the presentation."""
         try:
             if presentation_id not in self.presentations:
@@ -460,13 +480,13 @@ class PresentationManager:
                 "success": True,
                 "deleted_index": slide_index,
                 "remaining_slides": len(self.presentations[presentation_id].slides),
-                "message": "Slide deleted successfully"
+                "message": "Slide deleted successfully",
             }
         except Exception as e:
             logger.error(f"Error deleting slide: {e}")
             return {"success": False, "error": str(e)}
 
-    def open_presentation(self, file_path: str) -> Dict[str, Any]:
+    def open_presentation(self, file_path: str) -> dict[str, Any]:
         """Open an existing PowerPoint presentation."""
         try:
             if not Path(file_path).exists():
@@ -480,7 +500,7 @@ class PresentationManager:
                 "success": True,
                 "presentation_id": pres_id,
                 "slide_count": len(prs.slides),
-                "message": "Presentation opened successfully"
+                "message": "Presentation opened successfully",
             }
         except Exception as e:
             logger.error(f"Error opening presentation: {e}")
@@ -494,17 +514,17 @@ manager = PresentationManager()
 # Tool definitions using FastMCP decorators
 @mcp.tool(description="Create a new PowerPoint presentation")
 async def create_presentation(
-    title: Optional[str] = Field(None, description="Title for the first slide"),
-    subtitle: Optional[str] = Field(None, description="Subtitle for the first slide")
-) -> Dict[str, Any]:
+    title: str | None = Field(None, description="Title for the first slide"),
+    subtitle: str | None = Field(None, description="Subtitle for the first slide"),
+) -> dict[str, Any]:
     """Create a new PowerPoint presentation."""
     return manager.create_presentation(title, subtitle)
 
 
 @mcp.tool(description="Open an existing PowerPoint presentation")
 async def open_presentation(
-    file_path: str = Field(..., description="Path to the PPTX file")
-) -> Dict[str, Any]:
+    file_path: str = Field(..., description="Path to the PPTX file"),
+) -> dict[str, Any]:
     """Open an existing PowerPoint presentation."""
     return manager.open_presentation(file_path)
 
@@ -513,9 +533,9 @@ async def open_presentation(
 async def add_slide(
     presentation_id: str = Field(..., description="ID of the presentation"),
     layout_index: int = Field(1, ge=0, le=10, description="Slide layout index"),
-    title: Optional[str] = Field(None, description="Slide title"),
-    content: Optional[str] = Field(None, description="Slide content")
-) -> Dict[str, Any]:
+    title: str | None = Field(None, description="Slide title"),
+    content: str | None = Field(None, description="Slide content"),
+) -> dict[str, Any]:
     """Add a new slide to the presentation."""
     return manager.add_slide(presentation_id, layout_index, title, content)
 
@@ -524,8 +544,8 @@ async def add_slide(
 async def set_slide_title(
     presentation_id: str = Field(..., description="ID of the presentation"),
     slide_index: int = Field(..., ge=0, description="Index of the slide"),
-    title: str = Field(..., description="New title for the slide")
-) -> Dict[str, Any]:
+    title: str = Field(..., description="New title for the slide"),
+) -> dict[str, Any]:
     """Set the title of a specific slide."""
     return manager.set_slide_title(presentation_id, slide_index, title)
 
@@ -534,8 +554,8 @@ async def set_slide_title(
 async def set_slide_content(
     presentation_id: str = Field(..., description="ID of the presentation"),
     slide_index: int = Field(..., ge=0, description="Index of the slide"),
-    content: str = Field(..., description="Content text for the slide")
-) -> Dict[str, Any]:
+    content: str = Field(..., description="Content text for the slide"),
+) -> dict[str, Any]:
     """Set the main content of a specific slide."""
     return manager.set_slide_content(presentation_id, slide_index, content)
 
@@ -548,8 +568,8 @@ async def add_text_box(
     left: float = Field(..., ge=0, le=10, description="Left position in inches"),
     top: float = Field(..., ge=0, le=10, description="Top position in inches"),
     width: float = Field(..., ge=0.1, le=10, description="Width in inches"),
-    height: float = Field(..., ge=0.1, le=10, description="Height in inches")
-) -> Dict[str, Any]:
+    height: float = Field(..., ge=0.1, le=10, description="Height in inches"),
+) -> dict[str, Any]:
     """Add a text box to a slide."""
     return manager.add_text_box(presentation_id, slide_index, text, left, top, width, height)
 
@@ -561,9 +581,9 @@ async def add_image(
     image_path: str = Field(..., description="Path to the image file"),
     left: float = Field(..., ge=0, le=10, description="Left position in inches"),
     top: float = Field(..., ge=0, le=10, description="Top position in inches"),
-    width: Optional[float] = Field(None, ge=0.1, le=10, description="Width in inches"),
-    height: Optional[float] = Field(None, ge=0.1, le=10, description="Height in inches")
-) -> Dict[str, Any]:
+    width: float | None = Field(None, ge=0.1, le=10, description="Width in inches"),
+    height: float | None = Field(None, ge=0.1, le=10, description="Height in inches"),
+) -> dict[str, Any]:
     """Add an image to a slide."""
     return manager.add_image(presentation_id, slide_index, image_path, left, top, width, height)
 
@@ -572,14 +592,16 @@ async def add_image(
 async def add_shape(
     presentation_id: str = Field(..., description="ID of the presentation"),
     slide_index: int = Field(..., ge=0, description="Index of the slide"),
-    shape_type: str = Field(...,
-                          pattern="^(rectangle|oval|triangle|diamond|star|arrow|rounded_rectangle)$",
-                          description="Type of shape"),
+    shape_type: str = Field(
+        ...,
+        pattern="^(rectangle|oval|triangle|diamond|star|arrow|rounded_rectangle)$",
+        description="Type of shape",
+    ),
     left: float = Field(..., ge=0, le=10, description="Left position in inches"),
     top: float = Field(..., ge=0, le=10, description="Top position in inches"),
     width: float = Field(..., ge=0.1, le=10, description="Width in inches"),
-    height: float = Field(..., ge=0.1, le=10, description="Height in inches")
-) -> Dict[str, Any]:
+    height: float = Field(..., ge=0.1, le=10, description="Height in inches"),
+) -> dict[str, Any]:
     """Add a shape to a slide."""
     return manager.add_shape(presentation_id, slide_index, shape_type, left, top, width, height)
 
@@ -593,8 +615,8 @@ async def add_table(
     left: float = Field(..., ge=0, le=10, description="Left position in inches"),
     top: float = Field(..., ge=0, le=10, description="Top position in inches"),
     width: float = Field(..., ge=0.1, le=10, description="Width in inches"),
-    height: float = Field(..., ge=0.1, le=10, description="Height in inches")
-) -> Dict[str, Any]:
+    height: float = Field(..., ge=0.1, le=10, description="Height in inches"),
+) -> dict[str, Any]:
     """Add a table to a slide."""
     return manager.add_table(presentation_id, slide_index, rows, cols, left, top, width, height)
 
@@ -602,8 +624,8 @@ async def add_table(
 @mcp.tool(description="Delete a slide from the presentation")
 async def delete_slide(
     presentation_id: str = Field(..., description="ID of the presentation"),
-    slide_index: int = Field(..., ge=0, description="Index of the slide to delete")
-) -> Dict[str, Any]:
+    slide_index: int = Field(..., ge=0, description="Index of the slide to delete"),
+) -> dict[str, Any]:
     """Delete a slide from the presentation."""
     return manager.delete_slide(presentation_id, slide_index)
 
@@ -611,16 +633,16 @@ async def delete_slide(
 @mcp.tool(description="Save the presentation to a file")
 async def save_presentation(
     presentation_id: str = Field(..., description="ID of the presentation"),
-    output_path: Optional[str] = Field(None, description="Output file path")
-) -> Dict[str, Any]:
+    output_path: str | None = Field(None, description="Output file path"),
+) -> dict[str, Any]:
     """Save the presentation to a file."""
     return manager.save_presentation(presentation_id, output_path)
 
 
 @mcp.tool(description="Get information about the presentation")
 async def get_presentation_info(
-    presentation_id: str = Field(..., description="ID of the presentation")
-) -> Dict[str, Any]:
+    presentation_id: str = Field(..., description="ID of the presentation"),
+) -> dict[str, Any]:
     """Get information about a presentation."""
     return manager.get_presentation_info(presentation_id)
 
@@ -630,8 +652,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="PowerPoint FastMCP Server")
-    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                        help="Transport mode (stdio or http)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
     parser.add_argument("--port", type=int, default=9014, help="HTTP port")
 

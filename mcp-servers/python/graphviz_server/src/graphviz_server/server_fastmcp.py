@@ -12,14 +12,12 @@ Supports DOT language manipulation, graph rendering, and visualization analysis.
 """
 
 import logging
-import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -45,13 +43,13 @@ class GraphvizProcessor:
     def _find_graphviz(self) -> str:
         """Find Graphviz dot executable."""
         possible_commands = [
-            'dot',
-            '/usr/bin/dot',
-            '/usr/local/bin/dot',
-            '/opt/graphviz/bin/dot',
-            '/opt/homebrew/bin/dot',  # macOS Homebrew
-            'C:\\Program Files\\Graphviz\\bin\\dot.exe',  # Windows
-            'C:\\Program Files (x86)\\Graphviz\\bin\\dot.exe'  # Windows x86
+            "dot",
+            "/usr/bin/dot",
+            "/usr/local/bin/dot",
+            "/opt/graphviz/bin/dot",
+            "/opt/homebrew/bin/dot",  # macOS Homebrew
+            "C:\\Program Files\\Graphviz\\bin\\dot.exe",  # Windows
+            "C:\\Program Files (x86)\\Graphviz\\bin\\dot.exe",  # Windows x86
         ]
 
         for cmd in possible_commands:
@@ -60,10 +58,17 @@ class GraphvizProcessor:
                 return cmd
 
         logger.warning("Graphviz not found. Please install Graphviz.")
-        raise RuntimeError("Graphviz not found. Please install Graphviz from https://graphviz.org/download/")
+        raise RuntimeError(
+            "Graphviz not found. Please install Graphviz from https://graphviz.org/download/"
+        )
 
-    def create_graph(self, file_path: str, graph_type: str = "digraph", graph_name: str = "G",
-                    attributes: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def create_graph(
+        self,
+        file_path: str,
+        graph_type: str = "digraph",
+        graph_name: str = "G",
+        attributes: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Create a new DOT graph file."""
         try:
             # Create directory if it doesn't exist
@@ -75,30 +80,36 @@ class GraphvizProcessor:
             # Add graph attributes
             if attributes:
                 for key, value in attributes.items():
-                    content.append(f"    {key}=\"{value}\";")
+                    content.append(f'    {key}="{value}";')
                 content.append("")
 
             content.append("    // Nodes and edges go here")
             content.append("}")
 
             # Write to file
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(content))
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(content))
 
             return {
                 "success": True,
                 "message": f"Graph created at {file_path}",
                 "file_path": file_path,
                 "graph_type": graph_type,
-                "graph_name": graph_name
+                "graph_name": graph_name,
             }
 
         except Exception as e:
             logger.error(f"Error creating graph: {e}")
             return {"success": False, "error": str(e)}
 
-    def render_graph(self, input_file: str, output_file: Optional[str] = None, format: str = "png",
-                    layout: str = "dot", dpi: Optional[int] = None) -> Dict[str, Any]:
+    def render_graph(
+        self,
+        input_file: str,
+        output_file: str | None = None,
+        format: str = "png",
+        layout: str = "dot",
+        dpi: int | None = None,
+    ) -> dict[str, Any]:
         """Render a DOT graph to an image."""
         try:
             if not Path(input_file).exists():
@@ -123,36 +134,31 @@ class GraphvizProcessor:
             logger.info(f"Running command: {' '.join(cmd)}")
 
             # Run Graphviz
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             if result.returncode != 0:
                 return {
                     "success": False,
                     "error": f"Graphviz rendering failed: {result.stderr}",
                     "stdout": result.stdout,
-                    "stderr": result.stderr
+                    "stderr": result.stderr,
                 }
 
             if not Path(output_file).exists():
                 return {
                     "success": False,
                     "error": f"Output file not created: {output_file}",
-                    "stdout": result.stdout
+                    "stdout": result.stdout,
                 }
 
             return {
                 "success": True,
-                "message": f"Graph rendered successfully",
+                "message": "Graph rendered successfully",
                 "input_file": input_file,
                 "output_file": output_file,
                 "format": format,
                 "layout": layout,
-                "file_size": Path(output_file).stat().st_size
+                "file_size": Path(output_file).stat().st_size,
             }
 
         except subprocess.TimeoutExpired:
@@ -161,14 +167,19 @@ class GraphvizProcessor:
             logger.error(f"Error rendering graph: {e}")
             return {"success": False, "error": str(e)}
 
-    def add_node(self, file_path: str, node_id: str, label: Optional[str] = None,
-                attributes: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def add_node(
+        self,
+        file_path: str,
+        node_id: str,
+        label: str | None = None,
+        attributes: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Add a node to a DOT graph."""
         try:
             if not Path(file_path).exists():
                 return {"success": False, "error": f"Graph file not found: {file_path}"}
 
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             # Build node definition
@@ -180,15 +191,15 @@ class GraphvizProcessor:
                     node_attrs.append(f'{key}="{value}"')
 
             if node_attrs:
-                node_def = f'    {node_id} [{", ".join(node_attrs)}];'
+                node_def = f"    {node_id} [{', '.join(node_attrs)}];"
             else:
-                node_def = f'    {node_id};'
+                node_def = f"    {node_id};"
 
             # Find insertion point (before closing brace)
-            lines = content.split('\n')
+            lines = content.split("\n")
             insert_index = -1
             for i in range(len(lines) - 1, -1, -1):
-                if lines[i].strip() == '}':
+                if lines[i].strip() == "}":
                     insert_index = i
                     break
 
@@ -196,43 +207,49 @@ class GraphvizProcessor:
                 return {"success": False, "error": "Could not find closing brace in DOT file"}
 
             # Check if node already exists
-            if re.search(rf'\b{re.escape(node_id)}\b', content):
+            if re.search(rf"\b{re.escape(node_id)}\b", content):
                 return {"success": False, "error": f"Node '{node_id}' already exists"}
 
             # Insert node definition
             lines.insert(insert_index, node_def)
 
             # Write back to file
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(lines))
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
 
             return {
                 "success": True,
                 "message": f"Node '{node_id}' added to graph",
                 "node_id": node_id,
                 "label": label,
-                "attributes": attributes
+                "attributes": attributes,
             }
 
         except Exception as e:
             logger.error(f"Error adding node: {e}")
             return {"success": False, "error": str(e)}
 
-    def add_edge(self, file_path: str, from_node: str, to_node: str, label: Optional[str] = None,
-                attributes: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def add_edge(
+        self,
+        file_path: str,
+        from_node: str,
+        to_node: str,
+        label: str | None = None,
+        attributes: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Add an edge to a DOT graph."""
         try:
             if not Path(file_path).exists():
                 return {"success": False, "error": f"Graph file not found: {file_path}"}
 
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             # Determine edge operator based on graph type
-            if content.strip().startswith('graph ') or content.strip().startswith('strict graph '):
-                edge_op = '--'  # Undirected graph
+            if content.strip().startswith("graph ") or content.strip().startswith("strict graph "):
+                edge_op = "--"  # Undirected graph
             else:
-                edge_op = '->'  # Directed graph
+                edge_op = "->"  # Directed graph
 
             # Build edge definition
             edge_attrs = []
@@ -243,15 +260,15 @@ class GraphvizProcessor:
                     edge_attrs.append(f'{key}="{value}"')
 
             if edge_attrs:
-                edge_def = f'    {from_node} {edge_op} {to_node} [{", ".join(edge_attrs)}];'
+                edge_def = f"    {from_node} {edge_op} {to_node} [{', '.join(edge_attrs)}];"
             else:
-                edge_def = f'    {from_node} {edge_op} {to_node};'
+                edge_def = f"    {from_node} {edge_op} {to_node};"
 
             # Find insertion point (before closing brace)
-            lines = content.split('\n')
+            lines = content.split("\n")
             insert_index = -1
             for i in range(len(lines) - 1, -1, -1):
-                if lines[i].strip() == '}':
+                if lines[i].strip() == "}":
                     insert_index = i
                     break
 
@@ -262,8 +279,8 @@ class GraphvizProcessor:
             lines.insert(insert_index, edge_def)
 
             # Write back to file
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(lines))
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
 
             return {
                 "success": True,
@@ -271,15 +288,20 @@ class GraphvizProcessor:
                 "from_node": from_node,
                 "to_node": to_node,
                 "label": label,
-                "attributes": attributes
+                "attributes": attributes,
             }
 
         except Exception as e:
             logger.error(f"Error adding edge: {e}")
             return {"success": False, "error": str(e)}
 
-    def set_attributes(self, file_path: str, target_type: str, target_id: Optional[str] = None,
-                      attributes: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def set_attributes(
+        self,
+        file_path: str,
+        target_type: str,
+        target_id: str | None = None,
+        attributes: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Set attributes for graph, node, or edge."""
         try:
             if not Path(file_path).exists():
@@ -288,26 +310,26 @@ class GraphvizProcessor:
             if not attributes:
                 return {"success": False, "error": "No attributes provided"}
 
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             # For graph attributes, add them at the beginning of the graph
             if target_type == "graph":
-                lines = content.split('\n')
+                lines = content.split("\n")
                 for i, line in enumerate(lines):
-                    if '{' in line:
+                    if "{" in line:
                         # Insert attributes after opening brace
                         for key, value in attributes.items():
                             lines.insert(i + 1, f'    {key}="{value}";')
                         break
 
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write('\n'.join(lines))
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines))
 
                 return {
                     "success": True,
                     "message": "Graph attributes set successfully",
-                    "attributes": attributes
+                    "attributes": attributes,
                 }
 
             # For node/edge attributes (simplified implementation)
@@ -316,34 +338,35 @@ class GraphvizProcessor:
                 "message": f"{target_type.capitalize()} attributes would be set (simplified for FastMCP)",
                 "target_type": target_type,
                 "target_id": target_id,
-                "attributes": attributes
+                "attributes": attributes,
             }
 
         except Exception as e:
             logger.error(f"Error setting attributes: {e}")
             return {"success": False, "error": str(e)}
 
-    def analyze_graph(self, file_path: str, include_structure: bool = True,
-                     include_metrics: bool = True) -> Dict[str, Any]:
+    def analyze_graph(
+        self, file_path: str, include_structure: bool = True, include_metrics: bool = True
+    ) -> dict[str, Any]:
         """Analyze a DOT graph file."""
         try:
             if not Path(file_path).exists():
                 return {"success": False, "error": f"Graph file not found: {file_path}"}
 
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             analysis = {"success": True}
 
             if include_structure:
                 # Count nodes and edges (simplified)
-                node_count = len(re.findall(r'^\s*(\w+)\s*\[', content, re.MULTILINE))
-                edge_count = len(re.findall(r'(->|--)', content))
+                node_count = len(re.findall(r"^\s*(\w+)\s*\[", content, re.MULTILINE))
+                edge_count = len(re.findall(r"(->|--)", content))
 
                 # Detect graph type
-                if content.strip().startswith('digraph'):
+                if content.strip().startswith("digraph"):
                     graph_type = "directed"
-                elif content.strip().startswith('graph'):
+                elif content.strip().startswith("graph"):
                     graph_type = "undirected"
                 else:
                     graph_type = "unknown"
@@ -352,15 +375,17 @@ class GraphvizProcessor:
                     "graph_type": graph_type,
                     "node_count": node_count,
                     "edge_count": edge_count,
-                    "file_lines": len(content.split('\n'))
+                    "file_lines": len(content.split("\n")),
                 }
 
             if include_metrics:
                 # Basic metrics
                 analysis["metrics"] = {
                     "file_size": len(content),
-                    "has_attributes": 'label=' in content or 'color=' in content or 'shape=' in content,
-                    "has_subgraphs": 'subgraph' in content
+                    "has_attributes": "label=" in content
+                    or "color=" in content
+                    or "shape=" in content,
+                    "has_subgraphs": "subgraph" in content,
                 }
 
             return analysis
@@ -369,7 +394,7 @@ class GraphvizProcessor:
             logger.error(f"Error analyzing graph: {e}")
             return {"success": False, "error": str(e)}
 
-    def validate_graph(self, file_path: str) -> Dict[str, Any]:
+    def validate_graph(self, file_path: str) -> dict[str, Any]:
         """Validate a DOT graph file."""
         try:
             if not Path(file_path).exists():
@@ -378,25 +403,16 @@ class GraphvizProcessor:
             # Run dot with -n flag (no output) to validate
             cmd = [self.dot_cmd, "-n", file_path]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
             if result.returncode == 0:
-                return {
-                    "success": True,
-                    "message": "Graph is valid",
-                    "file_path": file_path
-                }
+                return {"success": True, "message": "Graph is valid", "file_path": file_path}
             else:
                 return {
                     "success": False,
                     "error": "Graph validation failed",
                     "stderr": result.stderr,
-                    "returncode": result.returncode
+                    "returncode": result.returncode,
                 }
 
         except subprocess.TimeoutExpired:
@@ -405,7 +421,7 @@ class GraphvizProcessor:
             logger.error(f"Error validating graph: {e}")
             return {"success": False, "error": str(e)}
 
-    def list_layouts(self) -> Dict[str, Any]:
+    def list_layouts(self) -> dict[str, Any]:
         """List available Graphviz layout engines and formats."""
         try:
             layouts = ["dot", "neato", "fdp", "sfdp", "twopi", "circo", "patchwork", "osage"]
@@ -416,7 +432,7 @@ class GraphvizProcessor:
                 "layouts": layouts,
                 "formats": formats,
                 "default_layout": "dot",
-                "default_format": "png"
+                "default_format": "png",
             }
         except Exception as e:
             logger.error(f"Error listing layouts: {e}")
@@ -434,11 +450,14 @@ except RuntimeError as e:
 @mcp.tool(description="Create a new DOT graph file")
 async def create_graph(
     file_path: str = Field(..., description="Path for the DOT file"),
-    graph_type: str = Field("digraph", pattern="^(graph|digraph|strict graph|strict digraph)$",
-                           description="Graph type (graph, digraph, strict graph, strict digraph)"),
+    graph_type: str = Field(
+        "digraph",
+        pattern="^(graph|digraph|strict graph|strict digraph)$",
+        description="Graph type (graph, digraph, strict graph, strict digraph)",
+    ),
     graph_name: str = Field("G", description="Graph name"),
-    attributes: Optional[Dict[str, str]] = Field(None, description="Graph attributes"),
-) -> Dict[str, Any]:
+    attributes: dict[str, str] | None = Field(None, description="Graph attributes"),
+) -> dict[str, Any]:
     """Create a new Graphviz DOT graph file."""
     return processor.create_graph(file_path, graph_type, graph_name, attributes)
 
@@ -446,13 +465,19 @@ async def create_graph(
 @mcp.tool(description="Render a DOT graph to an image")
 async def render_graph(
     input_file: str = Field(..., description="Path to the DOT file"),
-    output_file: Optional[str] = Field(None, description="Output image file path"),
-    format: str = Field("png", pattern="^(png|svg|pdf|ps|gif|jpg|json|dot|xdot)$",
-                       description="Output format (png, svg, pdf, ps, etc.)"),
-    layout: str = Field("dot", pattern="^(dot|neato|fdp|sfdp|twopi|circo|patchwork|osage)$",
-                       description="Layout engine (dot, neato, fdp, sfdp, twopi, circo)"),
-    dpi: Optional[int] = Field(None, description="Output resolution in DPI", ge=72, le=600),
-) -> Dict[str, Any]:
+    output_file: str | None = Field(None, description="Output image file path"),
+    format: str = Field(
+        "png",
+        pattern="^(png|svg|pdf|ps|gif|jpg|json|dot|xdot)$",
+        description="Output format (png, svg, pdf, ps, etc.)",
+    ),
+    layout: str = Field(
+        "dot",
+        pattern="^(dot|neato|fdp|sfdp|twopi|circo|patchwork|osage)$",
+        description="Layout engine (dot, neato, fdp, sfdp, twopi, circo)",
+    ),
+    dpi: int | None = Field(None, description="Output resolution in DPI", ge=72, le=600),
+) -> dict[str, Any]:
     """Render a DOT graph to an image with specified format and layout."""
     return processor.render_graph(input_file, output_file, format, layout, dpi)
 
@@ -461,9 +486,9 @@ async def render_graph(
 async def add_node(
     file_path: str = Field(..., description="Path to the DOT file"),
     node_id: str = Field(..., description="Node identifier"),
-    label: Optional[str] = Field(None, description="Node label"),
-    attributes: Optional[Dict[str, str]] = Field(None, description="Node attributes"),
-) -> Dict[str, Any]:
+    label: str | None = Field(None, description="Node label"),
+    attributes: dict[str, str] | None = Field(None, description="Node attributes"),
+) -> dict[str, Any]:
     """Add a node with optional label and attributes to a DOT graph."""
     return processor.add_node(file_path, node_id, label, attributes)
 
@@ -473,9 +498,9 @@ async def add_edge(
     file_path: str = Field(..., description="Path to the DOT file"),
     from_node: str = Field(..., description="Source node identifier"),
     to_node: str = Field(..., description="Target node identifier"),
-    label: Optional[str] = Field(None, description="Edge label"),
-    attributes: Optional[Dict[str, str]] = Field(None, description="Edge attributes"),
-) -> Dict[str, Any]:
+    label: str | None = Field(None, description="Edge label"),
+    attributes: dict[str, str] | None = Field(None, description="Edge attributes"),
+) -> dict[str, Any]:
     """Add an edge between two nodes with optional label and attributes."""
     return processor.add_edge(file_path, from_node, to_node, label, attributes)
 
@@ -483,11 +508,12 @@ async def add_edge(
 @mcp.tool(description="Set graph, node, or edge attributes")
 async def set_attributes(
     file_path: str = Field(..., description="Path to the DOT file"),
-    target_type: str = Field(..., pattern="^(graph|node|edge)$",
-                             description="Attribute target (graph, node, edge)"),
-    target_id: Optional[str] = Field(None, description="Target ID (for node/edge, None for graph)"),
-    attributes: Optional[Dict[str, str]] = Field(None, description="Attributes to set"),
-) -> Dict[str, Any]:
+    target_type: str = Field(
+        ..., pattern="^(graph|node|edge)$", description="Attribute target (graph, node, edge)"
+    ),
+    target_id: str | None = Field(None, description="Target ID (for node/edge, None for graph)"),
+    attributes: dict[str, str] | None = Field(None, description="Attributes to set"),
+) -> dict[str, Any]:
     """Set attributes for graph, node, or edge elements."""
     return processor.set_attributes(file_path, target_type, target_id, attributes)
 
@@ -497,7 +523,7 @@ async def analyze_graph(
     file_path: str = Field(..., description="Path to the DOT file"),
     include_structure: bool = Field(True, description="Include structural analysis"),
     include_metrics: bool = Field(True, description="Include graph metrics"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Analyze a graph's structure and calculate metrics."""
     return processor.analyze_graph(file_path, include_structure, include_metrics)
 
@@ -505,13 +531,13 @@ async def analyze_graph(
 @mcp.tool(description="Validate DOT file syntax")
 async def validate_graph(
     file_path: str = Field(..., description="Path to the DOT file"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Validate the syntax of a DOT graph file."""
     return processor.validate_graph(file_path)
 
 
 @mcp.tool(description="List available layout engines and output formats")
-async def list_layouts() -> Dict[str, Any]:
+async def list_layouts() -> dict[str, Any]:
     """List all available Graphviz layout engines and output formats."""
     return processor.list_layouts()
 
@@ -521,8 +547,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Graphviz FastMCP Server")
-    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                        help="Transport mode (stdio or http)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
     parser.add_argument("--port", type=int, default=9005, help="HTTP port")
 

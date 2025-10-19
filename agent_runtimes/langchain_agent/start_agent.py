@@ -7,12 +7,13 @@ Startup script for the MCP Langchain Agent
 # Standard
 import asyncio
 import logging
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import uvicorn
 
 # Third-Party
 from dotenv import load_dotenv
-import uvicorn
 
 try:
     # Local
@@ -22,11 +23,9 @@ except ImportError:
     from config import get_example_env, get_settings, validate_environment
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
 
 def setup_environment():
     """Setup environment and validate configuration"""
@@ -57,6 +56,7 @@ def setup_environment():
 
     return get_settings()
 
+
 async def test_agent_initialization():
     """Test that the agent can be initialized"""
     try:
@@ -84,6 +84,7 @@ async def test_agent_initialization():
         logger.error(f"Agent initialization failed: {e}")
         return False
 
+
 def main():
     """Main startup function"""
     logger.info("Starting MCP Langchain Agent")
@@ -102,7 +103,7 @@ def main():
     if not asyncio.run(test_agent_initialization()):
         logger.error("Agent initialization test failed")
         response = input("Continue anyway? (y/N): ")
-        if response.lower() != 'y':
+        if response.lower() != "y":
             sys.exit(1)
 
     # Start the FastAPI server
@@ -115,13 +116,14 @@ def main():
             port=8000,
             reload=settings.debug_mode,
             log_level="info" if not settings.debug_mode else "debug",
-            access_log=True
+            access_log=True,
         )
     except KeyboardInterrupt:
         logger.info("Server stopped by user")
     except Exception as e:
         logger.error(f"Server failed to start: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

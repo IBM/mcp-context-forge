@@ -259,7 +259,7 @@ class WebhookNotificationPlugin(Plugin):
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
         """Hook for prompt post-fetch events."""
-        await self._notify_webhooks(EventType.PROMPT_SUCCESS, context, metadata={"prompt_name": payload.name})
+        await self._notify_webhooks(EventType.PROMPT_SUCCESS, context, metadata={"prompt_id": payload.prompt_id})
         return PromptPosthookResult()
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:

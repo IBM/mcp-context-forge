@@ -243,16 +243,19 @@ class TestWebSocketTransport:
         from mcpgateway.transports.websocket_transport import WebSocketTransport
 
         mock_ws = Mock(spec=WebSocket)
+
         # Stop after one iteration
+
         async def fake_receive_bytes():
             transport._connected = False
             return b"pong"
+
         mock_ws.receive_bytes.side_effect = fake_receive_bytes
 
         transport = WebSocketTransport(mock_ws)
         transport._connected = True
 
-        with (patch.object(transport, 'disconnect') as disconnect_mock):
+        with patch.object(transport, "disconnect") as disconnect_mock:
             assert await transport.is_connected()
             await transport._ping_loop()
             assert disconnect_mock.call_count == 1

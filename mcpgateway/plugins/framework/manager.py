@@ -21,7 +21,7 @@ Examples:
 
     >>> # Create test payload and context
     >>> from mcpgateway.plugins.framework.models import PromptPrehookPayload, GlobalContext
-    >>> payload = PromptPrehookPayload(name="test", args={"user": "input"})
+    >>> payload = PromptPrehookPayload(prompt_id="test", name="test", args={"user": "input"})
     >>> context = GlobalContext(request_id="123")
     >>> # result, contexts = await manager.prompt_pre_fetch(payload, context)  # Called in async context
 """
@@ -172,7 +172,7 @@ class PluginExecutor(Generic[T]):
             >>> # In async context:
             >>> # result, contexts = await executor.execute(
             >>> #     plugins=plugins,
-            >>> #     payload=PromptPrehookPayload(name="test", args={}),
+            >>> #     payload=PromptPrehookPayload(prompt_id="123", args={}),
             >>> #     global_context=GlobalContext(request_id="123"),
             >>> #     plugin_run=pre_prompt_fetch,
             >>> #     compare=pre_prompt_matches
@@ -328,7 +328,7 @@ async def pre_prompt_fetch(plugin: PluginRef, payload: PromptPrehookPayload, con
         >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptPrehookPayload, PluginContext, GlobalContext
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
-        >>> payload = PromptPrehookPayload(name="test", args={"key": "value"})
+        >>> payload = PromptPrehookPayload(prompt_id="123", args={"key": "value"})
         >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await pre_prompt_fetch(plugin_ref, payload, context)
@@ -354,7 +354,7 @@ async def post_prompt_fetch(plugin: PluginRef, payload: PromptPosthookPayload, c
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
         >>> result = PromptResult(messages=[])
-        >>> payload = PromptPosthookPayload(name="test", result=result)
+        >>> payload = PromptPosthookPayload(prompt_id="123", result=result)
         >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
         >>> # result = await post_prompt_fetch(plugin_ref, payload, context)
@@ -451,7 +451,7 @@ async def post_resource_fetch(plugin: PluginRef, payload: ResourcePostFetchPaylo
         >>> from mcpgateway.models import ResourceContent
         >>> # Assuming you have a plugin instance:
         >>> # plugin_ref = PluginRef(my_plugin)
-        >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
+        >>> content = ResourceContent(type="resource", id="res-1", uri="file:///data.txt", text="Data")
         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
         >>> context = PluginContext(global_context=GlobalContext(request_id="123"))
         >>> # In async context:
@@ -484,7 +484,7 @@ class PluginManager:
         >>>
         >>> # Execute prompt hooks
         >>> from mcpgateway.plugins.framework import PromptPrehookPayload, GlobalContext
-        >>> payload = PromptPrehookPayload(name="test", args={})
+        >>> payload = PromptPrehookPayload(prompt_id="123", args={})
         >>> context = GlobalContext(request_id="req-123")
         >>> # In async context:
         >>> # result, contexts = await manager.prompt_pre_fetch(payload, context)
@@ -713,6 +713,7 @@ class PluginManager:
             >>>
             >>> from mcpgateway.plugins.framework import PromptPrehookPayload, GlobalContext
             >>> payload = PromptPrehookPayload(
+            ...     prompt_id="123",
             ...     name="greeting",
             ...     args={"user": "Alice"}
             ... )
@@ -774,7 +775,7 @@ class PluginManager:
             >>> prompt_result = PromptResult(messages=[message])
             >>>
             >>> post_payload = PromptPosthookPayload(
-            ...     name="greeting",
+            ...     prompt_id="123",
             ...     result=prompt_result
             ... )
             >>>
@@ -974,7 +975,7 @@ class PluginManager:
             >>> # In async context:
             >>> # await manager.initialize()
             >>> # from mcpgateway.models import ResourceContent
-            >>> # content = ResourceContent(type="resource", uri="file:///data.txt", text="Data")
+            >>> # content = ResourceContent(type="resource",id="res-1", uri="file:///data.txt", text="Data")
             >>> # payload = ResourcePostFetchPayload("file:///data.txt", content)
             >>> # context = GlobalContext(request_id="123", server_id="srv1")
             >>> # contexts = self._context_store.get("123")  # From pre-fetch

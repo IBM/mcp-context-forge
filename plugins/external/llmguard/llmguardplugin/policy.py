@@ -8,7 +8,6 @@ Authors: Shriti Priya
 
 """
 
-
 # Standard
 import ast
 from enum import Enum

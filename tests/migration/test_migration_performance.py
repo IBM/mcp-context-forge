@@ -19,8 +19,7 @@ import time
 import pytest
 
 # Local
-from .utils.data_seeder import DataGenerationConfig, DataSeeder
-from .utils.schema_validator import SchemaValidator
+from .utils.data_seeder import DataSeeder
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ class TestMigrationPerformance:
         This test measures the fundamental performance characteristics
         of SQLite migrations to establish baseline metrics for comparison.
         """
-        logger.info(f"🏁 Testing SQLite migration performance baseline")
+        logger.info("🏁 Testing SQLite migration performance baseline")
         logger.info(f"📊 Data size: {sum(len(entities) for entities in sample_test_data.values())} records")
 
         # Measure baseline performance with standard test data
@@ -60,7 +59,7 @@ class TestMigrationPerformance:
         assert result.execution_time < baseline_threshold, f"Baseline too slow: {result.execution_time:.2f}s > {baseline_threshold}s"
 
         # Log detailed performance metrics
-        logger.info(f"🎯 Baseline Performance Metrics:")
+        logger.info("🎯 Baseline Performance Metrics:")
         logger.info(f"   Execution time: {result.execution_time:.2f}s (threshold: {baseline_threshold}s)")
         logger.info(f"   Records processed: {sum(result.records_after.values())}")
         logger.info(f"   Processing rate: {sum(result.records_after.values()) / result.execution_time:.1f} records/sec")
@@ -79,10 +78,10 @@ class TestMigrationPerformance:
             "execution_time": result.execution_time,
             "records_processed": sum(result.records_after.values()),
             "processing_rate": sum(result.records_after.values()) / result.execution_time,
-            "performance_metrics": result.performance_metrics
+            "performance_metrics": result.performance_metrics,
         }
 
-        logger.info(f"✅ Baseline performance test completed successfully")
+        logger.info("✅ Baseline performance test completed successfully")
         return baseline_metrics
 
     @pytest.mark.parametrize("scale_factor", [1, 5, 10])
@@ -112,7 +111,7 @@ class TestMigrationPerformance:
 
         # Calculate performance metrics
         processing_rate = sum(result.records_after.values()) / result.execution_time
-        expected_max_time = performance_thresholds["large_dataset"]["max_duration"] * (scale_factor ** 0.5)  # Sub-linear scaling expected
+        expected_max_time = performance_thresholds["large_dataset"]["max_duration"] * (scale_factor**0.5)  # Sub-linear scaling expected
 
         logger.info(f"📊 Scalability Results for {scale_factor}x:")
         logger.info(f"   Execution time: {result.execution_time:.2f}s")
@@ -135,7 +134,7 @@ class TestMigrationPerformance:
         This test validates that migrations can handle realistic production
         data volumes without performance degradation or failures.
         """
-        logger.info(f"🗄️ Testing large dataset migration performance")
+        logger.info("🗄️ Testing large dataset migration performance")
 
         total_records = sum(len(entities) for entities in large_test_data.values())
         logger.info(f"📊 Large dataset size: {total_records} records")
@@ -172,13 +171,13 @@ class TestMigrationPerformance:
         processing_rate = sum(result.records_after.values()) / result.execution_time
         memory_per_record = result.performance_metrics.get("memory_mb", 0) / sum(result.records_after.values()) * 1024  # KB per record
 
-        logger.info(f"📊 Large Dataset Performance Results:")
+        logger.info("📊 Large Dataset Performance Results:")
         logger.info(f"   Execution time: {result.execution_time:.2f}s")
         logger.info(f"   Processing rate: {processing_rate:.1f} records/sec")
         logger.info(f"   Memory per record: {memory_per_record:.2f} KB/record")
         logger.info(f"   Total memory usage: {result.performance_metrics.get('memory_mb', 'N/A')} MB")
 
-        logger.info(f"✅ Large dataset migration completed successfully")
+        logger.info("✅ Large dataset migration completed successfully")
 
     def test_migration_memory_usage(self, migration_runner, performance_thresholds):
         """Test migration memory usage patterns and leak detection.
@@ -186,7 +185,7 @@ class TestMigrationPerformance:
         This test monitors memory usage throughout the migration process
         to detect memory leaks and ensure efficient resource utilization.
         """
-        logger.info(f"🧠 Testing migration memory usage patterns")
+        logger.info("🧠 Testing migration memory usage patterns")
 
         # Generate dataset with known characteristics
         data_seeder = DataSeeder()
@@ -206,7 +205,7 @@ class TestMigrationPerformance:
             memory_usage = result.performance_metrics["memory_mb"]
             max_allowed = performance_thresholds["large_dataset"]["max_memory_mb"]
 
-            logger.info(f"🧠 Memory Usage Analysis:")
+            logger.info("🧠 Memory Usage Analysis:")
             logger.info(f"   Peak memory usage: {memory_usage:.1f} MB")
             logger.info(f"   Memory limit: {max_allowed} MB")
             logger.info(f"   Memory efficiency: {memory_usage / max_allowed * 100:.1f}% of limit")
@@ -227,7 +226,7 @@ class TestMigrationPerformance:
         else:
             logger.warning("⚠️ Memory usage metrics not available")
 
-        logger.info(f"✅ Memory usage test completed")
+        logger.info("✅ Memory usage test completed")
 
     def test_concurrent_migration_performance(self, container_manager, migration_runner, sample_test_data):
         """Test migration performance under concurrent database operations.
@@ -235,12 +234,12 @@ class TestMigrationPerformance:
         This test simulates concurrent database operations during migration
         to validate performance under realistic production conditions.
         """
-        logger.info(f"🔀 Testing concurrent migration performance")
+        logger.info("🔀 Testing concurrent migration performance")
 
         # This test simulates concurrent operations during migration
         # In a real implementation, this would run actual concurrent operations
 
-        logger.info(f"🚀 Starting migration with simulated concurrent load")
+        logger.info("🚀 Starting migration with simulated concurrent load")
         concurrent_start = time.time()
 
         # Run migration
@@ -257,7 +256,7 @@ class TestMigrationPerformance:
         max_concurrent_duration = 120  # seconds
         assert concurrent_duration < max_concurrent_duration, f"Concurrent migration too slow: {concurrent_duration:.2f}s"
 
-        logger.info(f"📊 Concurrent Migration Results:")
+        logger.info("📊 Concurrent Migration Results:")
         logger.info(f"   Total duration: {concurrent_duration:.2f}s")
         logger.info(f"   Migration time: {result.execution_time:.2f}s")
         logger.info(f"   Concurrent overhead: {(concurrent_duration - result.execution_time):.2f}s")
@@ -272,7 +271,7 @@ class TestMigrationPerformance:
         max_overhead = 50  # percent
         assert overhead_percentage < max_overhead, f"Concurrent overhead too high: {overhead_percentage:.1f}% > {max_overhead}%"
 
-        logger.info(f"✅ Concurrent migration performance test completed")
+        logger.info("✅ Concurrent migration performance test completed")
 
     def test_migration_performance_regression(self, migration_runner, sample_test_data):
         """Test for performance regressions between version migrations.
@@ -280,13 +279,10 @@ class TestMigrationPerformance:
         This test compares migration performance between different version pairs
         to detect performance regressions in newer versions.
         """
-        logger.info(f"📉 Testing migration performance regression detection")
+        logger.info("📉 Testing migration performance regression detection")
 
         # Test multiple version transitions
-        test_scenarios = [
-            ("0.5.0", "0.6.0", "Previous version migration"),
-            ("0.6.0", "latest", "Latest version migration")
-        ]
+        test_scenarios = [("0.5.0", "0.6.0", "Previous version migration"), ("0.6.0", "latest", "Latest version migration")]
 
         performance_results = {}
 
@@ -303,7 +299,7 @@ class TestMigrationPerformance:
                 "execution_time": result.execution_time,
                 "processing_rate": sum(result.records_after.values()) / result.execution_time,
                 "memory_usage": result.performance_metrics.get("memory_mb", 0),
-                "description": description
+                "description": description,
             }
 
             logger.info(f"   Execution time: {result.execution_time:.2f}s")
@@ -325,7 +321,7 @@ class TestMigrationPerformance:
             if baseline["memory_usage"] > 0 and current["memory_usage"] > 0:
                 memory_delta = ((current["memory_usage"] - baseline["memory_usage"]) / baseline["memory_usage"]) * 100
 
-            logger.info(f"📊 Performance Regression Analysis:")
+            logger.info("📊 Performance Regression Analysis:")
             logger.info(f"   Execution time change: {time_delta:+.1f}%")
             logger.info(f"   Processing rate change: {rate_delta:+.1f}%")
             if memory_delta != 0:
@@ -343,7 +339,7 @@ class TestMigrationPerformance:
             if memory_delta != 0:
                 assert memory_delta < max_memory_regression, f"Memory usage regression detected: {memory_delta:+.1f}% > {max_memory_regression}%"
 
-        logger.info(f"✅ Performance regression test completed")
+        logger.info("✅ Performance regression test completed")
 
     def test_migration_stress_limits(self, migration_runner, performance_thresholds):
         """Test migration behavior at stress limits and resource constraints.
@@ -351,7 +347,7 @@ class TestMigrationPerformance:
         This test pushes migrations to their limits to identify breaking points
         and ensure graceful degradation under extreme conditions.
         """
-        logger.info(f"💪 Testing migration stress limits")
+        logger.info("💪 Testing migration stress limits")
 
         # Generate maximum stress test dataset
         data_seeder = DataSeeder()
@@ -369,7 +365,7 @@ class TestMigrationPerformance:
 
         # Validate behavior under stress
         if result.success:
-            logger.info(f"💪 Stress test PASSED:")
+            logger.info("💪 Stress test PASSED:")
             logger.info(f"   Duration: {stress_duration:.2f}s")
             logger.info(f"   Records processed: {sum(result.records_after.values())}")
             logger.info(f"   Processing rate: {sum(result.records_after.values()) / stress_duration:.1f} records/sec")
@@ -384,7 +380,7 @@ class TestMigrationPerformance:
         else:
             # If migration fails under extreme stress, that's acceptable
             # but we should get a clear error message
-            logger.info(f"💪 Stress test FAILED (acceptable under extreme conditions):")
+            logger.info("💪 Stress test FAILED (acceptable under extreme conditions):")
             logger.info(f"   Error: {result.error_message[:200]}...")
             logger.info(f"   Duration before failure: {stress_duration:.2f}s")
 
@@ -396,7 +392,7 @@ class TestMigrationPerformance:
             max_failure_time = 300  # 5 minutes maximum before giving up
             assert stress_duration < max_failure_time, f"Stress test hung too long before failure: {stress_duration:.2f}s"
 
-        logger.info(f"✅ Stress limit test completed")
+        logger.info("✅ Stress limit test completed")
 
     @pytest.mark.benchmark
     def test_migration_benchmark_suite(self, migration_runner, sample_test_data, large_test_data):
@@ -405,81 +401,63 @@ class TestMigrationPerformance:
         This test runs a comprehensive benchmark suite to establish
         performance baselines and identify optimization opportunities.
         """
-        logger.info(f"🏆 Running comprehensive migration benchmark suite")
+        logger.info("🏆 Running comprehensive migration benchmark suite")
 
         benchmark_results = {}
 
         # Benchmark 1: Small dataset migration
-        logger.info(f"🔬 Benchmark 1: Small dataset migration")
+        logger.info("🔬 Benchmark 1: Small dataset migration")
         small_start = time.time()
         small_result = migration_runner.test_forward_migration("0.6.0", "latest", sample_test_data)
         small_duration = time.time() - small_start
 
         assert small_result.success, "Small dataset benchmark failed"
 
-        benchmark_results["small_dataset"] = {
-            "duration": small_duration,
-            "records": sum(small_result.records_after.values()),
-            "rate": sum(small_result.records_after.values()) / small_duration
-        }
+        benchmark_results["small_dataset"] = {"duration": small_duration, "records": sum(small_result.records_after.values()), "rate": sum(small_result.records_after.values()) / small_duration}
 
         # Benchmark 2: Large dataset migration
-        logger.info(f"🔬 Benchmark 2: Large dataset migration")
+        logger.info("🔬 Benchmark 2: Large dataset migration")
         large_start = time.time()
         large_result = migration_runner.test_forward_migration("0.6.0", "latest", large_test_data)
         large_duration = time.time() - large_start
 
         assert large_result.success, "Large dataset benchmark failed"
 
-        benchmark_results["large_dataset"] = {
-            "duration": large_duration,
-            "records": sum(large_result.records_after.values()),
-            "rate": sum(large_result.records_after.values()) / large_duration
-        }
+        benchmark_results["large_dataset"] = {"duration": large_duration, "records": sum(large_result.records_after.values()), "rate": sum(large_result.records_after.values()) / large_duration}
 
         # Benchmark 3: Schema-only migration (no data)
-        logger.info(f"🔬 Benchmark 3: Schema-only migration")
+        logger.info("🔬 Benchmark 3: Schema-only migration")
         schema_start = time.time()
         schema_result = migration_runner.test_forward_migration("0.6.0", "latest", None)
         schema_duration = time.time() - schema_start
 
         assert schema_result.success, "Schema-only benchmark failed"
 
-        benchmark_results["schema_only"] = {
-            "duration": schema_duration,
-            "records": 0,
-            "rate": 0
-        }
+        benchmark_results["schema_only"] = {"duration": schema_duration, "records": 0, "rate": 0}
 
         # Generate benchmark report
-        logger.info(f"🏆 Benchmark Suite Results:")
-        logger.info(f"=" * 60)
+        logger.info("🏆 Benchmark Suite Results:")
+        logger.info("=" * 60)
 
         for benchmark_name, metrics in benchmark_results.items():
             logger.info(f"📊 {benchmark_name.replace('_', ' ').title()}:")
             logger.info(f"   Duration: {metrics['duration']:.2f}s")
             logger.info(f"   Records: {metrics['records']}")
-            if metrics['rate'] > 0:
+            if metrics["rate"] > 0:
                 logger.info(f"   Rate: {metrics['rate']:.1f} records/sec")
             logger.info("")
 
         # Save benchmark results for comparison
         # Standard
         import json
+
         benchmark_file = Path("tests/migration/reports/benchmark_results.json")
         benchmark_file.parent.mkdir(parents=True, exist_ok=True)
 
-        benchmark_data = {
-            "timestamp": time.time(),
-            "results": benchmark_results,
-            "metadata": {
-                "version": "latest",
-                "test_environment": "container_testing"
-            }
-        }
+        benchmark_data = {"timestamp": time.time(), "results": benchmark_results, "metadata": {"version": "latest", "test_environment": "container_testing"}}
 
-        with open(benchmark_file, 'w') as f:
+        with open(benchmark_file, "w") as f:
             json.dump(benchmark_data, f, indent=2)
 
         logger.info(f"💾 Benchmark results saved to {benchmark_file}")
-        logger.info(f"✅ Comprehensive benchmark suite completed")
+        logger.info("✅ Comprehensive benchmark suite completed")

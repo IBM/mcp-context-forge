@@ -14,7 +14,8 @@ and error handling scenarios.
 # Standard
 from datetime import datetime, timedelta, timezone
 import hashlib
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException, status
@@ -24,7 +25,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user, get_db
-from mcpgateway.db import EmailApiToken, EmailUser, SessionLocal
+from mcpgateway.db import EmailApiToken, EmailUser
 
 
 class TestGetDb:
@@ -36,8 +37,7 @@ class TestGetDb:
             mock_session = MagicMock(spec=Session)
             mock_session_local.return_value = mock_session
 
-            db_gen = get_db()
-            db = next(db_gen)
+            db = next(get_db())
 
             assert db == mock_session
             mock_session_local.assert_called_once()
@@ -49,7 +49,7 @@ class TestGetDb:
             mock_session_local.return_value = mock_session
 
             db_gen = get_db()
-            db = next(db_gen)
+            _ = next(db_gen)
 
             # Finish the generator
             try:
@@ -66,7 +66,7 @@ class TestGetDb:
             mock_session_local.return_value = mock_session
 
             db_gen = get_db()
-            db = next(db_gen)
+            _ = next(db_gen)
 
             # Simulate an exception by closing the generator
             try:
@@ -230,7 +230,6 @@ class TestGetCurrentUser:
         )
 
         # Standard
-        import logging
 
         caplog.set_level(logging.WARNING)
 
@@ -498,7 +497,7 @@ class TestGetCurrentUser:
                         assert user.full_name == "Platform Administrator"
                         assert user.is_admin is True
                         assert user.is_active is True
-                        assert user.is_email_verified is True
+                        assert user.is_email_verified() is True
 
     @pytest.mark.asyncio
     async def test_inactive_user_raises_401(self):
@@ -557,11 +556,9 @@ class TestGetCurrentUser:
                 mock_auth_service_class.return_value = mock_auth_service
 
                 # Standard
-                import logging
 
-                caplog.set_level(logging.DEBUG)
-
-                user = await get_current_user(credentials=credentials, db=mock_db)
+                caplog.set_level(logging.DEBUG, logger="mcpgateway.auth")
+                _ = await get_current_user(credentials=credentials, db=mock_db)
 
                 assert "Attempting authentication with token: test_token_for_loggi..." in caplog.text
                 assert "Attempting JWT token validation" in caplog.text
@@ -578,7 +575,12 @@ class TestGetCurrentUser:
         token_hash = hashlib.sha256(api_token_value.encode()).hexdigest()
 
         mock_api_token = EmailApiToken(
-            user_email="api_user@example.com", token_hash=token_hash, jti="permanent_jti", is_active=True, expires_at=None, last_used=datetime.now(timezone.utc)  # No expiry
+            user_email="api_user@example.com",
+            token_hash=token_hash,
+            jti="permanent_jti",
+            is_active=True,
+            expires_at=None,
+            last_used=datetime.now(timezone.utc),  # No expiry
         )
 
         mock_user = EmailUser(
@@ -662,9 +664,8 @@ class TestGetCurrentUser:
         mock_db.execute.return_value = mock_result
 
         # Standard
-        import logging
 
-        caplog.set_level(logging.DEBUG)
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.auth")
 
         with patch("mcpgateway.auth.verify_jwt_token", AsyncMock(side_effect=Exception("JWT validation failed"))):
             with patch("mcpgateway.services.token_catalog_service.TokenCatalogService") as mock_token_service_class:
@@ -678,7 +679,7 @@ class TestGetCurrentUser:
                     mock_auth_service_class.return_value = mock_auth_service
 
                     with patch("mcpgateway.db.utc_now", return_value=datetime.now(timezone.utc)):
-                        user = await get_current_user(credentials=credentials, db=mock_db)
+                        _ = await get_current_user(credentials=credentials, db=mock_db)
 
                         assert "JWT validation failed with error" in caplog.text
                         assert "trying database API token" in caplog.text

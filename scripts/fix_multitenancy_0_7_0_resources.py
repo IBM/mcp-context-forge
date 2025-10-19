@@ -15,7 +15,6 @@ Usage:
 """
 
 import sys
-import os
 from pathlib import Path
 
 # Add project root to Python path
@@ -40,25 +39,17 @@ def fix_unassigned_resources():
 
     try:
         with SessionLocal() as db:
-
             # 1. Find admin user and personal team
             print("🔍 Finding admin user and personal team...")
             admin_email = settings.platform_admin_email
-            admin_user = db.query(EmailUser).filter(
-                EmailUser.email == admin_email,
-                EmailUser.is_admin == True
-            ).first()
+            admin_user = db.query(EmailUser).filter(EmailUser.email == admin_email, EmailUser.is_admin == True).first()
 
             if not admin_user:
                 print(f"❌ Admin user not found: {admin_email}")
                 print("Make sure the migration has run and admin user exists")
                 return False
 
-            personal_team = db.query(EmailTeam).filter(
-                EmailTeam.created_by == admin_user.email,
-                EmailTeam.is_personal == True,
-                EmailTeam.is_active == True
-            ).first()
+            personal_team = db.query(EmailTeam).filter(EmailTeam.created_by == admin_user.email, EmailTeam.is_personal == True, EmailTeam.is_active == True).first()
 
             if not personal_team:
                 print(f"❌ Personal team not found for admin: {admin_user.email}")
@@ -68,14 +59,7 @@ def fix_unassigned_resources():
             print(f"✅ Found personal team: {personal_team.name} ({personal_team.id})")
 
             # 2. Fix each resource type
-            resource_types = [
-                ("servers", Server),
-                ("tools", Tool),
-                ("resources", Resource),
-                ("prompts", Prompt),
-                ("gateways", Gateway),
-                ("a2a_agents", A2AAgent)
-            ]
+            resource_types = [("servers", Server), ("tools", Tool), ("resources", Resource), ("prompts", Prompt), ("gateways", Gateway), ("a2a_agents", A2AAgent)]
 
             total_fixed = 0
 
@@ -83,11 +67,7 @@ def fix_unassigned_resources():
                 print(f"\n📋 Processing {table_name}...")
 
                 # Find unassigned resources
-                unassigned = db.query(resource_model).filter(
-                    (resource_model.team_id == None) |
-                    (resource_model.owner_email == None) |
-                    (resource_model.visibility == None)
-                ).all()
+                unassigned = db.query(resource_model).filter((resource_model.team_id == None) | (resource_model.owner_email == None) | (resource_model.visibility == None)).all()
 
                 if not unassigned:
                     print(f"   ✅ No unassigned {table_name} found")
@@ -96,7 +76,7 @@ def fix_unassigned_resources():
                 print(f"   🔧 Fixing {len(unassigned)} unassigned {table_name}...")
 
                 for resource in unassigned:
-                    resource_name = getattr(resource, 'name', 'Unknown')
+                    resource_name = getattr(resource, "name", "Unknown")
                     print(f"      - Assigning: {resource_name}")
 
                     # Assign to admin's personal team
@@ -104,7 +84,7 @@ def fix_unassigned_resources():
                     resource.owner_email = admin_user.email
 
                     # Set visibility to public if not already set
-                    if not hasattr(resource, 'visibility') or resource.visibility is None:
+                    if not hasattr(resource, "visibility") or resource.visibility is None:
                         resource.visibility = "public"
 
                     total_fixed += 1
@@ -116,13 +96,14 @@ def fix_unassigned_resources():
             print(f"\n🎉 Successfully fixed {total_fixed} resources!")
             print(f"   All resources now assigned to: {personal_team.name}")
             print(f"   Owner email: {admin_user.email}")
-            print(f"   Default visibility: public")
+            print("   Default visibility: public")
 
             return True
 
     except Exception as e:
         print(f"\n❌ Fix operation failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -134,7 +115,7 @@ def main():
     print("This is safe and will make resources visible in the team-based UI.\n")
 
     response = input("Continue? (y/N): ").lower().strip()
-    if response not in ('y', 'yes'):
+    if response not in ("y", "yes"):
         print("Operation cancelled.")
         return
 

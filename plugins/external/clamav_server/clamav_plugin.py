@@ -52,7 +52,7 @@ EICAR_SIGNATURES = (
 
 
 def _has_eicar(data: bytes) -> bool:
-    """ Has Eicar implementation."""
+    """Has Eicar implementation."""
 
     blob = data.decode("latin1", errors="ignore")
     return any(sig in blob for sig in EICAR_SIGNATURES)
@@ -75,7 +75,7 @@ class ClamAVConfig:
 
 
 def _clamd_instream_scan_tcp(host: str, port: int, data: bytes, timeout: float) -> str:
-    """ Clamd Instream Scan Tcp implementation."""
+    """Clamd Instream Scan Tcp implementation."""
 
     # Minimal INSTREAM protocol: https://linux.die.net/man/8/clamd
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -99,7 +99,7 @@ def _clamd_instream_scan_tcp(host: str, port: int, data: bytes, timeout: float) 
 
 
 def _clamd_instream_scan_unix(path: str, data: bytes, timeout: float) -> str:
-    """ Clamd Instream Scan Unix implementation."""
+    """Clamd Instream Scan Unix implementation."""
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
@@ -130,7 +130,7 @@ class ClamAVRemotePlugin(Plugin):
         self._stats: dict[str, int] = {"attempted": 0, "infected": 0, "blocked": 0, "errors": 0}
 
     def _bump(self, key: str) -> None:
-        """ Bump implementation."""
+        """Bump implementation."""
 
         try:
             self._stats[key] = int(self._stats.get(key, 0)) + 1
@@ -138,7 +138,7 @@ class ClamAVRemotePlugin(Plugin):
             pass
 
     def _scan_bytes(self, data: bytes) -> tuple[bool, str]:
-        """ Scan Bytes implementation."""
+        """Scan Bytes implementation."""
 
         if len(data) > self._cfg.max_bytes:
             return False, "SKIPPED: too large"
@@ -259,7 +259,7 @@ class ClamAVRemotePlugin(Plugin):
                             continue_processing=False,
                             violation=PluginViolation(
                                 reason="ClamAV detection",
-                                description=f"Malware detected in prompt output: {payload.name}",
+                                description=f"Malware detected in prompt output: {payload.prompt_id}",
                                 code="CLAMAV_INFECTED",
                                 details={"detail": detail},
                             ),
@@ -281,6 +281,7 @@ class ClamAVRemotePlugin(Plugin):
         Returns:
             Result blocking if malware detected, or allowing with scan metadata.
         """
+
         # Recursively scan string values in tool outputs
         def iter_strings(obj):
             """Iter Strings implementation."""

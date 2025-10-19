@@ -2085,7 +2085,11 @@ class TestTokenStorageService:
             service = TokenStorageService(mock_db)
 
             token_record = OAuthToken(
-                gateway_id="gateway123", user_id="user123", access_token="expired_token", refresh_token=None, expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1)  # No refresh token
+                gateway_id="gateway123",
+                user_id="user123",
+                access_token="expired_token",
+                refresh_token=None,
+                expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1),  # No refresh token
             )
 
             result = await service._refresh_access_token(token_record)

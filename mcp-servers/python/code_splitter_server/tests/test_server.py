@@ -7,8 +7,6 @@ Authors: Mihai Criveti
 Tests for Code Splitter MCP Server (FastMCP).
 """
 
-import json
-import pytest
 from code_splitter_server.server_fastmcp import splitter
 
 
@@ -49,7 +47,7 @@ def func2(x, y):
 
 def test_extract_classes_only():
     """Test class extraction."""
-    python_code = '''
+    python_code = """
 class BaseClass:
     def base_method(self):
         pass
@@ -57,7 +55,7 @@ class BaseClass:
 class DerivedClass(BaseClass):
     def derived_method(self):
         pass
-'''
+"""
     result = splitter.extract_classes_only(python_code)
     assert result["success"] is True
     assert result["class_count"] == 2
@@ -66,7 +64,7 @@ class DerivedClass(BaseClass):
 
 def test_split_python_code():
     """Test code splitting."""
-    python_code = '''
+    python_code = """
 def func1():
     return 1
 
@@ -76,7 +74,7 @@ class MyClass:
 
 def func2():
     return 3
-'''
+"""
     # Use min_lines=1 since test functions are short
     result = splitter.split_python_code(python_code, min_lines=1)
     assert result["success"] is True

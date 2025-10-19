@@ -7,6 +7,7 @@ Authors: Teryl Taylor
 Simple example plugin for searching and replacing text.
 This module loads configurations for plugins.
 """
+
 # Standard
 import re
 

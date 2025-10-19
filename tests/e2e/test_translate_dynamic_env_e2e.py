@@ -105,7 +105,7 @@ if __name__ == "__main__":
     main()
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
@@ -125,7 +125,7 @@ if __name__ == "__main__":
             test_port = random.randint(9000, 9999)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
-                    s.bind(('localhost', test_port))
+                    s.bind(("localhost", test_port))
                     port = test_port
                     break
                 except OSError:
@@ -136,23 +136,26 @@ if __name__ == "__main__":
 
         # Start translate server with header mappings
         cmd = [
-            "python3", "-m", "mcpgateway.translate",
-            "--stdio", test_mcp_server_script,
-            "--port", str(port),
+            "python3",
+            "-m",
+            "mcpgateway.translate",
+            "--stdio",
+            test_mcp_server_script,
+            "--port",
+            str(port),
             "--expose-sse",  # Enable SSE endpoint
             "--enable-dynamic-env",
-            "--header-to-env", "Authorization=GITHUB_TOKEN",
-            "--header-to-env", "X-Tenant-Id=TENANT_ID",
-            "--header-to-env", "X-API-Key=API_KEY",
-            "--header-to-env", "X-Environment=ENVIRONMENT",
+            "--header-to-env",
+            "Authorization=GITHUB_TOKEN",
+            "--header-to-env",
+            "X-Tenant-Id=TENANT_ID",
+            "--header-to-env",
+            "X-API-Key=API_KEY",
+            "--header-to-env",
+            "X-Environment=ENVIRONMENT",
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         # Wait for server to be ready with health check
         max_retries = 10
@@ -194,13 +197,7 @@ if __name__ == "__main__":
         port = translate_server_process
 
         # Test with headers
-        headers = {
-            "Authorization": "Bearer github-token-123",
-            "X-Tenant-Id": "acme-corp",
-            "X-API-Key": "api-key-456",
-            "X-Environment": "production",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": "Bearer github-token-123", "X-Tenant-Id": "acme-corp", "X-API-Key": "api-key-456", "X-Environment": "production", "Content-Type": "application/json"}
 
         async with httpx.AsyncClient() as client:
             try:
@@ -218,17 +215,8 @@ if __name__ == "__main__":
 
                         # Once we have endpoint, send request
                         if endpoint_url and not request_sent:
-                            request_data = {
-                                "jsonrpc": "2.0",
-                                "id": 1,
-                                "method": "env_test",
-                                "params": {}
-                            }
-                            response = await client.post(
-                                endpoint_url,
-                                json=request_data,
-                                headers=headers
-                            )
+                            request_data = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
+                            response = await client.post(endpoint_url, json=request_data, headers=headers)
                             assert response.status_code in [200, 202]
                             request_sent = True
                             continue
@@ -262,11 +250,7 @@ if __name__ == "__main__":
         async with httpx.AsyncClient() as client:
             try:
                 # Request 1: User 1 - Use proper MCP SSE flow
-                headers1 = {
-                    "Authorization": "Bearer user1-token",
-                    "X-Tenant-Id": "tenant-1",
-                    "Content-Type": "application/json"
-                }
+                headers1 = {"Authorization": "Bearer user1-token", "X-Tenant-Id": "tenant-1", "Content-Type": "application/json"}
 
                 async with client.stream("GET", f"http://localhost:{port}/sse", headers=headers1, timeout=10.0) as sse_response:
                     endpoint_url = None
@@ -278,12 +262,7 @@ if __name__ == "__main__":
                             continue
 
                         if endpoint_url and not request_sent:
-                            request1 = {
-                                "jsonrpc": "2.0",
-                                "id": 1,
-                                "method": "env_test",
-                                "params": {}
-                            }
+                            request1 = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
                             response = await client.post(endpoint_url, json=request1, headers=headers1)
                             assert response.status_code in [200, 202]
                             request_sent = True
@@ -302,12 +281,7 @@ if __name__ == "__main__":
                                 continue
 
                 # Request 2: User 2 - Separate SSE session
-                headers2 = {
-                    "Authorization": "Bearer user2-token",
-                    "X-Tenant-Id": "tenant-2",
-                    "X-API-Key": "user2-api-key",
-                    "Content-Type": "application/json"
-                }
+                headers2 = {"Authorization": "Bearer user2-token", "X-Tenant-Id": "tenant-2", "X-API-Key": "user2-api-key", "Content-Type": "application/json"}
 
                 async with client.stream("GET", f"http://localhost:{port}/sse", headers=headers2, timeout=10.0) as sse_response:
                     endpoint_url = None
@@ -319,12 +293,7 @@ if __name__ == "__main__":
                             continue
 
                         if endpoint_url and not request_sent:
-                            request2 = {
-                                "jsonrpc": "2.0",
-                                "id": 2,
-                                "method": "env_test",
-                                "params": {}
-                            }
+                            request2 = {"jsonrpc": "2.0", "id": 2, "method": "env_test", "params": {}}
                             response = await client.post(endpoint_url, json=request2, headers=headers2)
                             assert response.status_code in [200, 202]
                             request_sent = True
@@ -356,9 +325,9 @@ if __name__ == "__main__":
         # Test with mixed case headers
         headers = {
             "authorization": "Bearer mixed-case-token",  # lowercase
-            "X-TENANT-ID": "MIXED-TENANT",              # uppercase
-            "x-api-key": "mixed-api-key",               # mixed case
-            "Content-Type": "application/json"
+            "X-TENANT-ID": "MIXED-TENANT",  # uppercase
+            "x-api-key": "mixed-api-key",  # mixed case
+            "Content-Type": "application/json",
         }
 
         async with httpx.AsyncClient() as client:
@@ -373,12 +342,7 @@ if __name__ == "__main__":
                             continue
 
                         if endpoint_url and not request_sent:
-                            request_data = {
-                                "jsonrpc": "2.0",
-                                "id": 1,
-                                "method": "env_test",
-                                "params": {}
-                            }
+                            request_data = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
                             response = await client.post(endpoint_url, json=request_data, headers=headers)
                             assert response.status_code in [200, 202]
                             request_sent = True
@@ -412,7 +376,7 @@ if __name__ == "__main__":
             "Authorization": "Bearer partial-token",
             "X-Tenant-Id": "partial-tenant",
             "Other-Header": "ignored-value",  # Not in mappings
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         async with httpx.AsyncClient() as client:
@@ -426,12 +390,7 @@ if __name__ == "__main__":
                         continue
 
                     if endpoint_url and not request_sent:
-                        request_data = {
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "env_test",
-                            "params": {}
-                        }
+                        request_data = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
                         response = await client.post(endpoint_url, json=request_data, headers=headers)
                         assert response.status_code in [200, 202]
                         request_sent = True
@@ -459,9 +418,7 @@ if __name__ == "__main__":
         port = translate_server_process
 
         # Test without dynamic environment headers
-        headers = {
-            "Content-Type": "application/json"
-        }
+        headers = {"Content-Type": "application/json"}
 
         async with httpx.AsyncClient() as client:
             async with client.stream("GET", f"http://localhost:{port}/sse", headers=headers, timeout=10.0) as sse_response:
@@ -474,12 +431,7 @@ if __name__ == "__main__":
                         continue
 
                     if endpoint_url and not request_sent:
-                        request_data = {
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "env_test",
-                            "params": {}
-                        }
+                        request_data = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
                         response = await client.post(endpoint_url, json=request_data, headers=headers)
                         assert response.status_code in [200, 202]
                         request_sent = True
@@ -506,11 +458,7 @@ if __name__ == "__main__":
         """Test complete MCP initialize flow with environment injection."""
         port = translate_server_process
 
-        headers = {
-            "Authorization": "Bearer init-token",
-            "X-Tenant-Id": "init-tenant",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": "Bearer init-token", "X-Tenant-Id": "init-tenant", "Content-Type": "application/json"}
 
         async with httpx.AsyncClient() as client:
             async with client.stream("GET", f"http://localhost:{port}/sse", headers=headers, timeout=10.0) as sse_response:
@@ -531,11 +479,7 @@ if __name__ == "__main__":
                             "jsonrpc": "2.0",
                             "id": 1,
                             "method": "initialize",
-                            "params": {
-                                "protocolVersion": "2025-03-26",
-                                "capabilities": {},
-                                "clientInfo": {"name": "test-client", "version": "1.0.0"}
-                            }
+                            "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}},
                         }
                         response = await client.post(endpoint_url, json=init_request, headers=headers)
                         assert response.status_code in [200, 202]
@@ -552,12 +496,7 @@ if __name__ == "__main__":
 
                                 # After receiving init response, send env_test request
                                 if result.get("id") == 1 and not env_test_sent:
-                                    env_test_request = {
-                                        "jsonrpc": "2.0",
-                                        "id": 2,
-                                        "method": "env_test",
-                                        "params": {}
-                                    }
+                                    env_test_request = {"jsonrpc": "2.0", "id": 2, "method": "env_test", "params": {}}
                                     response = await client.post(endpoint_url, json=env_test_request, headers=headers)
                                     assert response.status_code in [200, 202]
                                     env_test_sent = True
@@ -589,10 +528,10 @@ if __name__ == "__main__":
         # Test with dangerous characters that are still valid in HTTP headers
         # (we can't test \x00 and \n as they're illegal in HTTP headers)
         headers = {
-            "Authorization": "Bearer token 123",      # Contains spaces (should be sanitized)
-            "X-Tenant-Id": "acme=corp",              # Contains equals (should be sanitized)
-            "X-API-Key": "key;with;semicolons",      # Contains semicolons
-            "Content-Type": "application/json"
+            "Authorization": "Bearer token 123",  # Contains spaces (should be sanitized)
+            "X-Tenant-Id": "acme=corp",  # Contains equals (should be sanitized)
+            "X-API-Key": "key;with;semicolons",  # Contains semicolons
+            "Content-Type": "application/json",
         }
 
         async with httpx.AsyncClient() as client:
@@ -606,12 +545,7 @@ if __name__ == "__main__":
                         continue
 
                     if endpoint_url and not request_sent:
-                        request_data = {
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "env_test",
-                            "params": {}
-                        }
+                        request_data = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
                         response = await client.post(endpoint_url, json=request_data, headers=headers)
                         assert response.status_code in [200, 202]
                         request_sent = True
@@ -625,8 +559,8 @@ if __name__ == "__main__":
                                 env_result = result["result"]
                                 # Verify sanitization
                                 assert env_result["GITHUB_TOKEN"] == "Bearer token 123"  # Spaces preserved
-                                assert env_result["TENANT_ID"] == "acme=corp"           # Equals preserved
-                                assert env_result["API_KEY"] == "key;with;semicolons"   # Semicolons preserved
+                                assert env_result["TENANT_ID"] == "acme=corp"  # Equals preserved
+                                assert env_result["API_KEY"] == "key;with;semicolons"  # Semicolons preserved
                                 break
                         except json.JSONDecodeError:
                             continue
@@ -639,11 +573,7 @@ if __name__ == "__main__":
 
         # Test with large header value (will be truncated)
         large_value = "x" * 5000  # 5KB value
-        headers = {
-            "Authorization": large_value,
-            "X-Tenant-Id": "acme-corp",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": large_value, "X-Tenant-Id": "acme-corp", "Content-Type": "application/json"}
 
         async with httpx.AsyncClient() as client:
             async with client.stream("GET", f"http://localhost:{port}/sse", headers=headers, timeout=10.0) as sse_response:
@@ -656,12 +586,7 @@ if __name__ == "__main__":
                         continue
 
                     if endpoint_url and not request_sent:
-                        request_data = {
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "env_test",
-                            "params": {}
-                        }
+                        request_data = {"jsonrpc": "2.0", "id": 1, "method": "env_test", "params": {}}
                         response = await client.post(endpoint_url, json=request_data, headers=headers)
                         assert response.status_code in [200, 202]
                         request_sent = True
@@ -698,7 +623,6 @@ if __name__ == "__main__":
         """Test SSE endpoint works with dynamic environment injection."""
         port = translate_server_process
 
-
         async with httpx.AsyncClient() as client:
             # Connect to SSE endpoint
             async with client.stream("GET", f"http://localhost:{port}/sse", timeout=5.0) as sse_response:
@@ -722,11 +646,7 @@ if __name__ == "__main__":
 
         async with httpx.AsyncClient() as client:
             # Test with invalid JSON
-            response = await client.post(
-                f"http://localhost:{port}/message",
-                content="invalid json",
-                headers={"Content-Type": "application/json"}
-            )
+            response = await client.post(f"http://localhost:{port}/message", content="invalid json", headers={"Content-Type": "application/json"})
 
             assert response.status_code == 400
             assert "Invalid JSON payload" in response.text
@@ -739,39 +659,18 @@ if __name__ == "__main__":
 
         async def make_request(client, headers, request_id):
             """Make a single request with given headers."""
-            request_data = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "env_test",
-                "params": {}
-            }
+            request_data = {"jsonrpc": "2.0", "id": request_id, "method": "env_test", "params": {}}
 
-            response = await client.post(
-                f"http://localhost:{port}/message",
-                json=request_data,
-                headers=headers
-            )
+            response = await client.post(f"http://localhost:{port}/message", json=request_data, headers=headers)
             return response
 
         async with httpx.AsyncClient() as client:
             # Make concurrent requests with different headers
-            headers1 = {
-                "Authorization": "Bearer concurrent-token-1",
-                "X-Tenant-Id": "concurrent-tenant-1",
-                "Content-Type": "application/json"
-            }
+            headers1 = {"Authorization": "Bearer concurrent-token-1", "X-Tenant-Id": "concurrent-tenant-1", "Content-Type": "application/json"}
 
-            headers2 = {
-                "Authorization": "Bearer concurrent-token-2",
-                "X-Tenant-Id": "concurrent-tenant-2",
-                "Content-Type": "application/json"
-            }
+            headers2 = {"Authorization": "Bearer concurrent-token-2", "X-Tenant-Id": "concurrent-tenant-2", "Content-Type": "application/json"}
 
-            headers3 = {
-                "Authorization": "Bearer concurrent-token-3",
-                "X-Tenant-Id": "concurrent-tenant-3",
-                "Content-Type": "application/json"
-            }
+            headers3 = {"Authorization": "Bearer concurrent-token-3", "X-Tenant-Id": "concurrent-tenant-3", "Content-Type": "application/json"}
 
             # Make concurrent requests
             tasks = [
@@ -799,7 +698,7 @@ print('{"jsonrpc":"2.0","id":1,"result":"ready"}')
 sys.stdout.flush()
 """
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(script_content)
             f.flush()
             os.chmod(f.name, 0o755)
@@ -821,7 +720,7 @@ sys.stdout.flush()
             test_port = random.randint(9000, 9999)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
-                    s.bind(('localhost', test_port))
+                    s.bind(("localhost", test_port))
                     port = test_port
                     break
                 except OSError:
@@ -831,20 +730,21 @@ sys.stdout.flush()
             pytest.skip("Could not find available port for translate server")
 
         cmd = [
-            "python3", "-m", "mcpgateway.translate",
-            "--stdio", test_server_script,
-            "--port", str(port),
+            "python3",
+            "-m",
+            "mcpgateway.translate",
+            "--stdio",
+            test_server_script,
+            "--port",
+            str(port),
             "--enable-dynamic-env",
-            "--header-to-env", "Authorization=GITHUB_TOKEN",
-            "--header-to-env", "X-Tenant-Id=TENANT_ID",
+            "--header-to-env",
+            "Authorization=GITHUB_TOKEN",
+            "--header-to-env",
+            "X-Tenant-Id=TENANT_ID",
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         try:
             # Wait for server to start
@@ -876,7 +776,7 @@ sys.stdout.flush()
             test_port = random.randint(9000, 9999)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
-                    s.bind(('localhost', test_port))
+                    s.bind(("localhost", test_port))
                     port = test_port
                     break
                 except OSError:
@@ -886,19 +786,19 @@ sys.stdout.flush()
             pytest.skip("Could not find available port for translate server")
 
         cmd = [
-            "python3", "-m", "mcpgateway.translate",
-            "--stdio", test_server_script,
-            "--port", str(port),
+            "python3",
+            "-m",
+            "mcpgateway.translate",
+            "--stdio",
+            test_server_script,
+            "--port",
+            str(port),
             "--enable-dynamic-env",
-            "--header-to-env", "Invalid Header!=GITHUB_TOKEN",  # Invalid header name
+            "--header-to-env",
+            "Invalid Header!=GITHUB_TOKEN",  # Invalid header name
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         try:
             # Wait longer to see if process exits
@@ -944,7 +844,7 @@ sys.stdout.flush()
             test_port = random.randint(9000, 9999)
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 try:
-                    s.bind(('localhost', test_port))
+                    s.bind(("localhost", test_port))
                     port = test_port
                     break
                 except OSError:
@@ -954,18 +854,18 @@ sys.stdout.flush()
             pytest.skip("Could not find available port for translate server")
 
         cmd = [
-            "python3", "-m", "mcpgateway.translate",
-            "--stdio", test_server_script,
-            "--port", str(port),
-            "--header-to-env", "Authorization=GITHUB_TOKEN",  # Mappings without enable flag
+            "python3",
+            "-m",
+            "mcpgateway.translate",
+            "--stdio",
+            test_server_script,
+            "--port",
+            str(port),
+            "--header-to-env",
+            "Authorization=GITHUB_TOKEN",  # Mappings without enable flag
         ]
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         try:
             # Wait for server to start

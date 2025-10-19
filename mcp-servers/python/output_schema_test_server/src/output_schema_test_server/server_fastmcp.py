@@ -13,7 +13,7 @@ Implements tools with explicit output schemas to verify the complete workflow.
 import argparse
 import logging
 import sys
-from typing import Dict, Any
+from typing import Any
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -27,15 +27,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Create FastMCP server instance
-mcp = FastMCP(
-    name="output-schema-test-server",
-    version="0.1.0"
-)
+mcp = FastMCP(name="output-schema-test-server", version="0.1.0")
 
 
 # Pydantic models for structured outputs
 class CalculationResult(BaseModel):
     """Result of a mathematical calculation."""
+
     result: float = Field(..., description="The calculated result")
     operation: str = Field(..., description="The operation performed")
     operands: list[float] = Field(..., description="The operands used")
@@ -44,6 +42,7 @@ class CalculationResult(BaseModel):
 
 class UserInfo(BaseModel):
     """User information structure."""
+
     name: str = Field(..., description="User's full name")
     email: str = Field(..., description="User's email address")
     age: int = Field(..., ge=0, le=150, description="User's age")
@@ -52,18 +51,17 @@ class UserInfo(BaseModel):
 
 class ValidationResult(BaseModel):
     """Result of input validation."""
+
     valid: bool = Field(..., description="Whether the input is valid")
     errors: list[str] = Field(default_factory=list, description="Validation errors if any")
     cleaned_value: str = Field(..., description="Cleaned/normalized value")
 
 
 # Tools with output schemas
-@mcp.tool(
-    description="Add two numbers and return a structured result with output schema"
-)
+@mcp.tool(description="Add two numbers and return a structured result with output schema")
 async def add_numbers(
     a: float = Field(..., description="First number"),
-    b: float = Field(..., description="Second number")
+    b: float = Field(..., description="Second number"),
 ) -> CalculationResult:
     """Add two numbers and return a structured result.
 
@@ -71,85 +69,57 @@ async def add_numbers(
     The MCP framework should automatically generate the output schema.
     """
     logger.info(f"Adding {a} + {b}")
-    return CalculationResult(
-        result=a + b,
-        operation="addition",
-        operands=[a, b],
-        success=True
-    )
+    return CalculationResult(result=a + b, operation="addition", operands=[a, b], success=True)
 
 
-@mcp.tool(
-    description="Multiply two numbers with structured output"
-)
+@mcp.tool(description="Multiply two numbers with structured output")
 async def multiply_numbers(
     a: float = Field(..., description="First number"),
-    b: float = Field(..., description="Second number")
+    b: float = Field(..., description="Second number"),
 ) -> CalculationResult:
     """Multiply two numbers and return a structured result."""
     logger.info(f"Multiplying {a} * {b}")
     return CalculationResult(
-        result=a * b,
-        operation="multiplication",
-        operands=[a, b],
-        success=True
+        result=a * b, operation="multiplication", operands=[a, b], success=True
     )
 
 
-@mcp.tool(
-    description="Divide two numbers with error handling in output"
-)
+@mcp.tool(description="Divide two numbers with error handling in output")
 async def divide_numbers(
-    a: float = Field(..., description="Numerator"),
-    b: float = Field(..., description="Denominator")
+    a: float = Field(..., description="Numerator"), b: float = Field(..., description="Denominator")
 ) -> CalculationResult:
     """Divide two numbers with error handling."""
     logger.info(f"Dividing {a} / {b}")
 
     if b == 0:
         # Return structured error
-        return CalculationResult(
-            result=0.0,
-            operation="division",
-            operands=[a, b],
-            success=False
-        )
+        return CalculationResult(result=0.0, operation="division", operands=[a, b], success=False)
 
-    return CalculationResult(
-        result=a / b,
-        operation="division",
-        operands=[a, b],
-        success=True
-    )
+    return CalculationResult(result=a / b, operation="division", operands=[a, b], success=True)
 
 
-@mcp.tool(
-    description="Create a user profile with structured validation"
-)
+@mcp.tool(description="Create a user profile with structured validation")
 async def create_user(
     name: str = Field(..., min_length=1, max_length=100, description="User's full name"),
-    email: str = Field(..., pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", description="Valid email address"),
+    email: str = Field(
+        ...,
+        pattern=r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$",
+        description="Valid email address",
+    ),
     age: int = Field(..., ge=0, le=150, description="User's age"),
-    roles: list[str] = Field(default_factory=list, description="User's roles")
+    roles: list[str] = Field(default_factory=list, description="User's roles"),
 ) -> UserInfo:
     """Create a user profile with validation.
 
     This tool demonstrates complex output schemas with nested fields and validation.
     """
     logger.info(f"Creating user: {name}")
-    return UserInfo(
-        name=name,
-        email=email,
-        age=age,
-        roles=roles if roles else ["user"]
-    )
+    return UserInfo(name=name, email=email, age=age, roles=roles if roles else ["user"])
 
 
-@mcp.tool(
-    description="Validate email address format"
-)
+@mcp.tool(description="Validate email address format")
 async def validate_email(
-    email: str = Field(..., description="Email address to validate")
+    email: str = Field(..., description="Email address to validate"),
 ) -> ValidationResult:
     """Validate an email address and return structured validation result."""
     import re
@@ -167,29 +137,20 @@ async def validate_email(
 
     cleaned = email.strip().lower()
 
-    return ValidationResult(
-        valid=len(errors) == 0,
-        errors=errors,
-        cleaned_value=cleaned
-    )
+    return ValidationResult(valid=len(errors) == 0, errors=errors, cleaned_value=cleaned)
 
 
-@mcp.tool(
-    description="Perform calculation with multiple operations (testing complex output)"
-)
+@mcp.tool(description="Perform calculation with multiple operations (testing complex output)")
 async def calculate_stats(
-    numbers: list[float] = Field(..., min_length=1, description="List of numbers to analyze")
-) -> Dict[str, Any]:
+    numbers: list[float] = Field(..., min_length=1, description="List of numbers to analyze"),
+) -> dict[str, Any]:
     """Calculate statistics from a list of numbers.
 
     Returns a dictionary with statistical measures.
     This tests dict-based output schemas.
     """
     if not numbers:
-        return {
-            "error": "Empty list provided",
-            "success": False
-        }
+        return {"error": "Empty list provided", "success": False}
 
     result = {
         "count": len(numbers),
@@ -198,35 +159,29 @@ async def calculate_stats(
         "min": min(numbers),
         "max": max(numbers),
         "range": max(numbers) - min(numbers),
-        "success": True
+        "success": True,
     }
 
     # Calculate median
     sorted_numbers = sorted(numbers)
     n = len(sorted_numbers)
     if n % 2 == 0:
-        result["median"] = (sorted_numbers[n//2 - 1] + sorted_numbers[n//2]) / 2
+        result["median"] = (sorted_numbers[n // 2 - 1] + sorted_numbers[n // 2]) / 2
     else:
-        result["median"] = sorted_numbers[n//2]
+        result["median"] = sorted_numbers[n // 2]
 
     return result
 
 
-@mcp.tool(
-    description="Simple echo tool without output schema (for comparison)"
-)
-async def echo(
-    message: str = Field(..., description="Message to echo back")
-) -> str:
+@mcp.tool(description="Simple echo tool without output schema (for comparison)")
+async def echo(message: str = Field(..., description="Message to echo back")) -> str:
     """Echo a message back - simple string return without schema."""
     logger.info(f"Echoing: {message}")
     return f"Echo: {message}"
 
 
-@mcp.tool(
-    description="Get server information and capabilities"
-)
-async def get_server_info() -> Dict[str, Any]:
+@mcp.tool(description="Get server information and capabilities")
+async def get_server_info() -> dict[str, Any]:
     """Get information about this MCP server and its output schema capabilities."""
     return {
         "server_name": "output-schema-test-server",
@@ -238,15 +193,15 @@ async def get_server_info() -> Dict[str, Any]:
             "divide_numbers",
             "create_user",
             "validate_email",
-            "calculate_stats"
+            "calculate_stats",
         ],
         "tools_without_schemas": ["echo"],
         "description": "Test server demonstrating MCP outputSchema field support",
         "schema_types": {
             "pydantic_models": ["CalculationResult", "UserInfo", "ValidationResult"],
             "dict_returns": ["calculate_stats", "get_server_info"],
-            "simple_returns": ["echo"]
-        }
+            "simple_returns": ["echo"],
+        },
     }
 
 
@@ -259,26 +214,17 @@ def main() -> None:
         "--transport",
         choices=["stdio", "http"],
         default="stdio",
-        help="Transport mode (stdio or http)"
+        help="Transport mode (stdio or http)",
     )
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP host (only for http transport)")
     parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="HTTP host (only for http transport)"
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=9100,
-        help="HTTP port (only for http transport)"
+        "--port", type=int, default=9100, help="HTTP port (only for http transport)"
     )
 
     args = parser.parse_args()
 
     if args.transport == "http":
-        logger.info(
-            f"Starting Output Schema Test Server on HTTP at {args.host}:{args.port}"
-        )
+        logger.info(f"Starting Output Schema Test Server on HTTP at {args.host}:{args.port}")
         logger.info(f"HTTP endpoint: http://{args.host}:{args.port}/mcp/")
         mcp.run(transport="http", host=args.host, port=args.port)
     else:

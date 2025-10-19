@@ -12,7 +12,7 @@ import argparse
 import ast
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 class AsyncCodeValidator:
@@ -25,12 +25,7 @@ class AsyncCodeValidator:
     def validate_directory(self, source_dir: Path) -> Dict[str, Any]:
         """Validate all Python files in directory."""
 
-        validation_results = {
-            'files_checked': 0,
-            'issues_found': 0,
-            'suggestions': 0,
-            'details': []
-        }
+        validation_results = {"files_checked": 0, "issues_found": 0, "suggestions": 0, "details": []}
 
         python_files = list(source_dir.rglob("*.py"))
 
@@ -39,24 +34,20 @@ class AsyncCodeValidator:
                 continue
 
             file_results = self._validate_file(file_path)
-            validation_results['details'].append(file_results)
-            validation_results['files_checked'] += 1
-            validation_results['issues_found'] += len(file_results['issues'])
-            validation_results['suggestions'] += len(file_results['suggestions'])
+            validation_results["details"].append(file_results)
+            validation_results["files_checked"] += 1
+            validation_results["issues_found"] += len(file_results["issues"])
+            validation_results["suggestions"] += len(file_results["suggestions"])
 
         return validation_results
 
     def _validate_file(self, file_path: Path) -> Dict[str, Any]:
         """Validate a single Python file."""
 
-        file_results = {
-            'file': str(file_path),
-            'issues': [],
-            'suggestions': []
-        }
+        file_results = {"file": str(file_path), "issues": [], "suggestions": []}
 
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 source_code = f.read()
 
             tree = ast.parse(source_code, filename=str(file_path))
@@ -65,22 +56,18 @@ class AsyncCodeValidator:
             validator = AsyncPatternVisitor(file_path)
             validator.visit(tree)
 
-            file_results['issues'] = validator.issues
-            file_results['suggestions'] = validator.suggestions
+            file_results["issues"] = validator.issues
+            file_results["suggestions"] = validator.suggestions
 
         except Exception as e:
-            file_results['issues'].append({
-                'type': 'parse_error',
-                'message': f"Failed to parse file: {str(e)}",
-                'line': 0
-            })
+            file_results["issues"].append({"type": "parse_error", "message": f"Failed to parse file: {str(e)}", "line": 0})
 
         return file_results
-
 
     def _should_skip_file(self, file_path: Path) -> bool:
         """Determine if a file should be skipped (e.g., __init__.py files)."""
         return file_path.name == "__init__.py"
+
 
 class AsyncPatternVisitor(ast.NodeVisitor):
     """AST visitor to detect async patterns and issues."""
@@ -121,30 +108,32 @@ class AsyncPatternVisitor(ast.NodeVisitor):
         """Check for blocking operations in async functions."""
 
         blocking_patterns = [
-            'time.sleep',
-            'requests.get', 'requests.post',
-            'subprocess.run', 'subprocess.call',
-            'open'  # File I/O without async
+            "time.sleep",
+            "requests.get",
+            "requests.post",
+            "subprocess.run",
+            "subprocess.call",
+            "open",  # File I/O without async
         ]
 
         for child in ast.walk(node):
             if isinstance(child, ast.Call):
                 call_name = self._get_call_name(child)
                 if call_name in blocking_patterns:
-                    self.issues.append({
-                        'type': 'blocking_operation',
-                        'message': f"Blocking operation '{call_name}' in async function",
-                        'line': child.lineno,
-                        'suggestion': f"Use async equivalent of {call_name}"
-                    })
+                    self.issues.append(
+                        {"type": "blocking_operation", "message": f"Blocking operation '{call_name}' in async function", "line": child.lineno, "suggestion": f"Use async equivalent of {call_name}"}
+                    )
 
     def _check_unawaited_calls(self, node):
         """Check for potentially unawaited async calls."""
 
         # Look for calls that might return coroutines
         async_patterns = [
-            'aiohttp', 'asyncio', 'asyncpg',
-            'websockets', 'motor'  # Common async libraries
+            "aiohttp",
+            "asyncio",
+            "asyncpg",
+            "websockets",
+            "motor",  # Common async libraries
         ]
 
         call_name = self._get_call_name(node)
@@ -152,13 +141,9 @@ class AsyncPatternVisitor(ast.NodeVisitor):
         for pattern in async_patterns:
             if pattern in call_name:
                 # Check if this call is awaited
-                parent = getattr(node, 'parent', None)
+                parent = getattr(node, "parent", None)
                 if not isinstance(parent, ast.Await):
-                    self.suggestions.append({
-                        'type': 'potentially_unawaited',
-                        'message': f"Call to '{call_name}' might need await",
-                        'line': node.lineno
-                    })
+                    self.suggestions.append({"type": "potentially_unawaited", "message": f"Call to '{call_name}' might need await", "line": node.lineno})
                     break
 
     def _get_call_name(self, node):
@@ -184,7 +169,7 @@ if __name__ == "__main__":
     validator = AsyncCodeValidator()
     results = validator.validate_directory(args.source)
 
-    with open(args.report, 'w') as f:
+    with open(args.report, "w") as f:
         json.dump(results, f, indent=4)
 
     print(f"Validation report saved to {args.report}")

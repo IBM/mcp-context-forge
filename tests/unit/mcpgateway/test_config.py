@@ -186,11 +186,10 @@ def test_get_settings_is_lru_cached(mock_settings):
 #                       Keep the user-supplied baseline                       #
 # --------------------------------------------------------------------------- #
 def test_settings_default_values():
-
     dummy_env = {
         "JWT_SECRET_KEY": "x" * 32,  # required, at least 32 chars
         "AUTH_ENCRYPTION_SECRET": "dummy-secret",
-        "APP_DOMAIN": "http://localhost"
+        "APP_DOMAIN": "http://localhost",
     }
 
     with patch.dict(os.environ, dummy_env, clear=True):

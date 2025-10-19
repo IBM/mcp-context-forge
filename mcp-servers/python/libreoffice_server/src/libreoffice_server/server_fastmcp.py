@@ -12,14 +12,13 @@ Supports conversion between various document formats including PDF, DOCX, ODT, H
 Powered by FastMCP for enhanced type safety and automatic validation.
 """
 
-import json
 import logging
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -45,12 +44,12 @@ class LibreOfficeConverter:
     def _find_libreoffice(self) -> str:
         """Find LibreOffice executable."""
         possible_commands = [
-            'libreoffice',
-            'libreoffice7.0',
-            'libreoffice6.4',
-            '/usr/bin/libreoffice',
-            '/opt/libreoffice/program/soffice',
-            'soffice'
+            "libreoffice",
+            "libreoffice7.0",
+            "libreoffice6.4",
+            "/usr/bin/libreoffice",
+            "/opt/libreoffice/program/soffice",
+            "soffice",
         ]
 
         for cmd in possible_commands:
@@ -59,9 +58,13 @@ class LibreOfficeConverter:
 
         raise RuntimeError("LibreOffice not found. Please install LibreOffice.")
 
-    def convert_document(self, input_file: str, output_format: str,
-                        output_dir: Optional[str] = None,
-                        output_filename: Optional[str] = None) -> Dict[str, Any]:
+    def convert_document(
+        self,
+        input_file: str,
+        output_format: str,
+        output_dir: str | None = None,
+        output_filename: str | None = None,
+    ) -> dict[str, Any]:
         """Convert a document to the specified format."""
         try:
             input_path = Path(input_file)
@@ -79,9 +82,11 @@ class LibreOfficeConverter:
             cmd = [
                 self.libreoffice_cmd,
                 "--headless",
-                "--convert-to", output_format,
+                "--convert-to",
+                output_format,
                 str(input_path),
-                "--outdir", str(output_path)
+                "--outdir",
+                str(output_path),
             ]
 
             logger.info(f"Running command: {' '.join(cmd)}")
@@ -90,7 +95,7 @@ class LibreOfficeConverter:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120  # 2 minute timeout
+                timeout=120,  # 2 minute timeout
             )
 
             if result.returncode != 0:
@@ -98,7 +103,7 @@ class LibreOfficeConverter:
                     "success": False,
                     "error": f"LibreOffice conversion failed: {result.stderr}",
                     "stdout": result.stdout,
-                    "stderr": result.stderr
+                    "stderr": result.stderr,
                 }
 
             # Find the output file
@@ -120,16 +125,16 @@ class LibreOfficeConverter:
                     return {
                         "success": False,
                         "error": f"Output file not found: {expected_output}",
-                        "stdout": result.stdout
+                        "stdout": result.stdout,
                     }
 
             return {
                 "success": True,
-                "message": f"Document converted successfully",
+                "message": "Document converted successfully",
                 "input_file": str(input_path),
                 "output_file": str(expected_output),
                 "output_format": output_format,
-                "file_size": expected_output.stat().st_size
+                "file_size": expected_output.stat().st_size,
             }
 
         except subprocess.TimeoutExpired:
@@ -138,18 +143,16 @@ class LibreOfficeConverter:
             logger.error(f"Error converting document: {e}")
             return {"success": False, "error": str(e)}
 
-    def convert_batch(self, input_files: List[str], output_format: str,
-                     output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def convert_batch(
+        self, input_files: list[str], output_format: str, output_dir: str | None = None
+    ) -> dict[str, Any]:
         """Convert multiple documents."""
         try:
             results = []
 
             for input_file in input_files:
                 result = self.convert_document(input_file, output_format, output_dir)
-                results.append({
-                    "input_file": input_file,
-                    "result": result
-                })
+                results.append({"input_file": input_file, "result": result})
 
             successful = sum(1 for r in results if r["result"]["success"])
             failed = len(results) - successful
@@ -160,15 +163,16 @@ class LibreOfficeConverter:
                 "total_files": len(input_files),
                 "successful": successful,
                 "failed": failed,
-                "results": results
+                "results": results,
             }
 
         except Exception as e:
             logger.error(f"Error in batch conversion: {e}")
             return {"success": False, "error": str(e)}
 
-    def merge_documents(self, input_files: List[str], output_file: str,
-                       output_format: str = "pdf") -> Dict[str, Any]:
+    def merge_documents(
+        self, input_files: list[str], output_file: str, output_format: str = "pdf"
+    ) -> dict[str, Any]:
         """Merge multiple documents into one."""
         try:
             if len(input_files) < 2:
@@ -184,15 +188,13 @@ class LibreOfficeConverter:
 
                 # Convert all files to the target format
                 for input_file in input_files:
-                    result = self.convert_document(
-                        input_file, output_format, temp_dir
-                    )
+                    result = self.convert_document(input_file, output_format, temp_dir)
                     if result["success"]:
                         converted_files.append(result["output_file"])
                     else:
                         return {
                             "success": False,
-                            "error": f"Failed to convert {input_file}: {result['error']}"
+                            "error": f"Failed to convert {input_file}: {result['error']}",
                         }
 
                 # For now, return the list of converted files
@@ -201,14 +203,14 @@ class LibreOfficeConverter:
                     "success": True,
                     "message": "Files converted to same format (manual merge required)",
                     "converted_files": converted_files,
-                    "note": "LibreOffice does not support automated merging via command line. Files have been converted to the same format."
+                    "note": "LibreOffice does not support automated merging via command line. Files have been converted to the same format.",
                 }
 
         except Exception as e:
             logger.error(f"Error merging documents: {e}")
             return {"success": False, "error": str(e)}
 
-    def _merge_pdfs(self, input_files: List[str], output_file: str) -> Dict[str, Any]:
+    def _merge_pdfs(self, input_files: list[str], output_file: str) -> dict[str, Any]:
         """Merge PDF files using external tools if available."""
         # Check if pdftk or similar tools are available
         if shutil.which("pdftk"):
@@ -220,7 +222,7 @@ class LibreOfficeConverter:
                     return {
                         "success": True,
                         "message": "PDFs merged successfully using pdftk",
-                        "output_file": output_file
+                        "output_file": output_file,
                     }
                 else:
                     return {"success": False, "error": f"pdftk failed: {result.stderr}"}
@@ -229,10 +231,10 @@ class LibreOfficeConverter:
 
         return {
             "success": False,
-            "error": "PDF merging requires pdftk or similar tool to be installed"
+            "error": "PDF merging requires pdftk or similar tool to be installed",
         }
 
-    def extract_text(self, input_file: str, output_file: Optional[str] = None) -> Dict[str, Any]:
+    def extract_text(self, input_file: str, output_file: str | None = None) -> dict[str, Any]:
         """Extract text from a document."""
         try:
             input_path = Path(input_file)
@@ -249,13 +251,13 @@ class LibreOfficeConverter:
 
                 # Read the extracted text
                 text_file = Path(result["output_file"])
-                text_content = text_file.read_text(encoding='utf-8', errors='ignore')
+                text_content = text_file.read_text(encoding="utf-8", errors="ignore")
 
                 # Save to output file if specified
                 if output_file:
                     output_path = Path(output_file)
                     output_path.parent.mkdir(parents=True, exist_ok=True)
-                    output_path.write_text(text_content, encoding='utf-8')
+                    output_path.write_text(text_content, encoding="utf-8")
 
                 return {
                     "success": True,
@@ -263,15 +265,17 @@ class LibreOfficeConverter:
                     "input_file": input_file,
                     "output_file": output_file,
                     "text_length": len(text_content),
-                    "text_preview": text_content[:500] + "..." if len(text_content) > 500 else text_content,
-                    "full_text": text_content if len(text_content) <= 10000 else None
+                    "text_preview": text_content[:500] + "..."
+                    if len(text_content) > 500
+                    else text_content,
+                    "full_text": text_content if len(text_content) <= 10000 else None,
                 }
 
         except Exception as e:
             logger.error(f"Error extracting text: {e}")
             return {"success": False, "error": str(e)}
 
-    def get_document_info(self, input_file: str) -> Dict[str, Any]:
+    def get_document_info(self, input_file: str) -> dict[str, Any]:
         """Get information about a document."""
         try:
             input_path = Path(input_file)
@@ -288,18 +292,20 @@ class LibreOfficeConverter:
                 "file_size": stat.st_size,
                 "file_extension": input_path.suffix,
                 "modified_time": stat.st_mtime,
-                "created_time": stat.st_ctime
+                "created_time": stat.st_ctime,
             }
 
             # Try to get more detailed info by converting to text and analyzing
             text_result = self.extract_text(input_file)
             if text_result["success"]:
                 text = text_result["full_text"] or text_result["text_preview"]
-                info.update({
-                    "text_length": len(text),
-                    "word_count": len(text.split()) if text else 0,
-                    "line_count": len(text.splitlines()) if text else 0
-                })
+                info.update(
+                    {
+                        "text_length": len(text),
+                        "word_count": len(text.split()) if text else 0,
+                        "line_count": len(text.splitlines()) if text else 0,
+                    }
+                )
 
             return info
 
@@ -307,24 +313,45 @@ class LibreOfficeConverter:
             logger.error(f"Error getting document info: {e}")
             return {"success": False, "error": str(e)}
 
-    def list_supported_formats(self) -> Dict[str, Any]:
+    def list_supported_formats(self) -> dict[str, Any]:
         """List supported input and output formats."""
         return {
             "success": True,
             "input_formats": [
-                "doc", "docx", "odt", "rtf", "txt", "html", "htm",
-                "xls", "xlsx", "ods", "csv",
-                "ppt", "pptx", "odp",
-                "pdf"
+                "doc",
+                "docx",
+                "odt",
+                "rtf",
+                "txt",
+                "html",
+                "htm",
+                "xls",
+                "xlsx",
+                "ods",
+                "csv",
+                "ppt",
+                "pptx",
+                "odp",
+                "pdf",
             ],
             "output_formats": [
-                "pdf", "docx", "odt", "html", "txt", "rtf",
-                "xlsx", "ods", "csv",
-                "pptx", "odp",
-                "png", "jpg", "svg"
+                "pdf",
+                "docx",
+                "odt",
+                "html",
+                "txt",
+                "rtf",
+                "xlsx",
+                "ods",
+                "csv",
+                "pptx",
+                "odp",
+                "png",
+                "jpg",
+                "svg",
             ],
             "merge_formats": ["pdf"],
-            "note": "Actual supported formats depend on LibreOffice installation"
+            "note": "Actual supported formats depend on LibreOffice installation",
         }
 
 
@@ -340,12 +367,14 @@ except RuntimeError:
 @mcp.tool(description="Convert a document to another format using LibreOffice")
 async def convert_document(
     input_file: str = Field(..., description="Path to the input file"),
-    output_format: str = Field(...,
-                              pattern="^(pdf|docx|odt|html|txt|rtf|xlsx|ods|csv|pptx|odp|png|jpg|svg)$",
-                              description="Target format"),
-    output_dir: Optional[str] = Field(None, description="Output directory (defaults to input dir)"),
-    output_filename: Optional[str] = Field(None, description="Custom output filename")
-) -> Dict[str, Any]:
+    output_format: str = Field(
+        ...,
+        pattern="^(pdf|docx|odt|html|txt|rtf|xlsx|ods|csv|pptx|odp|png|jpg|svg)$",
+        description="Target format",
+    ),
+    output_dir: str | None = Field(None, description="Output directory (defaults to input dir)"),
+    output_filename: str | None = Field(None, description="Custom output filename"),
+) -> dict[str, Any]:
     """Convert a document to another format."""
     if converter is None:
         return {"success": False, "error": "LibreOffice not available"}
@@ -354,65 +383,62 @@ async def convert_document(
         input_file=input_file,
         output_format=output_format,
         output_dir=output_dir,
-        output_filename=output_filename
+        output_filename=output_filename,
     )
 
 
 @mcp.tool(description="Convert multiple documents to the same format")
 async def convert_batch(
-    input_files: List[str] = Field(..., description="List of input file paths"),
-    output_format: str = Field(...,
-                              pattern="^(pdf|docx|odt|html|txt|rtf|xlsx|ods|csv|pptx|odp|png|jpg|svg)$",
-                              description="Target format for all files"),
-    output_dir: Optional[str] = Field(None, description="Output directory")
-) -> Dict[str, Any]:
+    input_files: list[str] = Field(..., description="List of input file paths"),
+    output_format: str = Field(
+        ...,
+        pattern="^(pdf|docx|odt|html|txt|rtf|xlsx|ods|csv|pptx|odp|png|jpg|svg)$",
+        description="Target format for all files",
+    ),
+    output_dir: str | None = Field(None, description="Output directory"),
+) -> dict[str, Any]:
     """Convert multiple documents to the same format."""
     if converter is None:
         return {"success": False, "error": "LibreOffice not available"}
 
     return converter.convert_batch(
-        input_files=input_files,
-        output_format=output_format,
-        output_dir=output_dir
+        input_files=input_files, output_format=output_format, output_dir=output_dir
     )
 
 
 @mcp.tool(description="Merge multiple documents into one file")
 async def merge_documents(
-    input_files: List[str] = Field(..., description="List of input file paths to merge"),
+    input_files: list[str] = Field(..., description="List of input file paths to merge"),
     output_file: str = Field(..., description="Output file path"),
-    output_format: str = Field("pdf", pattern="^(pdf)$", description="Output format (pdf recommended)")
-) -> Dict[str, Any]:
+    output_format: str = Field(
+        "pdf", pattern="^(pdf)$", description="Output format (pdf recommended)"
+    ),
+) -> dict[str, Any]:
     """Merge multiple documents into one."""
     if converter is None:
         return {"success": False, "error": "LibreOffice not available"}
 
     return converter.merge_documents(
-        input_files=input_files,
-        output_file=output_file,
-        output_format=output_format
+        input_files=input_files, output_file=output_file, output_format=output_format
     )
 
 
 @mcp.tool(description="Extract text content from a document")
 async def extract_text(
     input_file: str = Field(..., description="Path to the input file"),
-    output_file: Optional[str] = Field(None, description="Output text file path (optional)")
-) -> Dict[str, Any]:
+    output_file: str | None = Field(None, description="Output text file path (optional)"),
+) -> dict[str, Any]:
     """Extract text from a document."""
     if converter is None:
         return {"success": False, "error": "LibreOffice not available"}
 
-    return converter.extract_text(
-        input_file=input_file,
-        output_file=output_file
-    )
+    return converter.extract_text(input_file=input_file, output_file=output_file)
 
 
 @mcp.tool(description="Get information about a document")
 async def get_document_info(
-    input_file: str = Field(..., description="Path to the input file")
-) -> Dict[str, Any]:
+    input_file: str = Field(..., description="Path to the input file"),
+) -> dict[str, Any]:
     """Get information about a document."""
     if converter is None:
         return {"success": False, "error": "LibreOffice not available"}
@@ -421,7 +447,7 @@ async def get_document_info(
 
 
 @mcp.tool(description="List supported input and output formats")
-async def list_supported_formats() -> Dict[str, Any]:
+async def list_supported_formats() -> dict[str, Any]:
     """List supported formats."""
     if converter is None:
         return {"success": False, "error": "LibreOffice not available"}
@@ -434,8 +460,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="LibreOffice FastMCP Server")
-    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                        help="Transport mode (stdio or http)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
     parser.add_argument("--port", type=int, default=9011, help="HTTP port")
 

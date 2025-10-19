@@ -7,11 +7,9 @@ Authors: Mihai Criveti
 Tests for URL-to-Markdown MCP Server (FastMCP).
 """
 
-import json
+from unittest.mock import AsyncMock, patch
+
 import pytest
-import tempfile
-from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
 
 
 @pytest.mark.asyncio
@@ -72,7 +70,7 @@ async def test_convert_text_to_markdown():
     result = await converter._convert_text_to_markdown(text_content)
 
     assert result["success"] is True
-    assert result["markdown"] == text_content.decode('utf-8')
+    assert result["markdown"] == text_content.decode("utf-8")
     assert result["engine"] == "text"
 
 
@@ -87,7 +85,7 @@ async def test_fetch_url_with_mock():
     mock_response.text = "<html><body><h1>Mocked Page</h1></body></html>"
     mock_response.content = b"<html><body><h1>Mocked Page</h1></body></html>"
 
-    with patch.object(converter, 'get_session') as mock_get_session:
+    with patch.object(converter, "get_session") as mock_get_session:
         mock_client = AsyncMock()
         mock_response.url = "https://example.com"  # Set the URL attribute
         mock_client.get.return_value = mock_response
@@ -123,8 +121,8 @@ async def test_capabilities():
     from url_to_markdown_server.server_fastmcp import converter
 
     # Check that converter is properly initialized
-    assert hasattr(converter, 'html_engines')
-    assert hasattr(converter, 'document_converters')
+    assert hasattr(converter, "html_engines")
+    assert hasattr(converter, "document_converters")
     assert isinstance(converter.html_engines, dict)
     assert isinstance(converter.document_converters, dict)
 

@@ -16,7 +16,7 @@ import json
 import logging
 from pathlib import Path
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 # Local
 from .container_manager import ContainerManager
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MigrationResult:
     """Result of a migration test operation."""
+
     success: bool
     version_from: str
     version_to: str
@@ -56,7 +57,7 @@ class MigrationResult:
             "performance_metrics": self.performance_metrics,
             "alembic_output_length": len(self.alembic_output),
             "schema_before_length": len(self.schema_before),
-            "schema_after_length": len(self.schema_after)
+            "schema_after_length": len(self.schema_after),
         }
 
 
@@ -82,8 +83,7 @@ class MigrationTestRunner:
 
         logger.info("🚀 Initialized MigrationTestRunner")
 
-    def test_forward_migration(self, from_version: str, to_version: str,
-                              test_data: Optional[Dict] = None) -> MigrationResult:
+    def test_forward_migration(self, from_version: str, to_version: str, test_data: Optional[Dict] = None) -> MigrationResult:
         """Test upgrade migration between versions.
 
         Args:
@@ -95,12 +95,9 @@ class MigrationTestRunner:
             Migration test result
         """
         logger.info(f"🔄 Testing FORWARD migration: {from_version} → {to_version}")
-        return self._run_migration_test(
-            from_version, to_version, "upgrade", test_data
-        )
+        return self._run_migration_test(from_version, to_version, "upgrade", test_data)
 
-    def test_reverse_migration(self, from_version: str, to_version: str,
-                              test_data: Optional[Dict] = None) -> MigrationResult:
+    def test_reverse_migration(self, from_version: str, to_version: str, test_data: Optional[Dict] = None) -> MigrationResult:
         """Test downgrade migration between versions.
 
         Args:
@@ -112,12 +109,9 @@ class MigrationTestRunner:
             Migration test result
         """
         logger.info(f"🔙 Testing REVERSE migration: {from_version} → {to_version}")
-        return self._run_migration_test(
-            from_version, to_version, "downgrade", test_data
-        )
+        return self._run_migration_test(from_version, to_version, "downgrade", test_data)
 
-    def test_skip_version_migration(self, from_version: str, to_version: str,
-                                   test_data: Optional[Dict] = None) -> MigrationResult:
+    def test_skip_version_migration(self, from_version: str, to_version: str, test_data: Optional[Dict] = None) -> MigrationResult:
         """Test migration skipping intermediate versions.
 
         Args:
@@ -129,12 +123,9 @@ class MigrationTestRunner:
             Migration test result
         """
         logger.info(f"⏭️ Testing SKIP-VERSION migration: {from_version} → {to_version}")
-        return self._run_migration_test(
-            from_version, to_version, "skip_upgrade", test_data
-        )
+        return self._run_migration_test(from_version, to_version, "skip_upgrade", test_data)
 
-    def _run_migration_test(self, from_version: str, to_version: str,
-                           direction: str, test_data: Optional[Dict] = None) -> MigrationResult:
+    def _run_migration_test(self, from_version: str, to_version: str, direction: str, test_data: Optional[Dict] = None) -> MigrationResult:
         """Run a complete migration test scenario.
 
         Args:
@@ -164,15 +155,15 @@ class MigrationTestRunner:
             # Phase 3: Seed test data if provided
             records_before = {}
             if test_data:
-                logger.info(f"🌱 Phase 3: Seeding test data")
+                logger.info("🌱 Phase 3: Seeding test data")
                 self._seed_test_data(container_id, test_data)
                 records_before = self._count_records(container_id)
                 logger.info(f"📊 Record counts before migration: {records_before}")
             else:
-                logger.info(f"ℹ️ Phase 3: No test data to seed")
+                logger.info("ℹ️ Phase 3: No test data to seed")
 
             # Phase 4: Capture pre-migration state
-            logger.info(f"📋 Phase 4: Capturing pre-migration state")
+            logger.info("📋 Phase 4: Capturing pre-migration state")
             schema_before = self.container_manager.get_database_schema(container_id, "sqlite")
             logger.info(f"✅ Pre-migration schema captured ({len(schema_before)} chars)")
 
@@ -191,25 +182,21 @@ class MigrationTestRunner:
             # Let's give it time to complete the migration
             time.sleep(5)
             migration_output = f"Application automatically migrated database from {from_version} to {to_version}"
-            logger.info(f"✅ Migration completed automatically by application")
+            logger.info("✅ Migration completed automatically by application")
 
             # Phase 7: Capture post-migration state
-            logger.info(f"📋 Phase 7: Capturing post-migration state")
+            logger.info("📋 Phase 7: Capturing post-migration state")
             schema_after = self.container_manager.get_database_schema(container_id, "sqlite")
             records_after = self._count_records(container_id) if test_data else {}
             logger.info(f"📊 Record counts after migration: {records_after}")
 
             # Phase 8: Validate data integrity
-            logger.info(f"🔍 Phase 8: Validating data integrity")
-            data_integrity = self._validate_data_integrity(
-                container_id, records_before, records_after
-            )
+            logger.info("🔍 Phase 8: Validating data integrity")
+            data_integrity = self._validate_data_integrity(container_id, records_before, records_after)
 
             # Phase 9: Calculate performance metrics
             execution_time = time.time() - start_time
-            performance_metrics = self._calculate_performance_metrics(
-                container_id, execution_time, len(schema_before), len(schema_after)
-            )
+            performance_metrics = self._calculate_performance_metrics(container_id, execution_time, len(schema_before), len(schema_after))
 
             logger.info(f"✅ Migration test completed successfully in {execution_time:.2f}s")
 
@@ -225,7 +212,7 @@ class MigrationTestRunner:
                 alembic_output=migration_output,
                 records_before=records_before,
                 records_after=records_after,
-                performance_metrics=performance_metrics
+                performance_metrics=performance_metrics,
             )
 
         except Exception as e:
@@ -251,9 +238,9 @@ class MigrationTestRunner:
                 data_integrity_check=False,
                 migration_direction=direction,
                 error_message=error_details,
-                records_before=records_before if 'records_before' in locals() else {},
+                records_before=records_before if "records_before" in locals() else {},
                 records_after={},
-                performance_metrics={}
+                performance_metrics={},
             )
 
         finally:
@@ -264,8 +251,7 @@ class MigrationTestRunner:
         self.results.append(result)
         return result
 
-    def _execute_migration(self, container_id: str, direction: str,
-                          from_version: str, to_version: str) -> str:
+    def _execute_migration(self, container_id: str, direction: str, from_version: str, to_version: str) -> str:
         """Execute the appropriate migration command.
 
         Args:
@@ -279,13 +265,13 @@ class MigrationTestRunner:
         """
         if direction in ["upgrade", "skip_upgrade"]:
             command = "upgrade head"
-            logger.info(f"⬆️ Running upgrade migration to latest schema")
+            logger.info("⬆️ Running upgrade migration to latest schema")
         elif direction == "downgrade":
             # Find the target revision for downgrade
             # For now, we'll use a simple approach - in production this would
             # need more sophisticated revision mapping
-            command = f"downgrade -1"  # Downgrade by one revision
-            logger.info(f"⬇️ Running downgrade migration")
+            command = "downgrade -1"  # Downgrade by one revision
+            logger.info("⬇️ Running downgrade migration")
         else:
             raise ValueError(f"Unknown migration direction: {direction}")
 
@@ -293,11 +279,11 @@ class MigrationTestRunner:
         output = self.container_manager.exec_alembic_command(container_id, command)
 
         if "ERROR" in output or "FAILED" in output:
-            logger.error(f"❌ Migration command failed")
+            logger.error("❌ Migration command failed")
             logger.error(f"📤 Alembic output: {output}")
             raise RuntimeError(f"Alembic migration failed: {output}")
 
-        logger.info(f"✅ Migration command completed successfully")
+        logger.info("✅ Migration command completed successfully")
         return output
 
     def _seed_test_data(self, container_id: str, test_data: Dict) -> None:
@@ -307,9 +293,7 @@ class MigrationTestRunner:
             container_id: Target container ID
             test_data: Dictionary containing test data
         """
-        logger.info(f"🌱 Seeding test data via API: {len(test_data.get('tools', []))} tools, "
-                   f"{len(test_data.get('servers', []))} servers, "
-                   f"{len(test_data.get('gateways', []))} gateways")
+        logger.info(f"🌱 Seeding test data via API: {len(test_data.get('tools', []))} tools, {len(test_data.get('servers', []))} servers, {len(test_data.get('gateways', []))} gateways")
 
         # Get container port
         port = self.container_manager._get_container_port(container_id, "4444")
@@ -318,11 +302,12 @@ class MigrationTestRunner:
         # Seed data using REST API
         # Third-Party
         import requests
+
         session = requests.Session()
         session.timeout = 10
 
         # Add tools
-        for tool in test_data.get('tools', []):
+        for tool in test_data.get("tools", []):
             try:
                 response = session.post(f"{base_url}/tools", json=tool)
                 response.raise_for_status()
@@ -331,7 +316,7 @@ class MigrationTestRunner:
                 logger.warning(f"⚠️ Failed to add tool {tool.get('name', 'unnamed')}: {e}")
 
         # Add servers
-        for server in test_data.get('servers', []):
+        for server in test_data.get("servers", []):
             try:
                 response = session.post(f"{base_url}/servers", json=server)
                 response.raise_for_status()
@@ -340,7 +325,7 @@ class MigrationTestRunner:
                 logger.warning(f"⚠️ Failed to add server {server.get('name', 'unnamed')}: {e}")
 
         # Add gateways
-        for gateway in test_data.get('gateways', []):
+        for gateway in test_data.get("gateways", []):
             try:
                 response = session.post(f"{base_url}/gateways", json=gateway)
                 response.raise_for_status()
@@ -348,7 +333,7 @@ class MigrationTestRunner:
             except Exception as e:
                 logger.warning(f"⚠️ Failed to add gateway {gateway.get('name', 'unnamed')}: {e}")
 
-        logger.info(f"✅ Test data seeding completed via API")
+        logger.info("✅ Test data seeding completed via API")
 
     def _count_records(self, container_id: str) -> Dict[str, int]:
         """Count records via REST API endpoints.
@@ -359,7 +344,7 @@ class MigrationTestRunner:
         Returns:
             Dictionary mapping entity types to record counts
         """
-        logger.debug(f"📊 Counting records via API")
+        logger.debug("📊 Counting records via API")
 
         # Get container port
         port = self.container_manager._get_container_port(container_id, "4444")
@@ -368,18 +353,12 @@ class MigrationTestRunner:
         # Count records using REST API
         # Third-Party
         import requests
+
         session = requests.Session()
         session.timeout = 10
 
         counts = {}
-        endpoints = {
-            "tools": "/tools",
-            "servers": "/servers",
-            "gateways": "/gateways",
-            "resources": "/resources",
-            "prompts": "/prompts",
-            "a2a_agents": "/a2a"
-        }
+        endpoints = {"tools": "/tools", "servers": "/servers", "gateways": "/gateways", "resources": "/resources", "prompts": "/prompts", "a2a_agents": "/a2a"}
 
         for entity_type, endpoint in endpoints.items():
             try:
@@ -389,8 +368,8 @@ class MigrationTestRunner:
                 # API typically returns a list of items
                 if isinstance(data, list):
                     counts[entity_type] = len(data)
-                elif isinstance(data, dict) and 'items' in data:
-                    counts[entity_type] = len(data['items'])
+                elif isinstance(data, dict) and "items" in data:
+                    counts[entity_type] = len(data["items"])
                 else:
                     counts[entity_type] = 0
                 logger.debug(f"📊 {entity_type}: {counts[entity_type]} records")
@@ -400,9 +379,7 @@ class MigrationTestRunner:
 
         return counts
 
-    def _validate_data_integrity(self, container_id: str,
-                               records_before: Dict[str, int],
-                               records_after: Dict[str, int]) -> bool:
+    def _validate_data_integrity(self, container_id: str, records_before: Dict[str, int], records_after: Dict[str, int]) -> bool:
         """Validate data integrity after migration.
 
         Args:
@@ -413,10 +390,10 @@ class MigrationTestRunner:
         Returns:
             True if data integrity is maintained
         """
-        logger.info(f"🔍 Validating data integrity")
+        logger.info("🔍 Validating data integrity")
 
         if not records_before:
-            logger.info(f"ℹ️ No baseline data to compare - integrity check passed")
+            logger.info("ℹ️ No baseline data to compare - integrity check passed")
             return True
 
         integrity_ok = True
@@ -438,16 +415,20 @@ class MigrationTestRunner:
         try:
             # For application-level migrations, verify the API is responding correctly
             # This indicates the database schema and relationships are working
-            logger.info(f"🔍 Verifying application database integrity via REST API")
+            logger.info("🔍 Verifying application database integrity via REST API")
 
             # Test basic API endpoints to ensure database relationships work using python3
-            health_result = self.container_manager._run_command([
-                self.container_manager.runtime, "exec", container_id,
-                "python3", "-c",
-                "import urllib.request; "
-                "resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); "
-                "print(resp.read().decode())"
-            ], capture_output=True)
+            health_result = self.container_manager._run_command(
+                [
+                    self.container_manager.runtime,
+                    "exec",
+                    container_id,
+                    "python3",
+                    "-c",
+                    "import urllib.request; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); print(resp.read().decode())",
+                ],
+                capture_output=True,
+            )
 
             # Test that we can read from all main tables via API
             test_endpoints = ["tools", "servers", "gateways", "resources", "prompts"]
@@ -455,13 +436,18 @@ class MigrationTestRunner:
 
             for endpoint in test_endpoints:
                 try:
-                    api_result = self.container_manager._run_command([
-                        self.container_manager.runtime, "exec", container_id,
-                        "python3", "-c",
-                        f"import urllib.request; "
-                        f"resp = urllib.request.urlopen('http://localhost:4444/{endpoint}', timeout=5); "
-                        f"print(resp.read().decode())"
-                    ], capture_output=True, check=False)
+                    api_result = self.container_manager._run_command(
+                        [
+                            self.container_manager.runtime,
+                            "exec",
+                            container_id,
+                            "python3",
+                            "-c",
+                            f"import urllib.request; resp = urllib.request.urlopen('http://localhost:4444/{endpoint}', timeout=5); print(resp.read().decode())",
+                        ],
+                        capture_output=True,
+                        check=False,
+                    )
 
                     if api_result.returncode != 0:
                         logger.warning(f"⚠️ API endpoint {endpoint} not responding correctly")
@@ -473,23 +459,22 @@ class MigrationTestRunner:
                     logger.debug(f"ℹ️ Could not test {endpoint} endpoint: {e}")
 
             if health_result.returncode == 0:
-                logger.info(f"✅ Application database integrity verified via health check")
+                logger.info("✅ Application database integrity verified via health check")
             else:
-                logger.warning(f"⚠️ Application health check failed, but allowing data integrity to pass")
+                logger.warning("⚠️ Application health check failed, but allowing data integrity to pass")
 
         except Exception as e:
             logger.warning(f"⚠️ Could not verify application database integrity: {e}")
             # Don't fail the integrity check for API issues in application-level migrations
 
         if integrity_ok:
-            logger.info(f"✅ Data integrity validation passed")
+            logger.info("✅ Data integrity validation passed")
         else:
-            logger.error(f"❌ Data integrity validation failed")
+            logger.error("❌ Data integrity validation failed")
 
         return integrity_ok
 
-    def _calculate_performance_metrics(self, container_id: str, execution_time: float,
-                                     schema_before_size: int, schema_after_size: int) -> Dict[str, float]:
+    def _calculate_performance_metrics(self, container_id: str, execution_time: float, schema_before_size: int, schema_after_size: int) -> Dict[str, float]:
         """Calculate performance metrics for the migration.
 
         Args:
@@ -501,45 +486,44 @@ class MigrationTestRunner:
         Returns:
             Dictionary of performance metrics
         """
-        logger.debug(f"📊 Calculating performance metrics")
+        logger.debug("📊 Calculating performance metrics")
 
         metrics = {
             "execution_time_seconds": execution_time,
             "schema_size_before": schema_before_size,
             "schema_size_after": schema_after_size,
-            "schema_size_delta": schema_after_size - schema_before_size
+            "schema_size_delta": schema_after_size - schema_before_size,
         }
 
         # Try to get container resource usage
         try:
-            stats_result = self.container_manager._run_command([
-                self.container_manager.runtime, "stats", "--no-stream", "--format",
-                "table {{.CPUPerc}},{{.MemUsage}}", container_id
-            ], capture_output=True, check=False)
+            stats_result = self.container_manager._run_command(
+                [self.container_manager.runtime, "stats", "--no-stream", "--format", "table {{.CPUPerc}},{{.MemUsage}}", container_id], capture_output=True, check=False
+            )
 
             if stats_result.returncode == 0 and stats_result.stdout:
-                lines = stats_result.stdout.strip().split('\n')
+                lines = stats_result.stdout.strip().split("\n")
                 if len(lines) > 1:  # Skip header
                     stats_line = lines[1]
-                    if ',' in stats_line:
-                        cpu_str, mem_str = stats_line.split(',', 1)
+                    if "," in stats_line:
+                        cpu_str, mem_str = stats_line.split(",", 1)
                         # Parse CPU percentage
-                        if '%' in cpu_str:
+                        if "%" in cpu_str:
                             try:
-                                metrics["cpu_percent"] = float(cpu_str.replace('%', '').strip())
+                                metrics["cpu_percent"] = float(cpu_str.replace("%", "").strip())
                             except:
                                 pass
                         # Parse memory usage
-                        if '/' in mem_str:
+                        if "/" in mem_str:
                             try:
-                                mem_used = mem_str.split('/')[0].strip()
+                                mem_used = mem_str.split("/")[0].strip()
                                 # Convert various units to MB
-                                if 'GiB' in mem_used:
-                                    metrics["memory_mb"] = float(mem_used.replace('GiB', '').strip()) * 1024
-                                elif 'MiB' in mem_used:
-                                    metrics["memory_mb"] = float(mem_used.replace('MiB', '').strip())
-                                elif 'MB' in mem_used:
-                                    metrics["memory_mb"] = float(mem_used.replace('MB', '').strip())
+                                if "GiB" in mem_used:
+                                    metrics["memory_mb"] = float(mem_used.replace("GiB", "").strip()) * 1024
+                                elif "MiB" in mem_used:
+                                    metrics["memory_mb"] = float(mem_used.replace("MiB", "").strip())
+                                elif "MB" in mem_used:
+                                    metrics["memory_mb"] = float(mem_used.replace("MB", "").strip())
                             except:
                                 pass
 
@@ -553,8 +537,7 @@ class MigrationTestRunner:
         logger.debug(f"📊 Performance metrics: {metrics}")
         return metrics
 
-    def run_full_migration_matrix(self, include_reverse: bool = True,
-                                 include_skip: bool = True) -> Dict[str, List[MigrationResult]]:
+    def run_full_migration_matrix(self, include_reverse: bool = True, include_skip: bool = True) -> Dict[str, List[MigrationResult]]:
         """Run complete migration test matrix.
 
         Args:
@@ -564,23 +547,19 @@ class MigrationTestRunner:
         Returns:
             Dictionary of test results organized by category
         """
-        logger.info(f"🚀 Starting full migration test matrix")
+        logger.info("🚀 Starting full migration test matrix")
         logger.info(f"📋 Settings: reverse={include_reverse}, skip={include_skip}")
 
         versions = self.container_manager.AVAILABLE_VERSIONS
         logger.info(f"🔢 Testing with versions: {versions}")
 
-        results = {
-            "forward_migrations": [],
-            "reverse_migrations": [],
-            "skip_migrations": []
-        }
+        results = {"forward_migrations": [], "reverse_migrations": [], "skip_migrations": []}
 
         # Generate test data for all scenarios
         test_data = self._generate_test_data()
 
         # Forward migrations (sequential version upgrades)
-        logger.info(f"⬆️ Testing forward migrations")
+        logger.info("⬆️ Testing forward migrations")
         for i in range(len(versions) - 1):
             from_ver, to_ver = versions[i], versions[i + 1]
             logger.info(f"🔄 Testing {from_ver} → {to_ver}")
@@ -599,7 +578,7 @@ class MigrationTestRunner:
 
         # Reverse migrations (sequential version downgrades)
         if include_reverse:
-            logger.info(f"⬇️ Testing reverse migrations")
+            logger.info("⬇️ Testing reverse migrations")
             for i in range(len(versions) - 1, 0, -1):
                 from_ver, to_ver = versions[i], versions[i - 1]
                 logger.info(f"🔄 Testing {from_ver} → {to_ver}")
@@ -618,12 +597,12 @@ class MigrationTestRunner:
 
         # Skip version migrations
         if include_skip:
-            logger.info(f"⏭️ Testing skip-version migrations")
+            logger.info("⏭️ Testing skip-version migrations")
             skip_pairs = [
                 ("0.2.0", "0.4.0"),  # Skip 0.3.0
                 ("0.3.0", "0.6.0"),  # Skip 0.4.0, 0.5.0
-                ("0.4.0", "latest"), # Skip 0.5.0, 0.6.0
-                ("0.2.0", "latest")  # Skip all intermediate versions
+                ("0.4.0", "latest"),  # Skip 0.5.0, 0.6.0
+                ("0.2.0", "latest"),  # Skip all intermediate versions
             ]
 
             for from_ver, to_ver in skip_pairs:
@@ -643,18 +622,15 @@ class MigrationTestRunner:
                         logger.error(f"❌ {from_ver} ⏭️ {to_ver} EXCEPTION: {e}")
 
         # Summary
-        total_tests = (len(results["forward_migrations"]) +
-                      len(results["reverse_migrations"]) +
-                      len(results["skip_migrations"]))
+        total_tests = len(results["forward_migrations"]) + len(results["reverse_migrations"]) + len(results["skip_migrations"])
 
-        successful_tests = sum(1 for result_list in results.values()
-                              for result in result_list if result.success)
+        successful_tests = sum(1 for result_list in results.values() for result in result_list if result.success)
 
-        logger.info(f"📊 Migration matrix completed:")
+        logger.info("📊 Migration matrix completed:")
         logger.info(f"   Total tests: {total_tests}")
         logger.info(f"   Successful: {successful_tests}")
         logger.info(f"   Failed: {total_tests - successful_tests}")
-        logger.info(f"   Success rate: {successful_tests/total_tests*100:.1f}%")
+        logger.info(f"   Success rate: {successful_tests / total_tests * 100:.1f}%")
 
         return results
 
@@ -664,7 +640,7 @@ class MigrationTestRunner:
         Returns:
             Dictionary containing test data for seeding
         """
-        logger.info(f"🎲 Generating test data for migration scenarios")
+        logger.info("🎲 Generating test data for migration scenarios")
 
         test_data = {
             "tools": [
@@ -672,41 +648,27 @@ class MigrationTestRunner:
                     "name": "migration_test_tool_1",
                     "description": "Test tool for migration validation",
                     "schema": {"type": "object", "properties": {"param": {"type": "string"}}},
-                    "annotations": {"category": "test", "priority": "high"}
+                    "annotations": {"category": "test", "priority": "high"},
                 },
                 {
                     "name": "migration_test_tool_2",
                     "description": "Another test tool with complex schema",
-                    "schema": {
-                        "type": "object",
-                        "properties": {
-                            "items": {"type": "array", "items": {"type": "string"}},
-                            "config": {"type": "object", "additionalProperties": True}
-                        }
-                    },
-                    "annotations": {"category": "test", "version": "1.0"}
-                }
+                    "schema": {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "string"}}, "config": {"type": "object", "additionalProperties": True}}},
+                    "annotations": {"category": "test", "version": "1.0"},
+                },
             ],
-            "servers": [
-                {
-                    "name": "migration_test_server",
-                    "description": "Test server for migration validation",
-                    "transport": "sse",
-                    "annotations": {"environment": "test"}
-                }
-            ],
+            "servers": [{"name": "migration_test_server", "description": "Test server for migration validation", "transport": "sse", "annotations": {"environment": "test"}}],
             "gateways": [
                 {
                     "name": "migration_test_gateway",
                     "base_url": "http://test-gateway.example.com",
                     "description": "Test gateway for federation testing",
-                    "annotations": {"region": "test", "type": "migration"}
+                    "annotations": {"region": "test", "type": "migration"},
                 }
-            ]
+            ],
         }
 
-        logger.info(f"✅ Generated test data: {len(test_data['tools'])} tools, "
-                   f"{len(test_data['servers'])} servers, {len(test_data['gateways'])} gateways")
+        logger.info(f"✅ Generated test data: {len(test_data['tools'])} tools, {len(test_data['servers'])} servers, {len(test_data['gateways'])} gateways")
 
         return test_data
 
@@ -723,15 +685,15 @@ class MigrationTestRunner:
                 "total_tests": len(self.results),
                 "successful_tests": sum(1 for r in self.results if r.success),
                 "timestamp": time.time(),
-                "container_runtime": self.container_manager.runtime
+                "container_runtime": self.container_manager.runtime,
             },
-            "results": [result.to_dict() for result in self.results]
+            "results": [result.to_dict() for result in self.results],
         }
 
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(results_data, f, indent=2)
 
         logger.info(f"✅ Results saved to {output_file}")

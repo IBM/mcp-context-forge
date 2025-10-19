@@ -8,14 +8,14 @@ Comprehensive tests for Personal Team Service functionality.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailUser
 from mcpgateway.services.personal_team_service import PersonalTeamService
 
 
@@ -82,12 +82,12 @@ class TestPersonalTeamService:
     def test_service_has_required_methods(self, service):
         """Test that service has all required methods."""
         required_methods = [
-            'create_personal_team',
-            'get_personal_team',
-            'ensure_personal_team',
-            'is_personal_team',
-            'delete_personal_team',
-            'get_personal_team_owner',
+            "create_personal_team",
+            "get_personal_team",
+            "ensure_personal_team",
+            "is_personal_team",
+            "delete_personal_team",
+            "get_personal_team_owner",
         ]
 
         for method_name in required_methods:
@@ -104,10 +104,11 @@ class TestPersonalTeamService:
         # Setup: No existing team
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        with patch('mcpgateway.services.personal_team_service.EmailTeam') as MockTeam, \
-             patch('mcpgateway.services.personal_team_service.EmailTeamMember') as MockMember, \
-             patch('mcpgateway.services.personal_team_service.utc_now') as mock_utc_now:
-
+        with (
+            patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.personal_team_service.EmailTeamMember") as MockMember,
+            patch("mcpgateway.services.personal_team_service.utc_now") as mock_utc_now,
+        ):
             mock_team = MagicMock()
             mock_team.id = "new-team-id"
             mock_team.name = "Test User's Team"
@@ -133,13 +134,7 @@ class TestPersonalTeamService:
             assert mock_db.flush.call_count == 2
 
             # Verify membership creation
-            MockMember.assert_called_once_with(
-                team_id="new-team-id",
-                user_email="testuser@example.com",
-                role="owner",
-                joined_at=mock_utc_now.return_value,
-                is_active=True
-            )
+            MockMember.assert_called_once_with(team_id="new-team-id", user_email="testuser@example.com", role="owner", joined_at=mock_utc_now.return_value, is_active=True)
 
             # Verify commit
             mock_db.commit.assert_called_once()
@@ -166,9 +161,7 @@ class TestPersonalTeamService:
 
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        with patch('mcpgateway.services.personal_team_service.EmailTeam') as MockTeam, \
-             patch('mcpgateway.services.personal_team_service.EmailTeamMember'):
-
+        with patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam, patch("mcpgateway.services.personal_team_service.EmailTeamMember"):
             mock_team = MagicMock()
             mock_team.id = "special-team-id"
             MockTeam.return_value = mock_team
@@ -179,8 +172,8 @@ class TestPersonalTeamService:
             MockTeam.assert_called_once()
             call_args = MockTeam.call_args[1]
             # The '+' character is preserved in the slug
-            assert call_args['slug'] == "personal-test+special-user-sub-example-com"
-            assert call_args['name'] == "Special User's Team"
+            assert call_args["slug"] == "personal-test+special-user-sub-example-com"
+            assert call_args["name"] == "Special User's Team"
 
     @pytest.mark.asyncio
     async def test_create_personal_team_database_error(self, service, mock_db, mock_user):
@@ -188,9 +181,7 @@ class TestPersonalTeamService:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db.commit.side_effect = Exception("Database error")
 
-        with patch('mcpgateway.services.personal_team_service.EmailTeam'), \
-             patch('mcpgateway.services.personal_team_service.EmailTeamMember'):
-
+        with patch("mcpgateway.services.personal_team_service.EmailTeam"), patch("mcpgateway.services.personal_team_service.EmailTeamMember"):
             with pytest.raises(Exception, match="Database error"):
                 await service.create_personal_team(mock_user)
 
@@ -236,7 +227,7 @@ class TestPersonalTeamService:
     @pytest.mark.asyncio
     async def test_ensure_personal_team_existing(self, service, mock_user, mock_personal_team):
         """Test ensure personal team when team already exists."""
-        with patch.object(service, 'get_personal_team', new_callable=AsyncMock) as mock_get:
+        with patch.object(service, "get_personal_team", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_personal_team
 
             result = await service.ensure_personal_team(mock_user)
@@ -247,9 +238,7 @@ class TestPersonalTeamService:
     @pytest.mark.asyncio
     async def test_ensure_personal_team_create_new(self, service, mock_user, mock_personal_team):
         """Test ensure personal team creates new team when none exists."""
-        with patch.object(service, 'get_personal_team', new_callable=AsyncMock) as mock_get, \
-             patch.object(service, 'create_personal_team', new_callable=AsyncMock) as mock_create:
-
+        with patch.object(service, "get_personal_team", new_callable=AsyncMock) as mock_get, patch.object(service, "create_personal_team", new_callable=AsyncMock) as mock_create:
             mock_get.return_value = None  # No existing team
             mock_create.return_value = mock_personal_team
 
@@ -262,9 +251,7 @@ class TestPersonalTeamService:
     @pytest.mark.asyncio
     async def test_ensure_personal_team_creation_fails_then_succeeds(self, service, mock_user, mock_personal_team):
         """Test ensure personal team when creation fails with ValueError but team exists."""
-        with patch.object(service, 'get_personal_team', new_callable=AsyncMock) as mock_get, \
-             patch.object(service, 'create_personal_team', new_callable=AsyncMock) as mock_create:
-
+        with patch.object(service, "get_personal_team", new_callable=AsyncMock) as mock_get, patch.object(service, "create_personal_team", new_callable=AsyncMock) as mock_create:
             # First call returns None, second call returns the team
             mock_get.side_effect = [None, mock_personal_team]
             mock_create.side_effect = ValueError("Team already exists")
@@ -278,9 +265,7 @@ class TestPersonalTeamService:
     @pytest.mark.asyncio
     async def test_ensure_personal_team_complete_failure(self, service, mock_user):
         """Test ensure personal team when both creation and retrieval fail."""
-        with patch.object(service, 'get_personal_team', new_callable=AsyncMock) as mock_get, \
-             patch.object(service, 'create_personal_team', new_callable=AsyncMock) as mock_create:
-
+        with patch.object(service, "get_personal_team", new_callable=AsyncMock) as mock_get, patch.object(service, "create_personal_team", new_callable=AsyncMock) as mock_create:
             mock_get.side_effect = [None, None]  # Team not found both times
             mock_create.side_effect = ValueError("Team already exists")
 
@@ -342,7 +327,7 @@ class TestPersonalTeamService:
     @pytest.mark.asyncio
     async def test_delete_personal_team_not_allowed(self, service):
         """Test that personal teams cannot be deleted."""
-        with patch.object(service, 'is_personal_team') as mock_check:
+        with patch.object(service, "is_personal_team") as mock_check:
             mock_check.return_value = True
 
             with pytest.raises(ValueError, match="Personal teams cannot be deleted"):
@@ -351,7 +336,7 @@ class TestPersonalTeamService:
     @pytest.mark.asyncio
     async def test_delete_non_personal_team(self, service):
         """Test delete operation on non-personal team."""
-        with patch.object(service, 'is_personal_team') as mock_check:
+        with patch.object(service, "is_personal_team") as mock_check:
             mock_check.return_value = False
 
             result = await service.delete_personal_team("regular-team-456")
@@ -413,9 +398,7 @@ class TestPersonalTeamService:
 
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        with patch('mcpgateway.services.personal_team_service.EmailTeam') as MockTeam, \
-             patch('mcpgateway.services.personal_team_service.EmailTeamMember'):
-
+        with patch("mcpgateway.services.personal_team_service.EmailTeam") as MockTeam, patch("mcpgateway.services.personal_team_service.EmailTeamMember"):
             mock_team = MagicMock()
             mock_team.id = "long-email-team"
             MockTeam.return_value = mock_team
@@ -425,7 +408,7 @@ class TestPersonalTeamService:
             assert result == mock_team
             call_args = MockTeam.call_args[1]
             expected_slug = "personal-very-long-email-address-with-many-dots-subdomain-example-com"
-            assert call_args['slug'] == expected_slug
+            assert call_args["slug"] == expected_slug
 
     @pytest.mark.asyncio
     async def test_create_personal_team_rollback_on_flush_error(self, service, mock_db, mock_user):
@@ -433,9 +416,7 @@ class TestPersonalTeamService:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db.flush.side_effect = Exception("Flush failed")
 
-        with patch('mcpgateway.services.personal_team_service.EmailTeam'), \
-             patch('mcpgateway.services.personal_team_service.EmailTeamMember'):
-
+        with patch("mcpgateway.services.personal_team_service.EmailTeam"), patch("mcpgateway.services.personal_team_service.EmailTeamMember"):
             with pytest.raises(Exception, match="Flush failed"):
                 await service.create_personal_team(mock_user)
 
@@ -448,12 +429,10 @@ class TestPersonalTeamService:
         # Simulate race condition: first check shows no team, but creation fails due to concurrent creation
         mock_db.query.return_value.filter.return_value.first.side_effect = [
             None,  # Initial check in create_personal_team
-            MagicMock(id="existing-team")  # After failed creation attempt
+            MagicMock(id="existing-team"),  # After failed creation attempt
         ]
 
-        with patch('mcpgateway.services.personal_team_service.EmailTeam'), \
-             patch('mcpgateway.services.personal_team_service.EmailTeamMember'):
-
+        with patch("mcpgateway.services.personal_team_service.EmailTeam"), patch("mcpgateway.services.personal_team_service.EmailTeamMember"):
             mock_db.commit.side_effect = Exception("UNIQUE constraint failed")
 
             with pytest.raises(Exception, match="UNIQUE constraint failed"):

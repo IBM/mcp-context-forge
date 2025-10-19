@@ -7,8 +7,6 @@ Authors: Mihai Criveti
 Tests for Chunker MCP Server.
 """
 
-import json
-import pytest
 from chunker_server.server_fastmcp import chunker
 
 

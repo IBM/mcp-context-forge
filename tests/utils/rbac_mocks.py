@@ -20,8 +20,6 @@ from typing import Dict, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
-from fastapi import Request
-from fastapi.security import HTTPAuthorizationCredentials
 
 
 def create_mock_user_context(
@@ -248,8 +246,10 @@ class RBACMockManager:
 
             # If custom user provided, create a custom mock function
             if self.custom_user:
+
                 async def custom_user_mock(*args, **kwargs):
                     return self.custom_user
+
                 overrides[get_current_user_with_permissions] = custom_user_mock
 
             self.app.dependency_overrides.update(overrides)
@@ -277,10 +277,12 @@ def mock_require_permission_decorator(permission: str, resource_type: Optional[s
     Returns:
         Callable: A decorator that doesn't perform any permission checks
     """
+
     def decorator(func):
         # Return the function unchanged - no permission checking
         # Don't wrap the function at all to preserve the original signature
         return func
+
     return decorator
 
 
@@ -290,9 +292,11 @@ def mock_require_admin_permission():
     Returns:
         Callable: A decorator that doesn't perform any permission checks
     """
+
     def decorator(func):
         # Return the function unchanged - no admin permission checking
         return func
+
     return decorator
 
 
@@ -306,9 +310,11 @@ def mock_require_any_permission(permissions, resource_type: Optional[str] = None
     Returns:
         Callable: A decorator that doesn't perform any permission checks
     """
+
     def decorator(func):
         # Return the function unchanged - no permission checking
         return func
+
     return decorator
 
 
@@ -328,12 +334,14 @@ def setup_rbac_mocks_for_app(app, custom_user_context: Optional[Dict] = None):
 
     # If custom user context provided, override the user context function
     if custom_user_context:
+
         async def custom_user_mock(*args, **kwargs):
             print(f"DEBUG: custom_user_mock called with args={args}, kwargs={kwargs}")
             return custom_user_context
 
         # First-Party
         from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
         overrides[get_current_user_with_permissions] = custom_user_mock
 
     app.dependency_overrides.update(overrides)
@@ -352,9 +360,9 @@ def patch_rbac_decorators():
 
     # Store original functions
     originals = {
-        'require_permission': rbac_module.require_permission,
-        'require_admin_permission': rbac_module.require_admin_permission,
-        'require_any_permission': rbac_module.require_any_permission,
+        "require_permission": rbac_module.require_permission,
+        "require_admin_permission": rbac_module.require_admin_permission,
+        "require_any_permission": rbac_module.require_any_permission,
     }
 
     # Replace with mock versions
@@ -374,9 +382,9 @@ def restore_rbac_decorators(originals: Dict):
     # First-Party
     import mcpgateway.middleware.rbac as rbac_module
 
-    rbac_module.require_permission = originals['require_permission']
-    rbac_module.require_admin_permission = originals['require_admin_permission']
-    rbac_module.require_any_permission = originals['require_any_permission']
+    rbac_module.require_permission = originals["require_permission"]
+    rbac_module.require_admin_permission = originals["require_admin_permission"]
+    rbac_module.require_any_permission = originals["require_any_permission"]
 
 
 def teardown_rbac_mocks_for_app(app):

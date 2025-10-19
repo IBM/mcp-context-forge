@@ -10,15 +10,12 @@ This module tests the security middleware in isolation without the full app.
 """
 
 # Standard
-from unittest.mock import patch
 
 # Third-Party
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 
 

@@ -33,11 +33,7 @@ def valid_env(tmp_path: Path):
 def invalid_env(tmp_path: Path):
     envfile = tmp_path / ".env"
     # Invalid URL + wrong log level + invalid port
-    envfile.write_text(
-       "APP_DOMAIN=not-a-url\n"
-        "PORT=-1\n"
-        "LOG_LEVEL=wronglevel\n"
-    )
+    envfile.write_text("APP_DOMAIN=not-a-url\nPORT=-1\nLOG_LEVEL=wronglevel\n")
     return envfile
 
 
@@ -47,11 +43,11 @@ def test_validate_env_success_direct(valid_env: Path):
     """
     # Clear any cached settings to ensure test isolation
     from mcpgateway.config import get_settings
+
     get_settings.cache_clear()
 
     # Clear environment variables that might interfere
-    env_vars_to_clear = ['APP_DOMAIN', 'PORT', 'LOG_LEVEL', 'PLATFORM_ADMIN_PASSWORD',
-                        'BASIC_AUTH_PASSWORD', 'JWT_SECRET_KEY', 'AUTH_ENCRYPTION_SECRET']
+    env_vars_to_clear = ["APP_DOMAIN", "PORT", "LOG_LEVEL", "PLATFORM_ADMIN_PASSWORD", "BASIC_AUTH_PASSWORD", "JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"]
 
     with patch.dict(os.environ, {}, clear=False):
         for var in env_vars_to_clear:
@@ -67,11 +63,11 @@ def test_validate_env_failure_direct(invalid_env: Path):
     """
     # Clear any cached settings to ensure test isolation
     from mcpgateway.config import get_settings
+
     get_settings.cache_clear()
 
     # Clear environment variables that might interfere
-    env_vars_to_clear = ['APP_DOMAIN', 'PORT', 'LOG_LEVEL', 'PLATFORM_ADMIN_PASSWORD',
-                        'BASIC_AUTH_PASSWORD', 'JWT_SECRET_KEY', 'AUTH_ENCRYPTION_SECRET']
+    env_vars_to_clear = ["APP_DOMAIN", "PORT", "LOG_LEVEL", "PLATFORM_ADMIN_PASSWORD", "BASIC_AUTH_PASSWORD", "JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"]
 
     with patch.dict(os.environ, {}, clear=False):
         for var in env_vars_to_clear:

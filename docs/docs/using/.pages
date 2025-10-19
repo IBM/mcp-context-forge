@@ -5,6 +5,7 @@ nav:
   - reverse-proxy.md
   - multi-auth-headers.md
   - tool-annotations.md
+  - rest-passthrough.md
   - Clients: clients
   - Agents: agents
   - Servers: servers

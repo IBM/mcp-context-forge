@@ -15,7 +15,6 @@ from unittest.mock import patch
 # Third-Party
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-import pytest
 
 # First-Party
 from mcpgateway.config import settings
@@ -31,7 +30,7 @@ def test_security_headers_can_be_disabled():
     def test_endpoint():
         return {"message": "test"}
 
-    with patch.object(settings, 'security_headers_enabled', False):
+    with patch.object(settings, "security_headers_enabled", False):
         client = TestClient(app)
         response = client.get("/test")
 
@@ -52,12 +51,7 @@ def test_individual_headers_configurable():
         return {"message": "test"}
 
     # Test with some headers disabled
-    with patch.multiple(settings,
-                       security_headers_enabled=True,
-                       x_content_type_options_enabled=False,
-                       x_frame_options="SAMEORIGIN",
-                       x_xss_protection_enabled=False,
-                       x_download_options_enabled=True):
+    with patch.multiple(settings, security_headers_enabled=True, x_content_type_options_enabled=False, x_frame_options="SAMEORIGIN", x_xss_protection_enabled=False, x_download_options_enabled=True):
         client = TestClient(app)
         response = client.get("/test")
 
@@ -79,11 +73,13 @@ def test_hsts_configuration():
         return {"message": "test"}
 
     # Test with custom HSTS settings
-    with patch.multiple(settings,
-                       security_headers_enabled=True,
-                       hsts_enabled=True,
-                       hsts_max_age=7776000,  # 90 days
-                       hsts_include_subdomains=False):
+    with patch.multiple(
+        settings,
+        security_headers_enabled=True,
+        hsts_enabled=True,
+        hsts_max_age=7776000,  # 90 days
+        hsts_include_subdomains=False,
+    ):
         client = TestClient(app)
         response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -103,9 +99,7 @@ def test_hsts_can_be_disabled():
     def test_endpoint():
         return {"message": "test"}
 
-    with patch.multiple(settings,
-                       security_headers_enabled=True,
-                       hsts_enabled=False):
+    with patch.multiple(settings, security_headers_enabled=True, hsts_enabled=False):
         client = TestClient(app)
         response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -123,9 +117,7 @@ def test_server_header_removal_configurable():
         return {"message": "test"}
 
     # Test with server header removal disabled
-    with patch.multiple(settings,
-                       security_headers_enabled=True,
-                       remove_server_headers=False):
+    with patch.multiple(settings, security_headers_enabled=True, remove_server_headers=False):
         client = TestClient(app)
         response = client.get("/test")
 

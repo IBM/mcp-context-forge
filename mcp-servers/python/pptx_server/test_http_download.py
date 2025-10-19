@@ -11,9 +11,9 @@ Test HTTP download functionality.
 # Standard
 import asyncio
 import os
-from pathlib import Path
 import sys
 import threading
+from pathlib import Path
 
 # Third-Party
 import requests
@@ -25,8 +25,9 @@ def start_http_server():
     """Start HTTP server in background."""
     try:
         # Third-Party
-        from pptx_server.http_server import app
         import uvicorn
+
+        from pptx_server.http_server import app
 
         uvicorn.run(app, host="localhost", port=9000, log_level="warning")
     except Exception as e:

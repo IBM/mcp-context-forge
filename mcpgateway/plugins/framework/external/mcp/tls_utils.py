@@ -79,9 +79,12 @@ def create_ssl_context(tls_config: MCPClientTLSConfig, plugin_name: str) -> ssl.
         # - Automatic expiration checking (notBefore/notAfter per RFC 5280)
         ssl_context = ssl.create_default_context()
 
+        # Enforce TLS 1.2 or higher for security
+        ssl_context.minimum_version = ssl.TLSVersion.TLSv1_2
+
         if not tls_config.verify:
             # Disable certificate verification (not recommended for production)
-            logger.warning(f"Certificate verification disabled for plugin '{plugin_name}'. " "This is not recommended for production use.")
+            logger.warning(f"Certificate verification disabled for plugin '{plugin_name}'. This is not recommended for production use.")
             ssl_context.check_hostname = False
             ssl_context.verify_mode = ssl.CERT_NONE  # noqa: DUO122
         else:
@@ -99,7 +102,7 @@ def create_ssl_context(tls_config: MCPClientTLSConfig, plugin_name: str) -> ssl.
             # Hostname verification
             # When enabled, certificate's SAN or CN must match the server hostname
             if not tls_config.check_hostname:
-                logger.warning(f"Hostname verification disabled for plugin '{plugin_name}'. " "This increases risk of MITM attacks.")
+                logger.warning(f"Hostname verification disabled for plugin '{plugin_name}'. This increases risk of MITM attacks.")
                 ssl_context.check_hostname = False
 
         # Load client certificate for mTLS (mutual authentication)
@@ -114,10 +117,7 @@ def create_ssl_context(tls_config: MCPClientTLSConfig, plugin_name: str) -> ssl.
 
         # Log security configuration
         logger.debug(
-            f"SSL context created for plugin '{plugin_name}': "
-            f"verify_mode={ssl_context.verify_mode}, "
-            f"check_hostname={ssl_context.check_hostname}, "
-            f"minimum_version={ssl_context.minimum_version}"
+            f"SSL context created for plugin '{plugin_name}': verify_mode={ssl_context.verify_mode}, check_hostname={ssl_context.check_hostname}, minimum_version={ssl_context.minimum_version}"
         )
 
         return ssl_context

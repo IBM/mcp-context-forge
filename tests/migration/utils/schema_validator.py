@@ -16,7 +16,6 @@ import difflib
 import logging
 from pathlib import Path
 import re
-import tempfile
 from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
@@ -25,6 +24,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TableSchema:
     """Represents a database table schema."""
+
     name: str
     columns: Dict[str, str]  # column_name -> type
     constraints: List[str]
@@ -38,6 +38,7 @@ class TableSchema:
 @dataclass
 class SchemaComparison:
     """Result of comparing two database schemas."""
+
     added_tables: List[str]
     removed_tables: List[str]
     modified_tables: List[str]
@@ -87,7 +88,7 @@ class SchemaValidator:
         statements = self._split_sql_statements(schema_sql)
 
         for statement in statements:
-            if statement.strip().upper().startswith('CREATE TABLE'):
+            if statement.strip().upper().startswith("CREATE TABLE"):
                 table = self._parse_create_table_statement(statement)
                 if table:
                     tables[table.name] = table
@@ -100,12 +101,12 @@ class SchemaValidator:
         """Split SQL dump into individual statements."""
         # Remove comments and normalize whitespace
         lines = []
-        for line in sql.split('\n'):
+        for line in sql.split("\n"):
             line = line.strip()
-            if line and not line.startswith('--') and not line.startswith('/*'):
+            if line and not line.startswith("--") and not line.startswith("/*"):
                 lines.append(line)
 
-        sql_clean = '\n'.join(lines)
+        sql_clean = "\n".join(lines)
 
         # Split on semicolons, but be careful about semicolons in strings
         statements = []
@@ -122,11 +123,11 @@ class SchemaValidator:
                 string_char = char
             elif in_string and char == string_char:
                 # Check if it's escaped
-                if i == 0 or sql_clean[i-1] != '\\':
+                if i == 0 or sql_clean[i - 1] != "\\":
                     in_string = False
                     string_char = None
-            elif not in_string and char == ';':
-                statement = ''.join(current_statement).strip()
+            elif not in_string and char == ";":
+                statement = "".join(current_statement).strip()
                 if statement:
                     statements.append(statement)
                 current_statement = []
@@ -137,7 +138,7 @@ class SchemaValidator:
             i += 1
 
         # Add final statement
-        statement = ''.join(current_statement).strip()
+        statement = "".join(current_statement).strip()
         if statement:
             statements.append(statement)
 
@@ -147,8 +148,7 @@ class SchemaValidator:
         """Parse a CREATE TABLE statement into TableSchema."""
         try:
             # Extract table name
-            match = re.match(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(["`]?)(\w+)\\1',
-                           statement, re.IGNORECASE)
+            match = re.match(r'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(["`]?)(\w+)\\1', statement, re.IGNORECASE)
             if not match:
                 logger.debug(f"Could not extract table name from: {statement[:100]}")
                 return None
@@ -156,14 +156,14 @@ class SchemaValidator:
             table_name = match.group(2)
 
             # Extract column definitions between parentheses
-            paren_start = statement.find('(')
-            paren_end = statement.rfind(')')
+            paren_start = statement.find("(")
+            paren_end = statement.rfind(")")
 
             if paren_start == -1 or paren_end == -1:
                 logger.debug(f"Could not find parentheses in CREATE TABLE: {table_name}")
                 return None
 
-            column_section = statement[paren_start + 1:paren_end]
+            column_section = statement[paren_start + 1 : paren_end]
 
             columns = {}
             constraints = []
@@ -181,7 +181,7 @@ class SchemaValidator:
                 # Check if it's a constraint or column definition
                 if self._is_constraint_definition(col_def):
                     constraints.append(col_def)
-                    if 'FOREIGN KEY' in col_def.upper():
+                    if "FOREIGN KEY" in col_def.upper():
                         foreign_keys.append(col_def)
                 else:
                     # Parse column definition
@@ -192,17 +192,11 @@ class SchemaValidator:
 
                         # Include constraints in column type
                         if len(col_parts) > 2:
-                            col_type += ' ' + ' '.join(col_parts[2:])
+                            col_type += " " + " ".join(col_parts[2:])
 
                         columns[col_name] = col_type
 
-            return TableSchema(
-                name=table_name,
-                columns=columns,
-                constraints=constraints,
-                indexes=indexes,
-                foreign_keys=foreign_keys
-            )
+            return TableSchema(name=table_name, columns=columns, constraints=constraints, indexes=indexes, foreign_keys=foreign_keys)
 
         except Exception as e:
             logger.warning(f"Error parsing CREATE TABLE statement: {e}")
@@ -225,12 +219,12 @@ class SchemaValidator:
                 in_string = False
                 string_char = None
             elif not in_string:
-                if char == '(':
+                if char == "(":
                     paren_depth += 1
-                elif char == ')':
+                elif char == ")":
                     paren_depth -= 1
-                elif char == ',' and paren_depth == 0:
-                    definitions.append(''.join(current_def))
+                elif char == "," and paren_depth == 0:
+                    definitions.append("".join(current_def))
                     current_def = []
                     continue
 
@@ -238,22 +232,18 @@ class SchemaValidator:
 
         # Add final definition
         if current_def:
-            definitions.append(''.join(current_def))
+            definitions.append("".join(current_def))
 
         return definitions
 
     def _is_constraint_definition(self, definition: str) -> bool:
         """Check if a definition is a table constraint rather than column."""
-        constraint_keywords = [
-            'PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE', 'CHECK',
-            'CONSTRAINT', 'INDEX'
-        ]
+        constraint_keywords = ["PRIMARY KEY", "FOREIGN KEY", "UNIQUE", "CHECK", "CONSTRAINT", "INDEX"]
 
         def_upper = definition.upper().strip()
         return any(keyword in def_upper for keyword in constraint_keywords)
 
-    def compare_schemas(self, schema_before: Dict[str, TableSchema],
-                       schema_after: Dict[str, TableSchema]) -> SchemaComparison:
+    def compare_schemas(self, schema_before: Dict[str, TableSchema], schema_after: Dict[str, TableSchema]) -> SchemaComparison:
         """Compare two database schemas and identify changes.
 
         Args:
@@ -313,14 +303,10 @@ class SchemaValidator:
         schema_diff = self._generate_schema_diff(schema_before, schema_after)
 
         # Identify breaking changes and warnings
-        breaking_changes, warnings = self._analyze_breaking_changes(
-            added_tables, removed_tables, removed_columns, modified_columns
-        )
+        breaking_changes, warnings = self._analyze_breaking_changes(added_tables, removed_tables, removed_columns, modified_columns)
 
         # Calculate compatibility score
-        compatibility_score = self._calculate_compatibility_score(
-            schema_before, schema_after, breaking_changes
-        )
+        compatibility_score = self._calculate_compatibility_score(schema_before, schema_after, breaking_changes)
 
         comparison = SchemaComparison(
             added_tables=added_tables,
@@ -332,7 +318,7 @@ class SchemaValidator:
             schema_diff=schema_diff,
             compatibility_score=compatibility_score,
             breaking_changes=breaking_changes,
-            warnings=warnings
+            warnings=warnings,
         )
 
         logger.info(f"✅ Schema comparison completed: compatibility={compatibility_score:.2f}")
@@ -340,8 +326,7 @@ class SchemaValidator:
 
         return comparison
 
-    def _generate_schema_diff(self, schema_before: Dict[str, TableSchema],
-                             schema_after: Dict[str, TableSchema]) -> str:
+    def _generate_schema_diff(self, schema_before: Dict[str, TableSchema], schema_after: Dict[str, TableSchema]) -> str:
         """Generate a unified diff of the schemas."""
 
         def schema_to_lines(schema: Dict[str, TableSchema]) -> List[str]:
@@ -359,18 +344,13 @@ class SchemaValidator:
         before_lines = schema_to_lines(schema_before)
         after_lines = schema_to_lines(schema_after)
 
-        diff_lines = list(difflib.unified_diff(
-            before_lines, after_lines,
-            fromfile='schema_before',
-            tofile='schema_after',
-            lineterm=''
-        ))
+        diff_lines = list(difflib.unified_diff(before_lines, after_lines, fromfile="schema_before", tofile="schema_after", lineterm=""))
 
-        return '\n'.join(diff_lines)
+        return "\n".join(diff_lines)
 
-    def _analyze_breaking_changes(self, added_tables: List[str], removed_tables: List[str],
-                                 removed_columns: Dict[str, List[str]],
-                                 modified_columns: Dict[str, List[str]]) -> Tuple[List[str], List[str]]:
+    def _analyze_breaking_changes(
+        self, added_tables: List[str], removed_tables: List[str], removed_columns: Dict[str, List[str]], modified_columns: Dict[str, List[str]]
+    ) -> Tuple[List[str], List[str]]:
         """Identify breaking changes and warnings."""
         breaking_changes = []
         warnings = []
@@ -397,15 +377,12 @@ class SchemaValidator:
 
         return breaking_changes, warnings
 
-    def _calculate_compatibility_score(self, schema_before: Dict[str, TableSchema],
-                                     schema_after: Dict[str, TableSchema],
-                                     breaking_changes: List[str]) -> float:
+    def _calculate_compatibility_score(self, schema_before: Dict[str, TableSchema], schema_after: Dict[str, TableSchema], breaking_changes: List[str]) -> float:
         """Calculate a compatibility score between 0.0 and 1.0."""
         if not schema_before:
             return 1.0  # No baseline to compare
 
-        total_elements = sum(len(table.columns) + len(table.constraints)
-                           for table in schema_before.values())
+        total_elements = sum(len(table.columns) + len(table.constraints) for table in schema_before.values())
 
         if total_elements == 0:
             return 1.0
@@ -416,8 +393,7 @@ class SchemaValidator:
 
         return max(0.0, min(1.0, compatibility))
 
-    def validate_schema_evolution(self, container_id: str, container_manager,
-                                 expected_tables: Set[str] = None) -> Dict[str, any]:
+    def validate_schema_evolution(self, container_id: str, container_manager, expected_tables: Set[str] = None) -> Dict[str, any]:
         """Validate that schema evolution follows expected patterns.
 
         Args:
@@ -435,13 +411,7 @@ class SchemaValidator:
             schema_sql = container_manager.get_database_schema(container_id, "sqlite")
             current_schema = self.parse_sqlite_schema(schema_sql)
 
-            validation_results = {
-                "valid": True,
-                "errors": [],
-                "warnings": [],
-                "table_count": len(current_schema),
-                "tables": list(current_schema.keys())
-            }
+            validation_results = {"valid": True, "errors": [], "warnings": [], "table_count": len(current_schema), "tables": list(current_schema.keys())}
 
             # Check expected tables if provided
             if expected_tables:
@@ -450,15 +420,11 @@ class SchemaValidator:
                 extra_tables = current_tables - expected_tables
 
                 if missing_tables:
-                    validation_results["errors"].append(
-                        f"Missing expected tables: {missing_tables}"
-                    )
+                    validation_results["errors"].append(f"Missing expected tables: {missing_tables}")
                     validation_results["valid"] = False
 
                 if extra_tables:
-                    validation_results["warnings"].append(
-                        f"Unexpected tables found: {extra_tables}"
-                    )
+                    validation_results["warnings"].append(f"Unexpected tables found: {extra_tables}")
 
             # Validate table structures
             for table_name, table_schema in current_schema.items():
@@ -473,22 +439,14 @@ class SchemaValidator:
 
             missing_core = core_tables - current_tables
             if missing_core:
-                validation_results["warnings"].append(
-                    f"Missing core MCP Gateway tables: {missing_core}"
-                )
+                validation_results["warnings"].append(f"Missing core MCP Gateway tables: {missing_core}")
 
             logger.info(f"✅ Schema validation completed: valid={validation_results['valid']}")
             return validation_results
 
         except Exception as e:
             logger.error(f"❌ Schema validation failed: {e}")
-            return {
-                "valid": False,
-                "errors": [f"Validation exception: {str(e)}"],
-                "warnings": [],
-                "table_count": 0,
-                "tables": []
-            }
+            return {"valid": False, "errors": [f"Validation exception: {str(e)}"], "warnings": [], "table_count": 0, "tables": []}
 
     def _validate_table_structure(self, table_schema: TableSchema) -> List[str]:
         """Validate individual table structure."""
@@ -514,8 +472,7 @@ class SchemaValidator:
 
         return errors
 
-    def save_schema_snapshot(self, schema: Dict[str, TableSchema],
-                           version: str, output_dir: str) -> Path:
+    def save_schema_snapshot(self, schema: Dict[str, TableSchema], version: str, output_dir: str) -> Path:
         """Save schema snapshot to file for future comparison.
 
         Args:
@@ -532,21 +489,13 @@ class SchemaValidator:
         # Convert schema to serializable format
         schema_data = {}
         for table_name, table_schema in schema.items():
-            schema_data[table_name] = {
-                "columns": table_schema.columns,
-                "constraints": table_schema.constraints,
-                "indexes": table_schema.indexes,
-                "foreign_keys": table_schema.foreign_keys
-            }
+            schema_data[table_name] = {"columns": table_schema.columns, "constraints": table_schema.constraints, "indexes": table_schema.indexes, "foreign_keys": table_schema.foreign_keys}
 
         # Standard
         import json
-        with open(output_path, 'w') as f:
-            json.dump({
-                "version": version,
-                "timestamp": time.time(),
-                "tables": schema_data
-            }, f, indent=2)
+
+        with open(output_path, "w") as f:
+            json.dump({"version": version, "timestamp": time.time(), "tables": schema_data}, f, indent=2)
 
         logger.info(f"💾 Saved schema snapshot: {output_path}")
         return output_path
@@ -564,17 +513,14 @@ class SchemaValidator:
 
         # Standard
         import json
-        with open(snapshot_file, 'r') as f:
+
+        with open(snapshot_file, "r") as f:
             data = json.load(f)
 
         schema = {}
         for table_name, table_data in data["tables"].items():
             schema[table_name] = TableSchema(
-                name=table_name,
-                columns=table_data["columns"],
-                constraints=table_data["constraints"],
-                indexes=table_data["indexes"],
-                foreign_keys=table_data["foreign_keys"]
+                name=table_name, columns=table_data["columns"], constraints=table_data["constraints"], indexes=table_data["indexes"], foreign_keys=table_data["foreign_keys"]
             )
 
         logger.info(f"✅ Loaded {len(schema)} tables from snapshot")

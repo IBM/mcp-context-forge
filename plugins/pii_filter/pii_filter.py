@@ -431,7 +431,7 @@ class PIIFilterPlugin(Plugin):
                     all_detections[key] = detections
 
                     if self.pii_config.log_detections:
-                        logger.warning(f"PII detected in prompt argument '{key}': " f"{', '.join(detections.keys())}")
+                        logger.warning(f"PII detected in prompt argument '{key}': {', '.join(detections.keys())}")
 
                     if self.pii_config.block_on_detection:
                         violation = PluginViolation(
@@ -464,7 +464,7 @@ class PIIFilterPlugin(Plugin):
 
         # Return modified payload if PII was masked
         if all_detections:
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=modified_args))
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=modified_args))
 
         return PromptPrehookResult()
 
@@ -494,7 +494,7 @@ class PIIFilterPlugin(Plugin):
                     all_detections[f"message_{message.role}"] = detections
 
                     if self.pii_config.log_detections:
-                        logger.warning(f"PII detected in {message.role} message: " f"{', '.join(detections.keys())}")
+                        logger.warning(f"PII detected in {message.role} message: {', '.join(detections.keys())}")
 
                     # Mask the PII
                     masked_text = self.detector.mask(text, detections)
@@ -808,4 +808,4 @@ class PIIFilterPlugin(Plugin):
 
     async def shutdown(self) -> None:
         """Cleanup when plugin shuts down."""
-        logger.info(f"PII Filter plugin shutting down. " f"Total masked: {self.masked_count} items")
+        logger.info(f"PII Filter plugin shutting down. Total masked: {self.masked_count} items")

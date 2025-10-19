@@ -4,6 +4,254 @@
 
 ---
 
+## [0.9.0] - 2025-10-18 - REST Passthrough, Multi-Tenancy Fixes & Platform Enhancements
+
+### Overview
+
+This release delivers **REST API Passthrough Capabilities**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
+
+- **🔌 REST Passthrough API Fields** - Comprehensive REST tool configuration with query/header mapping, timeouts, and plugin chains
+- **🔐 Multi-Tenancy & RBAC Fixes** - Critical bug fixes for team management, API tokens, and resource access control
+- **🛠️ Developer Experience** - Support bundle generation, LLM chat interface, system metrics, and performance testing
+- **🔒 Security Enhancements** - Plugin mTLS support, CSP headers, cookie scope fixes, and RBAC vulnerability patches
+- **🌐 Platform Support** - s390x architecture support, multiple StreamableHTTP content, and MCP tool output schema
+- **🧪 Quality & Testing** - Complete build pipeline verification, enhanced linting, mutation testing, and fuzzing
+
+### Added
+
+#### **🔌 REST Passthrough Configuration** (#746, #1273)
+* **Query & Header Mapping** - Configure dynamic query parameter and header mappings for REST tools
+* **Path Templates** - Support for URL path templates with variable substitution
+* **Timeout Configuration** - Per-tool timeout settings (default: 20000ms for REST passthrough)
+* **Endpoint Exposure Control** - Toggle passthrough endpoint visibility with `expose_passthrough` flag
+* **Host Allowlists** - Configure allowed upstream hosts/schemes for enhanced security
+* **Plugin Chain Support** - Pre and post-request plugin chains for REST tools
+* **Base URL Extraction** - Automatic extraction of base URL and path template from tool URLs
+* **Admin UI Integration** - "Advanced: Add Passthrough" button in tool creation form with dynamic field generation
+
+#### **🛡️ REST Tool Validation** (#1273)
+* **URL Structure Validation** - Ensures base URLs have valid scheme and netloc
+* **Path Template Validation** - Enforces leading slash in path templates
+* **Timeout Validation** - Validates timeout values are positive integers
+* **Allowlist Validation** - Regex-based validation for allowed hosts/schemes
+* **Plugin Chain Validation** - Restricts plugins to known safe plugins (deny_filter, rate_limit, pii_filter, response_shape, regex_filter, resource_filter)
+* **Integration Type Enforcement** - REST-specific fields only allowed for `integration_type='REST'`
+
+#### **🛠️ Developer & Operations Tools** (#1197, #1202, #1228, #1204)
+* **Support Bundle Generation** (#1197) - Automated diagnostics collection with sanitized logs, configuration, and system information
+  - Command-line tool: `mcpgateway --support-bundle --output-dir /tmp --log-lines 1000`
+  - API endpoint: `GET /admin/support-bundle/generate?log_lines=1000`
+  - Admin UI: "Download Support Bundle" button in Diagnostics tab
+  - Automatic sanitization of secrets (passwords, tokens, API keys)
+* **LLM Chat Interface** (#1202, #1200) - Built-in MCP client with LLM chat service for virtual servers
+  - Agent-enabled tool orchestration with MCP protocol integration
+  - Session consistency using Redis for persistent conversations
+  - Direct testing of virtual servers and tools from the Admin UI
+* **System Statistics in Metrics** (#1228, #1232) - Comprehensive system monitoring in metrics page
+  - CPU, memory, disk usage, and network statistics
+  - Process information and resource consumption
+  - System health indicators for production monitoring
+* **Performance Testing Framework** (#1203, #1204, #1226) - Load testing and benchmarking capabilities
+  - Production-scale load data generator for multi-tenant testing (#1225)
+  - Benchmark MCP server for performance analysis (#1219, #1220, #1221)
+  - Fixed TokenUsageLog SQLite bug in load testing framework
+* **Metrics Export Enhancement** (#1218) - Export all metrics data for external analysis and integration
+
+#### **🔐 SSO & Authentication Enhancements** (#1212, #1213, #1216, #1217)
+* **Microsoft Entra ID Support** (#1212, #1211) - Complete Entra ID integration with environment variable configuration
+* **Generic OIDC Provider Support** (#1213) - Flexible OIDC integration for any compliant provider
+* **Keycloak Integration** (#1217, #1216, #1109) - Full Keycloak support with application/x-www-form-urlencoded
+* **OAuth Timeout Configuration** (#1201) - Configurable `OAUTH_DEFAULT_TIMEOUT` for OAuth providers
+
+#### **🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240)
+* **Plugin Client-Server mTLS Support** (#1196) - Mutual TLS authentication for external plugins
+* **Complete OPA Plugin Hooks** (#1198, #1137) - All missing hooks implemented in OPA plugin
+* **Plugin Linters & Quality** (#1240) - Comprehensive linting for all plugins with automated fixes
+* **Plugin Compose Configuration** (#1174) - Enhanced plugin and catalog configuration in docker-compose
+
+#### **🌐 Protocol & Platform Enhancements**
+* **MCP Tool Output Schema Support** (#1258, #1263, #1269) - Full support for MCP tool `outputSchema` field
+  - Database and service layer implementation (#1263)
+  - Admin UI support for viewing and editing output schemas (#1269)
+  - Preserves output schema during tool discovery and invocation
+* **Multiple StreamableHTTP Content** (#1188, #1189) - Support for multiple content blocks in StreamableHTTP responses
+* **s390x Architecture Support** (#1138, #1206) - Container builds for IBM Z platform (s390x)
+* **System Monitor MCP Server** (#977) - Go-based MCP server for system monitoring and metrics
+
+#### **📚 Documentation Enhancements**
+* **Langflow MCP Server Integration** (#1205) - Documentation for Langflow integration
+* **SSO Tutorial Updates** (#277) - Comprehensive GitHub SSO integration tutorial
+* **Environment Variable Documentation** (#1215) - Updated and clarified environment variable settings
+* **Documentation Formatting Fixes** (#1214) - Fixed newlines and formatting across documentation
+
+### Fixed
+
+#### **🐛 Critical Multi-Tenancy & RBAC Bugs**
+* **RBAC Vulnerability Patch** (#1248, #1250) - Fixed unauthorized access to resource status toggling
+  - Ownership checks now enforced for all resource operations
+  - Toggle permissions restricted to resource owners only
+* **Backend Multi-Tenancy Issues** (#969) - Comprehensive fixes for team-based resource scoping
+* **Team Member Re-addition** (#959) - Fixed unique constraint preventing re-adding team members
+* **Public Resource Ownership** (#1209, #1210) - Implemented ownership checks for public resources
+  - Users can only edit/delete their own public resources
+  - Prevents unauthorized modification of team-shared resources
+* **Incomplete Visibility Implementation** (#958) - Fixed visibility enforcement across all resource types
+
+#### **🔒 Security & Authentication Fixes**
+* **JWT Token Fixes** (#1254, #1255, #1262, #1261)
+  - Fixed JWT jti mismatch between token and database record (#1254, #1255)
+  - Fixed JWT token following default expiry instead of UI configuration (#1262)
+  - Fixed API token expiry override by environment variables (#1261)
+* **Cookie Scope & RBAC Redirects** (#1252, #448) - Aligned cookie scope with app root path
+  - Fixed custom base path support (e.g., `/api` instead of `/mcp`)
+  - Proper RBAC redirects for custom app paths
+* **OAuth & Login Issues** (#1048, #1101, #1117, #1181, #1190)
+  - Fixed HTTP login requiring `SECURE_COOKIES=false` warning (#1048, #1181)
+  - Fixed login failures in v0.7.0 (#1101, #1117)
+  - Fixed virtual MCP server access with JWT instead of OAuth (#1190)
+* **CSP & Iframe Embedding** (#922, #1241) - Fixed iframe embedding with consistent CSP and X-Frame-Options headers
+
+#### **🔧 UI/UX & Display Fixes**
+* **UI Margins & Layout** (#1272, #1276, #1275) - Fixed UI margin issues and catalog display
+* **Request Payload Visibility** (#1098, #1242) - Fixed request payload not visible in UI
+* **Tool Annotations** (#835) - Added custom annotation support for tools
+* **Header-Modal Overlap** (#1178, #1179) - Fixed header overlapping with modals
+* **Passthrough Headers** (#861, #1024) - Fixed passthrough header parameters not persisted to database
+  - Plugin `tool_prefetch` hook can now access PASSTHROUGH_HEADERS and tags
+
+#### **🛠️ Infrastructure & Build Fixes**
+* **CI/CD Pipeline Verification** (#1257) - Complete build pipeline verification with all stages
+* **Makefile Clean Target** (#1238) - Fixed Makefile clean target for proper cleanup
+* **UV Lock Conflicts** (#1230, #1234, #1243) - Resolved conflicting dependencies with semgrep
+* **Deprecated Config Parameters** (#1237) - Removed deprecated 'env=...' parameters in config.py
+* **Bandit Security Scan** (#1244) - Fixed all bandit security warnings
+* **Test Warnings & Mypy Issues** (#1268) - Fixed test warnings and mypy type issues
+
+#### **🐳 Container & Deployment Fixes**
+* **Gateway Registration on MacOS** (#625) - Fixed gateway registration and tool invocation on MacOS
+* **Non-root Container Users** (#1231) - Added non-root user to scratch Go containers
+* **Container Runtime Detection** - Improved Docker/Podman detection in Makefile
+
+### Changed
+
+#### **📊 Database Schema** (#1273)
+* **New Tool Columns** - Added 9 new columns to tools table via Alembic migration `8a2934be50c0`:
+  - `base_url` - Base URL for REST passthrough
+  - `path_template` - Path template for URL construction
+  - `query_mapping` - JSON mapping for query parameters
+  - `header_mapping` - JSON mapping for headers
+  - `timeout_ms` - Request timeout in milliseconds
+  - `expose_passthrough` - Boolean flag to enable/disable passthrough
+  - `allowlist` - JSON array of allowed hosts/schemes
+  - `plugin_chain_pre` - Pre-request plugin chain
+  - `plugin_chain_post` - Post-request plugin chain
+
+#### **🔧 API Schemas** (#1273)
+* **ToolCreate Schema** - Enhanced with passthrough field validation and auto-extraction logic
+* **ToolUpdate Schema** - Updated with same validation logic for modifications
+* **ToolRead Schema** - Extended to expose passthrough configuration in API responses
+
+#### **⚙️ Configuration & Defaults** (#1194)
+* **APP_DOMAIN Default** - Updated default URL to be compatible with Pydantic v2
+* **OAUTH_DEFAULT_TIMEOUT** - New configuration for OAuth provider timeouts
+* **Environment Variables** - Comprehensive cleanup and documentation updates
+
+#### **🧹 Code Quality Improvements** (#1233)
+* **CONTRIBUTING.md Cleanup** - Simplified contribution guidelines
+* **Lint-smart Makefile Fix** - Fixed syntax error in lint-smart target
+* **Plugin Linting** - Comprehensive linting across all plugins with automated fixes
+* **Deprecation Removal** - Removed all deprecated Pydantic v1 patterns
+
+### Security
+
+* **RBAC Vulnerability Patch** - Fixed unauthorized resource access (#1248)
+* **Plugin mTLS Support** - Mutual TLS for external plugin communication (#1196)
+* **CSP Headers** - Proper Content-Security-Policy for iframe embedding (#1241)
+* **Cookie Scope Security** - Aligned cookie scope with app root path (#1252)
+* **Support Bundle Sanitization** - Automatic secret redaction in diagnostic bundles (#1197)
+* **Ownership Enforcement** - Strict ownership checks for public resources (#1209)
+
+### Infrastructure
+
+* **Multi-Architecture Support** - s390x platform builds for IBM Z (#1206)
+* **Complete Build Verification** - End-to-end CI/CD pipeline testing (#1257)
+* **Performance Testing Framework** - Production-scale load testing capabilities (#1204)
+* **System Monitoring** - Comprehensive system statistics and health indicators (#1228)
+
+### Documentation
+
+* **REST Passthrough Configuration** - Complete REST API passthrough guide
+* **SSO Integration Tutorials** - GitHub, Entra ID, Keycloak, and generic OIDC
+* **Support Bundle Usage** - CLI, API, and Admin UI documentation
+* **Performance Testing Guide** - Load testing and benchmarking documentation
+* **LLM Chat Interface** - MCP-enabled tool orchestration guide
+
+### Issues Closed
+
+**REST Integration:**
+- Closes #746 - REST Passthrough API configuration fields
+
+**Multi-Tenancy & RBAC:**
+- Closes #969 - Backend Multi-Tenancy Issues - Critical bugs and missing features
+- Closes #959 - Unable to Re-add Team Member Due to Unique Constraint
+- Closes #958 - Incomplete Visibility Implementation
+- Closes #1248 - RBAC Vulnerability: Unauthorized Access to Resource Status Toggling
+- Closes #1209 - Finalize RBAC/ABAC implementation for Ownership Checks on Public Resources
+
+**Security & Authentication:**
+- Closes #1254 - JWT jti mismatch between token and database record
+- Closes #1262 - JWT token follows default variable payload expiry instead of UI
+- Closes #1261 - API Token Expiry Issue: UI Configuration overridden by default env Variable
+- Closes #1048 - Login issue - Serving over HTTP requires SECURE_COOKIES=false
+- Closes #1101 - Login issue with v0.7.0
+- Closes #1117 - Login not working with 0.7.0 version
+- Closes #1181 - Secure cookie warnings for HTTP development
+- Closes #1190 - Virtual MCP server requiring OAUTH instead of JWT in 0.7.0
+- Closes #1109 - MCP Gateway UI OAuth2 Integration Fails with Keycloak
+
+**SSO Integration:**
+- Closes #1211 - Microsoft Entra ID Integration Support and Tutorial
+- Closes #1213 - Generic OIDC Provider Support via Environment Variables
+- Closes #1216 - Keycloak Integration Support with Environment Variables
+- Closes #277 - GitHub SSO Integration Tutorial
+
+**Developer Tools & Operations:**
+- Closes #1197 - Support Bundle Generation - Automated Diagnostics Collection
+- Closes #1200 - In built MCP client - LLM Chat service for virtual servers
+- Closes #1202 - LLM Chat Interface with MCP Enabled Tool Orchestration
+- Closes #1228 - Show system statistics in metrics page
+- Closes #1225 - Production-Scale Load Data Generator for Multi-Tenant Testing
+- Closes #1219 - Benchmark MCP Server for Load Testing and Performance Analysis
+- Closes #1203 - Performance Testing & Benchmarking Framework
+
+**Plugin Framework:**
+- Closes #1196 - Plugin client server mTLS support
+- Closes #1137 - Add missing hooks to OPA plugin
+- Closes #1198 - Complete OPA plugin hook implementation
+
+**Platform & Protocol:**
+- Closes #1258 - MCP Tool outputSchema Field is Stripped During Discovery
+- Closes #1188 - Allow multiple StreamableHTTP content
+- Closes #1138 - Support for container builds for s390x
+
+**Bug Fixes:**
+- Closes #1098 - Unable to see request payload being sent
+- Closes #1024 - plugin tool_prefetch hook cannot access PASSTHROUGH_HEADERS, tags
+- Closes #861 - Passthrough header parameters not persisted to database
+- Closes #1178 - Header overlaps with modals in UI
+- Closes #922 - IFraming the admin UI is not working
+- Closes #625 - Gateway unable to register gateway or call tools on MacOS
+- Closes #1230 - pyproject.toml conflicting dependencies with uv
+- Closes #448 - MCP server with custom base path "/api" not working
+- Closes #835 - Adding Custom annotation for tools
+
+**Documentation:**
+- Closes #1159 - Several minor quirks in main README.md
+- Closes #1093 - RBAC - support generic OAuth provider or ldap provider (documentation)
+- Closes #869 - 0.7.0 Release timeline
+
+---
+
 ## [0.8.0] - 2025-10-07 - Advanced OAuth, Plugin Ecosystem & MCP Registry
 
 ### Overview

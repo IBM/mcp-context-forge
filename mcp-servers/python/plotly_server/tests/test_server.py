@@ -8,6 +8,7 @@ Tests for Plotly MCP Server (FastMCP).
 """
 
 import pytest
+
 from plotly_server.server_fastmcp import visualizer
 
 
@@ -17,9 +18,7 @@ def test_create_chart():
         pytest.skip("Plotly visualizer not available")
 
     result = visualizer.create_chart(
-        chart_type="line",
-        data={"x": [1, 2, 3], "y": [1, 4, 9]},
-        title="Test Chart"
+        chart_type="line", data={"x": [1, 2, 3], "y": [1, 4, 9]}, title="Test Chart"
     )
 
     assert result["success"] is True
@@ -36,8 +35,8 @@ def test_create_subplot():
         cols=2,
         plots=[
             {"type": "line", "data": {"x": [1, 2], "y": [1, 2]}},
-            {"type": "bar", "data": {"x": ["A", "B"], "y": [3, 4]}}
-        ]
+            {"type": "bar", "data": {"x": ["A", "B"], "y": [3, 4]}},
+        ],
     )
 
     assert result["success"] is True
@@ -49,17 +48,12 @@ def test_export_chart():
         pytest.skip("Plotly visualizer not available")
 
     # Create a simple chart first
-    chart_result = visualizer.create_chart(
-        chart_type="line",
-        data={"x": [1, 2], "y": [1, 2]}
-    )
+    chart_result = visualizer.create_chart(chart_type="line", data={"x": [1, 2], "y": [1, 2]})
 
     if chart_result["success"]:
         # Try to export (may fail if kaleido not installed)
         export_result = visualizer.export_chart(
-            chart_data=chart_result.get("html", ""),
-            format="png",
-            output_path="/tmp/test.png"
+            chart_data=chart_result.get("html", ""), format="png", output_path="/tmp/test.png"
         )
         # Don't assert success as kaleido might not be installed
 

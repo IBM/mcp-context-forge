@@ -12,13 +12,12 @@ Supports flowcharts, sequence diagrams, Gantt charts, and more.
 Powered by FastMCP for enhanced type safety and automatic validation.
 """
 
-import json
 import logging
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import uuid4
 
 from fastmcp import FastMCP
@@ -47,10 +46,7 @@ class MermaidProcessor:
         """Check if Mermaid CLI is available."""
         try:
             result = subprocess.run(
-                ["mmdc", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
+                ["mmdc", "--version"], capture_output=True, text=True, timeout=5
             )
             return result.returncode == 0
         except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -59,10 +55,10 @@ class MermaidProcessor:
 
     def create_flowchart(
         self,
-        nodes: List[Dict[str, str]],
-        connections: List[Dict[str, str]],
+        nodes: list[dict[str, str]],
+        connections: list[dict[str, str]],
         direction: str = "TD",
-        title: Optional[str] = None
+        title: str | None = None,
     ) -> str:
         """Create flowchart Mermaid code."""
         lines = [f"flowchart {direction}"]
@@ -99,13 +95,10 @@ class MermaidProcessor:
             else:
                 lines.append(f"    {from_node} {arrow_type} {to_node}")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def create_sequence_diagram(
-        self,
-        participants: List[str],
-        messages: List[Dict[str, str]],
-        title: Optional[str] = None
+        self, participants: list[str], messages: list[dict[str, str]], title: str | None = None
     ) -> str:
         """Create sequence diagram Mermaid code."""
         lines = ["sequenceDiagram"]
@@ -133,15 +126,15 @@ class MermaidProcessor:
             else:
                 lines.append(f"    {from_participant}->{to_participant}: {message_text}")
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
-    def create_gantt_chart(self, title: str, tasks: List[Dict[str, Any]]) -> str:
+    def create_gantt_chart(self, title: str, tasks: list[dict[str, Any]]) -> str:
         """Create Gantt chart Mermaid code."""
         lines = [
             "gantt",
             f"    title {title}",
             "    dateFormat  YYYY-MM-DD",
-            "    axisFormat  %m/%d"
+            "    axisFormat  %m/%d",
         ]
 
         for task in tasks:
@@ -164,27 +157,27 @@ class MermaidProcessor:
 
             lines.append(task_line)
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     def render_diagram(
         self,
         mermaid_code: str,
         output_format: str = "svg",
-        output_file: Optional[str] = None,
+        output_file: str | None = None,
         theme: str = "default",
-        width: Optional[int] = None,
-        height: Optional[int] = None
-    ) -> Dict[str, Any]:
+        width: int | None = None,
+        height: int | None = None,
+    ) -> dict[str, Any]:
         """Render Mermaid diagram to specified format."""
         if not self.mermaid_cli_available:
             return {
                 "success": False,
-                "error": "Mermaid CLI not available. Install with: npm install -g @mermaid-js/mermaid-cli"
+                "error": "Mermaid CLI not available. Install with: npm install -g @mermaid-js/mermaid-cli",
             }
 
         try:
             # Create temporary input file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.mmd', delete=False) as f:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".mmd", delete=False) as f:
                 f.write(mermaid_code)
                 input_file = f.name
 
@@ -205,12 +198,7 @@ class MermaidProcessor:
                 cmd.extend(["-H", str(height)])
 
             # Execute rendering
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             # Clean up input file
             Path(input_file).unlink(missing_ok=True)
@@ -219,14 +207,11 @@ class MermaidProcessor:
                 return {
                     "success": False,
                     "error": f"Mermaid rendering failed: {result.stderr}",
-                    "stdout": result.stdout
+                    "stdout": result.stdout,
                 }
 
             if not Path(output_file).exists():
-                return {
-                    "success": False,
-                    "error": f"Output file not created: {output_file}"
-                }
+                return {"success": False, "error": f"Output file not created: {output_file}"}
 
             return {
                 "success": True,
@@ -234,7 +219,7 @@ class MermaidProcessor:
                 "output_format": output_format,
                 "file_size": Path(output_file).stat().st_size,
                 "theme": theme,
-                "mermaid_code": mermaid_code
+                "mermaid_code": mermaid_code,
             }
 
         except subprocess.TimeoutExpired:
@@ -243,19 +228,29 @@ class MermaidProcessor:
             logger.error(f"Error rendering diagram: {e}")
             return {"success": False, "error": str(e)}
 
-    def validate_mermaid(self, mermaid_code: str) -> Dict[str, Any]:
+    def validate_mermaid(self, mermaid_code: str) -> dict[str, Any]:
         """Validate Mermaid diagram syntax."""
         try:
             # Basic validation checks
-            lines = mermaid_code.strip().split('\n')
+            lines = mermaid_code.strip().split("\n")
             if not lines:
                 return {"valid": False, "error": "Empty diagram"}
 
             first_line = lines[0].strip()
             valid_diagram_types = [
-                "flowchart", "graph", "sequenceDiagram", "classDiagram",
-                "stateDiagram", "erDiagram", "gantt", "pie", "journey",
-                "gitgraph", "C4Context", "mindmap", "timeline"
+                "flowchart",
+                "graph",
+                "sequenceDiagram",
+                "classDiagram",
+                "stateDiagram",
+                "erDiagram",
+                "gantt",
+                "pie",
+                "journey",
+                "gitgraph",
+                "C4Context",
+                "mindmap",
+                "timeline",
             ]
 
             diagram_type = None
@@ -267,20 +262,24 @@ class MermaidProcessor:
             if not diagram_type:
                 return {
                     "valid": False,
-                    "error": f"Unknown diagram type. Must start with one of: {', '.join(valid_diagram_types)}"
+                    "error": f"Unknown diagram type. Must start with one of: {', '.join(valid_diagram_types)}",
                 }
 
             return {
                 "valid": True,
                 "diagram_type": diagram_type,
                 "line_count": len(lines),
-                "estimated_complexity": "low" if len(lines) < 10 else "medium" if len(lines) < 50 else "high"
+                "estimated_complexity": "low"
+                if len(lines) < 10
+                else "medium"
+                if len(lines) < 50
+                else "high",
             }
 
         except Exception as e:
             return {"valid": False, "error": str(e)}
 
-    def get_diagram_templates(self) -> Dict[str, Any]:
+    def get_diagram_templates(self) -> dict[str, Any]:
         """Get Mermaid diagram templates."""
         return {
             "flowchart": {
@@ -290,7 +289,7 @@ class MermaidProcessor:
     B -->|No| D[Process 2]
     C --> E[End]
     D --> E""",
-                "description": "Basic flowchart template"
+                "description": "Basic flowchart template",
             },
             "sequence": {
                 "template": """sequenceDiagram
@@ -298,7 +297,7 @@ class MermaidProcessor:
     participant B as Bob
     A->>B: Hello Bob, how are you?
     B-->>A: Great!""",
-                "description": "Basic sequence diagram template"
+                "description": "Basic sequence diagram template",
             },
             "gantt": {
                 "template": """gantt
@@ -308,7 +307,7 @@ class MermaidProcessor:
     Task 1 :a1, 2024-01-01, 30d
     section Development
     Task 2 :after a1, 20d""",
-                "description": "Basic Gantt chart template"
+                "description": "Basic Gantt chart template",
             },
             "class": {
                 "template": """classDiagram
@@ -322,8 +321,8 @@ class MermaidProcessor:
         +bark()
     }
     Animal <|-- Dog""",
-                "description": "Basic class diagram template"
-            }
+                "description": "Basic class diagram template",
+            },
         }
 
 
@@ -337,16 +336,20 @@ except Exception:
 # Tool definitions using FastMCP decorators
 @mcp.tool(description="Create and optionally render a Mermaid diagram")
 async def create_diagram(
-    diagram_type: str = Field(...,
-                             pattern="^(flowchart|sequence|gantt|class|state|er|pie|journey)$",
-                             description="Type of Mermaid diagram"),
+    diagram_type: str = Field(
+        ...,
+        pattern="^(flowchart|sequence|gantt|class|state|er|pie|journey)$",
+        description="Type of Mermaid diagram",
+    ),
     content: str = Field(..., description="Mermaid diagram content/code"),
     output_format: str = Field("svg", pattern="^(svg|png|pdf)$", description="Output format"),
-    output_file: Optional[str] = Field(None, description="Output file path"),
-    theme: str = Field("default", pattern="^(default|dark|forest|neutral)$", description="Diagram theme"),
-    width: Optional[int] = Field(None, ge=100, le=5000, description="Output width in pixels"),
-    height: Optional[int] = Field(None, ge=100, le=5000, description="Output height in pixels")
-) -> Dict[str, Any]:
+    output_file: str | None = Field(None, description="Output file path"),
+    theme: str = Field(
+        "default", pattern="^(default|dark|forest|neutral)$", description="Diagram theme"
+    ),
+    width: int | None = Field(None, ge=100, le=5000, description="Output width in pixels"),
+    height: int | None = Field(None, ge=100, le=5000, description="Output height in pixels"),
+) -> dict[str, Any]:
     """Create and render a Mermaid diagram."""
     if processor is None:
         return {"success": False, "error": "Mermaid processor not available"}
@@ -362,34 +365,33 @@ async def create_diagram(
         output_file=output_file,
         theme=theme,
         width=width,
-        height=height
+        height=height,
     )
 
 
 @mcp.tool(description="Create flowchart from structured data")
 async def create_flowchart(
-    nodes: List[Dict[str, str]] = Field(..., description="Flowchart nodes with id, label, and optional shape"),
-    connections: List[Dict[str, str]] = Field(..., description="Node connections with from, to, optional label and arrow"),
+    nodes: list[dict[str, str]] = Field(
+        ..., description="Flowchart nodes with id, label, and optional shape"
+    ),
+    connections: list[dict[str, str]] = Field(
+        ..., description="Node connections with from, to, optional label and arrow"
+    ),
     direction: str = Field("TD", pattern="^(TD|TB|BT|RL|LR)$", description="Flow direction"),
-    title: Optional[str] = Field(None, description="Diagram title"),
+    title: str | None = Field(None, description="Diagram title"),
     output_format: str = Field("svg", pattern="^(svg|png|pdf)$", description="Output format"),
-    output_file: Optional[str] = Field(None, description="Output file path")
-) -> Dict[str, Any]:
+    output_file: str | None = Field(None, description="Output file path"),
+) -> dict[str, Any]:
     """Create a flowchart from structured data."""
     if processor is None:
         return {"success": False, "error": "Mermaid processor not available"}
 
     mermaid_code = processor.create_flowchart(
-        nodes=nodes,
-        connections=connections,
-        direction=direction,
-        title=title
+        nodes=nodes, connections=connections, direction=direction, title=title
     )
 
     result = processor.render_diagram(
-        mermaid_code=mermaid_code,
-        output_format=output_format,
-        output_file=output_file
+        mermaid_code=mermaid_code, output_format=output_format, output_file=output_file
     )
 
     if result.get("success"):
@@ -400,26 +402,24 @@ async def create_flowchart(
 
 @mcp.tool(description="Create sequence diagram from participants and messages")
 async def create_sequence_diagram(
-    participants: List[str] = Field(..., description="Sequence participants"),
-    messages: List[Dict[str, str]] = Field(..., description="Messages with from, to, message, and optional arrow type"),
-    title: Optional[str] = Field(None, description="Diagram title"),
+    participants: list[str] = Field(..., description="Sequence participants"),
+    messages: list[dict[str, str]] = Field(
+        ..., description="Messages with from, to, message, and optional arrow type"
+    ),
+    title: str | None = Field(None, description="Diagram title"),
     output_format: str = Field("svg", pattern="^(svg|png|pdf)$", description="Output format"),
-    output_file: Optional[str] = Field(None, description="Output file path")
-) -> Dict[str, Any]:
+    output_file: str | None = Field(None, description="Output file path"),
+) -> dict[str, Any]:
     """Create a sequence diagram from participants and messages."""
     if processor is None:
         return {"success": False, "error": "Mermaid processor not available"}
 
     mermaid_code = processor.create_sequence_diagram(
-        participants=participants,
-        messages=messages,
-        title=title
+        participants=participants, messages=messages, title=title
     )
 
     result = processor.render_diagram(
-        mermaid_code=mermaid_code,
-        output_format=output_format,
-        output_file=output_file
+        mermaid_code=mermaid_code, output_format=output_format, output_file=output_file
     )
 
     if result.get("success"):
@@ -431,23 +431,20 @@ async def create_sequence_diagram(
 @mcp.tool(description="Create Gantt chart from task data")
 async def create_gantt_chart(
     title: str = Field(..., description="Gantt chart title"),
-    tasks: List[Dict[str, Any]] = Field(..., description="Tasks with name, start, and optional end/duration/status"),
+    tasks: list[dict[str, Any]] = Field(
+        ..., description="Tasks with name, start, and optional end/duration/status"
+    ),
     output_format: str = Field("svg", pattern="^(svg|png|pdf)$", description="Output format"),
-    output_file: Optional[str] = Field(None, description="Output file path")
-) -> Dict[str, Any]:
+    output_file: str | None = Field(None, description="Output file path"),
+) -> dict[str, Any]:
     """Create a Gantt chart from task data."""
     if processor is None:
         return {"success": False, "error": "Mermaid processor not available"}
 
-    mermaid_code = processor.create_gantt_chart(
-        title=title,
-        tasks=tasks
-    )
+    mermaid_code = processor.create_gantt_chart(title=title, tasks=tasks)
 
     result = processor.render_diagram(
-        mermaid_code=mermaid_code,
-        output_format=output_format,
-        output_file=output_file
+        mermaid_code=mermaid_code, output_format=output_format, output_file=output_file
     )
 
     if result.get("success"):
@@ -458,8 +455,8 @@ async def create_gantt_chart(
 
 @mcp.tool(description="Validate Mermaid diagram syntax")
 async def validate_mermaid(
-    mermaid_code: str = Field(..., description="Mermaid diagram code to validate")
-) -> Dict[str, Any]:
+    mermaid_code: str = Field(..., description="Mermaid diagram code to validate"),
+) -> dict[str, Any]:
     """Validate Mermaid diagram syntax."""
     if processor is None:
         return {"valid": False, "error": "Mermaid processor not available"}
@@ -468,7 +465,7 @@ async def validate_mermaid(
 
 
 @mcp.tool(description="Get Mermaid diagram templates")
-async def get_templates() -> Dict[str, Any]:
+async def get_templates() -> dict[str, Any]:
     """Get Mermaid diagram templates."""
     if processor is None:
         return {"error": "Mermaid processor not available"}
@@ -481,8 +478,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Mermaid FastMCP Server")
-    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                        help="Transport mode (stdio or http)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
     parser.add_argument("--port", type=int, default=9012, help="HTTP port")
 

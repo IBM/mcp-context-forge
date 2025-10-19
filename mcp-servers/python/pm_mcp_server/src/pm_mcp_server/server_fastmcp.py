@@ -10,11 +10,9 @@ FastMCP entry point for the project management MCP server.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from importlib import resources
-from typing import Dict, Iterable, List, Optional
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -31,8 +29,8 @@ from pm_mcp_server.schemata import (
     EarnedValueResult,
     HealthDashboard,
     MeetingSummary,
-    RiskRegister,
     RiskEntry,
+    RiskRegister,
     ScheduleModel,
     Stakeholder,
     StakeholderMatrixResult,
@@ -60,23 +58,23 @@ mcp = FastMCP("pm-mcp-server", version=__version__)
 @mcp.tool(description="Generate a work breakdown structure from scope narrative.")
 async def generate_work_breakdown(
     scope: str = Field(..., description="Narrative scope statement"),
-    phases: Optional[List[str]] = Field(None, description="Optional ordered phase names"),
-    constraints: Optional[Dict[str, str]] = Field(
+    phases: list[str] | None = Field(None, description="Optional ordered phase names"),
+    constraints: dict[str, str] | None = Field(
         default=None, description="Schedule/budget guardrails (finish_no_later_than, budget_limit)"
     ),
-) -> List[WBSNode]:
+) -> list[WBSNode]:
     return planning.generate_work_breakdown(scope=scope, phases=phases, constraints=constraints)
 
 
 @mcp.tool(description="Convert WBS into a simple sequential schedule model.")
 async def build_schedule(
-    wbs: List[WBSNode] = Field(..., description="WBS nodes to schedule"),
-    default_owner: Optional[str] = Field(None, description="Fallback owner for tasks"),
+    wbs: list[WBSNode] = Field(..., description="WBS nodes to schedule"),
+    default_owner: str | None = Field(None, description="Fallback owner for tasks"),
 ) -> ScheduleModel:
     return planning.build_schedule(wbs, default_owner)
 
 
-@mcp.tool(description="Run critical path analysis over a schedule." )
+@mcp.tool(description="Run critical path analysis over a schedule.")
 async def critical_path_analysis(
     schedule: ScheduleModel = Field(..., description="Schedule model to analyse"),
 ) -> CriticalPathResult:
@@ -86,7 +84,7 @@ async def critical_path_analysis(
 @mcp.tool(description="Generate gantt chart artefacts from schedule")
 async def produce_gantt_diagram(
     schedule: ScheduleModel = Field(..., description="Schedule with CPM fields"),
-    project_start: Optional[str] = Field(None, description="Project start ISO date"),
+    project_start: str | None = Field(None, description="Project start ISO date"),
 ) -> DiagramArtifact:
     return planning.gantt_artifacts(schedule, project_start)
 
@@ -101,16 +99,18 @@ async def schedule_optimizer(
 @mcp.tool(description="Check proposed features against scope guardrails")
 async def scope_guardrails(
     scope_statement: str = Field(..., description="Authorised scope summary"),
-    proposed_items: List[str] = Field(..., description="Items or features to evaluate"),
-) -> Dict[str, object]:
+    proposed_items: list[str] = Field(..., description="Items or features to evaluate"),
+) -> dict[str, object]:
     return planning.scope_guardrails(scope_statement, proposed_items)
 
 
 @mcp.tool(description="Assemble sprint backlog based on capacity and priority")
 async def sprint_planning_helper(
-    backlog: List[Dict[str, object]] = Field(..., description="Backlog items with priority/value/effort"),
+    backlog: list[dict[str, object]] = Field(
+        ..., description="Backlog items with priority/value/effort"
+    ),
     sprint_capacity: float = Field(..., ge=0.0, description="Total available story points or days"),
-) -> Dict[str, object]:
+) -> dict[str, object]:
     return planning.sprint_planning_helper(backlog, sprint_capacity)
 
 
@@ -121,30 +121,30 @@ async def sprint_planning_helper(
 
 @mcp.tool(description="Manage and rank risks by severity")
 async def risk_register_manager(
-    risks: List[RiskEntry] = Field(..., description="Risk register entries"),
+    risks: list[RiskEntry] = Field(..., description="Risk register entries"),
 ) -> RiskRegister:
     return governance.risk_register_manager(risks)
 
 
 @mcp.tool(description="Summarise change request impacts")
 async def change_request_tracker(
-    requests: List[ChangeRequest] = Field(..., description="Change requests"),
-) -> Dict[str, object]:
+    requests: list[ChangeRequest] = Field(..., description="Change requests"),
+) -> dict[str, object]:
     return governance.change_request_tracker(requests)
 
 
 @mcp.tool(description="Compare baseline vs actual metrics")
 async def baseline_vs_actual(
-    planned: Dict[str, float] = Field(..., description="Baseline metrics"),
-    actual: Dict[str, float] = Field(..., description="Actual metrics"),
+    planned: dict[str, float] = Field(..., description="Baseline metrics"),
+    actual: dict[str, float] = Field(..., description="Actual metrics"),
     tolerance_percent: float = Field(10.0, ge=0.0, description="Variance tolerance percent"),
-) -> Dict[str, Dict[str, float | bool]]:
+) -> dict[str, dict[str, float | bool]]:
     return governance.baseline_vs_actual(planned, actual, tolerance_percent)
 
 
 @mcp.tool(description="Compute earned value management metrics")
 async def earned_value_calculator(
-    values: List[EarnedValueInput] = Field(..., description="Period EVM entries"),
+    values: list[EarnedValueInput] = Field(..., description="Period EVM entries"),
     budget_at_completion: float = Field(..., gt=0.0, description="Authorised budget"),
 ) -> EarnedValueResult:
     return governance.earned_value_calculator(values, budget_at_completion)
@@ -158,37 +158,37 @@ async def earned_value_calculator(
 @mcp.tool(description="Render status report markdown via template")
 async def status_report_generator(
     payload: StatusReportPayload = Field(..., description="Status report payload"),
-) -> Dict[str, str]:
+) -> dict[str, str]:
     return reporting.status_report_generator(payload)
 
 
 @mcp.tool(description="Produce project health dashboard summary")
 async def project_health_dashboard(
     snapshot: HealthDashboard = Field(..., description="Dashboard snapshot"),
-) -> Dict[str, object]:
+) -> dict[str, object]:
     return reporting.project_health_dashboard(snapshot)
 
 
 @mcp.tool(description="Generate project brief summary")
 async def project_brief_generator(
     name: str = Field(..., description="Project name"),
-    objectives: List[str] = Field(..., description="Objectives"),
-    success_criteria: List[str] = Field(..., description="Success criteria"),
+    objectives: list[str] = Field(..., description="Objectives"),
+    success_criteria: list[str] = Field(..., description="Success criteria"),
     budget: float = Field(..., ge=0.0, description="Budget value"),
     timeline: str = Field(..., description="Timeline narrative"),
-) -> Dict[str, object]:
+) -> dict[str, object]:
     return reporting.project_brief_generator(name, objectives, success_criteria, budget, timeline)
 
 
 @mcp.tool(description="Aggregate lessons learned entries")
 async def lessons_learned_catalog(
-    entries: List[Dict[str, str]] = Field(..., description="Lessons learned entries"),
-) -> Dict[str, List[str]]:
+    entries: list[dict[str, str]] = Field(..., description="Lessons learned entries"),
+) -> dict[str, list[str]]:
     return reporting.lessons_learned_catalog(entries)
 
 
 @mcp.tool(description="Expose packaged PM templates")
-async def document_template_library() -> Dict[str, str]:
+async def document_template_library() -> dict[str, str]:
     return reporting.document_template_library()
 
 
@@ -207,31 +207,31 @@ async def meeting_minutes_summarizer(
 @mcp.tool(description="Merge action item updates")
 async def action_item_tracker(
     current: ActionItemLog = Field(..., description="Current action item backlog"),
-    updates: List[ActionItem] = Field(..., description="Updates or new action items"),
+    updates: list[ActionItem] = Field(..., description="Updates or new action items"),
 ) -> ActionItemLog:
     return collaboration.action_item_tracker(current, updates)
 
 
 @mcp.tool(description="Report resource allocation variance")
 async def resource_allocator(
-    capacity: Dict[str, float] = Field(..., description="Capacity per team"),
-    assignments: Dict[str, float] = Field(..., description="Assigned load per team"),
-) -> Dict[str, Dict[str, float]]:
+    capacity: dict[str, float] = Field(..., description="Capacity per team"),
+    assignments: dict[str, float] = Field(..., description="Assigned load per team"),
+) -> dict[str, dict[str, float]]:
     return collaboration.resource_allocator(capacity, assignments)
 
 
 @mcp.tool(description="Produce stakeholder matrix diagram")
 async def stakeholder_matrix(
-    stakeholders: List[Stakeholder] = Field(..., description="Stakeholder entries"),
+    stakeholders: list[Stakeholder] = Field(..., description="Stakeholder entries"),
 ) -> StakeholderMatrixResult:
     return collaboration.stakeholder_matrix(stakeholders)
 
 
 @mcp.tool(description="Plan communications cadence per stakeholder")
 async def communications_planner(
-    stakeholders: List[Stakeholder] = Field(..., description="Stakeholders"),
+    stakeholders: list[Stakeholder] = Field(..., description="Stakeholders"),
     cadence_days: int = Field(7, ge=1, description="Base cadence in days"),
-) -> List[Dict[str, str]]:
+) -> list[dict[str, str]]:
     return collaboration.communications_planner(stakeholders, cadence_days)
 
 
@@ -269,8 +269,8 @@ async def change_impact_prompt() -> str:
 
 @mcp.tool(description="Provide glossary definitions for common PM terms")
 async def glossary_lookup(
-    terms: List[str] = Field(..., description="PM terms to define"),
-) -> Dict[str, str]:
+    terms: list[str] = Field(..., description="PM terms to define"),
+) -> dict[str, str]:
     glossary = {
         "cpi": "Cost Performance Index, EV / AC",
         "spi": "Schedule Performance Index, EV / PV",
@@ -282,9 +282,9 @@ async def glossary_lookup(
 
 
 @mcp.tool(description="List packaged sample data assets")
-async def sample_data_catalog() -> Dict[str, str]:
+async def sample_data_catalog() -> dict[str, str]:
     sample_pkg = resources.files("pm_mcp_server.data.sample_data")
-    resource_map: Dict[str, str] = {}
+    resource_map: dict[str, str] = {}
     for path in sample_pkg.iterdir():
         if not path.is_file():
             continue

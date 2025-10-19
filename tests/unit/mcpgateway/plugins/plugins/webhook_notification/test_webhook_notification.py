@@ -456,7 +456,7 @@ class TestWebhookNotificationPlugin:
         context = _create_context()
 
         # Test pre-hook
-        pre_payload = PromptPrehookPayload(name="test_prompt", args={})
+        pre_payload = PromptPrehookPayload(prompt_id="test_prompt", args={})
         pre_result = await plugin.prompt_pre_fetch(pre_payload, context)
         assert pre_result.continue_processing is True
 
@@ -465,7 +465,7 @@ class TestWebhookNotificationPlugin:
 
         from mcpgateway.plugins.framework.models import PromptPosthookPayload, PromptResult
         post_payload = PromptPosthookPayload(
-            name="test_prompt",
+            prompt_id="test_prompt",
             result=PromptResult(messages=[])
         )
         post_result = await plugin.prompt_post_fetch(post_payload, context)

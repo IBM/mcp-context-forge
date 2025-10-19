@@ -66,7 +66,7 @@ class LLMGuardPlugin(Plugin):
         return self.lgconfig.input or self.lgconfig.output
 
     def __update_context(self, context, key, value) -> dict:
-        """  Update Context implementation."""
+        """Update Context implementation."""
 
         def update_context(context):
             """Update Context implementation."""

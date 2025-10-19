@@ -8,7 +8,7 @@ Test SSO user approval workflow functionality.
 """
 
 # Standard
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -30,7 +30,7 @@ def mock_db_session():
 @pytest.fixture
 def sso_service(mock_db_session):
     """Create SSO service instance with mock dependencies."""
-    with patch('mcpgateway.services.sso_service.EmailAuthService'):
+    with patch("mcpgateway.services.sso_service.EmailAuthService"):
         service = SSOService(mock_db_session)
         return service
 
@@ -41,26 +41,22 @@ class TestSSOApprovalWorkflow:
     @pytest.mark.asyncio
     async def test_pending_approval_creation(self, sso_service):
         """Test that pending approval requests are created when required."""
-        user_info = {
-            "email": "newuser@example.com",
-            "full_name": "New User",
-            "provider": "github"
-        }
+        user_info = {"email": "newuser@example.com", "full_name": "New User", "provider": "github"}
 
         # Mock settings to require approval
-        with patch('mcpgateway.services.sso_service.settings') as mock_settings:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_require_admin_approval = True
 
             # Mock database queries
             sso_service.db.execute.return_value.scalar_one_or_none.return_value = None  # No existing pending approval
 
             # Mock get_user_by_email to return None (new user)
-            with patch.object(sso_service, 'auth_service') as mock_auth_service:
+            with patch.object(sso_service, "auth_service") as mock_auth_service:
                 # For async methods, need to use AsyncMock
                 mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
 
                 # Mock get_provider
-                with patch.object(sso_service, 'get_provider') as mock_get_provider:
+                with patch.object(sso_service, "get_provider") as mock_get_provider:
                     mock_provider = MagicMock()
                     mock_provider.auto_create_users = True
                     mock_provider.trusted_domains = []
@@ -76,14 +72,10 @@ class TestSSOApprovalWorkflow:
     @pytest.mark.asyncio
     async def test_approved_user_creation(self, sso_service):
         """Test that approved users can be created successfully."""
-        user_info = {
-            "email": "approved@example.com",
-            "full_name": "Approved User",
-            "provider": "github"
-        }
+        user_info = {"email": "approved@example.com", "full_name": "Approved User", "provider": "github"}
 
         # Mock settings to require approval
-        with patch('mcpgateway.services.sso_service.settings') as mock_settings:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_require_admin_approval = True
 
             # Mock existing approved pending approval
@@ -93,7 +85,7 @@ class TestSSOApprovalWorkflow:
             sso_service.db.execute.return_value.scalar_one_or_none.side_effect = [mock_pending, mock_pending]
 
             # Mock get_user_by_email to return None (new user)
-            with patch.object(sso_service, 'auth_service') as mock_auth_service:
+            with patch.object(sso_service, "auth_service") as mock_auth_service:
                 # For async methods, need to use AsyncMock
                 mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
 
@@ -108,18 +100,18 @@ class TestSSOApprovalWorkflow:
                 mock_auth_service.create_user = AsyncMock(return_value=mock_user)
 
                 # Mock get_provider
-                with patch.object(sso_service, 'get_provider') as mock_get_provider:
+                with patch.object(sso_service, "get_provider") as mock_get_provider:
                     mock_provider = MagicMock()
                     mock_provider.auto_create_users = True
                     mock_provider.trusted_domains = []
                     mock_get_provider.return_value = mock_provider
 
                     # Mock admin check
-                    with patch.object(sso_service, '_should_user_be_admin') as mock_admin_check:
+                    with patch.object(sso_service, "_should_user_be_admin") as mock_admin_check:
                         mock_admin_check.return_value = False
 
                         # Should create user and return token
-                        with patch('mcpgateway.services.sso_service.create_jwt_token') as mock_jwt:
+                        with patch("mcpgateway.services.sso_service.create_jwt_token") as mock_jwt:
                             mock_jwt.return_value = "mock_token"
 
                             result = await sso_service.authenticate_or_create_user(user_info)
@@ -131,14 +123,10 @@ class TestSSOApprovalWorkflow:
     @pytest.mark.asyncio
     async def test_rejected_user_denied(self, sso_service):
         """Test that rejected users are denied access."""
-        user_info = {
-            "email": "rejected@example.com",
-            "full_name": "Rejected User",
-            "provider": "github"
-        }
+        user_info = {"email": "rejected@example.com", "full_name": "Rejected User", "provider": "github"}
 
         # Mock settings to require approval
-        with patch('mcpgateway.services.sso_service.settings') as mock_settings:
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_require_admin_approval = True
 
             # Mock existing rejected pending approval
@@ -147,12 +135,12 @@ class TestSSOApprovalWorkflow:
             sso_service.db.execute.return_value.scalar_one_or_none.return_value = mock_pending
 
             # Mock get_user_by_email to return None (new user)
-            with patch.object(sso_service, 'auth_service') as mock_auth_service:
+            with patch.object(sso_service, "auth_service") as mock_auth_service:
                 # For async methods, need to use AsyncMock
                 mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
 
                 # Mock get_provider
-                with patch.object(sso_service, 'get_provider') as mock_get_provider:
+                with patch.object(sso_service, "get_provider") as mock_get_provider:
                     mock_provider = MagicMock()
                     mock_provider.auto_create_users = True
                     mock_provider.trusted_domains = []
@@ -166,12 +154,7 @@ class TestSSOApprovalWorkflow:
     def test_pending_approval_model_methods(self):
         """Test PendingUserApproval model methods."""
         # Test approval
-        approval = PendingUserApproval(
-            email="test@example.com",
-            full_name="Test User",
-            auth_provider="github",
-            expires_at=utc_now() + timedelta(days=30)
-        )
+        approval = PendingUserApproval(email="test@example.com", full_name="Test User", auth_provider="github", expires_at=utc_now() + timedelta(days=30))
 
         approval.approve("admin@example.com", "Looks good")
         assert approval.status == "approved"
@@ -180,12 +163,7 @@ class TestSSOApprovalWorkflow:
         assert approval.approved_at is not None
 
         # Test rejection
-        approval2 = PendingUserApproval(
-            email="test2@example.com",
-            full_name="Test User 2",
-            auth_provider="google",
-            expires_at=utc_now() + timedelta(days=30)
-        )
+        approval2 = PendingUserApproval(email="test2@example.com", full_name="Test User 2", auth_provider="google", expires_at=utc_now() + timedelta(days=30))
 
         approval2.reject("admin@example.com", "Suspicious activity", "Account flagged")
         assert approval2.status == "rejected"

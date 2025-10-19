@@ -143,7 +143,7 @@ class TestBrowserCompatibility:
                 parts = directive.split(" ", 1)
                 assert len(parts) >= 1
                 directive_name = parts[0]
-                assert re.match(r'^[a-z-]+$', directive_name), f"Invalid directive name: {directive_name}"
+                assert re.match(r"^[a-z-]+$", directive_name), f"Invalid directive name: {directive_name}"
 
     def test_x_frame_options_standard_values(self):
         """Test X-Frame-Options uses standard values."""
@@ -157,7 +157,7 @@ class TestBrowserCompatibility:
             def test_endpoint():
                 return {"message": "test"}
 
-            with patch.object(settings, 'x_frame_options', value):
+            with patch.object(settings, "x_frame_options", value):
                 client = TestClient(app)
                 response = client.get("/test")
 
@@ -179,7 +179,7 @@ class TestBrowserCompatibility:
             hsts_value = response.headers["Strict-Transport-Security"]
 
             # Should match RFC format: max-age=<seconds>; includeSubDomains
-            assert re.match(r'max-age=\d+(; includeSubDomains)?', hsts_value)
+            assert re.match(r"max-age=\d+(; includeSubDomains)?", hsts_value)
 
     def test_referrer_policy_standard_value(self):
         """Test Referrer-Policy uses standard value."""
@@ -196,16 +196,7 @@ class TestBrowserCompatibility:
         referrer_policy = response.headers["Referrer-Policy"]
 
         # Should be a standard referrer policy value
-        standard_policies = [
-            "no-referrer",
-            "no-referrer-when-downgrade",
-            "origin",
-            "origin-when-cross-origin",
-            "same-origin",
-            "strict-origin",
-            "strict-origin-when-cross-origin",
-            "unsafe-url"
-        ]
+        standard_policies = ["no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-cross-origin", "same-origin", "strict-origin", "strict-origin-when-cross-origin", "unsafe-url"]
 
         assert referrer_policy in standard_policies
 
@@ -251,12 +242,7 @@ class TestStaticAnalysisToolCompatibility:
         response = client.get("/test")
 
         # Headers should be in standard format for automated tools
-        headers_to_check = {
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
-            "X-XSS-Protection": "0",
-            "X-Download-Options": "noopen"
-        }
+        headers_to_check = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "X-XSS-Protection": "0", "X-Download-Options": "noopen"}
 
         for header_name, expected_value in headers_to_check.items():
             assert response.headers[header_name] == expected_value
@@ -298,11 +284,7 @@ class TestCORSPerformanceAndCompatibility:
         many_origins = [f"https://subdomain{i}.example.com" for i in range(100)]
 
         app = FastAPI()
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=many_origins,
-            allow_credentials=True
-        )
+        app.add_middleware(CORSMiddleware, allow_origins=many_origins, allow_credentials=True)
         app.add_middleware(SecurityHeadersMiddleware)
 
         @app.get("/test")
@@ -327,10 +309,7 @@ class TestCORSPerformanceAndCompatibility:
         # Test that environment switching works correctly
 
         # Development configuration
-        with patch.multiple(settings,
-                           environment="development",
-                           allowed_origins={"http://localhost:3000"}):
-
+        with patch.multiple(settings, environment="development", allowed_origins={"http://localhost:3000"}):
             app = FastAPI()
             app.add_middleware(SecurityHeadersMiddleware)
 
@@ -346,10 +325,7 @@ class TestCORSPerformanceAndCompatibility:
             assert "X-Content-Type-Options" in response.headers
 
         # Production configuration
-        with patch.multiple(settings,
-                           environment="production",
-                           allowed_origins={"https://example.com"}):
-
+        with patch.multiple(settings, environment="production", allowed_origins={"https://example.com"}):
             app = FastAPI()
             app.add_middleware(SecurityHeadersMiddleware)
 
@@ -405,14 +381,7 @@ class TestSecurityHeadersStandardsCompliance:
         response = client.get("/test")
 
         # Headers should use standard case (HTTP headers are case-insensitive but have conventions)
-        expected_headers = [
-            "X-Content-Type-Options",
-            "X-Frame-Options",
-            "X-XSS-Protection",
-            "X-Download-Options",
-            "Content-Security-Policy",
-            "Referrer-Policy"
-        ]
+        expected_headers = ["X-Content-Type-Options", "X-Frame-Options", "X-XSS-Protection", "X-Download-Options", "Content-Security-Policy", "Referrer-Policy"]
 
         for header in expected_headers:
             assert header in response.headers, f"Missing header: {header}"
@@ -442,14 +411,17 @@ class TestSecurityHeadersStandardsCompliance:
 class TestContentTypeCompatibility:
     """Test security headers with different content types."""
 
-    @pytest.mark.parametrize("content_type,content", [
-        ("application/json", '{"test": "json"}'),
-        ("text/html", "<html><body>Test</body></html>"),
-        ("text/plain", "Plain text response"),
-        ("application/xml", "<?xml version='1.0'?><root>test</root>"),
-        ("text/css", "body { color: black; }"),
-        ("application/javascript", "console.log('test');"),
-    ])
+    @pytest.mark.parametrize(
+        "content_type,content",
+        [
+            ("application/json", '{"test": "json"}'),
+            ("text/html", "<html><body>Test</body></html>"),
+            ("text/plain", "Plain text response"),
+            ("application/xml", "<?xml version='1.0'?><root>test</root>"),
+            ("text/css", "body { color: black; }"),
+            ("application/javascript", "console.log('test');"),
+        ],
+    )
     def test_security_headers_with_content_types(self, content_type: str, content: str):
         """Test security headers work with various content types."""
         app = FastAPI()
@@ -459,6 +431,7 @@ class TestContentTypeCompatibility:
         def test_endpoint():
             # Third-Party
             from fastapi import Response
+
             return Response(content=content, media_type=content_type)
 
         client = TestClient(app)
@@ -483,9 +456,10 @@ class TestContentTypeCompatibility:
         @app.get("/binary")
         def binary_endpoint():
             # Simulate binary content (like images, PDFs, etc.)
-            binary_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01'
+            binary_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
             # Third-Party
             from fastapi import Response
+
             return Response(content=binary_data, media_type="image/png")
 
         client = TestClient(app)
@@ -503,12 +477,15 @@ class TestContentTypeCompatibility:
 class TestSecurityInProxyScenarios:
     """Test security implementation in proxy/load balancer scenarios."""
 
-    @pytest.mark.parametrize("proxy_headers", [
-        {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "example.com"},
-        {"X-Forwarded-Proto": "http", "X-Forwarded-For": "192.168.1.1"},
-        {"X-Real-IP": "10.0.0.1", "X-Forwarded-Proto": "https"},
-        {"CF-Visitor": '{"scheme":"https"}', "X-Forwarded-Proto": "https"},  # Cloudflare
-    ])
+    @pytest.mark.parametrize(
+        "proxy_headers",
+        [
+            {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "example.com"},
+            {"X-Forwarded-Proto": "http", "X-Forwarded-For": "192.168.1.1"},
+            {"X-Real-IP": "10.0.0.1", "X-Forwarded-Proto": "https"},
+            {"CF-Visitor": '{"scheme":"https"}', "X-Forwarded-Proto": "https"},  # Cloudflare
+        ],
+    )
     def test_hsts_with_proxy_headers(self, proxy_headers: dict):
         """Test HSTS detection works with various proxy configurations."""
         app = FastAPI()
@@ -518,7 +495,7 @@ class TestSecurityInProxyScenarios:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.object(settings, 'hsts_enabled', True):
+        with patch.object(settings, "hsts_enabled", True):
             client = TestClient(app)
             response = client.get("/test", headers=proxy_headers)
 
@@ -534,7 +511,7 @@ class TestSecurityInProxyScenarios:
             "X-Forwarded-Proto": "https",
             "X-Forwarded-Host": "api.example.com",
             "X-Request-ID": "req-12345",
-            "X-Correlation-ID": "corr-67890"
+            "X-Correlation-ID": "corr-67890",
         }
 
         app = FastAPI()
@@ -570,10 +547,12 @@ class TestConfigurationValidationAndErrors:
             return {"message": "test"}
 
         # Test with potentially problematic configuration
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_frame_options="INVALID-VALUE",  # Non-standard but should work
-                           hsts_max_age=-1):  # Negative value
+        with patch.multiple(
+            settings,
+            security_headers_enabled=True,
+            x_frame_options="INVALID-VALUE",  # Non-standard but should work
+            hsts_max_age=-1,
+        ):  # Negative value
             client = TestClient(app)
             response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -594,7 +573,7 @@ class TestConfigurationValidationAndErrors:
             return {"message": "test"}
 
         # Mock settings to test attribute access patterns
-        with patch('mcpgateway.middleware.security_headers.settings') as mock_settings:
+        with patch("mcpgateway.middleware.security_headers.settings") as mock_settings:
             # Configure mock with all expected attributes
             mock_settings.security_headers_enabled = True
             mock_settings.x_content_type_options_enabled = True

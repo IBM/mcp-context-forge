@@ -178,10 +178,10 @@ class ContentModerationPlugin(Plugin):
     """Plugin for advanced content moderation using multiple AI providers."""
 
     def __init__(self, config: PluginConfig) -> None:
-        """Initialize the content moderation plugin.
+        """Initialize content moderation plugin with configuration.
 
         Args:
-            config: Plugin configuration.
+            config: Plugin configuration containing moderation settings.
         """
         super().__init__(config)
         self._cfg = ContentModerationConfig(**(config.config or {}))
@@ -545,7 +545,7 @@ Respond with JSON format:
 
         return [text for text in texts if len(text.strip()) > 3]  # Filter very short texts
 
-    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
+    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, _context: PluginContext) -> PromptPrehookResult:
         """Moderate prompt content before fetching."""
         texts = await self._extract_text_content(payload)
 
@@ -555,7 +555,7 @@ Respond with JSON format:
 
                 if self._cfg.audit_decisions:
                     logger.info(
-                        f"Content moderation - Prompt: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
+                        f"Content moderation - Prompt: {payload.prompt_id}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
                     )
 
                 if result.action == ModerationAction.BLOCK:
@@ -576,11 +576,11 @@ Respond with JSON format:
                     )
                 elif result.modified_content:
                     # Modify the payload with redacted/transformed content
-                    modified_payload = PromptPrehookPayload(name=payload.name, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
+                    modified_payload = PromptPrehookPayload(prompt_id=payload.prompt_id, args={k: result.modified_content if v == text else v for k, v in payload.args.items()})
                     return PromptPrehookResult(modified_payload=modified_payload, metadata={"moderation_result": result.dict(), "content_modified": True})
 
             except Exception as e:
-                logger.error(f"Content moderation failed for prompt {payload.name}: {e}")
+                logger.error(f"Content moderation failed for prompt {payload.prompt_id}: {e}")
                 if self._cfg.fallback_on_error == ModerationAction.BLOCK:
                     return PromptPrehookResult(
                         continue_processing=False,
@@ -589,7 +589,7 @@ Respond with JSON format:
 
         return PromptPrehookResult()
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, _context: PluginContext) -> ToolPreInvokeResult:
         """Moderate tool arguments before invocation."""
         texts = await self._extract_text_content(payload)
 
@@ -628,7 +628,7 @@ Respond with JSON format:
 
         return ToolPreInvokeResult(metadata={"moderation_checked": True})
 
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+    async def tool_post_invoke(self, payload: ToolPostInvokePayload, _context: PluginContext) -> ToolPostInvokeResult:
         """Moderate tool output after invocation."""
         # Extract text from tool results
         result_text = ""

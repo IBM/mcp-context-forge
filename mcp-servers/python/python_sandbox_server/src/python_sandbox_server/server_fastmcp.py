@@ -27,7 +27,7 @@ import sys
 import time
 import traceback
 from io import StringIO
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 from uuid import uuid4
 
 from fastmcp import FastMCP
@@ -56,48 +56,93 @@ ENABLE_DATA_SCIENCE = os.getenv("SANDBOX_ENABLE_DATA_SCIENCE", "false").lower() 
 # Safe standard library modules (no I/O, no system access)
 SAFE_STDLIB_MODULES = [
     # Core utilities
-    "math", "random", "datetime", "json", "re", "time", "calendar", "uuid",
-
+    "math",
+    "random",
+    "datetime",
+    "json",
+    "re",
+    "time",
+    "calendar",
+    "uuid",
     # Data structures and algorithms
-    "collections", "itertools", "functools", "operator", "bisect", "heapq",
-    "copy", "dataclasses", "enum", "typing",
-
+    "collections",
+    "itertools",
+    "functools",
+    "operator",
+    "bisect",
+    "heapq",
+    "copy",
+    "dataclasses",
+    "enum",
+    "typing",
     # Text processing
-    "string", "textwrap", "unicodedata", "difflib",
-
+    "string",
+    "textwrap",
+    "unicodedata",
+    "difflib",
     # Numeric and math
-    "decimal", "fractions", "statistics", "cmath",
-
+    "decimal",
+    "fractions",
+    "statistics",
+    "cmath",
     # Encoding and hashing
-    "base64", "binascii", "hashlib", "hmac", "secrets",
-
+    "base64",
+    "binascii",
+    "hashlib",
+    "hmac",
+    "secrets",
     # Parsing and formatting
-    "html", "html.parser", "xml.etree.ElementTree", "csv", "configparser",
+    "html",
+    "html.parser",
+    "xml.etree.ElementTree",
+    "csv",
+    "configparser",
     "urllib.parse",  # URL parsing only, not fetching
-
     # Abstract base classes and protocols
-    "abc", "contextlib", "types",
+    "abc",
+    "contextlib",
+    "types",
 ]
 
 # Data science modules (require ENABLE_DATA_SCIENCE)
 DATA_SCIENCE_MODULES = [
-    "numpy", "pandas", "scipy", "matplotlib", "seaborn", "sklearn",
-    "statsmodels", "plotly", "sympy",
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "seaborn",
+    "sklearn",
+    "statsmodels",
+    "plotly",
+    "sympy",
 ]
 
 # Network modules (require ENABLE_NETWORK)
 NETWORK_MODULES = [
-    "httpx", "requests", "urllib.request", "aiohttp", "websocket",
-    "ftplib", "smtplib", "email",
+    "httpx",
+    "requests",
+    "urllib.request",
+    "aiohttp",
+    "websocket",
+    "ftplib",
+    "smtplib",
+    "email",
 ]
 
 # File system modules (require ENABLE_FILESYSTEM)
 FILESYSTEM_MODULES = [
-    "pathlib", "os.path", "tempfile", "shutil", "glob", "zipfile", "tarfile",
+    "pathlib",
+    "os.path",
+    "tempfile",
+    "shutil",
+    "glob",
+    "zipfile",
+    "tarfile",
 ]
 
+
 # Build allowed imports based on configuration
-def get_allowed_imports() -> List[str]:
+def get_allowed_imports() -> list[str]:
     """Build the list of allowed imports based on configuration."""
     # Start with custom imports from environment
     custom_imports = os.getenv("SANDBOX_ALLOWED_IMPORTS", "").strip()
@@ -120,6 +165,7 @@ def get_allowed_imports() -> List[str]:
 
     return allowed
 
+
 ALLOWED_IMPORTS = get_allowed_imports()
 
 
@@ -132,12 +178,13 @@ class PythonSandbox:
         self.allowed_modules = set(ALLOWED_IMPORTS)
 
         # Track security warnings
-        self.security_warnings: List[str] = []
+        self.security_warnings: list[str] = []
 
     def _check_restricted_python(self) -> bool:
         """Check if RestrictedPython is available."""
         try:
             import RestrictedPython
+
             return True
         except ImportError:
             logger.warning("RestrictedPython not available")
@@ -150,14 +197,14 @@ class PythonSandbox:
             return True
 
         # Check parent modules (e.g., os.path when os is not allowed)
-        parts = module_name.split('.')
+        parts = module_name.split(".")
         for i in range(len(parts)):
-            partial = '.'.join(parts[:i+1])
+            partial = ".".join(parts[: i + 1])
             if partial in self.allowed_modules:
                 return True
 
         # Log security warning
-        if module_name not in ['os', 'sys', 'subprocess', '__builtin__', '__builtins__']:
+        if module_name not in ["os", "sys", "subprocess", "__builtin__", "__builtins__"]:
             self.security_warnings.append(f"Blocked import attempt: {module_name}")
 
         return False
@@ -168,45 +215,78 @@ class PythonSandbox:
             raise ImportError(f"Import of '{name}' is not allowed in sandbox")
         return __import__(name, *args, **kwargs)
 
-    def create_safe_globals(self) -> Dict[str, Any]:
+    def create_safe_globals(self) -> dict[str, Any]:
         """Create a safe global namespace for code execution."""
         # Safe built-in functions
         safe_builtins = {
             # Basic types
-            'bool': bool, 'int': int, 'float': float, 'str': str,
-            'list': list, 'dict': dict, 'tuple': tuple, 'set': set, 'frozenset': frozenset,
-            'bytes': bytes, 'bytearray': bytearray,
-
+            "bool": bool,
+            "int": int,
+            "float": float,
+            "str": str,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "set": set,
+            "frozenset": frozenset,
+            "bytes": bytes,
+            "bytearray": bytearray,
             # Safe functions
-            'len': len, 'abs': abs, 'min': min, 'max': max, 'sum': sum,
-            'round': round, 'sorted': sorted, 'reversed': reversed,
-            'enumerate': enumerate, 'zip': zip, 'map': map, 'filter': filter,
-            'all': all, 'any': any, 'range': range, 'print': print,
-            'isinstance': isinstance, 'issubclass': issubclass,
-            'hasattr': hasattr, 'getattr': getattr, 'setattr': setattr,
-            'callable': callable, 'type': type, 'id': id, 'hash': hash,
-            'iter': iter, 'next': next, 'slice': slice,
-
+            "len": len,
+            "abs": abs,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "round": round,
+            "sorted": sorted,
+            "reversed": reversed,
+            "enumerate": enumerate,
+            "zip": zip,
+            "map": map,
+            "filter": filter,
+            "all": all,
+            "any": any,
+            "range": range,
+            "print": print,
+            "isinstance": isinstance,
+            "issubclass": issubclass,
+            "hasattr": hasattr,
+            "getattr": getattr,
+            "setattr": setattr,
+            "callable": callable,
+            "type": type,
+            "id": id,
+            "hash": hash,
+            "iter": iter,
+            "next": next,
+            "slice": slice,
             # String/conversion methods
-            'chr': chr, 'ord': ord, 'hex': hex, 'oct': oct, 'bin': bin,
-            'format': format, 'repr': repr, 'ascii': ascii,
-
+            "chr": chr,
+            "ord": ord,
+            "hex": hex,
+            "oct": oct,
+            "bin": bin,
+            "format": format,
+            "repr": repr,
+            "ascii": ascii,
             # Math
-            'divmod': divmod, 'pow': pow,
-
+            "divmod": divmod,
+            "pow": pow,
             # Constants
-            'True': True, 'False': False, 'None': None,
-            'NotImplemented': NotImplemented,
-            'Ellipsis': Ellipsis,
+            "True": True,
+            "False": False,
+            "None": None,
+            "NotImplemented": NotImplemented,
+            "Ellipsis": Ellipsis,
         }
 
         # Optionally remove dangerous builtins in strict mode
         if not ENABLE_FILESYSTEM:
             # These could potentially be used to access file system indirectly
-            safe_builtins.pop('open', None)
-            safe_builtins.pop('compile', None)
-            safe_builtins.pop('eval', None)
-            safe_builtins.pop('exec', None)
+            safe_builtins.pop("open", None)
+            safe_builtins.pop("compile", None)
+            safe_builtins.pop("eval", None)
+            safe_builtins.pop("exec", None)
 
         # Pre-import allowed modules
         safe_imports = {}
@@ -218,33 +298,27 @@ class PythonSandbox:
                 # Module not installed, skip it
                 pass
 
-        globals_dict = {
-            '__builtins__': safe_builtins,
-            **safe_imports
-        }
+        globals_dict = {"__builtins__": safe_builtins, **safe_imports}
 
         # Note: RestrictedPython support is added during execution
 
         return globals_dict
 
-    def validate_code(self, code: str) -> Dict[str, Any]:
+    def validate_code(self, code: str) -> dict[str, Any]:
         """Validate Python code for syntax and security."""
         # First, always do a basic Python syntax check
         try:
-            compile(code, '<sandbox>', 'exec')
+            compile(code, "<sandbox>", "exec")
         except SyntaxError as e:
             return {
                 "valid": False,
                 "error": f"Syntax error: {str(e)}",
                 "line": e.lineno,
                 "offset": e.offset,
-                "text": e.text
+                "text": e.text,
             }
         except Exception as e:
-            return {
-                "valid": False,
-                "error": f"Compilation error: {str(e)}"
-            }
+            return {"valid": False, "error": f"Compilation error: {str(e)}"}
 
         # If basic syntax passes, check with RestrictedPython if available
         if self.restricted_python_available:
@@ -252,27 +326,21 @@ class PythonSandbox:
                 from RestrictedPython import compile_restricted_exec
 
                 # Compile with restrictions
-                result = compile_restricted_exec(code, '<sandbox>')
+                result = compile_restricted_exec(code, "<sandbox>")
 
                 # Check for RestrictedPython errors
                 if result.errors:
                     return {
                         "valid": False,
                         "errors": result.errors,
-                        "message": "Code contains restricted operations"
+                        "message": "Code contains restricted operations",
                     }
 
                 if result.code is None:
-                    return {
-                        "valid": False,
-                        "message": "RestrictedPython compilation failed"
-                    }
+                    return {"valid": False, "message": "RestrictedPython compilation failed"}
 
             except Exception as e:
-                return {
-                    "valid": False,
-                    "error": f"RestrictedPython error: {str(e)}"
-                }
+                return {"valid": False, "error": f"RestrictedPython error: {str(e)}"}
 
         # Additional security checks for dangerous patterns
         warnings = []
@@ -280,11 +348,11 @@ class PythonSandbox:
 
         # Check for obvious dangerous patterns
         dangerous_patterns = [
-            ('__import__', 'Dynamic imports detected'),
-            ('eval(', 'Use of eval detected'),
-            ('exec(', 'Use of exec detected'),
-            ('compile(', 'Use of compile detected'),
-            ('open(', 'File operations detected'),
+            ("__import__", "Dynamic imports detected"),
+            ("eval(", "Use of eval detected"),
+            ("exec(", "Use of exec detected"),
+            ("compile(", "Use of compile detected"),
+            ("open(", "File operations detected"),
         ]
 
         for pattern, warning in dangerous_patterns:
@@ -292,15 +360,22 @@ class PythonSandbox:
                 warnings.append(warning)
 
         # Check for dunder methods (but allow __name__, __main__)
-        if '__' in code:
+        if "__" in code:
             # More nuanced check for dangerous dunders
-            dangerous_dunders = ['__class__', '__base__', '__subclasses__', '__globals__', '__code__', '__closure__']
+            dangerous_dunders = [
+                "__class__",
+                "__base__",
+                "__subclasses__",
+                "__globals__",
+                "__code__",
+                "__closure__",
+            ]
             for dunder in dangerous_dunders:
                 if dunder in code:
                     security_issues.append(f"Potentially dangerous dunder method: {dunder}")
 
         # Check for attempts to access builtins
-        if 'builtins' in code or '__builtins__' in code:
+        if "builtins" in code or "__builtins__" in code:
             security_issues.append("Attempt to access builtins detected")
 
         # If there are security issues, mark as invalid
@@ -309,16 +384,16 @@ class PythonSandbox:
                 "valid": False,
                 "message": "Code failed security validation",
                 "security_issues": security_issues,
-                "warnings": warnings if warnings else None
+                "warnings": warnings if warnings else None,
             }
 
         return {
             "valid": True,
             "message": "Code passed validation",
-            "warnings": warnings if warnings else None
+            "warnings": warnings if warnings else None,
         }
 
-    def execute(self, code: str) -> Dict[str, Any]:
+    def execute(self, code: str) -> dict[str, Any]:
         """Execute Python code in the sandbox."""
         execution_id = str(uuid4())
         self.security_warnings = []  # Reset warnings for this execution
@@ -330,16 +405,16 @@ class PythonSandbox:
                 "success": False,
                 "error": validation.get("error") or validation.get("message", "Validation failed"),
                 "validation_errors": validation.get("errors"),
-                "execution_id": execution_id
+                "execution_id": execution_id,
             }
 
         # Check if this is a single expression or has a final expression to display
         # Try to compile as eval first (single expression)
         # But exclude function calls that have side effects like print()
         is_single_expression = False
-        if not any(code.strip().startswith(func) for func in ['print(', 'input(', 'help(']):
+        if not any(code.strip().startswith(func) for func in ["print(", "input(", "help("]):
             try:
-                compile(code, '<sandbox>', 'eval')
+                compile(code, "<sandbox>", "eval")
                 # Also check it's not a void function call
                 is_single_expression = True
             except SyntaxError:
@@ -349,8 +424,8 @@ class PythonSandbox:
         # For multi-line code, check if the last line is an expression
         # This mimics IPython behavior
         last_line_expression = None
-        if not is_single_expression and '\n' in code:
-            lines = code.rstrip().split('\n')
+        if not is_single_expression and "\n" in code:
+            lines = code.rstrip().split("\n")
             if lines:
                 last_line_raw = lines[-1]
                 last_line = last_line_raw.strip()
@@ -359,21 +434,53 @@ class PythonSandbox:
                 is_indented = len(last_line_raw) > 0 and last_line_raw[0].isspace()
 
                 # Check if the last line is an expression (not an assignment or statement)
-                if last_line and not is_indented and not any(last_line.startswith(kw) for kw in
-                    ['import ', 'from ', 'def ', 'class ', 'if ', 'for ', 'while ', 'with ',
-                     'try:', 'except:', 'finally:', 'elif ', 'else:', 'return ', 'yield ',
-                     'raise ', 'assert ', 'del ', 'global ', 'nonlocal ', 'pass', 'break', 'continue',
-                     'print(', 'input(', 'help(']):
+                if (
+                    last_line
+                    and not is_indented
+                    and not any(
+                        last_line.startswith(kw)
+                        for kw in [
+                            "import ",
+                            "from ",
+                            "def ",
+                            "class ",
+                            "if ",
+                            "for ",
+                            "while ",
+                            "with ",
+                            "try:",
+                            "except:",
+                            "finally:",
+                            "elif ",
+                            "else:",
+                            "return ",
+                            "yield ",
+                            "raise ",
+                            "assert ",
+                            "del ",
+                            "global ",
+                            "nonlocal ",
+                            "pass",
+                            "break",
+                            "continue",
+                            "print(",
+                            "input(",
+                            "help(",
+                        ]
+                    )
+                ):
                     # Also check it's not an assignment (simple check)
-                    if '=' not in last_line or any(op in last_line for op in ['==', '!=', '<=', '>=', ' in ', ' is ']):
+                    if "=" not in last_line or any(
+                        op in last_line for op in ["==", "!=", "<=", ">=", " in ", " is "]
+                    ):
                         try:
                             # Try to compile just the last line as an expression
-                            compile(last_line, '<sandbox>', 'eval')
+                            compile(last_line, "<sandbox>", "eval")
                             last_line_expression = last_line
                             # Modify code to capture the last expression
                             # Use a name that RestrictedPython allows
-                            lines[-1] = f'SANDBOX_EVAL_RESULT = ({last_line})'
-                            code = '\n'.join(lines)
+                            lines[-1] = f"SANDBOX_EVAL_RESULT = ({last_line})"
+                            code = "\n".join(lines)
                         except SyntaxError:
                             # Last line is not a valid expression
                             pass
@@ -393,7 +500,8 @@ class PythonSandbox:
             sys.stderr = stderr_capture
 
             # Set timeout if on Unix
-            if hasattr(signal, 'SIGALRM'):
+            if hasattr(signal, "SIGALRM"):
+
                 def timeout_handler(signum, frame):
                     raise TimeoutError(f"Execution timed out after {TIMEOUT} seconds")
 
@@ -407,66 +515,73 @@ class PythonSandbox:
 
             # Execute the code
             if self.restricted_python_available:
-                from RestrictedPython import compile_restricted_exec, compile_restricted_eval, PrintCollector, safe_globals as rp_safe_globals
+                from RestrictedPython import (
+                    PrintCollector,
+                    compile_restricted_eval,
+                    compile_restricted_exec,
+                )
+                from RestrictedPython import safe_globals as rp_safe_globals
 
                 # Update safe globals with RestrictedPython requirements
                 # Save our builtins
-                our_builtins = safe_globals.get('__builtins__', {})
+                our_builtins = safe_globals.get("__builtins__", {})
 
                 # Add RestrictedPython helpers
                 for key, value in rp_safe_globals.items():
-                    if key.startswith('_'):  # Only add the underscore helpers
+                    if key.startswith("_"):  # Only add the underscore helpers
                         safe_globals[key] = value
 
                 # Add missing helpers
-                if '_getiter_' not in safe_globals:
-                    safe_globals['_getiter_'] = iter
-                if '_getitem_' not in safe_globals:
-                    safe_globals['_getitem_'] = lambda obj, key: obj[key]
+                if "_getiter_" not in safe_globals:
+                    safe_globals["_getiter_"] = iter
+                if "_getitem_" not in safe_globals:
+                    safe_globals["_getitem_"] = lambda obj, key: obj[key]
 
                 # Merge builtins (ours + RestrictedPython's)
-                if '__builtins__' in rp_safe_globals and isinstance(rp_safe_globals['__builtins__'], dict):
-                    merged_builtins = dict(rp_safe_globals['__builtins__'])
+                if "__builtins__" in rp_safe_globals and isinstance(
+                    rp_safe_globals["__builtins__"], dict
+                ):
+                    merged_builtins = dict(rp_safe_globals["__builtins__"])
                     merged_builtins.update(our_builtins)
-                    safe_globals['__builtins__'] = merged_builtins
+                    safe_globals["__builtins__"] = merged_builtins
                 else:
-                    safe_globals['__builtins__'] = our_builtins
+                    safe_globals["__builtins__"] = our_builtins
 
-                safe_globals['_print_'] = PrintCollector
+                safe_globals["_print_"] = PrintCollector
 
                 # Use our controlled import function
-                safe_globals['__builtins__']['__import__'] = self._safe_import
+                safe_globals["__builtins__"]["__import__"] = self._safe_import
 
                 if is_single_expression:
                     # Compile and evaluate as expression
-                    compiled = compile_restricted_eval(code, '<sandbox>')
+                    compiled = compile_restricted_eval(code, "<sandbox>")
                     if compiled.code:
                         expression_result = eval(compiled.code, safe_globals, local_vars)
                     else:
                         raise RuntimeError("Failed to compile expression")
                 else:
                     # Compile and execute as statements
-                    compiled = compile_restricted_exec(code, '<sandbox>')
+                    compiled = compile_restricted_exec(code, "<sandbox>")
                     if compiled.code:
                         exec(compiled.code, safe_globals, local_vars)
                         # Check if we captured a final expression
-                        if last_line_expression and 'SANDBOX_EVAL_RESULT' in local_vars:
-                            expression_result = local_vars['SANDBOX_EVAL_RESULT']
+                        if last_line_expression and "SANDBOX_EVAL_RESULT" in local_vars:
+                            expression_result = local_vars["SANDBOX_EVAL_RESULT"]
                     else:
                         raise RuntimeError("Failed to compile code")
             else:
                 # Fallback to regular Python
-                safe_globals['__builtins__']['__import__'] = self._safe_import
+                safe_globals["__builtins__"]["__import__"] = self._safe_import
                 if is_single_expression:
                     expression_result = eval(code, safe_globals, local_vars)
                 else:
                     exec(code, safe_globals, local_vars)
                     # Check if we captured a final expression
-                    if last_line_expression and '__ipython_result__' in local_vars:
-                        expression_result = local_vars['__ipython_result__']
+                    if last_line_expression and "__ipython_result__" in local_vars:
+                        expression_result = local_vars["__ipython_result__"]
 
             # Cancel timeout
-            if hasattr(signal, 'SIGALRM'):
+            if hasattr(signal, "SIGALRM"):
                 signal.alarm(0)
 
             execution_time = time.time() - start_time
@@ -476,11 +591,11 @@ class PythonSandbox:
             stderr_output = stderr_capture.getvalue()
 
             # Get RestrictedPython print output if available
-            if self.restricted_python_available and '_print' in local_vars:
-                _print_collector = local_vars['_print']
-                if hasattr(_print_collector, 'txt'):
+            if self.restricted_python_available and "_print" in local_vars:
+                _print_collector = local_vars["_print"]
+                if hasattr(_print_collector, "txt"):
                     # Use the collected prints as a list
-                    printed_text = ''.join(_print_collector.txt) if _print_collector.txt else ""
+                    printed_text = "".join(_print_collector.txt) if _print_collector.txt else ""
                     if stdout_output:
                         stdout_output = printed_text + stdout_output
                     else:
@@ -499,10 +614,10 @@ class PythonSandbox:
             if expression_result is not None:
                 result = expression_result
                 # Also add it to stdout for display (like IPython)
-                if stdout_output or (self.restricted_python_available and '_print' in local_vars):
+                if stdout_output or (self.restricted_python_available and "_print" in local_vars):
                     # If there was already output, add a newline
-                    if not stdout_output.endswith('\n') and stdout_output:
-                        stdout_output += '\n'
+                    if not stdout_output.endswith("\n") and stdout_output:
+                        stdout_output += "\n"
                 else:
                     # No prior output, just show the result
                     pass
@@ -515,7 +630,7 @@ class PythonSandbox:
                     stdout_output = stdout_output + str(result)
             else:
                 # Look for result variable in assignments
-                for var in ['result', 'output', '_']:
+                for var in ["result", "output", "_"]:
                     if var in local_vars:
                         result = local_vars[var]
                         break
@@ -534,8 +649,8 @@ class PythonSandbox:
                 "result": result,
                 "execution_time": execution_time,
                 "execution_id": execution_id,
-                "variables": [k for k in local_vars.keys() if k != 'SANDBOX_EVAL_RESULT'],
-                "security_warnings": self.security_warnings if self.security_warnings else None
+                "variables": [k for k in local_vars.keys() if k != "SANDBOX_EVAL_RESULT"],
+                "security_warnings": self.security_warnings if self.security_warnings else None,
             }
 
         except ImportError as e:
@@ -543,14 +658,10 @@ class PythonSandbox:
                 "success": False,
                 "error": str(e),
                 "execution_id": execution_id,
-                "security_event": "blocked_import"
+                "security_event": "blocked_import",
             }
         except TimeoutError as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "execution_id": execution_id
-            }
+            return {"success": False, "error": str(e), "execution_id": execution_id}
         except Exception as e:
             return {
                 "success": False,
@@ -558,7 +669,7 @@ class PythonSandbox:
                 "traceback": traceback.format_exc(),
                 "stdout": stdout_capture.getvalue(),
                 "stderr": stderr_capture.getvalue(),
-                "execution_id": execution_id
+                "execution_id": execution_id,
             }
         finally:
             # Restore stdout/stderr
@@ -566,7 +677,7 @@ class PythonSandbox:
             sys.stderr = original_stderr
 
             # Cancel any pending alarm
-            if hasattr(signal, 'SIGALRM'):
+            if hasattr(signal, "SIGALRM"):
                 signal.alarm(0)
 
 
@@ -576,8 +687,8 @@ sandbox = PythonSandbox()
 
 @mcp.tool(description="Execute Python code in a secure sandbox environment")
 async def execute_code(
-    code: str = Field(..., description="Python code to execute")
-) -> Dict[str, Any]:
+    code: str = Field(..., description="Python code to execute"),
+) -> dict[str, Any]:
     """
     Execute Python code in a secure sandbox with RestrictedPython.
 
@@ -605,8 +716,8 @@ async def execute_code(
 
 @mcp.tool(description="Validate Python code without executing it")
 async def validate_code(
-    code: str = Field(..., description="Python code to validate")
-) -> Dict[str, Any]:
+    code: str = Field(..., description="Python code to validate"),
+) -> dict[str, Any]:
     """
     Validate Python code for syntax and security without execution.
 
@@ -625,7 +736,7 @@ async def validate_code(
 
 
 @mcp.tool(description="Get current sandbox capabilities and configuration")
-async def get_sandbox_info() -> Dict[str, Any]:
+async def get_sandbox_info() -> dict[str, Any]:
     """
     Get information about the sandbox environment.
 
@@ -636,12 +747,7 @@ async def get_sandbox_info() -> Dict[str, Any]:
     - Configuration details
     """
     # Group modules by category for clarity
-    modules_by_category = {
-        "safe_stdlib": [],
-        "data_science": [],
-        "network": [],
-        "filesystem": []
-    }
+    modules_by_category = {"safe_stdlib": [], "data_science": [], "network": [], "filesystem": []}
 
     for module in ALLOWED_IMPORTS:
         if module in SAFE_STDLIB_MODULES:
@@ -665,11 +771,39 @@ async def get_sandbox_info() -> Dict[str, Any]:
         "allowed_imports": modules_by_category,
         "total_allowed_modules": len(ALLOWED_IMPORTS),
         "safe_builtins": [
-            "bool", "int", "float", "str", "list", "dict", "tuple", "set",
-            "len", "abs", "min", "max", "sum", "round", "sorted", "reversed",
-            "enumerate", "zip", "map", "filter", "all", "any", "range", "print",
-            "chr", "ord", "hex", "oct", "bin", "isinstance", "type", "hasattr"
-        ]
+            "bool",
+            "int",
+            "float",
+            "str",
+            "list",
+            "dict",
+            "tuple",
+            "set",
+            "len",
+            "abs",
+            "min",
+            "max",
+            "sum",
+            "round",
+            "sorted",
+            "reversed",
+            "enumerate",
+            "zip",
+            "map",
+            "filter",
+            "all",
+            "any",
+            "range",
+            "print",
+            "chr",
+            "ord",
+            "hex",
+            "oct",
+            "bin",
+            "isinstance",
+            "type",
+            "hasattr",
+        ],
     }
 
 
@@ -678,8 +812,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Python Sandbox FastMCP Server")
-    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                        help="Transport mode (stdio or http)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
     parser.add_argument("--port", type=int, default=9015, help="HTTP port")
 

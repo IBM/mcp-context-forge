@@ -64,6 +64,7 @@ def test_client() -> TestClient:
     # Patch settings
     # First-Party
     from mcpgateway.config import settings
+
     mp.setattr(settings, "database_url", url, raising=False)
 
     # First-Party
@@ -93,6 +94,7 @@ def test_client() -> TestClient:
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
     from mcpgateway.middleware.rbac import get_db as rbac_get_db
     from mcpgateway.middleware.rbac import get_permission_service
+
     mock_email_user = MagicMock()
     mock_email_user.email = "integration-test-user@example.com"
     mock_email_user.full_name = "Integration Test User"
@@ -124,7 +126,7 @@ def test_client() -> TestClient:
             db.close()
 
     # Patch the PermissionService class to always return our mock
-    with patch('mcpgateway.middleware.rbac.PermissionService', MockPermissionService):
+    with patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService):
         app.dependency_overrides[get_current_user] = lambda: mock_email_user
         app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
         app.dependency_overrides[get_permission_service] = mock_get_permission_service
@@ -247,11 +249,7 @@ class TestIntegrationScenarios:
         mock_register_server.return_value = MOCK_SERVER
 
         # 1a. register a tool
-        tool_req = {
-            "tool": {"name": "test_tool", "url": "http://example.com"},
-            "team_id": None,
-            "visibility": "private"
-        }
+        tool_req = {"tool": {"name": "test_tool", "url": "http://example.com"}, "team_id": None, "visibility": "private"}
         resp_tool = test_client.post("/tools/", json=tool_req, headers=auth_headers)
         assert resp_tool.status_code == 200
         mock_register_tool.assert_awaited_once()
@@ -264,7 +262,7 @@ class TestIntegrationScenarios:
                 "associated_tools": [MOCK_TOOL.id],
             },
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
         resp_srv = test_client.post("/servers/", json=srv_req, headers=auth_headers)
         assert resp_srv.status_code == 201
@@ -327,15 +325,16 @@ class TestIntegrationScenarios:
                 "content": "Hello",  # required by ResourceCreate
             },
             "team_id": None,
-            "visibility": "private"
+            "visibility": "private",
         }
         resp_create = test_client.post("/resources/", json=create_body, headers=auth_headers)
         assert resp_create.status_code == 200
         mock_register.assert_awaited_once()
+        resource_id = resp_create.json()["id"]
 
         # read content
-        mock_read.return_value = ResourceContent(type="resource", uri=MOCK_RESOURCE.uri, mime_type="text/plain", text="Hello")
-        resp_read = test_client.get(f"/resources/{RESOURCE_URI_ESC}", headers=auth_headers)
+        mock_read.return_value = ResourceContent(type="resource", id=str(resource_id), uri=MOCK_RESOURCE.uri, mime_type="text/plain", text="Hello")
+        resp_read = test_client.get(f"/resources/{resource_id}", headers=auth_headers)
         assert resp_read.status_code == 200
         assert resp_read.json()["text"] == "Hello"
         mock_read.assert_awaited_once()

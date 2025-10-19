@@ -1,3 +1,89 @@
+// Add three fields to passthrough section on Advanced button click
+function handleAddPassthrough() {
+    const passthroughContainer = safeGetElement("passthrough-container");
+    if (!passthroughContainer) {
+        console.error("Passthrough container not found");
+        return;
+    }
+
+    // Toggle visibility
+    if (
+        passthroughContainer.style.display === "none" ||
+        passthroughContainer.style.display === ""
+    ) {
+        passthroughContainer.style.display = "block";
+        // Add fields only if not already present
+        if (!document.getElementById("query-mapping-field")) {
+            const queryDiv = document.createElement("div");
+            queryDiv.className = "mb-4";
+            queryDiv.innerHTML = `
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Query Mapping (JSON)</label>
+                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+            `;
+            passthroughContainer.appendChild(queryDiv);
+        }
+        if (!document.getElementById("header-mapping-field")) {
+            const headerDiv = document.createElement("div");
+            headerDiv.className = "mb-4";
+            headerDiv.innerHTML = `
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Header Mapping (JSON)</label>
+                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+            `;
+            passthroughContainer.appendChild(headerDiv);
+        }
+        if (!document.getElementById("timeout-ms-field")) {
+            const timeoutDiv = document.createElement("div");
+            timeoutDiv.className = "mb-4";
+            timeoutDiv.innerHTML = `
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">timeout_ms (number)</label>
+                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
+            `;
+            passthroughContainer.appendChild(timeoutDiv);
+        }
+        if (!document.getElementById("expose-passthrough-field")) {
+            const exposeDiv = document.createElement("div");
+            exposeDiv.className = "mb-4";
+            exposeDiv.innerHTML = `
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Expose Passthrough</label>
+                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                    <option value="true" selected>True</option>
+                    <option value="false">False</option>
+                </select>
+            `;
+            passthroughContainer.appendChild(exposeDiv);
+        }
+        if (!document.getElementById("allowlist-field")) {
+            const allowlistDiv = document.createElement("div");
+            allowlistDiv.className = "mb-4";
+            allowlistDiv.innerHTML = `
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Allowlist (comma-separated hosts/schemes)</label>
+                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
+            `;
+            passthroughContainer.appendChild(allowlistDiv);
+        }
+        if (!document.getElementById("plugin-chain-pre-field")) {
+            const pluginPreDiv = document.createElement("div");
+            pluginPreDiv.className = "mb-4";
+            pluginPreDiv.innerHTML = `
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Pre</label>
+                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+            `;
+            passthroughContainer.appendChild(pluginPreDiv);
+        }
+        if (!document.getElementById("plugin-chain-post-field")) {
+            const pluginPostDiv = document.createElement("div");
+            pluginPostDiv.className = "mb-4";
+            pluginPostDiv.innerHTML = `
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Post (optional, override defaults)</label>
+                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+            `;
+            passthroughContainer.appendChild(pluginPostDiv);
+        }
+    } else {
+        passthroughContainer.style.display = "none";
+    }
+}
+
 // Make URL field read-only for integration type MCP
 function updateEditToolUrl() {
     const editTypeField = document.getElementById("edit-tool-type");
@@ -3366,12 +3452,12 @@ async function viewPrompt(promptName) {
 /**
  * SECURE: Edit Prompt function with validation
  */
-async function editPrompt(promptName) {
+async function editPrompt(promptId) {
     try {
-        console.log(`Editing prompt: ${promptName}`);
+        console.log(`Editing prompt: ${promptId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`,
+            `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}`,
         );
 
         if (!response.ok) {
@@ -3427,7 +3513,22 @@ async function editPrompt(promptName) {
         // Set form action and populate fields with validation
         const editForm = safeGetElement("edit-prompt-form");
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}/edit`;
+            editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}/edit`;
+            // Add or update hidden team_id input if present in URL
+            const teamId = new URL(window.location.href).searchParams.get(
+                "team_id",
+            );
+            if (teamId) {
+                let teamInput = safeGetElement("edit-prompt-team-id");
+                if (!teamInput) {
+                    teamInput = document.createElement("input");
+                    teamInput.type = "hidden";
+                    teamInput.name = "team_id";
+                    teamInput.id = "edit-prompt-team-id";
+                    editForm.appendChild(teamInput);
+                }
+                teamInput.value = teamId;
+            }
         }
 
         // Validate prompt name
@@ -7923,7 +8024,13 @@ async function handlePromptFormSubmit(e) {
 async function handleEditPromptFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
+
     const formData = new FormData(form);
+    // Add team_id from URL if present (like handleEditToolFormSubmit)
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    if (teamId) {
+        formData.set("team_id", teamId);
+    }
 
     try {
         // Validate inputs
@@ -9097,6 +9204,11 @@ function setupFormHandlers() {
     const paramButton = safeGetElement("add-parameter-btn");
     if (paramButton) {
         paramButton.addEventListener("click", handleAddParameter);
+    }
+
+    const passthroughButton = safeGetElement("add-passthrough-btn");
+    if (passthroughButton) {
+        passthroughButton.addEventListener("click", handleAddPassthrough);
     }
 
     const serverForm = safeGetElement("add-server-form");

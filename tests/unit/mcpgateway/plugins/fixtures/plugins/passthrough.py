@@ -7,7 +7,6 @@ Authors: Mihai Criveti
 Passthrough plugin.
 """
 
-
 # First-Party
 from mcpgateway.plugins.framework import (
     Plugin,

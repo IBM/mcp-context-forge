@@ -2,10 +2,11 @@
 # Future
 from __future__ import annotations
 
+import os
+
 # Standard
 from dataclasses import dataclass
-import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Third-Party
 import httpx
@@ -14,15 +15,15 @@ import httpx
 @dataclass
 class ToolDef:
     id: str
-    name: Optional[str] = None
-    description: Optional[str] = None
-    schema: Optional[Dict[str, Any]] = None
+    name: str | None = None
+    description: str | None = None
+    schema: dict[str, Any] | None = None
     # extra fields from /tools to enable direct REST execution
-    url: Optional[str] = None
-    method: Optional[str] = None           # maps requestType
-    headers: Optional[Dict[str, Any]] = None
-    integration_type: Optional[str] = None # e.g. "REST"
-    jsonpath_filter: Optional[str] = None  # not applied in MVP
+    url: str | None = None
+    method: str | None = None  # maps requestType
+    headers: dict[str, Any] | None = None
+    integration_type: str | None = None  # e.g. "REST"
+    jsonpath_filter: str | None = None  # not applied in MVP
 
 
 class MCPClient:
@@ -32,18 +33,18 @@ class MCPClient:
         self._client = httpx.Client()
 
     @classmethod
-    def from_env(cls, base_url: str | None = None) -> "MCPClient":
+    def from_env(cls, base_url: str | None = None) -> MCPClient:
         url = base_url or os.getenv("MCP_GATEWAY_URL", "http://localhost:4444")
         token = os.getenv("MCPGATEWAY_BEARER_TOKEN") or os.getenv("GATEWAY_BEARER_TOKEN")  # Support both names
         return cls(url, token)
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         h = {"Content-Type": "application/json"}
         if self.token:
             h["Authorization"] = f"Bearer {self.token}"
         return h
 
-    def list_tools(self) -> List[ToolDef]:
+    def list_tools(self) -> list[ToolDef]:
         """
         Lists all available MCP tools from this server.
 
@@ -61,21 +62,21 @@ class MCPClient:
                     continue
                 data = resp.json()
                 raw_tools = data if isinstance(data, list) else data.get("tools", [])
-                out: List[ToolDef] = []
+                out: list[ToolDef] = []
                 for t in raw_tools:
                     out.append(
                         ToolDef(
-                            id = t.get("id") or t.get("tool_id") or t.get("name"),
-                            name = t.get("name") or t.get("originalName") or t.get("originalNameSlug"),
-                            description = t.get("description"),
+                            id=t.get("id") or t.get("tool_id") or t.get("name"),
+                            name=t.get("name") or t.get("originalName") or t.get("originalNameSlug"),
+                            description=t.get("description"),
                             # schemas in either snake_case or camelCase
-                            schema = t.get("input_schema") or t.get("inputSchema") or t.get("schema"),
+                            schema=t.get("input_schema") or t.get("inputSchema") or t.get("schema"),
                             # fields for direct REST execution
-                            url = t.get("url"),
-                            method = (t.get("requestType") or t.get("method") or "GET"),
-                            headers = (t.get("headers") or {}) if isinstance(t.get("headers"), dict) else {},
-                            integration_type = t.get("integrationType"),
-                            jsonpath_filter = t.get("jsonpathFilter"),
+                            url=t.get("url"),
+                            method=(t.get("requestType") or t.get("method") or "GET"),
+                            headers=(t.get("headers") or {}) if isinstance(t.get("headers"), dict) else {},
+                            integration_type=t.get("integrationType"),
+                            jsonpath_filter=t.get("jsonpathFilter"),
                         )
                     )
                 return out
@@ -83,7 +84,7 @@ class MCPClient:
         except Exception:
             return []
 
-    def invoke_tool(self, tool_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def invoke_tool(self, tool_id: str, args: dict[str, Any]) -> dict[str, Any]:
         """
         Try multiple execution surfaces:
         1) JSON-RPC /rpc with method=<tool name or id>, params=<args>
@@ -96,7 +97,7 @@ class MCPClient:
         # Best-effort: fetch catalog to find a human name for /rpc and resolve name to ID
         name_for_rpc = None
         actual_tool_id = tool_id
-        tool_meta: Optional[ToolDef] = None
+        tool_meta: ToolDef | None = None
         try:
             tools = self.list_tools()
             for t in tools:
@@ -122,28 +123,32 @@ class MCPClient:
                     "tool_id": actual_tool_id,
                     "error": f"Schema validation failed: {validation_result['error']}",
                     "schema": tool_meta.schema,
-                    "provided_args": args
+                    "provided_args": args,
                 }
 
         candidates = []
         # JSON-RPC first (by name, then id)
         if name_for_rpc:
-            candidates.append(("POST", "/rpc", {"jsonrpc":"2.0","id":"1","method":name_for_rpc,"params":args}))
-        candidates.append(("POST", "/rpc", {"jsonrpc":"2.0","id":"1","method":actual_tool_id,"params":args}))
+            candidates.append(("POST", "/rpc", {"jsonrpc": "2.0", "id": "1", "method": name_for_rpc, "params": args}))
+        candidates.append(("POST", "/rpc", {"jsonrpc": "2.0", "id": "1", "method": actual_tool_id, "params": args}))
 
         # Tool-specific invoke/execute variants (use actual ID)
         for base in ("/tools", "/admin/tools"):
-            candidates.extend([
-                ("POST", f"{base}/{actual_tool_id}/invoke", {"args": args}),
-                ("POST", f"{base}/{actual_tool_id}/execute", {"args": args}),
-            ])
+            candidates.extend(
+                [
+                    ("POST", f"{base}/{actual_tool_id}/invoke", {"args": args}),
+                    ("POST", f"{base}/{actual_tool_id}/execute", {"args": args}),
+                ]
+            )
 
         # Batch invoke with payload carrying the id
         for base in ("/tools", "/admin/tools"):
-            candidates.extend([
-                ("POST", f"{base}/invoke", {"id": actual_tool_id, "args": args}),
-                ("POST", f"{base}/execute", {"id": actual_tool_id, "args": args}),
-            ])
+            candidates.extend(
+                [
+                    ("POST", f"{base}/invoke", {"id": actual_tool_id, "args": args}),
+                    ("POST", f"{base}/execute", {"id": actual_tool_id, "args": args}),
+                ]
+            )
 
         last_err = None
         for method, path, body in candidates:
@@ -205,14 +210,16 @@ class MCPClient:
                     "request": {"url": tool_meta.url, "method": method_type},
                     "status_code": resp.status_code,
                     "result": data,
-                    "schema_validated": tool_meta.schema is not None
+                    "schema_validated": tool_meta.schema is not None,
                 }
             except Exception as e:
                 last_err = f"direct_rest_error: {e}"
 
         return {"tool_id": actual_tool_id, "args": args, "note": "No invoke path worked", "last_error": last_err}
 
-    def _validate_args_against_schema(self, args: Dict[str, Any], schema: Dict[str, Any], tool_id: str) -> Dict[str, Any]:
+    def _validate_args_against_schema(
+        self, args: dict[str, Any], schema: dict[str, Any], tool_id: str
+    ) -> dict[str, Any]:
         """Validate arguments against tool schema"""
         try:
             # Basic schema validation
@@ -237,7 +244,7 @@ class MCPClient:
                     "valid": False,
                     "error": f"Missing required fields: {missing_required}",
                     "required": required,
-                    "provided": list(args.keys())
+                    "provided": list(args.keys()),
                 }
 
             # Check for unexpected fields (warning only)

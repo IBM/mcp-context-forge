@@ -72,7 +72,9 @@ class DescriptiveStatistics:
 
         # Numeric columns descriptive statistics
         for col in numeric_cols:
-            result["numeric_columns"][col] = self._get_numeric_stats(df[col], confidence_level)
+            result["numeric_columns"][col] = self._get_numeric_stats(
+                df[col], confidence_level
+            )
 
         # Categorical columns descriptive statistics
         for col in categorical_cols:
@@ -80,7 +82,9 @@ class DescriptiveStatistics:
 
         return result
 
-    def _get_numeric_stats(self, series: pd.Series, confidence_level: float = 0.95) -> dict[str, Any]:
+    def _get_numeric_stats(
+        self, series: pd.Series, confidence_level: float = 0.95
+    ) -> dict[str, Any]:
         """
         Get descriptive statistics for a numeric series.
 
@@ -116,7 +120,7 @@ class DescriptiveStatistics:
         # Additional percentiles
         percentiles = [0.01, 0.05, 0.10, 0.90, 0.95, 0.99]
         for p in percentiles:
-            stats_dict[f"{int(p*100)}%"] = float(series.quantile(p))
+            stats_dict[f"{int(p * 100)}%"] = float(series.quantile(p))
 
         # Mode (most frequent value)
         try:
@@ -191,16 +195,26 @@ class DescriptiveStatistics:
         sorted_values = np.sort(value_counts.values)[::-1]  # Descending order
         n = len(sorted_values)
         index = np.arange(1, n + 1)
-        stats_dict["gini"] = float((np.sum((2 * index - n - 1) * sorted_values)) / (n * np.sum(sorted_values)))
+        stats_dict["gini"] = float(
+            (np.sum((2 * index - n - 1) * sorted_values)) / (n * np.sum(sorted_values))
+        )
 
         # Simpson's diversity index
         n_total = len(series)
-        simpson = np.sum([(count * (count - 1)) / (n_total * (n_total - 1)) for count in value_counts.values if n_total > 1])
+        simpson = np.sum(
+            [
+                (count * (count - 1)) / (n_total * (n_total - 1))
+                for count in value_counts.values
+                if n_total > 1
+            ]
+        )
         stats_dict["simpson_diversity"] = float(simpson if n_total > 1 else 0)
 
         return stats_dict
 
-    def get_percentiles(self, series: pd.Series, percentiles: list[float] | None = None) -> dict[str, float]:
+    def get_percentiles(
+        self, series: pd.Series, percentiles: list[float] | None = None
+    ) -> dict[str, float]:
         """
         Calculate percentiles for a numeric series.
 
@@ -226,7 +240,9 @@ class DescriptiveStatistics:
 
         return result
 
-    def get_summary_stats(self, df: pd.DataFrame, columns: list[str] | None = None) -> dict[str, Any]:
+    def get_summary_stats(
+        self, df: pd.DataFrame, columns: list[str] | None = None
+    ) -> dict[str, Any]:
         """
         Get a summary of key statistics for quick overview.
 
@@ -272,8 +288,14 @@ class DescriptiveStatistics:
                     value_counts = series.value_counts()
                     summary["categorical_summary"][col] = {
                         "unique_values": series.nunique(),
-                        "most_frequent": (str(value_counts.index[0]) if not value_counts.empty else None),
-                        "frequency": (int(value_counts.iloc[0]) if not value_counts.empty else 0),
+                        "most_frequent": (
+                            str(value_counts.index[0])
+                            if not value_counts.empty
+                            else None
+                        ),
+                        "frequency": (
+                            int(value_counts.iloc[0]) if not value_counts.empty else 0
+                        ),
                     }
 
         return summary
@@ -307,7 +329,9 @@ class DescriptiveStatistics:
         for metric in key_metrics:
             if metric in stats1 and metric in stats2:
                 diff = stats2[metric] - stats1[metric]
-                pct_change = (diff / stats1[metric] * 100) if stats1[metric] != 0 else None
+                pct_change = (
+                    (diff / stats1[metric] * 100) if stats1[metric] != 0 else None
+                )
                 comparison["differences"][metric] = {
                     "absolute_difference": diff,
                     "percent_change": pct_change,

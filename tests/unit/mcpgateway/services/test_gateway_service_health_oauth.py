@@ -17,8 +17,7 @@ These tests specifically target uncovered areas in gateway_service.py including:
 from __future__ import annotations
 
 # Standard
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
@@ -46,6 +45,7 @@ def _bypass_validation(monkeypatch):
     """Bypass Pydantic validation for mock objects."""
     # First-Party
     from mcpgateway.schemas import GatewayRead
+
     monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda x: x))
 
 
@@ -96,18 +96,17 @@ class TestGatewayServiceHealthOAuth:
     async def test_connect_to_streamablehttp_server(self, gateway_service):
         """Test connect_to_streamablehttp_server method with resources and prompts."""
         # Mock the method directly since it's complex to mock all dependencies
-        gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=(
-            {"resources": True, "prompts": True, "tools": True},  # capabilities
-            [MagicMock(request_type="STREAMABLEHTTP")],  # tools
-            [MagicMock(uri="http://example.com/resource", content="")],  # resources
-            [MagicMock(template="")]  # prompts
-        ))
+        gateway_service.connect_to_streamablehttp_server = AsyncMock(
+            return_value=(
+                {"resources": True, "prompts": True, "tools": True},  # capabilities
+                [MagicMock(request_type="STREAMABLEHTTP")],  # tools
+                [MagicMock(uri="http://example.com/resource", content="")],  # resources
+                [MagicMock(template="")],  # prompts
+            )
+        )
 
         # Execute
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_streamablehttp_server(
-            "http://test.example.com",
-            {"Authorization": "Bearer token"}
-        )
+        capabilities, tools, resources, prompts = await gateway_service.connect_to_streamablehttp_server("http://test.example.com", {"Authorization": "Bearer token"})
 
         # Verify
         assert "resources" in capabilities
@@ -120,18 +119,17 @@ class TestGatewayServiceHealthOAuth:
     async def test_connect_to_streamablehttp_server_resource_failures(self, gateway_service):
         """Test connect_to_streamablehttp_server with resource/prompt fetch failures."""
         # Mock the method to return empty resources and prompts on failure
-        gateway_service.connect_to_streamablehttp_server = AsyncMock(return_value=(
-            {"resources": True, "prompts": True, "tools": True},  # capabilities
-            [],  # tools
-            [],  # resources (empty due to failure)
-            []   # prompts (empty due to failure)
-        ))
+        gateway_service.connect_to_streamablehttp_server = AsyncMock(
+            return_value=(
+                {"resources": True, "prompts": True, "tools": True},  # capabilities
+                [],  # tools
+                [],  # resources (empty due to failure)
+                [],  # prompts (empty due to failure)
+            )
+        )
 
         # Execute
-        capabilities, tools, resources, prompts = await gateway_service.connect_to_streamablehttp_server(
-            "http://test.example.com",
-            {"Authorization": "Bearer token"}
-        )
+        capabilities, tools, resources, prompts = await gateway_service.connect_to_streamablehttp_server("http://test.example.com", {"Authorization": "Bearer token"})
 
         # Verify - should handle failures gracefully
         assert "resources" in capabilities
@@ -224,17 +222,11 @@ class TestGatewayServiceHealthOAuth:
         # Mock active gateways with different capabilities
         gateway1 = MagicMock()
         gateway1.enabled = True
-        gateway1.capabilities = {
-            "tools": {"listChanged": True},
-            "resources": {"listChanged": False}
-        }
+        gateway1.capabilities = {"tools": {"listChanged": True}, "resources": {"listChanged": False}}
 
         gateway2 = MagicMock()
         gateway2.enabled = True
-        gateway2.capabilities = {
-            "prompts": {"listChanged": True},
-            "resources": {"listChanged": True}
-        }
+        gateway2.capabilities = {"prompts": {"listChanged": True}, "resources": {"listChanged": True}}
 
         test_db.query.return_value.filter.return_value.all.return_value = [gateway1, gateway2]
 
@@ -256,12 +248,9 @@ class TestGatewayServiceHealthOAuth:
     async def test_fetch_tools_after_oauth_success(self, gateway_service, test_db):
         """Test successful OAuth tool fetching."""
         # Mock the method to return a successful result
-        gateway_service.fetch_tools_after_oauth = AsyncMock(return_value={
-            "capabilities": {"tools": True, "resources": True, "prompts": True},
-            "tools": [{"name": "oauth_tool", "description": "OAuth tool"}],
-            "resources": [],
-            "prompts": []
-        })
+        gateway_service.fetch_tools_after_oauth = AsyncMock(
+            return_value={"capabilities": {"tools": True, "resources": True, "prompts": True}, "tools": [{"name": "oauth_tool", "description": "OAuth tool"}], "resources": [], "prompts": []}
+        )
 
         result = await gateway_service.fetch_tools_after_oauth(test_db, "1")
 
@@ -274,9 +263,7 @@ class TestGatewayServiceHealthOAuth:
     async def test_fetch_tools_after_oauth_token_exchange_failure(self, gateway_service, test_db):
         """Test OAuth tool fetching with token exchange failure."""
         # Mock the method to raise a GatewayConnectionError
-        gateway_service.fetch_tools_after_oauth = AsyncMock(
-            side_effect=GatewayConnectionError("Failed to fetch tools after OAuth: No valid OAuth tokens found")
-        )
+        gateway_service.fetch_tools_after_oauth = AsyncMock(side_effect=GatewayConnectionError("Failed to fetch tools after OAuth: No valid OAuth tokens found"))
 
         with pytest.raises(GatewayConnectionError):
             await gateway_service.fetch_tools_after_oauth(test_db, "1")
@@ -285,9 +272,7 @@ class TestGatewayServiceHealthOAuth:
     async def test_fetch_tools_after_oauth_gateway_not_found(self, gateway_service, test_db):
         """Test OAuth tool fetching when gateway not found."""
         # Mock the method to raise a ValueError for gateway not found
-        gateway_service.fetch_tools_after_oauth = AsyncMock(
-            side_effect=GatewayConnectionError("Failed to fetch tools after OAuth: Gateway not found")
-        )
+        gateway_service.fetch_tools_after_oauth = AsyncMock(side_effect=GatewayConnectionError("Failed to fetch tools after OAuth: Gateway not found"))
 
         with pytest.raises(GatewayConnectionError):
             await gateway_service.fetch_tools_after_oauth(test_db, "999")
@@ -296,9 +281,7 @@ class TestGatewayServiceHealthOAuth:
     async def test_fetch_tools_after_oauth_initialization_failure(self, gateway_service, test_db):
         """Test OAuth tool fetching with gateway initialization failure."""
         # Mock the method to raise a GatewayConnectionError for initialization failure
-        gateway_service.fetch_tools_after_oauth = AsyncMock(
-            side_effect=GatewayConnectionError("Failed to fetch tools after OAuth: Gateway initialization failed")
-        )
+        gateway_service.fetch_tools_after_oauth = AsyncMock(side_effect=GatewayConnectionError("Failed to fetch tools after OAuth: Gateway initialization failed"))
 
         with pytest.raises(GatewayConnectionError):
             await gateway_service.fetch_tools_after_oauth(test_db, "1")

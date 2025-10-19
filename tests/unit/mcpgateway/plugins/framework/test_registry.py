@@ -6,6 +6,7 @@ Authors: Teryl Taylor
 
 Unit tests for plugin registry.
 """
+
 # Standard
 from unittest.mock import AsyncMock, patch
 
@@ -79,7 +80,7 @@ async def test_registry_priority_sorting():
         kind="test.Plugin",
         hooks=[HookType.PROMPT_PRE_FETCH],
         priority=300,  # High number = low priority
-        config={}
+        config={},
     )
 
     high_priority_config = PluginConfig(
@@ -90,8 +91,8 @@ async def test_registry_priority_sorting():
         tags=["test"],
         kind="test.Plugin",
         hooks=[HookType.PROMPT_PRE_FETCH],
-        priority=50,   # Low number = high priority
-        config={}
+        priority=50,  # Low number = high priority
+        config={},
     )
 
     # Create plugin instances
@@ -125,25 +126,11 @@ async def test_registry_hook_filtering():
 
     # Create plugin with specific hooks
     pre_fetch_config = PluginConfig(
-        name="PreFetchPlugin",
-        description="Pre-fetch plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="test.Plugin",
-        hooks=[HookType.PROMPT_PRE_FETCH],
-        config={}
+        name="PreFetchPlugin", description="Pre-fetch plugin", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={}
     )
 
     post_fetch_config = PluginConfig(
-        name="PostFetchPlugin",
-        description="Post-fetch plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="test.Plugin",
-        hooks=[HookType.PROMPT_POST_FETCH],
-        config={}
+        name="PostFetchPlugin", description="Post-fetch plugin", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_POST_FETCH], config={}
     )
 
     pre_fetch_plugin = Plugin(pre_fetch_config)
@@ -176,27 +163,9 @@ async def test_registry_shutdown():
     registry = PluginInstanceRegistry()
 
     # Create mock plugins with shutdown methods
-    mock_plugin1 = Plugin(PluginConfig(
-        name="Plugin1",
-        description="Test plugin 1",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="test.Plugin",
-        hooks=[HookType.PROMPT_PRE_FETCH],
-        config={}
-    ))
+    mock_plugin1 = Plugin(PluginConfig(name="Plugin1", description="Test plugin 1", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={}))
 
-    mock_plugin2 = Plugin(PluginConfig(
-        name="Plugin2",
-        description="Test plugin 2",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="test.Plugin",
-        hooks=[HookType.PROMPT_POST_FETCH],
-        config={}
-    ))
+    mock_plugin2 = Plugin(PluginConfig(name="Plugin2", description="Test plugin 2", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_POST_FETCH], config={}))
 
     # Mock the shutdown methods
     mock_plugin1.shutdown = AsyncMock()
@@ -227,16 +196,9 @@ async def test_registry_shutdown_with_error():
     registry = PluginInstanceRegistry()
 
     # Create mock plugin that fails during shutdown
-    failing_plugin = Plugin(PluginConfig(
-        name="FailingPlugin",
-        description="Plugin that fails shutdown",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="test.Plugin",
-        hooks=[HookType.PROMPT_PRE_FETCH],
-        config={}
-    ))
+    failing_plugin = Plugin(
+        PluginConfig(name="FailingPlugin", description="Plugin that fails shutdown", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={})
+    )
 
     # Mock shutdown to raise an exception
     failing_plugin.shutdown = AsyncMock(side_effect=RuntimeError("Shutdown failed"))
@@ -245,7 +207,7 @@ async def test_registry_shutdown_with_error():
     assert registry.plugin_count == 1
 
     # Shutdown should handle the error gracefully
-    with patch('mcpgateway.plugins.framework.registry.logger') as mock_logger:
+    with patch("mcpgateway.plugins.framework.registry.logger") as mock_logger:
         await registry.shutdown()
 
         # Verify error was logged
@@ -282,16 +244,7 @@ async def test_registry_cache_invalidation():
     """Test that priority cache is invalidated correctly."""
     registry = PluginInstanceRegistry()
 
-    plugin_config = PluginConfig(
-        name="TestPlugin",
-        description="Test plugin",
-        author="Test",
-        version="1.0",
-        tags=["test"],
-        kind="test.Plugin",
-        hooks=[HookType.PROMPT_PRE_FETCH],
-        config={}
-    )
+    plugin_config = PluginConfig(name="TestPlugin", description="Test plugin", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={})
 
     plugin = Plugin(plugin_config)
 
