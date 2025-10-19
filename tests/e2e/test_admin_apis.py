@@ -207,8 +207,12 @@ class TestAdminServerAPIs:
         """Test GET /admin/servers returns list of servers."""
         response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        # Don't assume empty - just check it returns a list
-        assert isinstance(response.json(), list)
+        # Don't assume empty - accept either the legacy list response
+        # or the newer paginated dict response with 'data' key.
+        resp_json = response.json()
+        assert isinstance(resp_json, (list, dict))
+        if isinstance(resp_json, dict):
+            assert "data" in resp_json and isinstance(resp_json["data"], list)
 
     async def test_admin_server_lifecycle(self, client: AsyncClient, mock_settings):
         """Test complete server lifecycle through admin UI."""
@@ -273,8 +277,12 @@ class TestAdminToolAPIs:
         """Test GET /admin/tools returns list of tools."""
         response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        # Don't assume empty - just check it returns a list
-        assert isinstance(response.json(), list)
+        # Don't assume empty - accept either the legacy list response
+        # or the newer paginated dict response with 'data' key.
+        resp_json = response.json()
+        assert isinstance(resp_json, (list, dict))
+        if isinstance(resp_json, dict):
+            assert "data" in resp_json and isinstance(resp_json["data"], list)
 
     # FIXME: Temporarily disabled due to issues with tool lifecycle tests
     # async def test_admin_tool_lifecycle(self, client: AsyncClient, mock_settings):

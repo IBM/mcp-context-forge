@@ -364,15 +364,25 @@ class TestAdminToolRoutes:
     async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_db):
         """Test listing tools with empty results and exceptions."""
         # Test empty list
-        mock_list_tools.return_value = []
-        result = await admin_list_tools(False, mock_db, "test-user")
-        assert result == []
+        # Arrange: make db.execute return an object whose scalar() -> 0 and scalars().all() -> []
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 0
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        # Call the function with explicit pagination params
+        result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+
+        # Expect structure with 'data' key and empty list
+        assert isinstance(result, dict)
+        assert result["data"] == []
 
         # Test with exception
-        mock_list_tools.side_effect = RuntimeError("Service unavailable")
+        # Simulate DB execution error
+        mock_db.execute.side_effect = RuntimeError("Service unavailable")
 
         with pytest.raises(RuntimeError):
-            await admin_list_tools(False, mock_db, "test-user")
+            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
     @patch.object(ToolService, "get_tool")
     async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_db):

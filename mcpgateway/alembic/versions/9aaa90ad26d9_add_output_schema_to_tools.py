@@ -2,7 +2,7 @@
 """add_output_schema_to_tools
 
 Revision ID: 9aaa90ad26d9
-Revises: 9c99ec6872ed
+Revises: g1a2b3c4d5e6
 Create Date: 2025-10-15 17:29:38.801771
 
 """
