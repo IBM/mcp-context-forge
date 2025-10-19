@@ -345,7 +345,15 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 
 ### Added
 
-#### **🔌 gRPC-to-MCP Protocol Translation** (#1171)
+#### **🔌 gRPC-to-MCP Protocol Translation** (#1171, #1172) [EXPERIMENTAL - OPT-IN]
+
+!!! warning "Experimental Feature - Disabled by Default"
+    gRPC support is an experimental opt-in feature that requires:
+
+    1. **Installation**: `pip install mcp-contextforge-gateway[grpc]`
+    2. **Enablement**: `MCPGATEWAY_GRPC_ENABLED=true` in environment
+
+    The feature is disabled by default and requires explicit activation. All gRPC dependencies are optional and not installed with the base package.
 
 * **Automatic Service Discovery** - Zero-configuration gRPC service integration via Server Reflection Protocol
   - Discovers all services and methods automatically from gRPC servers
@@ -423,8 +431,12 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   - Updated `.env.example` - gRPC configuration variables
 
 * **Configuration** - Feature flag and environment variables
-  - `MCPGATEWAY_GRPC_ENABLED=true` - Enable/disable gRPC features
+  - `MCPGATEWAY_GRPC_ENABLED=false` (default) - Feature disabled by default
+  - `MCPGATEWAY_GRPC_ENABLED=true` - Enable gRPC features (requires `[grpc]` extras)
+  - Optional dependency group: `mcp-contextforge-gateway[grpc]`
   - Backward compatible - opt-in feature, no breaking changes
+  - Conditional imports - gracefully handles missing grpcio packages
+  - UI tab and API endpoints hidden/disabled when feature is off
 
 * **Performance Benefits**
   - **1.25-1.6x faster** method invocation compared to REST (Protobuf binary vs JSON)
@@ -520,7 +532,14 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 * **Tool Limit Removal** (#1141) - Temporarily removed limit for tools until pagination is properly implemented
 * **Team Request UI** (#1022) - Fixed "Join Request" button showing no pending requests
 
-#### **🔌 gRPC Fixes**
+#### **🔌 gRPC Improvements & Fixes**
+* **Made gRPC Opt-In** (#1172) - Feature-flagged gRPC support for stability
+  - Moved grpcio packages to optional `[grpc]` dependency group
+  - Default `MCPGATEWAY_GRPC_ENABLED=false` (must be explicitly enabled)
+  - Conditional imports - no errors if grpcio packages not installed
+  - Tests automatically skipped when packages unavailable
+  - UI tab and API endpoints hidden when feature disabled
+  - Install with: `pip install mcp-contextforge-gateway[grpc]`
 * **Database Migration Compatibility** - Cross-database integer defaults
   - Fixed `server_default` values in Alembic migration to use `sa.text()`
   - Ensures compatibility across SQLite, MySQL, and PostgreSQL
@@ -538,12 +557,14 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
 
 #### **🔌 gRPC Dependency Updates**
 * **Dependency Updates** - Resolved version conflicts for gRPC compatibility
+  - **Made optional**: Moved all grpcio packages to `[grpc]` extras group
+  - Constrained `grpcio>=1.62.0,<1.68.0` for protobuf 4.x compatibility
+  - Constrained `grpcio-reflection>=1.62.0,<1.68.0`
+  - Constrained `grpcio-tools>=1.62.0,<1.68.0`
+  - Updated `protobuf>=4.25.0` (removed `<5.0` constraint)
   - Updated `semgrep>=1.99.0` (was `>=1.139.0`) for jsonschema compatibility
-  - Constrained `grpcio>=1.60.0,<1.70.0` for protobuf 4.x compatibility
-  - Constrained `grpcio-reflection>=1.60.0,<1.70.0`
-  - Constrained `grpcio-tools>=1.60.0,<1.70.0`
-  - Constrained `protobuf>=3.19,<5.0` for opentelemetry-proto compatibility
-  - All dependencies now resolve without conflicts
+  - Binary wheels preferred automatically (no manual flags needed)
+  - All dependencies resolve without conflicts
 
 * **Code Quality Improvements**
   - Fixed Bandit security issue (try/except/pass with proper logging)

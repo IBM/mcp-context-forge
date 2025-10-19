@@ -119,6 +119,7 @@ from mcpgateway.utils.services_auth import decode_auth
 
 # Conditional imports for gRPC support (only if grpcio is installed)
 try:
+    # First-Party
     from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
     from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNameConflictError, GrpcServiceNotFoundError
 

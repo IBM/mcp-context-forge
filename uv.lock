@@ -2152,9 +2152,6 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "filelock" },
-    { name = "grpcio" },
-    { name = "grpcio-reflection" },
-    { name = "grpcio-tools" },
     { name = "gunicorn" },
     { name = "httpx", extra = ["http2"] },
     { name = "jinja2" },
@@ -2164,7 +2161,6 @@ dependencies = [
     { name = "mcp" },
     { name = "oauthlib" },
     { name = "parse" },
-    { name = "protobuf" },
     { name = "psutil" },
     { name = "pydantic", extra = ["email"] },
     { name = "pydantic-settings" },
@@ -2204,6 +2200,12 @@ fuzz = [
 ]
 fuzz-atheris = [
     { name = "atheris" },
+]
+grpc = [
+    { name = "grpcio" },
+    { name = "grpcio-reflection" },
+    { name = "grpcio-tools" },
+    { name = "protobuf" },
 ]
 llmchat = [
     { name = "langchain-core" },
@@ -2314,9 +2316,9 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.2" },
     { name = "fastapi", specifier = ">=0.118.0" },
     { name = "filelock", specifier = ">=3.19.1" },
-    { name = "grpcio", specifier = ">=1.62.0,<1.68.0" },
-    { name = "grpcio-reflection", specifier = ">=1.62.0,<1.68.0" },
-    { name = "grpcio-tools", specifier = ">=1.62.0,<1.68.0" },
+    { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.62.0,<1.68.0" },
+    { name = "grpcio-reflection", marker = "extra == 'grpc'", specifier = ">=1.62.0,<1.68.0" },
+    { name = "grpcio-tools", marker = "extra == 'grpc'", specifier = ">=1.62.0,<1.68.0" },
     { name = "gunicorn", specifier = ">=23.0.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.28.1" },
@@ -2338,7 +2340,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.37.0" },
     { name = "parse", specifier = ">=1.20.2" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.55.0" },
-    { name = "protobuf", specifier = ">=4.25.0" },
+    { name = "protobuf", marker = "extra == 'grpc'", specifier = ">=4.25.0" },
     { name = "psutil", specifier = ">=7.1.0" },
     { name = "psycopg2-binary", marker = "extra == 'postgres'", specifier = ">=2.9.10" },
     { name = "pydantic", specifier = ">=2.11.10" },
@@ -2363,7 +2365,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.37.0" },
     { name = "zeroconf", specifier = ">=0.148.0" },
 ]
-provides-extras = ["redis", "postgres", "mysql", "llmchat", "fuzz", "fuzz-atheris", "alembic", "observability", "aiosqlite", "asyncpg", "playwright", "all", "dev-all"]
+provides-extras = ["redis", "postgres", "mysql", "llmchat", "fuzz", "fuzz-atheris", "alembic", "observability", "aiosqlite", "asyncpg", "grpc", "playwright", "all", "dev-all"]
 
 [package.metadata.requires-dev]
 dev = [

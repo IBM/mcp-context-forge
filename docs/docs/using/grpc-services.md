@@ -1,6 +1,71 @@
-# gRPC Services
+# gRPC Services (Experimental)
+
+!!! warning "Experimental Feature"
+    gRPC support is an **experimental opt-in feature** that is disabled by default. It requires additional dependencies and explicit enablement.
 
 MCP Gateway supports automatic translation of gRPC services into MCP tools via the gRPC Server Reflection Protocol. This enables seamless integration of gRPC microservices into your MCP ecosystem without manual schema definition.
+
+## Installation & Setup
+
+### 1. Install gRPC Dependencies
+
+gRPC support requires additional dependencies that are not installed by default. Install them using the `[grpc]` extras:
+
+```bash
+# Using pip
+pip install mcp-contextforge-gateway[grpc]
+
+# Using uv
+uv pip install mcp-contextforge-gateway[grpc]
+
+# In requirements.txt
+mcp-contextforge-gateway[grpc]>=0.8.0
+```
+
+This installs the following packages:
+- `grpcio>=1.62.0,<1.68.0`
+- `grpcio-reflection>=1.62.0,<1.68.0`
+- `grpcio-tools>=1.62.0,<1.68.0`
+- `protobuf>=4.25.0`
+
+### 2. Enable the Feature
+
+Set the environment variable to enable gRPC support:
+
+```bash
+# In .env file
+MCPGATEWAY_GRPC_ENABLED=true
+
+# Or export in shell
+export MCPGATEWAY_GRPC_ENABLED=true
+
+# Or set in docker-compose.yml
+environment:
+  - MCPGATEWAY_GRPC_ENABLED=true
+```
+
+### 3. Restart the Gateway
+
+After installing dependencies and enabling the feature, restart MCP Gateway:
+
+```bash
+# Development mode
+make dev
+
+# Production mode
+mcpgateway
+
+# Or with Docker
+docker restart mcpgateway
+```
+
+### 4. Verify Installation
+
+Check that gRPC support is enabled:
+
+1. Navigate to the Admin UI at `http://localhost:4444/admin`
+2. Look for the **🔌 gRPC Services** tab (only visible when enabled)
+3. Or check the API: `curl http://localhost:4444/grpc` (should not return 404)
 
 ## Overview
 
