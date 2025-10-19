@@ -117,6 +117,7 @@ from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
+from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -397,13 +398,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("Shutdown complete")
 
 
-# Initialize FastAPI app
+# Initialize FastAPI app with orjson for 2-3x faster JSON serialization
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
     description="A FastAPI-based MCP Gateway with federation support",
     root_path=settings.app_root_path,
     lifespan=lifespan,
+    default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
 )
 
 
