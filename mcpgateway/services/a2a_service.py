@@ -182,15 +182,14 @@ class A2AAgentService:
             if visibility.lower() == "public":
                 logger.info(f"visibility.lower(): {visibility.lower()}")
                 logger.info(f"agent_data.name: {agent_data.name}")
-
                 logger.info(f"agent_data.slug: {agent_data.slug}")
                 # Check for existing public a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.name == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.name, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
