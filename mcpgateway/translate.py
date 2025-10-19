@@ -950,10 +950,18 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     p.add_argument("--stdio", help='Local command to run, e.g. "uvx mcp-server-git"')
     p.add_argument("--connect-sse", dest="connect_sse", help="Connect to remote SSE endpoint URL")
     p.add_argument("--connect-streamable-http", dest="connect_streamable_http", help="Connect to remote streamable HTTP endpoint URL")
+    p.add_argument("--grpc", type=str, help="gRPC server target (host:port) to expose")
+    p.add_argument("--connect-grpc", type=str, help="Remote gRPC endpoint to connect to")
 
     # Protocol exposure options (can be combined)
     p.add_argument("--expose-sse", action="store_true", help="Expose via SSE protocol (endpoints: /sse and /message)")
     p.add_argument("--expose-streamable-http", action="store_true", help="Expose via streamable HTTP protocol (endpoint: /mcp)")
+
+    # gRPC configuration options
+    p.add_argument("--grpc-tls", action="store_true", help="Enable TLS for gRPC connection")
+    p.add_argument("--grpc-cert", type=str, help="Path to TLS certificate for gRPC")
+    p.add_argument("--grpc-key", type=str, help="Path to TLS key for gRPC")
+    p.add_argument("--grpc-metadata", action="append", help="gRPC metadata (KEY=VALUE, repeatable)")
 
     p.add_argument("--port", type=int, default=8000, help="HTTP port to bind")
     p.add_argument("--host", default="127.0.0.1", help="Host interface to bind (default: 127.0.0.1)")
@@ -2341,8 +2349,32 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
             raise
 
     try:
+        # Handle gRPC server exposure
+        if getattr(args, "grpc", None):
+            # First-Party
+            from mcpgateway.translate_grpc import expose_grpc_via_sse  # pylint: disable=import-outside-toplevel
+
+            # Parse metadata
+            metadata = {}
+            if getattr(args, "grpc_metadata", None):
+                for item in args.grpc_metadata:
+                    if "=" in item:
+                        key, value = item.split("=", 1)
+                        metadata[key] = value
+
+            asyncio.run(
+                expose_grpc_via_sse(
+                    target=args.grpc,
+                    port=args.port,
+                    tls_enabled=getattr(args, "grpc_tls", False),
+                    tls_cert=getattr(args, "grpc_cert", None),
+                    tls_key=getattr(args, "grpc_key", None),
+                    metadata=metadata,
+                )
+            )
+
         # Handle local stdio server exposure
-        if args.stdio:
+        elif args.stdio:
             # Check which protocols to expose
             expose_sse = getattr(args, "expose_sse", False)
             expose_streamable_http = getattr(args, "expose_streamable_http", False)
@@ -2375,8 +2407,11 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
             start_sse(args.connect_sse, args.oauth2Bearer, 30.0, args.stdioCommand)
         elif getattr(args, "connect_streamable_http", None):
             start_streamable_http_client(args.connect_streamable_http, args.oauth2Bearer, 30.0, args.stdioCommand)
+        elif getattr(args, "connect_grpc", None):
+            print("Error: --connect-grpc mode not yet implemented. Use --grpc to expose a gRPC server.", file=sys.stderr)
+            sys.exit(1)
         else:
-            print("Error: Must specify either --stdio (to expose local server) or --connect-sse/--connect-streamable-http (to connect to remote)", file=sys.stderr)
+            print("Error: Must specify either --stdio (to expose local server), --grpc (to expose gRPC server), or --connect-sse/--connect-streamable-http (to connect to remote)", file=sys.stderr)
             sys.exit(1)
     except KeyboardInterrupt:
         print("")  # restore shell prompt

@@ -451,6 +451,17 @@
               🤖 Agents (A2A)
             </a>
             {% endif %}
+            {% if grpc_enabled %}
+            <a
+              href="#grpc-services"
+              id="tab-grpc-services"
+              data-testid="grpc-services-tab"
+              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+              onclick="showTab('grpc-services')"
+            >
+              🔌 gRPC Services
+            </a>
+            {% endif %}
             <a
               href="#metrics"
               id="tab-metrics"
@@ -5715,6 +5726,258 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               {% endif %}
             </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
+      <!-- gRPC Services Panel -->
+      {% if grpc_enabled %}
+      <div id="grpc-services-panel" class="tab-panel hidden">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-2xl font-bold dark:text-gray-200">
+            gRPC Services Registry
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+            Manage gRPC services exposed as MCP tools via automatic reflection
+          </p>
+        </div>
+
+        <!-- gRPC Service Add Form -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
+            Register New gRPC Service
+          </h3>
+          <form action="{{ root_path }}/grpc" method="POST" id="add-grpc-service-form">
+            <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+              <!-- Service Name -->
+              <div>
+                <label
+                  for="grpc-service-name"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Service Name</label
+                >
+                <input
+                  type="text"
+                  id="grpc-service-name"
+                  name="name"
+                  required
+                  placeholder="my-grpc-service"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Target (host:port) -->
+              <div>
+                <label
+                  for="grpc-service-target"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >gRPC Target (host:port)</label
+                >
+                <input
+                  type="text"
+                  id="grpc-service-target"
+                  name="target"
+                  required
+                  placeholder="localhost:50051"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Description -->
+              <div class="sm:col-span-2">
+                <label
+                  for="grpc-service-description"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Description</label
+                >
+                <textarea
+                  id="grpc-service-description"
+                  name="description"
+                  rows="2"
+                  placeholder="Optional description of the gRPC service"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                ></textarea>
+              </div>
+
+              <!-- TLS Enabled -->
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="grpc-tls-enabled"
+                  name="tls_enabled"
+                  class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                  onchange="toggleGrpcTlsFields()"
+                />
+                <label
+                  for="grpc-tls-enabled"
+                  class="ml-2 block text-sm text-gray-900 dark:text-gray-400"
+                  >Enable TLS</label
+                >
+              </div>
+
+              <!-- Reflection Enabled -->
+              <div class="flex items-center">
+                <input
+                  type="checkbox"
+                  id="grpc-reflection-enabled"
+                  name="reflection_enabled"
+                  checked
+                  class="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                />
+                <label
+                  for="grpc-reflection-enabled"
+                  class="ml-2 block text-sm text-gray-900 dark:text-gray-400"
+                  >Enable Server Reflection</label
+                >
+              </div>
+
+              <!-- TLS Certificate Path (hidden by default) -->
+              <div id="grpc-tls-cert-field" class="hidden">
+                <label
+                  for="grpc-tls-cert-path"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >TLS Certificate Path</label
+                >
+                <input
+                  type="text"
+                  id="grpc-tls-cert-path"
+                  name="tls_cert_path"
+                  placeholder="/path/to/cert.pem"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- TLS Key Path (hidden by default) -->
+              <div id="grpc-tls-key-field" class="hidden">
+                <label
+                  for="grpc-tls-key-path"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >TLS Key Path</label
+                >
+                <input
+                  type="text"
+                  id="grpc-tls-key-path"
+                  name="tls_key_path"
+                  placeholder="/path/to/key.pem"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Team Selection -->
+              {% if teams %}
+              <div>
+                <label
+                  for="grpc-service-team-id"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Team</label
+                >
+                <select
+                  id="grpc-service-team-id"
+                  name="team_id"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                >
+                  <option value="">No Team (Global)</option>
+                  {% for team in teams %}
+                  <option value="{{ team.id }}">{{ team.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              {% endif %}
+            </div>
+
+            <div class="mt-6">
+              <button
+                type="submit"
+                class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              >
+                Register gRPC Service
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Registered gRPC Services List -->
+        <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
+            Registered gRPC Services
+          </h3>
+          <div class="space-y-4" id="grpc-services-list">
+            {% if grpc_services %}
+              {% for service in grpc_services %}
+              <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3">
+                <div class="flex items-start justify-between">
+                  <div class="flex-1">
+                    <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">
+                      {{ service.name }}
+                    </h4>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                      {{ service.description or "" }}
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
+                        {% if service.enabled %}Active{% else %}Inactive{% endif %}
+                      </span>
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.reachable %}bg-blue-100 text-blue-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                        {% if service.reachable %}Reachable{% else %}Unreachable{% endif %}
+                      </span>
+                      {% if service.reflection_enabled %}
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                        Reflection Enabled
+                      </span>
+                      {% endif %}
+                      {% if service.tls_enabled %}
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                        TLS
+                      </span>
+                      {% endif %}
+                    </div>
+                    <div class="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                      <p><strong>Target:</strong> {{ service.target }}</p>
+                      <p><strong>Services:</strong> {{ service.service_count }} | <strong>Methods:</strong> {{ service.method_count }}</p>
+                      {% if service.last_reflection %}
+                      <p><strong>Last Reflection:</strong> {{ service.last_reflection }}</p>
+                      {% endif %}
+                    </div>
+                  </div>
+                  <div class="flex flex-col space-y-2 ml-4">
+                    <form action="{{ root_path }}/grpc/{{ service.id }}/toggle" method="POST" class="inline">
+                      <button
+                        type="submit"
+                        class="px-3 py-1 text-sm font-medium rounded-md {% if service.enabled %}bg-yellow-100 text-yellow-800 hover:bg-yellow-200{% else %}bg-green-100 text-green-800 hover:bg-green-200{% endif %}"
+                      >
+                        {% if service.enabled %}Deactivate{% else %}Activate{% endif %}
+                      </button>
+                    </form>
+                    <form action="{{ root_path }}/grpc/{{ service.id }}/reflect" method="POST" class="inline">
+                      <button
+                        type="submit"
+                        class="px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 rounded-md hover:bg-blue-200"
+                      >
+                        Re-Reflect
+                      </button>
+                    </form>
+                    <button
+                      onclick="viewGrpcMethods('{{ service.id }}')"
+                      class="px-3 py-1 text-sm font-medium bg-purple-100 text-purple-800 rounded-md hover:bg-purple-200"
+                    >
+                      View Methods
+                    </button>
+                    <form action="{{ root_path }}/grpc/{{ service.id }}/delete" method="POST" class="inline" onsubmit="return confirm('Are you sure you want to delete this gRPC service?')">
+                      <button
+                        type="submit"
+                        class="px-3 py-1 text-sm font-medium bg-red-100 text-red-800 rounded-md hover:bg-red-200"
+                      >
+                        Delete
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              {% endfor %}
+            {% else %}
+              <p class="text-gray-500 dark:text-gray-400">No gRPC services registered yet.</p>
+            {% endif %}
           </div>
         </div>
       </div>
