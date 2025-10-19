@@ -207,6 +207,7 @@ mcpContextForge:
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format
     LOG_TO_FILE: "false"             # enable file logging
+    LOG_REQUESTS: "false"            # enable request payload logging with sensitive data masking
     LOG_FILEMODE: "a+"               # file write mode (append/overwrite)
     LOG_FILE: ""                     # log filename when file logging enabled
     LOG_FOLDER: ""                   # directory for log files
@@ -329,6 +330,19 @@ mcpContextForge:
     VALIDATION_MAX_RPC_PARAM_SIZE: "262144" # maximum RPC parameter size (256KB)
     VALIDATION_MAX_METHOD_LENGTH: "128" # maximum method name length
     VALIDATION_MAX_REQUESTS_PER_MINUTE: "60" # rate limiting: max requests per minute
+
+    # ─ Pagination Configuration ─
+    PAGINATION_DEFAULT_PAGE_SIZE: "50" # default number of items per page for paginated endpoints
+    PAGINATION_MAX_PAGE_SIZE: "500" # maximum allowed items per page (prevents abuse)
+    PAGINATION_MIN_PAGE_SIZE: "1" # minimum items per page
+    PAGINATION_CURSOR_THRESHOLD: "10000" # threshold for switching from offset to cursor-based pagination
+    PAGINATION_CURSOR_ENABLED: "true" # enable cursor-based pagination globally
+    PAGINATION_DEFAULT_SORT_FIELD: "created_at" # default sort field for paginated queries
+    PAGINATION_DEFAULT_SORT_ORDER: "desc" # default sort order for paginated queries (asc/desc)
+    PAGINATION_MAX_OFFSET: "100000" # maximum offset allowed for offset-based pagination
+    PAGINATION_COUNT_CACHE_TTL: "300" # cache pagination counts for performance (seconds)
+    PAGINATION_INCLUDE_LINKS: "true" # enable pagination links in API responses
+    PAGINATION_BASE_URL: "" # base URL for pagination links (defaults to request URL if empty)
 
   ####################################################################
   # SENSITIVE SETTINGS
