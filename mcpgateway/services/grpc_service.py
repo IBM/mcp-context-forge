@@ -15,8 +15,8 @@ retrieval, updates, activation toggling, and deletion.
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-# Third-Party
 try:
+    # Third-Party
     import grpc
     from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
 
@@ -28,6 +28,7 @@ except ImportError:
     reflection_pb2 = None  # type: ignore
     reflection_pb2_grpc = None  # type: ignore
 
+# Third-Party
 from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 

@@ -6606,19 +6606,18 @@ const promptTestState = {
 /**
  * Test a prompt by opening the prompt test modal
  */
-async function testPrompt(promptName) {
+async function testPrompt(promptId) {
     try {
-        console.log(`Testing prompt: ${promptName}`);
+        console.log(`Testing prompt ID: ${promptId}`);
 
         // Debouncing to prevent rapid clicking
         const now = Date.now();
-        const lastRequest =
-            promptTestState.lastRequestTime.get(promptName) || 0;
+        const lastRequest = promptTestState.lastRequestTime.get(promptId) || 0;
         const timeSinceLastRequest = now - lastRequest;
         const debounceDelay = 1000;
 
         if (timeSinceLastRequest < debounceDelay) {
-            console.log(`Prompt ${promptName} test request debounced`);
+            console.log(`Prompt ${promptId} test request debounced`);
             return;
         }
 
@@ -6630,7 +6629,7 @@ async function testPrompt(promptName) {
 
         // Update button state
         const testButton = document.querySelector(
-            `[onclick*="testPrompt('${promptName}')"]`,
+            `[onclick*="testPrompt('${promptId}')"]`,
         );
         if (testButton) {
             if (testButton.disabled) {
@@ -6645,8 +6644,8 @@ async function testPrompt(promptName) {
         }
 
         // Record request time and mark as active
-        promptTestState.lastRequestTime.set(promptName, now);
-        promptTestState.activeRequests.add(promptName);
+        promptTestState.lastRequestTime.set(promptId, now);
+        promptTestState.activeRequests.add(promptId);
 
         // Fetch prompt details
         const controller = new AbortController();
@@ -6655,7 +6654,7 @@ async function testPrompt(promptName) {
         try {
             // Fetch prompt details from the prompts endpoint (view mode)
             const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`,
+                `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}`,
                 {
                     method: "GET",
                     headers: {
@@ -6682,7 +6681,7 @@ async function testPrompt(promptName) {
             const descElement = safeGetElement("prompt-test-modal-description");
 
             if (titleElement) {
-                titleElement.textContent = `Test Prompt: ${prompt.name || promptName}`;
+                titleElement.textContent = `Test Prompt: ${prompt.name || promptId}`;
             }
             if (descElement) {
                 if (prompt.description) {
@@ -6719,7 +6718,7 @@ async function testPrompt(promptName) {
     } finally {
         // Always restore button state
         const testButton = document.querySelector(
-            `[onclick*="testPrompt('${promptName}')"]`,
+            `[onclick*="testPrompt('${promptId}')"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -6728,7 +6727,7 @@ async function testPrompt(promptName) {
         }
 
         // Clean up state
-        promptTestState.activeRequests.delete(promptName);
+        promptTestState.activeRequests.delete(promptId);
     }
 }
 
