@@ -2123,6 +2123,9 @@ endef
 # =============================================================================
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
+# help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
+# help: container-build-rust-lite - Build lite image WITH Rust plugins
+# help: container-rust       - Build with Rust and run container (all-in-one)
 # help: container-run        - Run container using detected runtime
 # help: container-run-host   - Run container using detected runtime with host networking
 # help: container-run-ssl    - Run container with TLS using detected runtime
@@ -2141,7 +2144,8 @@ endef
 # help: use-podman           - Switch to Podman runtime
 # help: show-runtime         - Show current container runtime
 
-.PHONY: container-build container-run container-run-ssl container-run-ssl-host \
+.PHONY: container-build container-build-rust container-build-rust-lite container-rust \
+        container-run container-run-ssl container-run-ssl-host \
         container-run-ssl-jwt container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
         container-build-multi use-docker use-podman show-runtime print-runtime \
@@ -2192,6 +2196,18 @@ container-build:
 	fi
 	@echo "✅ Built image: $(call get_image_name)"
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
+
+container-build-rust:
+	@echo "🦀 Building container WITH Rust plugins..."
+	$(MAKE) container-build ENABLE_RUST_BUILD=1
+
+container-build-rust-lite:
+	@echo "🦀 Building lite container WITH Rust plugins..."
+	$(MAKE) container-build ENABLE_RUST_BUILD=1 CONTAINER_FILE=Containerfile.lite
+
+container-rust: container-build-rust
+	@echo "🦀 Building and running container with Rust plugins..."
+	$(MAKE) container-run
 
 container-run: container-check-image
 	@echo "🚀 Running with $(CONTAINER_RUNTIME)..."
