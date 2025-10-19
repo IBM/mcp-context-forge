@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_30f902e1518e4bb2_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-10-19 08:51 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -208,12 +208,12 @@
     <p class="pln"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t"><span class="str">    Examples:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t"><span class="str">        >>> from mcpgateway.plugins.framework import PluginCondition, PromptPrehookPayload, GlobalContext</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t"><span class="str">        >>> payload = PromptPrehookPayload(name="greeting", args={})</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t"><span class="str">        >>> cond = PluginCondition(prompts={"greeting"})</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t"><span class="str">        >>> payload = PromptPrehookPayload(prompt_id="id1", args={})</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t"><span class="str">        >>> cond = PluginCondition(prompts={"id1"})</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t"><span class="str">        >>> ctx = GlobalContext(request_id="req1")</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t"><span class="str">        >>> pre_prompt_matches(payload, [cond], ctx)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t"><span class="str">        True</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t"><span class="str">        >>> payload2 = PromptPrehookPayload(name="other", args={})</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t"><span class="str">        >>> payload2 = PromptPrehookPayload(prompt_id="id2", args={})</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t"><span class="str">        >>> pre_prompt_matches(payload2, [cond], ctx)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t"><span class="str">        False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
@@ -222,7 +222,7 @@
     <p class="run"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">matches</span><span class="op">(</span><span class="nam">condition</span><span class="op">,</span> <span class="nam">context</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">            <span class="nam">current_result</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">        <span class="key">if</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span> <span class="key">and</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">name</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">        <span class="key">if</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span> <span class="key">and</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">prompt_id</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">            <span class="nam">current_result</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">        <span class="key">if</span> <span class="nam">current_result</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">            <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
@@ -247,7 +247,7 @@
     <p class="run"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">matches</span><span class="op">(</span><span class="nam">condition</span><span class="op">,</span> <span class="nam">context</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">            <span class="nam">current_result</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">        <span class="key">if</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span> <span class="key">and</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">name</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">        <span class="key">if</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span> <span class="key">and</span> <span class="nam">payload</span><span class="op">.</span><span class="nam">prompt_id</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">condition</span><span class="op">.</span><span class="nam">prompts</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">            <span class="nam">current_result</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">        <span class="key">if</span> <span class="nam">current_result</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">            <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
@@ -378,8 +378,8 @@
     <p class="pln"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t"><span class="str">    Examples:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t"><span class="str">        >>> from mcpgateway.plugins.framework import PluginCondition, ResourcePostFetchPayload, GlobalContext</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t"><span class="str">        >>> from mcpgateway.models import ResourceContent</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t"><span class="str">        >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Test")</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t"><span class="str">        >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t"><span class="str">        >>> content = ResourceContent(type="resource", id="123", uri="file:///data.txt", text="Test")</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t"><span class="str">        >>> payload = ResourcePostFetchPayload(id="123",uri="file:///data.txt", content=content)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t"><span class="str">        >>> cond = PluginCondition(resources={"file:///data.txt"})</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t300" href="#t300">300</a></span><span class="t"><span class="str">        >>> ctx = GlobalContext(request_id="req1")</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t301" href="#t301">301</a></span><span class="t"><span class="str">        >>> post_resource_matches(payload, [cond], ctx)</span>&nbsp;</span><span class="r"></span></p>
@@ -409,7 +409,7 @@
             <a class="nav" href="z_30f902e1518e4bb2_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-10-19 08:51 +0100
         </p>
     </div>
 </footer>

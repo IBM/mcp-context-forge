@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/plugins/framework/models.py: 76%</title>
+    <title>Coverage for mcpgateway/plugins/framework/models.py: 75%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_58284776.png">
     <link rel="stylesheet" href="style_cb_6b508a39.css" type="text/css">
     <script src="coverage_html_cb_6fb7b396.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway/plugins/framework/models.py</b>:
-            <span class="pc_cov">76%</span>
+            <span class="pc_cov">75%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -56,8 +56,8 @@
         </aside>
         <h2>
             <span class="text">327 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">270<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">57<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">269<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">58<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
             <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">13<span class="text"> partial</span></button>
         </h2>
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_df2a1aa6810c2be4_registry_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 21:10 +0100
+            created at 2025-10-19 08:51 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -853,26 +853,26 @@
     <p class="pln"><span class="n"><a id="t769" href="#t769">769</a></span><span class="t">    <span class="str">"""A prompt payload for a prompt prehook.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t770" href="#t770">770</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t771" href="#t771">771</a></span><span class="t"><span class="str">    Attributes:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t772" href="#t772">772</a></span><span class="t"><span class="str">        name (str): The name of the prompt template.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t772" href="#t772">772</a></span><span class="t"><span class="str">        prompt_id (str): The ID of the prompt template.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t773" href="#t773">773</a></span><span class="t"><span class="str">        args (dic[str,str]): The prompt template arguments.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t774" href="#t774">774</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t775" href="#t775">775</a></span><span class="t"><span class="str">    Examples:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t776" href="#t776">776</a></span><span class="t"><span class="str">        >>> payload = PromptPrehookPayload(name="test_prompt", args={"user": "alice"})</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t777" href="#t777">777</a></span><span class="t"><span class="str">        >>> payload.name</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t778" href="#t778">778</a></span><span class="t"><span class="str">        'test_prompt'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t776" href="#t776">776</a></span><span class="t"><span class="str">        >>> payload = PromptPrehookPayload(prompt_id="123", args={"user": "alice"})</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t777" href="#t777">777</a></span><span class="t"><span class="str">        >>> payload.prompt_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t778" href="#t778">778</a></span><span class="t"><span class="str">        '123'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t779" href="#t779">779</a></span><span class="t"><span class="str">        >>> payload.args</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t780" href="#t780">780</a></span><span class="t"><span class="str">        {'user': 'alice'}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t781" href="#t781">781</a></span><span class="t"><span class="str">        >>> payload2 = PromptPrehookPayload(name="empty")</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t781" href="#t781">781</a></span><span class="t"><span class="str">        >>> payload2 = PromptPrehookPayload(prompt_id="empty")</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t782" href="#t782">782</a></span><span class="t"><span class="str">        >>> payload2.args</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t783" href="#t783">783</a></span><span class="t"><span class="str">        {}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t784" href="#t784">784</a></span><span class="t"><span class="str">        >>> p = PromptPrehookPayload(name="greeting", args={"name": "Bob", "time": "morning"})</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t785" href="#t785">785</a></span><span class="t"><span class="str">        >>> p.name</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t786" href="#t786">786</a></span><span class="t"><span class="str">        'greeting'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t784" href="#t784">784</a></span><span class="t"><span class="str">        >>> p = PromptPrehookPayload(prompt_id="123", args={"name": "Bob", "time": "morning"})</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t785" href="#t785">785</a></span><span class="t"><span class="str">        >>> p.prompt_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t786" href="#t786">786</a></span><span class="t"><span class="str">        '123'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t787" href="#t787">787</a></span><span class="t"><span class="str">        >>> p.args["name"]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t788" href="#t788">788</a></span><span class="t"><span class="str">        'Bob'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t789" href="#t789">789</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t790" href="#t790">790</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t791" href="#t791">791</a></span><span class="t">    <span class="nam">name</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t791" href="#t791">791</a></span><span class="t">    <span class="nam">prompt_id</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t792" href="#t792">792</a></span><span class="t">    <span class="nam">args</span><span class="op">:</span> <span class="nam">Optional</span><span class="op">[</span><span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">str</span><span class="op">]</span><span class="op">]</span> <span class="op">=</span> <span class="nam">Field</span><span class="op">(</span><span class="nam">default_factory</span><span class="op">=</span><span class="nam">dict</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t793" href="#t793">793</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t794" href="#t794">794</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -880,27 +880,27 @@
     <p class="pln"><span class="n"><a id="t796" href="#t796">796</a></span><span class="t">    <span class="str">"""A prompt payload for a prompt posthook.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t797" href="#t797">797</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t798" href="#t798">798</a></span><span class="t"><span class="str">    Attributes:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t799" href="#t799">799</a></span><span class="t"><span class="str">        name (str): The prompt name.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t799" href="#t799">799</a></span><span class="t"><span class="str">        prompt_id (str): The prompt ID.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t800" href="#t800">800</a></span><span class="t"><span class="str">        result (PromptResult): The prompt after its template is rendered.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t801" href="#t801">801</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t802" href="#t802">802</a></span><span class="t"><span class="str">     Examples:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t803" href="#t803">803</a></span><span class="t"><span class="str">        >>> from mcpgateway.models import PromptResult, Message, TextContent</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t804" href="#t804">804</a></span><span class="t"><span class="str">        >>> msg = Message(role="user", content=TextContent(type="text", text="Hello World"))</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t805" href="#t805">805</a></span><span class="t"><span class="str">        >>> result = PromptResult(messages=[msg])</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t806" href="#t806">806</a></span><span class="t"><span class="str">        >>> payload = PromptPosthookPayload(name="greeting", result=result)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t807" href="#t807">807</a></span><span class="t"><span class="str">        >>> payload.name</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t808" href="#t808">808</a></span><span class="t"><span class="str">        'greeting'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t806" href="#t806">806</a></span><span class="t"><span class="str">        >>> payload = PromptPosthookPayload(prompt_id="123", result=result)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t807" href="#t807">807</a></span><span class="t"><span class="str">        >>> payload.prompt_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t808" href="#t808">808</a></span><span class="t"><span class="str">        '123'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t809" href="#t809">809</a></span><span class="t"><span class="str">        >>> payload.result.messages[0].content.text</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t810" href="#t810">810</a></span><span class="t"><span class="str">        'Hello World'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t811" href="#t811">811</a></span><span class="t"><span class="str">        >>> from mcpgateway.models import PromptResult, Message, TextContent</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t812" href="#t812">812</a></span><span class="t"><span class="str">        >>> msg = Message(role="assistant", content=TextContent(type="text", text="Test output"))</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t813" href="#t813">813</a></span><span class="t"><span class="str">        >>> r = PromptResult(messages=[msg])</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t814" href="#t814">814</a></span><span class="t"><span class="str">        >>> p = PromptPosthookPayload(name="test", result=r)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t815" href="#t815">815</a></span><span class="t"><span class="str">        >>> p.name</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t816" href="#t816">816</a></span><span class="t"><span class="str">        'test'</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t814" href="#t814">814</a></span><span class="t"><span class="str">        >>> p = PromptPosthookPayload(prompt_id="123", result=r)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t815" href="#t815">815</a></span><span class="t"><span class="str">        >>> p.prompt_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t816" href="#t816">816</a></span><span class="t"><span class="str">        '123'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t817" href="#t817">817</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t818" href="#t818">818</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t819" href="#t819">819</a></span><span class="t">    <span class="nam">name</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t819" href="#t819">819</a></span><span class="t">    <span class="nam">prompt_id</span><span class="op">:</span> <span class="nam">str</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t820" href="#t820">820</a></span><span class="t">    <span class="nam">result</span><span class="op">:</span> <span class="nam">PromptResult</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t821" href="#t821">821</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t822" href="#t822">822</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1140,7 +1140,7 @@
     <p class="pln"><span class="n"><a id="t1056" href="#t1056">1056</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1057" href="#t1057">1057</a></span><span class="t"><span class="str">            True if the context state and metadata are empty.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1058" href="#t1058">1058</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1059" href="#t1059">1059</a></span><span class="t">        <span class="key">return</span> <span class="key">not</span> <span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">state</span> <span class="key">or</span> <span class="nam">self</span><span class="op">.</span><span class="nam">metadata</span> <span class="key">or</span> <span class="nam">self</span><span class="op">.</span><span class="nam">global_context</span><span class="op">.</span><span class="nam">state</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t1059" href="#t1059">1059</a></span><span class="t">        <span class="key">return</span> <span class="key">not</span> <span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">state</span> <span class="key">or</span> <span class="nam">self</span><span class="op">.</span><span class="nam">metadata</span> <span class="key">or</span> <span class="nam">self</span><span class="op">.</span><span class="nam">global_context</span><span class="op">.</span><span class="nam">state</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1060" href="#t1060">1060</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1061" href="#t1061">1061</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1062" href="#t1062">1062</a></span><span class="t"><span class="nam">PluginContextTable</span> <span class="op">=</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">PluginContext</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
@@ -1180,7 +1180,7 @@
     <p class="pln"><span class="n"><a id="t1096" href="#t1096">1096</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1097" href="#t1097">1097</a></span><span class="t"><span class="str">    Examples:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1098" href="#t1098">1098</a></span><span class="t"><span class="str">        >>> from mcpgateway.models import ResourceContent</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1099" href="#t1099">1099</a></span><span class="t"><span class="str">        >>> content = ResourceContent(type="resource", uri="file:///data.txt",</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1099" href="#t1099">1099</a></span><span class="t"><span class="str">        >>> content = ResourceContent(type="resource", id="res-1", uri="file:///data.txt",</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1100" href="#t1100">1100</a></span><span class="t"><span class="str">        ...     text="Hello World")</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1101" href="#t1101">1101</a></span><span class="t"><span class="str">        >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1102" href="#t1102">1102</a></span><span class="t"><span class="str">        >>> payload.uri</span>&nbsp;</span><span class="r"></span></p>
@@ -1188,7 +1188,7 @@
     <p class="pln"><span class="n"><a id="t1104" href="#t1104">1104</a></span><span class="t"><span class="str">        >>> payload.content.text</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1105" href="#t1105">1105</a></span><span class="t"><span class="str">        'Hello World'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1106" href="#t1106">1106</a></span><span class="t"><span class="str">        >>> from mcpgateway.models import ResourceContent</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t1107" href="#t1107">1107</a></span><span class="t"><span class="str">        >>> resource_content = ResourceContent(type="resource", uri="test://resource", text="Test data")</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t1107" href="#t1107">1107</a></span><span class="t"><span class="str">    >>> resource_content = ResourceContent(type="resource", id="res-2", uri="test://resource", text="Test data")</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1108" href="#t1108">1108</a></span><span class="t"><span class="str">        >>> p = ResourcePostFetchPayload(uri="test://resource", content=resource_content)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1109" href="#t1109">1109</a></span><span class="t"><span class="str">        >>> p.uri</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1110" href="#t1110">1110</a></span><span class="t"><span class="str">        'test://resource'</span>&nbsp;</span><span class="r"></span></p>
@@ -1209,7 +1209,7 @@
             <a class="nav" href="z_df2a1aa6810c2be4_registry_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 21:10 +0100
+            created at 2025-10-19 08:51 +0100
         </p>
     </div>
 </footer>
