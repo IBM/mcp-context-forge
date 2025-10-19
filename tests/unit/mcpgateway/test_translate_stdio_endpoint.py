@@ -242,7 +242,7 @@ sys.stdout.flush()
         # Process should be terminated and cleaned up
         assert endpoint._proc is None  # Process object should be cleaned up
         # Pump task might still exist but should be finished/cancelled
-        if endpoint._pump_task is not None:
+        if endpoint._pump_task is not None:  # type: ignore[unreachable]
             # Wait a bit for the task to complete if it's still running
             for _ in range(10):  # Try up to 10 times (1 second total)
                 if endpoint._pump_task.done():
@@ -287,7 +287,7 @@ sys.stdout.flush()
     async def test_empty_env_vars(self, echo_script):
         """Test with empty environment variables dictionary."""
         pubsub = _PubSub()
-        env_vars = {}
+        env_vars: dict[str, str] = {}
 
         endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub, env_vars)
         await endpoint.start()
