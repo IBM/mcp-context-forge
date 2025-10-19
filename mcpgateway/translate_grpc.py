@@ -16,10 +16,23 @@ import asyncio
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
-from google.protobuf import descriptor_pool, json_format, message_factory
-from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
-import grpc
-from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc  # pylint: disable=no-member
+try:
+    from google.protobuf import descriptor_pool, json_format, message_factory
+    from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+    import grpc
+    from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc  # pylint: disable=no-member
+
+    GRPC_AVAILABLE = True
+except ImportError:
+    GRPC_AVAILABLE = False
+    # Placeholder values for when grpc is not available
+    descriptor_pool = None  # type: ignore
+    json_format = None  # type: ignore
+    message_factory = None  # type: ignore
+    FileDescriptorProto = None  # type: ignore
+    grpc = None  # type: ignore
+    reflection_pb2 = None  # type: ignore
+    reflection_pb2_grpc = None  # type: ignore
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService

@@ -16,8 +16,18 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-import grpc
-from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
+try:
+    import grpc
+    from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc
+
+    GRPC_AVAILABLE = True
+except ImportError:
+    GRPC_AVAILABLE = False
+    # grpc module will not be used if not available
+    grpc = None  # type: ignore
+    reflection_pb2 = None  # type: ignore
+    reflection_pb2_grpc = None  # type: ignore
+
 from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 
