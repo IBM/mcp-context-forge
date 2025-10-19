@@ -1,0 +1,38 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Python build artifacts
+*.pyc
+__pycache__/
+*.so
+*.pyd
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Benchmark results
+benchmarks/results/*.json
+benchmarks/results/*.csv
+
+# Test coverage
+*.profdata
+*.profraw
+coverage/
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log

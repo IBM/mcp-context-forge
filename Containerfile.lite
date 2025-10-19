@@ -22,6 +22,51 @@
 ARG ROOTFS_PATH=/tmp/rootfs
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
+ARG ENABLE_RUST=false
+
+###############################################################################
+# Rust builder stage - builds Rust plugins in manylinux2014 container
+# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
+# To build WITHOUT Rust (default): docker build -f Containerfile.lite .
+###############################################################################
+FROM quay.io/pypa/manylinux2014_x86_64:2025.10.19-2 AS rust-builder-base
+ARG ENABLE_RUST
+
+# Set shell with pipefail for safety
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Only build if ENABLE_RUST=true
+RUN if [ "$ENABLE_RUST" != "true" ]; then \
+        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
+        mkdir -p /build/plugins_rust/target/wheels; \
+        exit 0; \
+    fi
+
+# Install Rust toolchain (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+    fi
+ENV PATH="/root/.cargo/bin:$PATH"
+
+WORKDIR /build
+
+# Copy only Rust plugin files (only if ENABLE_RUST=true)
+COPY plugins_rust/ /build/plugins_rust/
+
+# Switch to Rust plugin directory
+WORKDIR /build/plugins_rust
+
+# Build Rust plugins using Python 3.12 from manylinux image (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        rm -rf target/wheels && \
+        /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
+        /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 && \
+        echo "✅ Rust plugins built successfully"; \
+    else \
+        echo "⏭️  Skipping Rust plugin build"; \
+    fi
+
+FROM rust-builder-base AS rust-builder
 
 ###########################
 # Builder stage
@@ -72,18 +117,33 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 COPY pyproject.toml /app/
 
 # ----------------------------------------------------------------------------
+# Copy Rust plugin wheels from rust-builder stage (if any exist)
+# ----------------------------------------------------------------------------
+COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
+
+# ----------------------------------------------------------------------------
 # Create and populate virtual environment
 #  - Upgrade pip, setuptools, wheel, pdm, uv
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
+#  - Install Rust plugins from pre-built wheels (if built)
 #  - Remove build tools but keep runtime dist-info
 #  - Remove build caches and build artifacts
 # ----------------------------------------------------------------------------
+ARG ENABLE_RUST=false
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
     && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability]" \
+    && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
+        echo "🦀 Installing Rust plugins..."; \
+        /app/.venv/bin/pip install --no-cache-dir /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
+        /app/.venv/bin/python3 -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
+    else \
+        echo "⏭️  Rust plugins not available - using Python implementations"; \
+    fi \
+    && rm -rf /tmp/rust-wheels \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
     && rm -rf /root/.cache /var/cache/dnf \
     && find /app/.venv -name "*.dist-info" -type d \

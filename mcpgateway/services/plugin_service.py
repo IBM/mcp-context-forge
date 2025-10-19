@@ -82,6 +82,11 @@ class PluginService:
                 "status": "enabled" if plugin_ref.mode != PluginMode.DISABLED else "disabled",
             }
 
+            # Add implementation type if available (e.g., Rust vs Python for PII filter)
+            plugin_instance = plugin_ref.plugin if hasattr(plugin_ref, "plugin") else plugin_ref._plugin if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
+            if plugin_instance and hasattr(plugin_instance, "implementation"):
+                plugin_dict["implementation"] = plugin_instance.implementation
+
             # Add config summary (first few keys only for list view)
             if plugin_config and hasattr(plugin_config, "config") and plugin_config.config:
                 config_keys = list(plugin_config.config.keys())[:5]

@@ -1,3 +1,53 @@
+###############################################################################
+# Rust builder stage - builds Rust plugins in manylinux2014 container
+# To build WITH Rust: docker build --build-arg ENABLE_RUST=true .
+# To build WITHOUT Rust (default): docker build .
+###############################################################################
+ARG ENABLE_RUST=false
+
+FROM quay.io/pypa/manylinux2014_x86_64:2025.10.19-2 AS rust-builder-base
+ARG ENABLE_RUST
+
+# Set shell with pipefail for safety
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Only build if ENABLE_RUST=true
+RUN if [ "$ENABLE_RUST" != "true" ]; then \
+        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
+        mkdir -p /build/plugins_rust/target/wheels; \
+        exit 0; \
+    fi
+
+# Install Rust toolchain (only if ENABLE_RUST=true)
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+    fi
+ENV PATH="/root/.cargo/bin:$PATH"
+
+WORKDIR /build
+
+# Copy only Rust plugin files (only if ENABLE_RUST=true)
+COPY plugins_rust/ /build/plugins_rust/
+
+# Switch to Rust plugin directory
+WORKDIR /build/plugins_rust
+
+# Build Rust plugins using Python 3.12 from manylinux image (only if ENABLE_RUST=true)
+# The manylinux2014 image has Python 3.12 at /opt/python/cp312-cp312/bin/python
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        rm -rf target/wheels && \
+        /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
+        /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 && \
+        echo "✅ Rust plugins built successfully"; \
+    else \
+        echo "⏭️  Skipping Rust plugin build"; \
+    fi
+
+FROM rust-builder-base AS rust-builder
+
+###############################################################################
+# Main application stage
+###############################################################################
 FROM registry.access.redhat.com/ubi10-minimal:10.0-1755721767
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
@@ -34,12 +84,24 @@ RUN chmod 644 /etc/profile.d/use-openssl.sh
 # Copy project files into container
 COPY . /app
 
+# Copy Rust plugin wheels from builder (if any exist)
+COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
+
 # Create virtual environment, upgrade pip and install dependencies using uv for speed
-# Including observability packages for OpenTelemetry support
+# Including observability packages for OpenTelemetry support and Rust plugins (if built)
+ARG ENABLE_RUST=false
 RUN python3 -m venv /app/.venv && \
     . /etc/profile.d/use-openssl.sh && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
-    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability]"
+    /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability]" && \
+    if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
+        echo "🦀 Installing Rust plugins..."; \
+        /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
+        /app/.venv/bin/python3 -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
+    else \
+        echo "⏭️  Rust plugins not available - using Python implementations"; \
+    fi && \
+    rm -rf /tmp/rust-wheels
 
 # update the user permissions
 RUN chown -R 1001:0 /app && \

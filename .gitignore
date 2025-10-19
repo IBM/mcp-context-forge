@@ -251,3 +251,8 @@ tmp/
 .continue
 
 .ruff_cache/
+
+# Rust build artifacts
+plugins_rust/target/
+plugins_rust/**/*.rs.bk
+plugins_rust/Cargo.lock
