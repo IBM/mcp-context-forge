@@ -86,7 +86,7 @@ class MarkdownCleanerPlugin(Plugin):
             else:
                 new_msgs.append(m)
         if changed:
-            return PromptPosthookResult(modified_payload=PromptPosthookPayload(name=payload.name, result=PromptResult(messages=new_msgs)))
+            return PromptPosthookResult(modified_payload=PromptPosthookPayload(prompt_id=payload.prompt_id, result=PromptResult(messages=new_msgs)))
         return PromptPosthookResult(continue_processing=True)
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:

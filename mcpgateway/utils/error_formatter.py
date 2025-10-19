@@ -311,6 +311,8 @@ class ErrorFormatter:
                     return {"message": "A prompt with this name already exists", "success": False}
                 elif "servers.id" in error_str:
                     return {"message": "A server with this ID already exists", "success": False}
+                elif "a2a_agents.slug" in error_str:
+                    return {"message": "An A2A agent with this name already exists", "success": False}
 
             elif "FOREIGN KEY constraint failed" in error_str:
                 return {"message": "Referenced item not found", "success": False}

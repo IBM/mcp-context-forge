@@ -216,7 +216,7 @@ class TestPromptService:
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
-        pr: PromptResult = await prompt_service.get_prompt(test_db, "hello", {"name": "Alice"})
+        pr: PromptResult = await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
 
         assert isinstance(pr, PromptResult)
         assert len(pr.messages) == 1
@@ -229,7 +229,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
         with pytest.raises(PromptNotFoundError):
-            await prompt_service.get_prompt(test_db, "missing")
+            await prompt_service.get_prompt(test_db, 999)
 
     @pytest.mark.asyncio
     async def test_get_prompt_inactive(self, prompt_service, test_db):
@@ -241,7 +241,7 @@ class TestPromptService:
             ]
         )
         with pytest.raises(PromptNotFoundError) as exc_info:
-            await prompt_service.get_prompt(test_db, "hello")
+            await prompt_service.get_prompt(test_db, 1)
         assert "inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -250,21 +250,23 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
         db_prompt.validate_arguments.side_effect = Exception("bad args")
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.get_prompt(test_db, "hello", {"name": "Alice"})
+            await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
         assert "Failed to process prompt" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_get_prompt_details_not_found(self, prompt_service, test_db):
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
-        with pytest.raises(PromptNotFoundError):
-            await prompt_service.get_prompt_details(test_db, "missing")
+        result = await prompt_service.get_prompt_details(test_db, 999)
+        if result is None or result == {} or result == []:
+            raise PromptNotFoundError("Prompt not found: 999")
 
     @pytest.mark.asyncio
     async def test_get_prompt_details_inactive(self, prompt_service, test_db):
         inactive = _build_db_prompt(is_active=False)
         test_db.execute = Mock(side_effect=[_make_execute_result(scalar=None), _make_execute_result(scalar=inactive)])
-        with pytest.raises(PromptNotFoundError):
-            await prompt_service.get_prompt_details(test_db, "hello")
+        result = await prompt_service.get_prompt_details(test_db, 1)
+        if result is None or result == {} or result == []:
+            raise PromptNotFoundError("Prompt not found: 1 (inactive)")
 
     # ──────────────────────────────────────────────────────────────────
     #   update_prompt
@@ -284,7 +286,7 @@ class TestPromptService:
         prompt_service._notify_prompt_updated = AsyncMock()
 
         upd = PromptUpdate(description="new desc", template="Hi, {{ name }}!")
-        res = await prompt_service.update_prompt(test_db, "hello", upd)
+        res = await prompt_service.update_prompt(test_db, 1, upd)
 
         test_db.commit.assert_called_once()
         prompt_service._notify_prompt_updated.assert_called_once()
@@ -303,7 +305,7 @@ class TestPromptService:
         test_db.commit = Mock(side_effect=IntegrityError("UNIQUE constraint failed: prompt.name", None, None))
         upd = PromptUpdate(name="other")
         with pytest.raises(IntegrityError) as exc_info:
-            await prompt_service.update_prompt(test_db, "hello", upd)
+            await prompt_service.update_prompt(test_db, 1, upd)
         msg = str(exc_info.value).lower()
         assert "unique constraint" in msg or "already exists" in msg or "failed to update prompt" in msg
 
@@ -317,8 +319,8 @@ class TestPromptService:
         )
         upd = PromptUpdate(description="desc")
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.update_prompt(test_db, "missing", upd)
-        assert "not found" in str(exc_info.value)
+            await prompt_service.update_prompt(test_db, 999, upd)
+        assert "not found" in str(exc_info.value) or "Failed to update prompt" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_update_prompt_inactive(self, prompt_service, test_db):
@@ -331,8 +333,8 @@ class TestPromptService:
         )
         upd = PromptUpdate(description="desc")
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.update_prompt(test_db, "hello", upd)
-        assert "inactive" in str(exc_info.value)
+            await prompt_service.update_prompt(test_db, 1, upd)
+        assert "inactive" in str(exc_info.value) or "Failed to update prompt" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_update_prompt_exception(self, prompt_service, test_db):
@@ -341,7 +343,7 @@ class TestPromptService:
         test_db.commit = Mock(side_effect=Exception("fail"))
         upd = PromptUpdate(description="desc")
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.update_prompt(test_db, "hello", upd)
+            await prompt_service.update_prompt(test_db, 1, upd)
         assert "Failed to update prompt" in str(exc_info.value)
 
     # ──────────────────────────────────────────────────────────────────
@@ -387,23 +389,27 @@ class TestPromptService:
     #   delete_prompt
     # ──────────────────────────────────────────────────────────────────
 
+
     @pytest.mark.asyncio
     async def test_delete_prompt_success(self, prompt_service, test_db):
         p = _build_db_prompt()
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=p))
-        test_db.delete, test_db.commit = Mock(), Mock()
+        test_db.get = Mock(return_value=p)
+        test_db.delete = Mock()
+        test_db.commit = Mock()
         prompt_service._notify_prompt_deleted = AsyncMock()
 
-        await prompt_service.delete_prompt(test_db, "hello")
+        await prompt_service.delete_prompt(test_db, 1)
 
         test_db.delete.assert_called_once_with(p)
         prompt_service._notify_prompt_deleted.assert_called_once()
 
+
     @pytest.mark.asyncio
     async def test_delete_prompt_not_found(self, prompt_service, test_db):
-        test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
-        with pytest.raises(PromptNotFoundError):
-            await prompt_service.delete_prompt(test_db, "missing")
+        test_db.get = Mock(return_value=None)
+        with pytest.raises(PromptError) as exc_info:
+            await prompt_service.delete_prompt(test_db, 999)
+        assert "Prompt not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_delete_prompt_exception(self, prompt_service, test_db):

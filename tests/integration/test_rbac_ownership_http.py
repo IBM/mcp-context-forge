@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime
 
 # Third-Party
 from fastapi.testclient import TestClient
@@ -28,7 +29,9 @@ from _pytest.monkeypatch import MonkeyPatch
 # First-Party
 from mcpgateway.main import app, require_auth
 from mcpgateway.auth import get_current_user
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db as rbac_get_db
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db as rbac_get_db, get_permission_service
+from mcpgateway.schemas import ToolRead, ServerRead, ResourceRead, PromptRead, GatewayRead, A2AAgentRead
+from mcpgateway.schemas import ToolMetrics
 
 # Local
 from tests.utils.rbac_mocks import MockPermissionService
@@ -45,7 +48,6 @@ def test_db_and_client():
 
     # Patch settings
     from mcpgateway.config import settings
-
     mp.setattr(settings, "database_url", url, raising=False)
 
     import mcpgateway.db as db_mod
@@ -74,7 +76,6 @@ def test_db_and_client():
     # Patch RBAC decorators to bypass permission checks
     # This allows tests to reach the ownership checks in service layer
     from tests.utils.rbac_mocks import patch_rbac_decorators
-
     rbac_originals = patch_rbac_decorators()
 
     yield TestSessionLocal, engine
@@ -82,7 +83,6 @@ def test_db_and_client():
     # Cleanup
     app.dependency_overrides.pop(rbac_get_db, None)
     from tests.utils.rbac_mocks import restore_rbac_decorators
-
     restore_rbac_decorators(rbac_originals)
     mp.undo()
     engine.dispose()
@@ -92,7 +92,6 @@ def test_db_and_client():
 
 def create_user_context(email: str, is_admin: bool = False, TestSessionLocal=None):
     """Create a mock user context for testing."""
-
     async def mock_user_with_permissions():
         """Mock user context for RBAC."""
         return {
@@ -103,7 +102,6 @@ def create_user_context(email: str, is_admin: bool = False, TestSessionLocal=Non
             "user_agent": "test-client",
             "db": TestSessionLocal() if TestSessionLocal else None,
         }
-
     return mock_user_with_permissions
 
 
@@ -142,12 +140,17 @@ class TestRBACOwnershipHTTP:
 
         app.dependency_overrides[require_auth] = lambda: "user-b@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_current_user_with_permissions] = create_user_context("user-b@example.com", TestSessionLocal=TestSessionLocal)
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "user-b@example.com", TestSessionLocal=TestSessionLocal
+        )
 
         client = TestClient(app)
 
         # Attempt to delete tool owned by user-a@example.com
-        response = client.delete("/tools/tool-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/tools/tool-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -175,11 +178,17 @@ class TestRBACOwnershipHTTP:
 
         app.dependency_overrides[require_auth] = lambda: "user-b@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_current_user_with_permissions] = create_user_context("user-b@example.com", TestSessionLocal=TestSessionLocal)
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "user-b@example.com", TestSessionLocal=TestSessionLocal
+        )
         client = TestClient(app)
 
         # Attempt to update tool owned by user-a@example.com
-        response = client.put("/tools/tool-123", json={"name": "updated-tool"}, headers={"Authorization": "Bearer test-token"})
+        response = client.put(
+            "/tools/tool-123",
+            json={"name": "updated-tool"},
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -207,12 +216,17 @@ class TestRBACOwnershipHTTP:
 
         app.dependency_overrides[require_auth] = lambda: "owner@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_current_user_with_permissions] = create_user_context("owner@example.com", TestSessionLocal=TestSessionLocal)
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "owner@example.com", TestSessionLocal=TestSessionLocal
+        )
 
         client = TestClient(app)
 
         # Delete own server
-        response = client.delete("/servers/server-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/servers/server-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify success
         assert response.status_code == 200
@@ -240,13 +254,16 @@ class TestRBACOwnershipHTTP:
 
         app.dependency_overrides[require_auth] = lambda: "user-b@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_current_user_with_permissions] = create_user_context("user-b@example.com", TestSessionLocal=TestSessionLocal)
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "user-b@example.com", TestSessionLocal=TestSessionLocal
+        )
         client = TestClient(app)
 
-        # Attempt to delete resource owned by user-a@example.com
+
+        # Attempt to delete resource owned by user-a@example.com (use resource ID, not URI)
         response = client.delete(
-            "/resources/test%3A%2F%2Fresource",  # URL-encoded URI
-            headers={"Authorization": "Bearer test-token"},
+            "/resources/resource-123",
+            headers={"Authorization": "Bearer test-token"}
         )
 
         # Verify HTTP 403 Forbidden
@@ -275,12 +292,17 @@ class TestRBACOwnershipHTTP:
 
         app.dependency_overrides[require_auth] = lambda: "admin@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_current_user_with_permissions] = create_user_context("admin@example.com", is_admin=True, TestSessionLocal=TestSessionLocal)
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "admin@example.com", is_admin=True, TestSessionLocal=TestSessionLocal
+        )
 
         client = TestClient(app)
 
         # Delete team member's gateway as team admin
-        response = client.delete("/gateways/gateway-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/gateways/gateway-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify success
         assert response.status_code == 200
@@ -308,11 +330,17 @@ class TestRBACOwnershipHTTP:
 
         app.dependency_overrides[require_auth] = lambda: "member@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_current_user_with_permissions] = create_user_context("member@example.com", TestSessionLocal=TestSessionLocal)
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "member@example.com", TestSessionLocal=TestSessionLocal
+        )
         client = TestClient(app)
 
         # Attempt to update prompt owned by team owner
-        response = client.put("/prompts/test-prompt", json={"description": "updated"}, headers={"Authorization": "Bearer test-token"})
+        response = client.put(
+            "/prompts/test-prompt",
+            json={"description": "updated"},
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403
@@ -340,11 +368,16 @@ class TestRBACOwnershipHTTP:
 
         app.dependency_overrides[require_auth] = lambda: "user-b@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
-        app.dependency_overrides[get_current_user_with_permissions] = create_user_context("user-b@example.com", TestSessionLocal=TestSessionLocal)
+        app.dependency_overrides[get_current_user_with_permissions] = create_user_context(
+            "user-b@example.com", TestSessionLocal=TestSessionLocal
+        )
         client = TestClient(app)
 
         # Attempt to delete A2A agent owned by user-a@example.com
-        response = client.delete("/a2a/agent-123", headers={"Authorization": "Bearer test-token"})
+        response = client.delete(
+            "/a2a/agent-123",
+            headers={"Authorization": "Bearer test-token"}
+        )
 
         # Verify HTTP 403 Forbidden
         assert response.status_code == 403

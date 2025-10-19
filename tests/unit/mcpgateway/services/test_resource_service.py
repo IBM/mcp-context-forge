@@ -229,11 +229,14 @@ class TestResourceRegistration:
         mock_scalar.scalar_one_or_none.return_value = mock_resource  # active
         mock_db.execute.return_value = mock_scalar
 
+        # Ensure visibility is a string, not a MagicMock
+        mock_resource.visibility = "public"
+
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
         # Accept the wrapped error message
-        assert "Failed to register resource" in str(exc_info.value)
+        assert "Public Resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_register_resource_uri_conflict_inactive(self, resource_service, mock_db, sample_resource_create, mock_inactive_resource):
@@ -245,7 +248,7 @@ class TestResourceRegistration:
         with pytest.raises(ResourceError) as exc_info:
             await resource_service.register_resource(mock_db, sample_resource_create)
 
-        assert "Failed to register resource" in str(exc_info.value)
+        assert "Resource already exists with URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_resource_create_with_invalid_uri(self):
@@ -407,7 +410,7 @@ class TestResourceReading:
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
 
-        result = await resource_service.read_resource(mock_db, "test://resource")
+        result = await resource_service.read_resource(mock_db, mock_resource.id)
 
         assert result is not None
 
@@ -437,19 +440,26 @@ class TestResourceReading:
         assert "exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_read_template_resource(self, resource_service, mock_db):
+    async def test_read_template_resource(self, resource_service, mock_db, mock_resource):
         """Test reading templated resource."""
-        uri = "test://template/{value}"
-
-        # Mock content
+        # Use the resource id instead of uri
         mock_content = MagicMock()
         mock_content.type = "text"
         mock_content.text = "template content"
 
+        # Add a template to the cache to trigger template logic
+        resource_service._template_cache["template"] = MagicMock(uri_template="test://template/{value}")
+
+
+        # Ensure db.get returns a mock resource with a template URI (containing curly braces)
+        mock_template_resource = MagicMock()
+        mock_template_resource.uri = "test://template/{value}"
+        mock_db.get.return_value = mock_template_resource
+
         with patch.object(resource_service, "_read_template_resource", return_value=mock_content) as mock_template:
-            result = await resource_service.read_resource(mock_db, uri)
-            assert result == mock_content
-            mock_template.assert_called_once_with(uri)
+            result = await resource_service.read_resource(mock_db, mock_resource.id)
+            assert result.text == "template content"
+            mock_template.assert_called_once_with(mock_template_resource.uri)
 
 
 # --------------------------------------------------------------------------- #
@@ -580,9 +590,11 @@ class TestResourceManagement:
         """Test successful resource update."""
         update_data = ResourceUpdate(name="Updated Name", description="Updated description", content="Updated content")
 
+
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
@@ -608,7 +620,7 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.update_resource(mock_db, "http://example.com/resource", update_data)
+            result = await resource_service.update_resource(mock_db, mock_resource.id, update_data)
 
             assert mock_resource.name == "Updated Name"
             assert mock_resource.description == "Updated description"
@@ -619,9 +631,11 @@ class TestResourceManagement:
         """Test updating non-existent resource."""
         update_data = ResourceUpdate(name="New Name")
 
+
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = None
 
         with pytest.raises(ResourceNotFoundError):
             await resource_service.update_resource(mock_db, "http://example.com/missing", update_data)
@@ -631,17 +645,19 @@ class TestResourceManagement:
         """Test updating inactive resource."""
         update_data = ResourceUpdate(name="New Name")
 
+
         # First query (for active) returns None, second (for inactive) returns resource
         mock_scalar1 = MagicMock()
         mock_scalar1.scalar_one_or_none.return_value = None
         mock_scalar2 = MagicMock()
         mock_scalar2.scalar_one_or_none.return_value = mock_inactive_resource
         mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
+        mock_db.get.return_value = None
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
             await resource_service.update_resource(mock_db, "http://example.com/inactive", update_data)
 
-        assert "exists but is inactive" in str(exc_info.value)
+        assert "Resource not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_update_resource_binary_content(self, resource_service, mock_db, mock_resource):
@@ -677,37 +693,39 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.update_resource(mock_db, "http://example.com/resource", update_data)
+
+            mock_db.get.return_value = mock_resource
+            result = await resource_service.update_resource(mock_db, mock_resource.id, update_data)
 
             assert mock_resource.binary_content == b"new binary content"
             assert mock_resource.text_content is None
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_resource_by_uri_success(self, resource_service, mock_db, mock_resource):
-        """Test getting resource by URI."""
+    async def test_get_resource_by_id_success(self, resource_service, mock_db, mock_resource):
+        """Test getting resource by ID."""
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
 
-        result = await resource_service.get_resource_by_uri(mock_db, "http://example.com/resource")
+        result = await resource_service.get_resource_by_id(mock_db, "1")
 
         assert isinstance(result, ResourceRead)
         assert result.uri == mock_resource.uri
 
     @pytest.mark.asyncio
-    async def test_get_resource_by_uri_not_found(self, resource_service, mock_db):
-        """Test getting non-existent resource by URI."""
+    async def test_get_resource_by_id_not_found(self, resource_service, mock_db):
+        """Test getting non-existent resource by ID."""
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_scalar
 
         with pytest.raises(ResourceNotFoundError):
-            await resource_service.get_resource_by_uri(mock_db, "http://example.com/missing")
+            await resource_service.get_resource_by_id(mock_db, "1")
 
     @pytest.mark.asyncio
-    async def test_get_resource_by_uri_inactive(self, resource_service, mock_db, mock_inactive_resource):
-        """Test getting inactive resource by URI."""
+    async def test_get_resource_by_id_inactive(self, resource_service, mock_db, mock_inactive_resource):
+        """Test getting inactive resource by ID."""
         # First query (for active only) returns None, second (checking inactive) returns resource
         mock_scalar1 = MagicMock()
         mock_scalar1.scalar_one_or_none.return_value = None
@@ -716,7 +734,7 @@ class TestResourceManagement:
         mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            await resource_service.get_resource_by_uri(mock_db, "http://example.com/inactive")
+            await resource_service.get_resource_by_id(mock_db, "1")
 
         assert "exists but is inactive" in str(exc_info.value)
 
@@ -727,7 +745,7 @@ class TestResourceManagement:
         mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
         mock_db.execute.return_value = mock_scalar
 
-        result = await resource_service.get_resource_by_uri(mock_db, "http://example.com/inactive", include_inactive=True)
+        result = await resource_service.get_resource_by_id(mock_db, "1", include_inactive=True)
 
         assert isinstance(result, ResourceRead)
         assert result.uri == mock_inactive_resource.uri

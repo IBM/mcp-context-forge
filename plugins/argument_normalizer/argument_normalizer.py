@@ -546,9 +546,9 @@ class ArgumentNormalizerPlugin(Plugin):
             normalized_args[key] = _normalize_value(value, self.cfg, key, modified)
 
         if modified["modified"]:
-            logger.debug("ArgumentNormalizer: normalized prompt args for %s", payload.name)
+            logger.debug("ArgumentNormalizer: normalized prompt args for %s", payload.prompt_id)
             return PromptPrehookResult(
-                modified_payload=PromptPrehookPayload(name=payload.name, args=normalized_args),
+                modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=normalized_args),
                 metadata={"argument_normalizer": {"modified": True}},
             )
 

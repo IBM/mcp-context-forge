@@ -123,7 +123,7 @@ class ExternalPluginServer:
             >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
             >>> def prompt_pre_fetch_func(plugin: Plugin, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
             ...     return plugin.prompt_pre_fetch(payload, context)
-            >>> payload = PromptPrehookPayload(name="test_prompt", args={"user": "This is so innovative"})
+            >>> payload = PromptPrehookPayload(prompt_id="test_id",  args={"user": "This is so innovative"})
             >>> context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
             >>> initialized = asyncio.run(server.initialize())
             >>> initialized

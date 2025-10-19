@@ -2560,14 +2560,14 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
-@resource_router.get("/{uri:path}")
+@resource_router.get("/{resource_id}")
 @require_permission("resources.read")
-async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
+async def read_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
     """
-    Read a resource by its URI with plugin support.
+    Read a resource by its ID with plugin support.
 
     Args:
-        uri (str): URI of the resource.
+        resource_id (str): ID of the resource.
         request (Request): FastAPI request object for context.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -2582,20 +2582,20 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     server_id = request.headers.get("X-Server-ID")
 
-    logger.debug(f"User {user} requested resource with URI {uri} (request_id: {request_id})")
+    logger.debug(f"User {user} requested resource with ID {resource_id} (request_id: {request_id})")
 
     # Check cache
-    if cached := resource_cache.get(uri):
+    if cached := resource_cache.get(resource_id):
         return cached
 
     try:
         # Call service with context for plugin support
-        content = await resource_service.read_resource(db, uri, request_id=request_id, user=user, server_id=server_id)
+        content = await resource_service.read_resource(db, resource_id, request_id=request_id, user=user, server_id=server_id)
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    resource_cache.set(uri, content)
+    resource_cache.set(resource_id, content)
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
@@ -2608,36 +2608,36 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
-            return {"type": "resource", "uri": uri, "text": content.text}
+            return {"type": "resource", "id": resource_id, "uri": content.uri, "text": content.text}
     except Exception:
         pass  # nosec B110 - Intentionally continue with fallback resource content handling
 
     if isinstance(content, bytes):
-        return {"type": "resource", "uri": uri, "blob": content.decode("utf-8", errors="ignore")}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "blob": content.decode("utf-8", errors="ignore")}
     if isinstance(content, str):
-        return {"type": "resource", "uri": uri, "text": content}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "text": content}
 
     # Objects with a 'text' attribute (e.g., mocks) – best-effort mapping
     if hasattr(content, "text"):
-        return {"type": "resource", "uri": uri, "text": getattr(content, "text")}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "text": getattr(content, "text")}
 
-    return {"type": "resource", "uri": uri, "text": str(content)}
+    return {"type": "resource", "id": resource_id, "uri": content.uri, "text": str(content)}
 
 
-@resource_router.put("/{uri:path}", response_model=ResourceRead)
+@resource_router.put("/{resource_id}", response_model=ResourceRead)
 @require_permission("resources.update")
 async def update_resource(
-    uri: str,
+    resource_id: str,
     resource: ResourceUpdate,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
     """
-    Update a resource identified by its URI.
+    Update a resource identified by its ID.
 
     Args:
-        uri (str): URI of the resource.
+        resource_id (str): ID of the resource.
         resource (ResourceUpdate): New resource data.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Database session.
@@ -2650,14 +2650,14 @@ async def update_resource(
         HTTPException: If the resource is not found or update fails.
     """
     try:
-        logger.debug(f"User {user} is updating resource with URI {uri}")
+        logger.debug(f"User {user} is updating resource with ID {resource_id}")
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         result = await resource_service.update_resource(
             db,
-            uri,
+            resource_id,
             resource,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -2670,23 +2670,25 @@ async def update_resource(
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:
-        logger.error(f"Validation error while updating resource {uri}: {e}")
+        logger.error(f"Validation error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
-        logger.error(f"Integrity error while updating resource {uri}: {e}")
+        logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
-    await invalidate_resource_cache(uri)
+    except ResourceURIConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await invalidate_resource_cache(resource_id)
     return result
 
 
-@resource_router.delete("/{uri:path}")
+@resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
-    Delete a resource by its URI.
+    Delete a resource by its ID.
 
     Args:
-        uri (str): URI of the resource to delete.
+        resource_id (str): ID of the resource to delete.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -2697,11 +2699,11 @@ async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(
         HTTPException: If the resource is not found or deletion fails.
     """
     try:
-        logger.debug(f"User {user} is deleting resource with URI {uri}")
+        logger.debug(f"User {user} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await resource_service.delete_resource(db, uri, user_email=user_email)
-        await invalidate_resource_cache(uri)
-        return {"status": "success", "message": f"Resource {uri} deleted"}
+        await resource_service.delete_resource(db, resource_id, user_email=user_email)
+        await invalidate_resource_cache(resource_id)
+        return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
@@ -2710,21 +2712,21 @@ async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@resource_router.post("/subscribe/{uri:path}")
+@resource_router.post("/subscribe/{resource_id}")
 @require_permission("resources.read")
-async def subscribe_resource(uri: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(resource_id: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
-        uri (str): URI of the resource to subscribe to.
+        resource_id (str): ID of the resource to subscribe to.
         user (str): Authenticated user.
 
     Returns:
         StreamingResponse: A streaming response with event updates.
     """
-    logger.debug(f"User {user} is subscribing to resource with URI {uri}")
-    return StreamingResponse(resource_service.subscribe_events(uri), media_type="text/event-stream")
+    logger.debug(f"User {user} is subscribing to resource with resource_id {resource_id}")
+    return StreamingResponse(resource_service.subscribe_events(resource_id), media_type="text/event-stream")
 
 
 ###############
@@ -2896,22 +2898,22 @@ async def create_prompt(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
 
 
-@prompt_router.post("/{name}")
+@prompt_router.post("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt(
-    name: str,
+    prompt_id: str,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
-    """Get a prompt by name with arguments.
+    """Get a prompt by prompt_id with arguments.
 
     This implements the prompts/get functionality from the MCP spec,
     which requires a POST request with arguments in the body.
 
 
     Args:
-        name: Name of the prompt.
+        prompt_id: ID of the prompt.
         args: Template arguments.
         db: Database session.
         user: Authenticated user.
@@ -2922,14 +2924,14 @@ async def get_prompt(
     Raises:
         Exception: Re-raised if not a handled exception type.
     """
-    logger.debug(f"User: {user} requested prompt: {name} with args={args}")
+    logger.debug(f"User: {user} requested prompt: {prompt_id} with args={args}")
 
     try:
         PromptExecuteArgs(args=args)
-        result = await prompt_service.get_prompt(db, name, args)
-        logger.debug(f"Prompt execution successful for '{name}'")
+        result = await prompt_service.get_prompt(db, prompt_id, args)
+        logger.debug(f"Prompt execution successful for '{prompt_id}'")
     except Exception as ex:
-        logger.error(f"Could not retrieve prompt {name}: {ex}")
+        logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
             return JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
@@ -2941,19 +2943,19 @@ async def get_prompt(
     return result
 
 
-@prompt_router.get("/{name}")
+@prompt_router.get("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt_no_args(
-    name: str,
+    prompt_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
-    """Get a prompt by name without arguments.
+    """Get a prompt by ID without arguments.
 
     This endpoint is for convenience when no arguments are needed.
 
     Args:
-        name: The name of the prompt to retrieve
+        prompt_id: The ID of the prompt to retrieve
         db: Database session
         user: Authenticated user
 
@@ -2963,14 +2965,14 @@ async def get_prompt_no_args(
     Raises:
         Exception: Re-raised from prompt service.
     """
-    logger.debug(f"User: {user} requested prompt: {name} with no arguments")
-    return await prompt_service.get_prompt(db, name, {})
+    logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
+    return await prompt_service.get_prompt(db, prompt_id, {})
 
 
-@prompt_router.put("/{name}", response_model=PromptRead)
+@prompt_router.put("/{prompt_id}", response_model=PromptRead)
 @require_permission("prompts.update")
 async def update_prompt(
-    name: str,
+    prompt_id: str,
     prompt: PromptUpdate,
     request: Request,
     db: Session = Depends(get_db),
@@ -2980,7 +2982,7 @@ async def update_prompt(
     Update (overwrite) an existing prompt definition.
 
     Args:
-        name (str): Identifier of the prompt to update.
+        prompt_id (str): Identifier of the prompt to update.
         prompt (PromptUpdate): New prompt content and metadata.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Active SQLAlchemy session.
@@ -2993,8 +2995,7 @@ async def update_prompt(
         HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
             * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
-    logger.info(f"User: {user} requested to update prompt: {name} with data={prompt}")
-    logger.debug(f"User: {user} requested to update prompt: {name} with data={prompt}")
+    logger.debug(f"User: {user} requested to update prompt: {prompt_id} with data={prompt}")
     try:
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
@@ -3002,7 +3003,7 @@ async def update_prompt(
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await prompt_service.update_prompt(
             db,
-            name,
+            prompt_id,
             prompt,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
@@ -3032,14 +3033,14 @@ async def update_prompt(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")
 
 
-@prompt_router.delete("/{name}")
+@prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
-    Delete a prompt by name.
+    Delete a prompt by ID.
 
     Args:
-        name: Name of the prompt.
+        prompt_id: ID of the prompt.
         db: Database session.
         user: Authenticated user.
 
@@ -3049,11 +3050,11 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(g
     Raises:
         HTTPException: If the prompt is not found, a prompt error occurs, or an unexpected error occurs during deletion.
     """
-    logger.debug(f"User: {user} requested deletion of prompt {name}")
+    logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await prompt_service.delete_prompt(db, name, user_email=user_email)
-        return {"status": "success", "message": f"Prompt {name} deleted"}
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PermissionError):
             raise HTTPException(status_code=403, detail=str(e))
@@ -3061,7 +3062,7 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(g
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, PromptError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        logger.error(f"Unexpected error while deleting prompt {name}: {e}")
+        logger.error(f"Unexpected error while deleting prompt {prompt_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while deleting the prompt")
 
     # except PromptNotFoundError as e:

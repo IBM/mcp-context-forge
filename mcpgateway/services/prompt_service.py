@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 import os
 from string import Formatter
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
 
 # Third-Party
@@ -58,13 +58,14 @@ class PromptNotFoundError(PromptError):
 class PromptNameConflictError(PromptError):
     """Raised when a prompt name conflicts with existing (active or inactive) prompt."""
 
-    def __init__(self, name: str, is_active: bool = True, prompt_id: Optional[int] = None):
+    def __init__(self, name: str, is_active: bool = True, prompt_id: Optional[int] = None, visibility: str = "public") -> None:
         """Initialize the error with prompt information.
 
         Args:
             name: The conflicting prompt name
             is_active: Whether the existing prompt is active
             prompt_id: ID of the existing prompt if available
+            visibility: Prompt visibility level (private, team, public).
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptNameConflictError
@@ -84,7 +85,7 @@ class PromptNameConflictError(PromptError):
         self.name = name
         self.is_active = is_active
         self.prompt_id = prompt_id
-        message = f"Prompt already exists with name: {name}"
+        message = f"{visibility.capitalize()} Prompt already exists with name: {name}"
         if not is_active:
             message += f" (currently inactive, ID: {prompt_id})"
         super().__init__(message)
@@ -317,6 +318,7 @@ class PromptService:
 
         Raises:
             IntegrityError: If a database integrity error occurs.
+            PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other prompt registration errors
 
         Examples:
@@ -376,6 +378,17 @@ class PromptService:
                 owner_email=getattr(prompt, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(prompt, "visibility", None) or visibility,
             )
+            # Check for existing server with the same name
+            if visibility.lower() == "public":
+                # Check for existing public prompt with the same name
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                if existing_prompt:
+                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+            elif visibility.lower() == "team":
+                # Check for existing team prompt with the same name
+                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                if existing_prompt:
+                    raise PromptNameConflictError(prompt.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             # Add to DB
             db.add(db_prompt)
@@ -392,6 +405,9 @@ class PromptService:
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except PromptNameConflictError as se:
+            db.rollback()
+            raise se
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to register prompt: {str(e)}")
@@ -596,7 +612,7 @@ class PromptService:
     async def get_prompt(
         self,
         db: Session,
-        name: str,
+        prompt_id: Union[int, str],
         arguments: Optional[Dict[str, str]] = None,
         user: Optional[str] = None,
         tenant_id: Optional[str] = None,
@@ -607,7 +623,7 @@ class PromptService:
 
         Args:
             db: Database session
-            name: Name of prompt to get
+            prompt_id: ID of the prompt to retrieve
             arguments: Optional arguments for rendering
             user: Optional user identifier for plugin context
             tenant_id: Optional tenant identifier for plugin context
@@ -631,7 +647,7 @@ class PromptService:
             >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.get_prompt(db, 'prompt_name'))
+            ...     asyncio.run(service.get_prompt(db, 'prompt_id'))
             ... except Exception:
             ...     pass
         """
@@ -645,7 +661,7 @@ class PromptService:
         with create_span(
             "prompt.render",
             {
-                "prompt.name": name,
+                "prompt.id": prompt_id,
                 "arguments_count": len(arguments) if arguments else 0,
                 "user": user or "anonymous",
                 "server_id": server_id,
@@ -654,29 +670,32 @@ class PromptService:
             },
         ) as span:
             try:
+                # Ensure prompt_id is an int for database operations
+                prompt_id_int = int(prompt_id) if isinstance(prompt_id, str) else prompt_id
+
                 if self._plugin_manager:
                     if not request_id:
                         request_id = uuid.uuid4().hex
                     global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
                     pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(
-                        payload=PromptPrehookPayload(name=name, args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
+                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
                     )
 
                     # Use modified payload if provided
                     if pre_result.modified_payload:
                         payload = pre_result.modified_payload
-                        name = payload.name
+                        prompt_id_int = int(payload.prompt_id) if isinstance(payload.prompt_id, str) else payload.prompt_id
                         arguments = payload.args
 
                 # Find prompt
-                prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
+                prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(DbPrompt.is_active)).scalar_one_or_none()
 
                 if not prompt:
-                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                    inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(not_(DbPrompt.is_active))).scalar_one_or_none()
                     if inactive_prompt:
-                        raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
+                        raise PromptNotFoundError(f"Prompt '{prompt_id_int}' exists but is inactive")
 
-                    raise PromptNotFoundError(f"Prompt not found: {name}")
+                    raise PromptNotFoundError(f"Prompt not found: {prompt_id_int}")
 
                 if not arguments:
                     result = PromptResult(
@@ -702,7 +721,7 @@ class PromptService:
 
                 if self._plugin_manager:
                     post_result, _ = await self._plugin_manager.prompt_post_fetch(
-                        payload=PromptPosthookPayload(name=name, result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
+                        payload=PromptPosthookPayload(prompt_id=str(prompt_id_int), result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
                     )
                     # Use modified payload if provided
                     result = post_result.modified_payload.result if post_result.modified_payload else result
@@ -732,7 +751,7 @@ class PromptService:
     async def update_prompt(
         self,
         db: Session,
-        name: str,
+        prompt_id: Union[int, str],
         prompt_update: PromptUpdate,
         modified_by: Optional[str] = None,
         modified_from_ip: Optional[str] = None,
@@ -745,7 +764,7 @@ class PromptService:
 
         Args:
             db: Database session
-            name: Name of prompt to update
+            prompt_id: ID of prompt to update
             prompt_update: Prompt update object
             modified_by: Username of the person modifying the prompt
             modified_from_ip: IP address where the modification originated
@@ -760,6 +779,7 @@ class PromptService:
             PromptNotFoundError: If the prompt is not found
             PermissionError: If user doesn't own the prompt
             IntegrityError: If a database integrity error occurs.
+            PromptNameConflictError: If a prompt with the same name already exists.
             PromptError: For other update errors
 
         Examples:
@@ -779,14 +799,25 @@ class PromptService:
             ...     pass
         """
         try:
-            prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(DbPrompt.is_active)).scalar_one_or_none()
+            prompt = db.get(DbPrompt, prompt_id)
             if not prompt:
-                inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
-                if inactive_prompt:
-                    raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
-
-                raise PromptNotFoundError(f"Prompt not found: {name}")
+            # # Check for name conflict if name is being changed and visibility is public
+            if prompt_update.name and prompt_update.name != prompt.name:
+                visibility = prompt_update.visibility or prompt.visibility
+                team_id = prompt_update.team_id or prompt.team_id
+                if visibility.lower() == "public":
+                    # Check for existing public prompts with the same name
+                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "public")).scalar_one_or_none()
+                    if existing_prompt:
+                        raise PromptNameConflictError(prompt_update.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
+                elif visibility.lower() == "team" and team_id:
+                    # Check for existing team prompt with the same name
+                    existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
+                    logger.info(f"Existing prompt check result: {existing_prompt}")
+                    if existing_prompt:
+                        raise PromptNameConflictError(prompt_update.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             # Check ownership if user_email provided
             if user_email:
@@ -858,6 +889,10 @@ class PromptService:
             db.rollback()
             logger.error(f"Prompt not found: {e}")
             raise e
+        except PromptNameConflictError as pnce:
+            db.rollback()
+            logger.error(f"Prompt name conflict: {pnce}")
+            raise pnce
         except Exception as e:
             db.rollback()
             raise PromptError(f"Failed to update prompt: {str(e)}")
@@ -930,13 +965,13 @@ class PromptService:
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
 
     # Get prompt details for admin ui
-    async def get_prompt_details(self, db: Session, name: str, include_inactive: bool = False) -> Dict[str, Any]:
+    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """
-        Get prompt details by name.
+        Get prompt details by ID.
 
         Args:
             db: Database session
-            name: Name of prompt
+            prompt_id: ID of prompt
             include_inactive: Whether to include inactive prompts
 
         Returns:
@@ -958,34 +993,28 @@ class PromptService:
             >>> result == prompt_dict
             True
         """
-        query = select(DbPrompt).where(DbPrompt.name == name)
-        if not include_inactive:
-            query = query.where(DbPrompt.is_active)
-        prompt = db.execute(query).scalar_one_or_none()
+        logger.info(f"prompt_id:::{prompt_id}")
+        prompt = db.get(DbPrompt, prompt_id)
         if not prompt:
-            if not include_inactive:
-                inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
-                if inactive_prompt:
-                    raise PromptNotFoundError(f"Prompt '{name}' exists but is inactive")
-            raise PromptNotFoundError(f"Prompt not found: {name}")
+            raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
         # Return the fully converted prompt including metrics
         prompt.team = self._get_team_name(db, prompt.team_id)
         return self._convert_db_prompt(prompt)
 
-    async def delete_prompt(self, db: Session, name: str, user_email: Optional[str] = None) -> None:
+    async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None) -> None:
         """
-        Delete a prompt template.
+        Delete a prompt template by its ID.
 
         Args:
-            db: Database session
-            name: Name of prompt to delete
-            user_email: Email of user performing delete (for ownership check)
+            db (Session): Database session.
+            prompt_id (str): ID of the prompt to delete.
+            user_email (Optional[str]): Email of user performing delete (for ownership check).
 
         Raises:
-            PromptNotFoundError: If the prompt is not found
-            PermissionError: If user doesn't own the prompt
-            PromptError: For other deletion errors
-            Exception: For unexpected errors
+            PromptNotFoundError: If the prompt is not found.
+            PermissionError: If user doesn't own the prompt.
+            PromptError: For other deletion errors.
+            Exception: For unexpected errors.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -999,14 +1028,14 @@ class PromptService:
             >>> service._notify_prompt_deleted = MagicMock()
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.delete_prompt(db, 'prompt_name'))
+            ...     asyncio.run(service.delete_prompt(db, '123'))
             ... except Exception:
             ...     pass
         """
         try:
-            prompt = db.execute(select(DbPrompt).where(DbPrompt.name == name)).scalar_one_or_none()
+            prompt = db.get(DbPrompt, prompt_id)
             if not prompt:
-                raise PromptNotFoundError(f"Prompt not found: {name}")
+                raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
 
             # Check ownership if user_email provided
             if user_email:
@@ -1021,7 +1050,7 @@ class PromptService:
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
-            logger.info(f"Permanently deleted prompt: {name}")
+            logger.info(f"Deleted prompt: {prompt_info['name']}")
         except PermissionError:
             db.rollback()
             raise
