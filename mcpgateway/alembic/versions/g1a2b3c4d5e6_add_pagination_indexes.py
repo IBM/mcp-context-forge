@@ -116,9 +116,9 @@ def upgrade() -> None:
         unique=False,
     )
     op.create_index(
-        "ix_email_api_tokens_owner_created_at",
+        "ix_email_api_tokens_user_email_created_at",
         "email_api_tokens",
-        ["owner_email", "created_at"],
+        ["user_email", "created_at"],
         unique=False,
     )
 
@@ -142,7 +142,7 @@ def downgrade() -> None:
     # Drop indexes in reverse order
     op.drop_index("ix_email_auth_events_user_timestamp", table_name="email_auth_events")
     op.drop_index("ix_email_auth_events_timestamp_id", table_name="email_auth_events")
-    op.drop_index("ix_email_api_tokens_owner_created_at", table_name="email_api_tokens")
+    op.drop_index("ix_email_api_tokens_user_email_created_at", table_name="email_api_tokens")
     op.drop_index("ix_email_api_tokens_created_at_id", table_name="email_api_tokens")
     op.drop_index("ix_email_teams_created_at_id", table_name="email_teams")
     op.drop_index("ix_email_users_created_at_email", table_name="email_users")
