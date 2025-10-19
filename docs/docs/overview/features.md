@@ -98,6 +98,7 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
     | **Resources** | URIs for blobs, text, images | Optional SSE change notifications |
     | **Prompts** | Jinja2 templates + multimodal content | Versioning & rollback |
     | **Servers** | Virtual collections of tools/prompts/resources | Exposed as full MCP servers |
+    | **gRPC Services** | gRPC microservices via automatic reflection | Protocol translation to MCP/JSON |
 
 ??? code "REST tool example"
 
@@ -113,6 +114,57 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
              }' \
          http://localhost:4444/tools
     ```
+
+---
+
+## 🔌 gRPC-to-MCP Translation
+
+??? success "Automatic gRPC Integration"
+
+    * **Server Reflection** - Automatically discovers gRPC services and methods
+    * **Protocol Translation** - Converts between gRPC/Protobuf ↔ MCP/JSON
+    * **Zero Configuration** - No manual schema definition required
+    * **TLS Support** - Secure connections to gRPC servers
+    * **Metadata Headers** - Custom gRPC metadata for authentication
+    * **Admin UI** - Manage gRPC services via web interface
+
+??? code "Register a gRPC service"
+
+    ```bash
+    # CLI: Expose gRPC service via HTTP/SSE
+    python3 -m mcpgateway.translate --grpc localhost:50051 --port 9000
+
+    # REST API: Register for persistence
+    curl -X POST -H "Authorization: Bearer $TOKEN" \
+         -H "Content-Type: application/json" \
+         -d '{
+               "name": "payment-service",
+               "target": "payments.example.com:50051",
+               "reflection_enabled": true,
+               "tls_enabled": true
+             }' \
+         http://localhost:4444/grpc
+    ```
+
+??? info "How it works"
+
+    1. Gateway connects to gRPC server using [Server Reflection Protocol](https://grpc.io/docs/guides/reflection/)
+    2. Discovers all available services and methods automatically
+    3. Translates Protobuf messages to/from JSON
+    4. Exposes each gRPC method as an MCP tool
+    5. Handles streaming (unary and server-streaming)
+
+??? example "Supported gRPC features"
+
+    | Feature | Status | Notes |
+    |---------|--------|-------|
+    | Unary RPCs | ✅ Supported | Request-response methods |
+    | Server Streaming | ⚠️ Partial | Basic support implemented |
+    | Client Streaming | 🚧 Planned | Future enhancement |
+    | Bidirectional Streaming | 🚧 Planned | Future enhancement |
+    | TLS/mTLS | ✅ Supported | Certificate-based auth |
+    | Metadata Headers | ✅ Supported | Custom headers for auth |
+    | Reflection | ✅ Required | Auto-discovery mechanism |
 
 ---
 

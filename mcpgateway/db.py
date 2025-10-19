@@ -2675,6 +2675,76 @@ class A2AAgent(Base):
         return f"<A2AAgent(id='{self.id}', name='{self.name}', agent_type='{self.agent_type}')>"
 
 
+class GrpcService(Base):
+    """
+    ORM model for gRPC services with reflection-based discovery.
+
+    gRPC services represent external gRPC servers that can be automatically discovered
+    via server reflection and exposed as MCP tools. The gateway translates between
+    gRPC/Protobuf and MCP/JSON protocols.
+    """
+
+    __tablename__ = "grpc_services"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    target: Mapped[str] = mapped_column(String(767), nullable=False)  # host:port format
+
+    # Configuration
+    reflection_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    tls_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tls_cert_path: Mapped[Optional[str]] = mapped_column(String(767))
+    tls_key_path: Mapped[Optional[str]] = mapped_column(String(767))
+    grpc_metadata: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)  # gRPC metadata headers
+
+    # Status
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    reachable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Discovery results from reflection
+    service_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    method_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    discovered_services: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)  # Service descriptors
+    last_reflection: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Tags for categorization
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the GrpcService instance.
+
+        Returns:
+            str: A formatted string containing the service's ID, name, and target.
+        """
+        return f"<GrpcService(id='{self.id}', name='{self.name}', target='{self.target}')>"
+
+
 class SessionRecord(Base):
     """ORM model for sessions from SSE client."""
 
@@ -3325,6 +3395,18 @@ def set_a2a_agent_slug(_mapper, _conn, target):
         _mapper: Mapper
         _conn: Connection
         target: Target A2AAgent instance
+    """
+    target.slug = slugify(target.name)
+
+
+@event.listens_for(GrpcService, "before_insert")
+def set_grpc_service_slug(_mapper, _conn, target):
+    """Set the slug for a GrpcService before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target GrpcService instance
     """
     target.slug = slugify(target.name)
 

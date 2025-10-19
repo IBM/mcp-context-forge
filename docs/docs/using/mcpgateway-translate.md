@@ -549,8 +549,68 @@ headers = {
 - **Performance**: Stateless mode recommended for high-traffic scenarios
 - **Compatibility**: Works with all MCP-compliant servers and clients
 
+## gRPC Service Exposure
+
+`mcpgateway.translate` now supports exposing gRPC services as MCP tools via automatic service discovery.
+
+### Quick Start
+
+Expose a local gRPC server via HTTP/SSE:
+
+```bash
+python3 -m mcpgateway.translate --grpc localhost:50051 --port 9000
+```
+
+### gRPC CLI Options
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--grpc` | gRPC server target (host:port) | `--grpc localhost:50051` |
+| `--connect-grpc` | Remote gRPC endpoint to connect to | `--connect-grpc api.example.com:443` |
+| `--grpc-tls` | Enable TLS for gRPC connection | `--grpc-tls` |
+| `--grpc-cert` | Path to TLS certificate | `--grpc-cert /path/to/cert.pem` |
+| `--grpc-key` | Path to TLS key | `--grpc-key /path/to/key.pem` |
+| `--grpc-metadata` | gRPC metadata headers (repeatable) | `--grpc-metadata "auth=Bearer token"` |
+
+### Examples
+
+**Basic gRPC exposure:**
+```bash
+python3 -m mcpgateway.translate \
+  --grpc localhost:50051 \
+  --port 9000
+```
+
+**With TLS and authentication:**
+```bash
+python3 -m mcpgateway.translate \
+  --grpc api.example.com:443 \
+  --grpc-tls \
+  --grpc-cert /etc/ssl/certs/client.pem \
+  --grpc-key /etc/ssl/private/client.key \
+  --grpc-metadata "authorization=Bearer my-token" \
+  --grpc-metadata "x-tenant-id=customer-1" \
+  --port 9000
+```
+
+### How It Works
+
+1. **Connects** to the gRPC server at the specified target
+2. **Uses** [gRPC Server Reflection](https://grpc.io/docs/guides/reflection/) to discover services
+3. **Translates** between gRPC/Protobuf and MCP/JSON protocols
+4. **Exposes** each gRPC method as an MCP tool via HTTP/SSE
+
+### Requirements
+
+- gRPC server must have **server reflection enabled**
+- Server must be reachable from the gateway
+- For TLS: Valid certificates and keys
+
+For full gRPC service management (registry, admin UI, persistence), see [gRPC Services](grpc-services.md).
+
 ## Related Documentation
 
+- [gRPC Services](grpc-services.md)
 - [MCP Gateway Overview](../overview/index.md)
 - [MCP Protocol Specification](https://modelcontextprotocol.io)
 - [Transport Protocols](../architecture/index.md#system-architecture)

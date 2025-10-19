@@ -14116,6 +14116,65 @@ window.submitApiKeyForm = function (event) {
         });
 };
 
+// gRPC Services Functions
+
+/**
+ * Toggle visibility of TLS certificate/key fields based on TLS checkbox
+ */
+window.toggleGrpcTlsFields = function () {
+    const tlsEnabled =
+        document.getElementById("grpc-tls-enabled")?.checked || false;
+    const certField = document.getElementById("grpc-tls-cert-field");
+    const keyField = document.getElementById("grpc-tls-key-field");
+
+    if (tlsEnabled) {
+        certField?.classList.remove("hidden");
+        keyField?.classList.remove("hidden");
+    } else {
+        certField?.classList.add("hidden");
+        keyField?.classList.add("hidden");
+    }
+};
+
+/**
+ * View gRPC service methods in a modal or alert
+ * @param {string} serviceId - The gRPC service ID
+ */
+window.viewGrpcMethods = function (serviceId) {
+    const rootPath = window.ROOT_PATH || "";
+
+    fetch(`${rootPath}/grpc/${serviceId}/methods`, {
+        method: "GET",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + (getCookie("jwt_token") || ""),
+        },
+    })
+        .then((response) => response.json())
+        .then((data) => {
+            if (data.methods && data.methods.length > 0) {
+                let methodsList = "gRPC Methods:\n\n";
+                data.methods.forEach((method) => {
+                    methodsList += `${method.full_name}\n`;
+                    methodsList += `  Input: ${method.input_type || "N/A"}\n`;
+                    methodsList += `  Output: ${method.output_type || "N/A"}\n`;
+                    if (method.client_streaming || method.server_streaming) {
+                        methodsList += `  Streaming: ${method.client_streaming ? "Client" : ""} ${method.server_streaming ? "Server" : ""}\n`;
+                    }
+                    methodsList += "\n";
+                });
+                alert(methodsList);
+            } else {
+                alert(
+                    "No methods discovered for this service. Try re-reflecting the service.",
+                );
+            }
+        })
+        .catch((error) => {
+            alert("Error fetching methods: " + error);
+        });
+};
+
 // Helper function to get cookie if not already defined
 if (typeof window.getCookie === "undefined") {
     window.getCookie = function (name) {
