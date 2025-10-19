@@ -291,7 +291,7 @@
       </div>
 
       <!-- Status and Mode -->
-      <div class="flex items-center gap-3 mb-4">
+      <div class="flex items-center gap-2 mb-4 flex-wrap">
         <!-- Status Indicator -->
         <div class="flex items-center">
           {% if plugin.status == 'enabled' %}
@@ -323,6 +323,23 @@
           class="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-medium rounded dark:bg-gray-700 dark:text-gray-300"
         >
           Disabled
+        </span>
+        {% endif %}
+
+        <!-- Implementation Badge -->
+        {% if plugin.implementation == 'Rust' %}
+        <span
+          class="px-2 py-1 bg-orange-100 text-orange-800 text-xs font-medium rounded dark:bg-orange-900 dark:text-orange-200"
+          title="Rust-accelerated implementation (5-100x faster)"
+        >
+          🦀 Rust
+        </span>
+        {% elif plugin.implementation == 'Python' %}
+        <span
+          class="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded dark:bg-blue-900 dark:text-blue-200"
+          title="Pure Python implementation"
+        >
+          🐍 Python
         </span>
         {% endif %}
       </div>
