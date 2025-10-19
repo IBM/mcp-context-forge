@@ -17,6 +17,8 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - **🔒 Security Enhancements** - Plugin mTLS support, CSP headers, cookie scope fixes, and RBAC vulnerability patches
 - **🌐 Platform Support** - s390x architecture support, multiple StreamableHTTP content, and MCP tool output schema
 - **🧪 Quality & Testing** - Complete build pipeline verification, enhanced linting, mutation testing, and fuzzing
+- **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70%
+- **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
 
 ### Added
 
@@ -98,7 +100,20 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Keycloak Integration** (#1217, #1216, #1109) - Full Keycloak support with application/x-www-form-urlencoded
 * **OAuth Timeout Configuration** (#1201) - Configurable `OAUTH_DEFAULT_TIMEOUT` for OAuth providers
 
-#### **🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240)
+#### **🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240, #1289)
+* **🦀 Rust Plugin Framework** (#1289, #1249) - Optional Rust-accelerated plugins with automatic Python fallback
+  - Complete PyO3-based framework for building high-performance plugins
+  - **PII Filter (Rust)**: 5-100x faster than Python implementation with identical functionality
+    - Bulk detection: ~100x faster (Python: 2287ms → Rust: 22ms)
+    - Single pattern: ~5-10x faster across all PII types
+    - Memory efficient with Rust's ownership model
+  - **Auto-Detection**: Automatically selects Rust or Python implementation at runtime
+  - **UI Integration**: Plugin catalog displays implementation type (🦀 Rust / 🐍 Python)
+  - **Comprehensive Testing**: Unit tests, integration tests, differential tests, and benchmarks
+  - **CI/CD Pipeline**: Automated builds, tests, and publishing for Rust plugins
+  - **Multi-Platform Builds**: Linux (x86_64, aarch64), macOS (universal2), Windows (x86_64)
+  - **Zero Breaking Changes**: Pure Python fallback when Rust not available
+  - Optional installation: `pip install mcp-contextforge-gateway[rust]`
 * **Plugin Client-Server mTLS Support** (#1196) - Mutual TLS authentication for external plugins
 * **Complete OPA Plugin Hooks** (#1198, #1137) - All missing hooks implemented in OPA plugin
 * **Plugin Linters & Quality** (#1240) - Comprehensive linting for all plugins with automated fixes
@@ -118,6 +133,26 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **SSO Tutorial Updates** (#277) - Comprehensive GitHub SSO integration tutorial
 * **Environment Variable Documentation** (#1215) - Updated and clarified environment variable settings
 * **Documentation Formatting Fixes** (#1214) - Fixed newlines and formatting across documentation
+
+#### **⚡ Performance Optimizations** (#1298, #1292)
+* **Response Compression Middleware** (#1298, #1292) - Automatic compression reducing bandwidth by 30-70%
+  - **Multi-Algorithm Support**: Brotli, Zstd, and GZip compression with automatic negotiation
+  - **Bandwidth Reduction**: 30-70% smaller responses for text-based content (JSON, HTML, CSS, JS)
+  - **Algorithm Priority**: Brotli (best compression) > Zstd (fastest) > GZip (universal fallback)
+  - **Smart Compression**: Only compresses responses >500 bytes to avoid overhead
+  - **Optimal Settings**: Balanced compression levels for CPU/bandwidth trade-off
+    - Brotli quality 4 (0-11 scale) for best compression ratio
+    - Zstd level 3 (1-22 scale) for fastest compression
+    - GZip level 6 (1-9 scale) for balanced performance
+  - **Cache-Friendly**: Adds `Vary: Accept-Encoding` header for proper cache behavior
+  - **Zero Client Changes**: Transparent to API clients, browsers handle decompression automatically
+  - **Browser Support**: Brotli supported by 96%+ of browsers, GZip universal fallback
+  - **Configurable**: Environment variables for enabling/disabling and tuning compression levels
+    - `COMPRESSION_ENABLED` - Enable/disable compression (default: true)
+    - `COMPRESSION_MINIMUM_SIZE` - Minimum response size to compress (default: 500 bytes)
+    - `COMPRESSION_GZIP_LEVEL` - GZip compression level (default: 6)
+    - `COMPRESSION_BROTLI_QUALITY` - Brotli quality level (default: 4)
+    - `COMPRESSION_ZSTD_LEVEL` - Zstd compression level (default: 3)
 
 ### Fixed
 
@@ -162,7 +197,7 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Bandit Security Scan** (#1244) - Fixed all bandit security warnings
 * **Test Warnings & Mypy Issues** (#1268) - Fixed test warnings and mypy type issues
 
-#### **🧪 Test Reliability & Quality Improvements** (#1281, #1283, #1284)
+#### **🧪 Test Reliability & Quality Improvements** (#1281, #1283, #1284, #1291)
 * **Gateway Test Stability** (#1281) - Fixed gateway test failures and eliminated warnings
   - Integrated pytest-httpx for cleaner HTTP mocking (eliminated manual mock complexity)
   - Eliminated RuntimeWarnings from improper async context manager mocking
@@ -174,6 +209,7 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
   - Fixed email verification logic error in auth.py (email_verified_at vs is_email_verified) (#1283)
   - Fixed caplog logger name specification for reliable debug message capture (#1284)
   - Added proper type hints and improved type safety across test suite
+* **Prompt Test Fixes** (#1291) - Fixed test failures and prompt-related test issues
 
 #### **🐳 Container & Deployment Fixes**
 * **Gateway Registration on MacOS** (#625) - Fixed gateway registration and tool invocation on MacOS
