@@ -52,6 +52,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
+from starlette_compress import CompressMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
@@ -883,6 +884,27 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Length", "X-Request-ID"],
 )
+
+# Add response compression middleware (Brotli, Zstd, GZip)
+# Automatically negotiates compression algorithm based on client Accept-Encoding header
+# Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
+# Only compress responses larger than minimum_size to avoid overhead
+if settings.compression_enabled:
+    app.add_middleware(
+        CompressMiddleware,
+        minimum_size=settings.compression_minimum_size,  # Only compress responses > N bytes
+        gzip_level=settings.compression_gzip_level,  # GZip: 1=fastest, 9=best (default: 6)
+        brotli_quality=settings.compression_brotli_quality,  # Brotli: 0-3=fast, 4-9=balanced, 10-11=max (default: 4)
+        zstd_level=settings.compression_zstd_level,  # Zstd: 1-3=fast, 4-9=balanced, 10+=slow (default: 3)
+    )
+    logger.info(
+        f"🗜️  Response compression enabled: minimum_size={settings.compression_minimum_size}B, "
+        f"gzip_level={settings.compression_gzip_level}, "
+        f"brotli_quality={settings.compression_brotli_quality}, "
+        f"zstd_level={settings.compression_zstd_level}"
+    )
+else:
+    logger.info("🚫 Response compression disabled")
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)

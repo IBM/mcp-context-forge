@@ -221,3 +221,107 @@ def test_supports_transport_properties():
 
     s_ws = Settings(transport_type="ws")
     assert (s_ws.supports_http, s_ws.supports_websocket, s_ws.supports_sse) == (False, True, False)
+
+
+# --------------------------------------------------------------------------- #
+#                          Response Compression                               #
+# --------------------------------------------------------------------------- #
+def test_compression_default_values():
+    """Test that compression settings have correct defaults."""
+    s = Settings(_env_file=None)
+    assert s.compression_enabled is True
+    assert s.compression_minimum_size == 500
+    assert s.compression_gzip_level == 6
+    assert s.compression_brotli_quality == 4
+    assert s.compression_zstd_level == 3
+
+
+def test_compression_custom_values():
+    """Test that compression settings can be customized."""
+    s = Settings(
+        compression_enabled=False,
+        compression_minimum_size=1000,
+        compression_gzip_level=9,
+        compression_brotli_quality=11,
+        compression_zstd_level=22,
+        _env_file=None,
+    )
+    assert s.compression_enabled is False
+    assert s.compression_minimum_size == 1000
+    assert s.compression_gzip_level == 9
+    assert s.compression_brotli_quality == 11
+    assert s.compression_zstd_level == 22
+
+
+def test_compression_minimum_size_validation():
+    """Test that compression_minimum_size validates >= 0."""
+    # Valid: 0 is allowed (compress all responses)
+    s = Settings(compression_minimum_size=0, _env_file=None)
+    assert s.compression_minimum_size == 0
+
+    # Invalid: negative values should fail
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(compression_minimum_size=-1, _env_file=None)
+    assert "greater than or equal to 0" in str(exc_info.value).lower()
+
+
+def test_compression_gzip_level_validation():
+    """Test that gzip level validates 1-9 range."""
+    from pydantic import ValidationError
+
+    # Valid range
+    for level in [1, 6, 9]:
+        s = Settings(compression_gzip_level=level, _env_file=None)
+        assert s.compression_gzip_level == level
+
+    # Invalid: below range
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(compression_gzip_level=0, _env_file=None)
+    assert "greater than or equal to 1" in str(exc_info.value).lower()
+
+    # Invalid: above range
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(compression_gzip_level=10, _env_file=None)
+    assert "less than or equal to 9" in str(exc_info.value).lower()
+
+
+def test_compression_brotli_quality_validation():
+    """Test that brotli quality validates 0-11 range."""
+    from pydantic import ValidationError
+
+    # Valid range
+    for quality in [0, 4, 11]:
+        s = Settings(compression_brotli_quality=quality, _env_file=None)
+        assert s.compression_brotli_quality == quality
+
+    # Invalid: below range
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(compression_brotli_quality=-1, _env_file=None)
+    assert "greater than or equal to 0" in str(exc_info.value).lower()
+
+    # Invalid: above range
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(compression_brotli_quality=12, _env_file=None)
+    assert "less than or equal to 11" in str(exc_info.value).lower()
+
+
+def test_compression_zstd_level_validation():
+    """Test that zstd level validates 1-22 range."""
+    from pydantic import ValidationError
+
+    # Valid range
+    for level in [1, 3, 22]:
+        s = Settings(compression_zstd_level=level, _env_file=None)
+        assert s.compression_zstd_level == level
+
+    # Invalid: below range
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(compression_zstd_level=0, _env_file=None)
+    assert "greater than or equal to 1" in str(exc_info.value).lower()
+
+    # Invalid: above range
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(compression_zstd_level=23, _env_file=None)
+    assert "less than or equal to 22" in str(exc_info.value).lower()
