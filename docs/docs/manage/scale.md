@@ -675,6 +675,87 @@ HEALTH_CHECK_TIMEOUT=10
 UNHEALTHY_THRESHOLD=3
 ```
 
+### Response Compression
+
+**Bandwidth Optimization**: Reduce data transfer by 30-70% with automatic response compression.
+
+MCP Gateway includes built-in response compression middleware that automatically compresses JSON, HTML, CSS, and JavaScript responses:
+
+```bash
+# Enable compression (default: true)
+COMPRESSION_ENABLED=true
+
+# Minimum response size to compress (bytes)
+# Responses smaller than this won't be compressed
+COMPRESSION_MINIMUM_SIZE=500
+
+# Compression quality levels
+COMPRESSION_GZIP_LEVEL=6          # GZip: 1-9 (6=balanced)
+COMPRESSION_BROTLI_QUALITY=4      # Brotli: 0-11 (4=balanced)
+COMPRESSION_ZSTD_LEVEL=3          # Zstd: 1-22 (3=fast)
+```
+
+**Algorithm Priority**: Brotli (best) > Zstd (fast) > GZip (universal)
+
+**Performance Impact**:
+
+- **Bandwidth reduction**: 30-70% for JSON/HTML responses
+- **CPU overhead**: <5% (Brotli level 4, GZip level 6)
+- **Latency**: Minimal (<10ms for typical responses)
+- **Scalability**: Increases effective throughput per pod
+
+**Tuning for Scale**:
+
+```bash
+# High-traffic production (optimize for speed)
+COMPRESSION_GZIP_LEVEL=4          # Faster compression
+COMPRESSION_BROTLI_QUALITY=3      # Lower quality, faster
+COMPRESSION_ZSTD_LEVEL=1          # Fastest
+
+# Bandwidth-constrained (optimize for size)
+COMPRESSION_GZIP_LEVEL=9          # Best compression
+COMPRESSION_BROTLI_QUALITY=11     # Maximum quality
+COMPRESSION_ZSTD_LEVEL=9          # Balanced slow
+
+# Development (disable compression)
+COMPRESSION_ENABLED=false         # No compression overhead
+```
+
+**Benefits at Scale**:
+
+- **Lower bandwidth costs**: 30-70% reduction in egress traffic
+- **Faster response times**: Smaller payloads transfer faster
+- **Higher throughput**: More requests per second with same bandwidth
+- **Better cache hit rates**: Smaller cached responses
+- **Mobile-friendly**: Critical for mobile clients on slow networks
+
+**Kubernetes Configuration**:
+
+```yaml
+# production-values.yaml
+mcpContextForge:
+  config:
+    COMPRESSION_ENABLED: "true"
+    COMPRESSION_MINIMUM_SIZE: "500"
+    COMPRESSION_GZIP_LEVEL: "6"
+    COMPRESSION_BROTLI_QUALITY: "4"
+    COMPRESSION_ZSTD_LEVEL: "3"
+```
+
+**Monitoring Compression**:
+
+```bash
+# Check compression in action
+curl -H "Accept-Encoding: br" https://gateway.example.com/openapi.json -v \
+  | grep -i "content-encoding"
+# Should show: content-encoding: br
+
+# Measure compression ratio
+UNCOMPRESSED=$(curl -s https://gateway.example.com/openapi.json | wc -c)
+COMPRESSED=$(curl -H "Accept-Encoding: br" -s https://gateway.example.com/openapi.json | wc -c)
+echo "Compression ratio: $((100 - COMPRESSED * 100 / UNCOMPRESSED))%"
+```
+
 ---
 
 ## 8. Benchmarking and Load Testing

@@ -376,6 +376,13 @@ class Settings(BaseSettings):
     hsts_include_subdomains: bool = Field(default=True)
     remove_server_headers: bool = Field(default=True)
 
+    # Response Compression Configuration
+    compression_enabled: bool = Field(default=True, description="Enable response compression (Brotli, Zstd, GZip)")
+    compression_minimum_size: int = Field(default=500, ge=0, description="Minimum response size in bytes to compress (0 = compress all)")
+    compression_gzip_level: int = Field(default=6, ge=1, le=9, description="GZip compression level (1=fastest, 9=best compression)")
+    compression_brotli_quality: int = Field(default=4, ge=0, le=11, description="Brotli compression quality (0-3=fast, 4-9=balanced, 10-11=max)")
+    compression_zstd_level: int = Field(default=3, ge=1, le=22, description="Zstd compression level (1-3=fast, 4-9=balanced, 10+=slow)")
+
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
     allowed_origins: Annotated[Set[str], NoDecode] = {

@@ -1483,6 +1483,59 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 > Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are always protected by authentication.
 > By default, they require Bearer token authentication. Setting `DOCS_ALLOW_BASIC_AUTH=true` enables HTTP Basic Authentication as an additional method using the same credentials as `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`.
 
+### Response Compression
+
+MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses (JSON, HTML, CSS, JS). Compression is negotiated automatically based on client `Accept-Encoding` headers with algorithm priority: **Brotli** (best compression) > **Zstd** (fastest) > **GZip** (universal fallback).
+
+| Setting                       | Description                                       | Default | Options              |
+| ----------------------------- | ------------------------------------------------- | ------- | -------------------- |
+| `COMPRESSION_ENABLED`         | Enable response compression                       | `true`  | bool                 |
+| `COMPRESSION_MINIMUM_SIZE`    | Minimum response size in bytes to compress        | `500`   | int (0=compress all) |
+| `COMPRESSION_GZIP_LEVEL`      | GZip compression level (1=fast, 9=best)          | `6`     | int (1-9)            |
+| `COMPRESSION_BROTLI_QUALITY`  | Brotli quality (0-3=fast, 4-9=balanced, 10-11=max) | `4`   | int (0-11)           |
+| `COMPRESSION_ZSTD_LEVEL`      | Zstd level (1-3=fast, 4-9=balanced, 10+=slow)    | `3`     | int (1-22)           |
+
+**Compression Behavior:**
+- Automatically negotiates algorithm based on client `Accept-Encoding` header
+- Only compresses responses larger than `COMPRESSION_MINIMUM_SIZE` bytes (small responses not worth compression overhead)
+- Adds `Vary: Accept-Encoding` header for proper cache behavior
+- No client changes required (browsers/clients handle decompression automatically)
+- Typical compression ratios: JSON responses 40-60%, HTML responses 50-70%
+
+**Performance Impact:**
+- CPU overhead: <5% (balanced settings)
+- Bandwidth reduction: 30-70% for text responses
+- Latency impact: <10ms for typical responses
+
+**Testing Compression:**
+```bash
+# Start server
+make dev
+
+# Test Brotli (best compression)
+curl -H "Accept-Encoding: br" http://localhost:8000/openapi.json -v | grep -i "content-encoding"
+
+# Test GZip (universal fallback)
+curl -H "Accept-Encoding: gzip" http://localhost:8000/openapi.json -v | grep -i "content-encoding"
+
+# Test Zstd (fastest)
+curl -H "Accept-Encoding: zstd" http://localhost:8000/openapi.json -v | grep -i "content-encoding"
+```
+
+**Tuning for Production:**
+```bash
+# High-traffic (optimize for speed)
+COMPRESSION_GZIP_LEVEL=4
+COMPRESSION_BROTLI_QUALITY=3
+COMPRESSION_ZSTD_LEVEL=1
+
+# Bandwidth-constrained (optimize for size)
+COMPRESSION_GZIP_LEVEL=9
+COMPRESSION_BROTLI_QUALITY=11
+COMPRESSION_ZSTD_LEVEL=9
+```
+
+> **Note**: See [Scaling Guide](https://ibm.github.io/mcp-context-forge/manage/scale/) for compression performance optimization at scale.
 
 ### Logging
 

@@ -74,6 +74,7 @@ dependencies = [
     "sqlalchemy>=2.0.43",
     "sse-starlette>=3.0.2",
     "starlette>=0.48.0",
+    "starlette-compress>=1.0.1",
     "typer>=0.19.2",
     "uvicorn>=0.37.0",
     "zeroconf>=0.148.0",
