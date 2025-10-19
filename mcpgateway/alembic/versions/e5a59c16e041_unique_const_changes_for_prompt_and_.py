@@ -50,6 +50,45 @@ def upgrade() -> None:
             if inspector.has_table(tmp_table):
                 op.drop_table(tmp_table)
 
+            # For PostgreSQL, find and drop incoming foreign keys from other tables
+            incoming_fks = []
+            if bind.dialect.name == "postgresql":
+                # Query PostgreSQL system catalogs to find foreign keys pointing to this table
+                fk_query = sa.text(
+                    """
+                    SELECT
+                        tc.table_name,
+                        tc.constraint_name,
+                        kcu.column_name,
+                        ccu.column_name AS foreign_column_name
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                        AND ccu.table_schema = tc.table_schema
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                        AND ccu.table_name = :table_name
+                """
+                )
+                result = bind.execute(fk_query, {"table_name": tbl})
+                for row in result:
+                    incoming_fks.append(
+                        {
+                            "table": row[0],
+                            "constraint": row[1],
+                            "column": row[2],
+                            "foreign_column": row[3],
+                        }
+                    )
+                    print(f"  Found incoming FK: {row[0]}.{row[1]} -> {tbl}.{row[3]}")
+
+                # Drop incoming foreign keys
+                for fk in incoming_fks:
+                    print(f"  Dropping FK: {fk['table']}.{fk['constraint']}")
+                    op.drop_constraint(fk["constraint"], fk["table"], type_="foreignkey")
+
             # Create new table structure with same columns but no old unique constraints
             new_table = sa.Table(tmp_table, metadata)
 
@@ -108,6 +147,12 @@ def upgrade() -> None:
             op.drop_table(tbl)
             op.rename_table(tmp_table, tbl)
 
+            # For PostgreSQL, recreate the incoming foreign keys
+            if bind.dialect.name == "postgresql":
+                for fk in incoming_fks:
+                    print(f"  Recreating FK: {fk['table']}.{fk['constraint']} -> {tbl}.{fk['foreign_column']}")
+                    op.create_foreign_key(fk["constraint"], fk["table"], tbl, [fk["column"]], [fk["foreign_column"]])
+
         except Exception as e:
             print(f"Warning: Could not update unique constraint on {tbl} table: {e}")
         # ### end Alembic commands ###
@@ -140,6 +185,45 @@ def downgrade() -> None:
             # Drop temp table if it exists
             if inspector.has_table(tmp_table):
                 op.drop_table(tmp_table)
+
+            # For PostgreSQL, find and drop incoming foreign keys from other tables
+            incoming_fks = []
+            if bind.dialect.name == "postgresql":
+                # Query PostgreSQL system catalogs to find foreign keys pointing to this table
+                fk_query = sa.text(
+                    """
+                    SELECT
+                        tc.table_name,
+                        tc.constraint_name,
+                        kcu.column_name,
+                        ccu.column_name AS foreign_column_name
+                    FROM information_schema.table_constraints AS tc
+                    JOIN information_schema.key_column_usage AS kcu
+                        ON tc.constraint_name = kcu.constraint_name
+                        AND tc.table_schema = kcu.table_schema
+                    JOIN information_schema.constraint_column_usage AS ccu
+                        ON ccu.constraint_name = tc.constraint_name
+                        AND ccu.table_schema = tc.table_schema
+                    WHERE tc.constraint_type = 'FOREIGN KEY'
+                        AND ccu.table_name = :table_name
+                """
+                )
+                result = bind.execute(fk_query, {"table_name": tbl})
+                for row in result:
+                    incoming_fks.append(
+                        {
+                            "table": row[0],
+                            "constraint": row[1],
+                            "column": row[2],
+                            "foreign_column": row[3],
+                        }
+                    )
+                    print(f"  Found incoming FK: {row[0]}.{row[1]} -> {tbl}.{row[3]}")
+
+                # Drop incoming foreign keys
+                for fk in incoming_fks:
+                    print(f"  Dropping FK: {fk['table']}.{fk['constraint']}")
+                    op.drop_constraint(fk["constraint"], fk["table"], type_="foreignkey")
 
             # Create new table structure with same columns but original unique constraints
             new_table = sa.Table(tmp_table, metadata)
@@ -177,6 +261,12 @@ def downgrade() -> None:
             # Drop original table and rename temp table
             op.drop_table(tbl)
             op.rename_table(tmp_table, tbl)
+
+            # For PostgreSQL, recreate the incoming foreign keys
+            if bind.dialect.name == "postgresql":
+                for fk in incoming_fks:
+                    print(f"  Recreating FK: {fk['table']}.{fk['constraint']} -> {tbl}.{fk['foreign_column']}")
+                    op.create_foreign_key(fk["constraint"], fk["table"], tbl, [fk["column"]], [fk["foreign_column"]])
 
         except Exception as e:
             print(f"Warning: Could not revert unique constraint on {tbl} table: {e}")
