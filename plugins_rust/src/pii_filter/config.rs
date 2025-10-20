@@ -143,7 +143,7 @@ impl Default for PIIConfig {
 
 impl PIIConfig {
     /// Extract configuration from Python dict
-    pub fn from_py_dict(dict: &PyDict) -> PyResult<Self> {
+    pub fn from_py_dict(dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         let mut config = Self::default();
 
         // Helper macro to extract boolean values

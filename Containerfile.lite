@@ -71,7 +71,7 @@ FROM rust-builder-base AS rust-builder
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.0-1756805986 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.0-1760519443 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION

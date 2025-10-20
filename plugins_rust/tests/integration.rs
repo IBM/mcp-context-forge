@@ -13,13 +13,21 @@ fn add_extension_module_path(py: Python<'_>) -> PyResult<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"));
 
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     let profile_dir = target_root.join(profile);
 
     let mut candidates = vec![profile_dir.clone(), profile_dir.join("deps")];
 
     // If the build directory differs (e.g., release artifacts while tests run in debug), include both.
-    let alternate_profile = if profile == "debug" { "release" } else { "debug" };
+    let alternate_profile = if profile == "debug" {
+        "release"
+    } else {
+        "debug"
+    };
     let alternate_dir = target_root.join(alternate_profile);
     candidates.push(alternate_dir.clone());
     candidates.push(alternate_dir.join("deps"));
@@ -199,7 +207,9 @@ fn test_masking() {
 
         let text = "SSN: 123-45-6789";
         let detections = detector.call_method1(py, "detect", (text,)).unwrap();
-        let masked = detector.call_method1(py, "mask", (text, detections)).unwrap();
+        let masked = detector
+            .call_method1(py, "mask", (text, detections))
+            .unwrap();
 
         let masked_str = masked.as_ref(py).extract::<String>().unwrap();
         assert!(masked_str.contains("***-**-6789"));
@@ -445,7 +455,9 @@ fn test_large_text_performance() {
         }
 
         let start = std::time::Instant::now();
-        let result = detector.call_method1(py, "detect", (text.as_str(),)).unwrap();
+        let result = detector
+            .call_method1(py, "detect", (text.as_str(),))
+            .unwrap();
         let duration = start.elapsed();
 
         let detections = result.downcast::<PyDict>(py).unwrap();

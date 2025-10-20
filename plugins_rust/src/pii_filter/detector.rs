@@ -102,7 +102,7 @@ impl PIIDetectorRust {
     /// * `block_on_detection` (bool): Whether to block on detection
     /// * `whitelist_patterns` (list[str]): Regex patterns to exclude from detection
     #[new]
-    pub fn new(config_dict: &PyDict) -> PyResult<Self> {
+    pub fn new(config_dict: &Bound<'_, PyDict>) -> PyResult<Self> {
         // Extract configuration from Python dict
         let config = PIIConfig::from_py_dict(config_dict).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid config: {}", e))
@@ -136,11 +136,11 @@ impl PIIDetectorRust {
     ///     ]
     /// }
     /// ```
-    pub fn detect(&self, text: &str) -> PyResult<PyObject> {
+    pub fn detect(&self, text: &str) -> PyResult<Py<PyAny>> {
         let detections = self.detect_internal(text);
 
         // Convert Rust HashMap to Python dict
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let py_dict = PyDict::new(py);
 
             for (pii_type, items) in detections {
@@ -162,7 +162,7 @@ impl PIIDetectorRust {
                 py_dict.set_item(pii_type.as_str(), py_list)?;
             }
 
-            Ok(py_dict.into())
+            Ok(py_dict.into_any().unbind())
         })
     }
 
@@ -174,7 +174,7 @@ impl PIIDetectorRust {
     ///
     /// # Returns
     /// Masked text with PII replaced
-    pub fn mask(&self, text: &str, detections: &PyAny) -> PyResult<String> {
+    pub fn mask(&self, text: &str, detections: &Bound<'_, PyAny>) -> PyResult<String> {
         // Convert Python detections back to Rust format
         let rust_detections = self.py_detections_to_rust(detections)?;
 
@@ -193,9 +193,9 @@ impl PIIDetectorRust {
     pub fn process_nested(
         &self,
         py: Python,
-        data: &PyAny,
+        data: &Bound<'_, PyAny>,
         path: &str,
-    ) -> PyResult<(bool, PyObject, PyObject)> {
+    ) -> PyResult<(bool, Py<PyAny>, Py<PyAny>)> {
         // Handle strings directly
         if let Ok(text) = data.extract::<String>() {
             let detections = self.detect_internal(&text);
@@ -203,9 +203,17 @@ impl PIIDetectorRust {
             if !detections.is_empty() {
                 let masked = masking::mask_pii(&text, &detections, &self.config);
                 let py_detections = self.rust_detections_to_py(py, &detections)?;
-                return Ok((true, masked.into_owned().into_py(py), py_detections));
+                return Ok((
+                    true,
+                    masked.into_owned().into_pyobject(py)?.into_any().unbind(),
+                    py_detections,
+                ));
             } else {
-                return Ok((false, data.into(), PyDict::new(py).into()));
+                return Ok((
+                    false,
+                    data.clone().unbind(),
+                    PyDict::new(py).into_any().unbind(),
+                ));
             }
         }
 
@@ -224,18 +232,19 @@ impl PIIDetectorRust {
                 };
 
                 let (val_modified, new_value, val_detections) =
-                    self.process_nested(py, value, &new_path)?;
+                    self.process_nested(py, &value, &new_path)?;
 
                 if val_modified {
                     modified = true;
-                    new_dict.set_item(key, new_value)?;
+                    new_dict.set_item(key, new_value.bind(py))?;
 
                     // Merge detections
-                    if let Ok(det_dict) = val_detections.downcast::<PyDict>(py) {
+                    let det_bound = val_detections.bind(py);
+                    if let Ok(det_dict) = det_bound.downcast::<PyDict>() {
                         for (pii_type_str, items) in det_dict.iter() {
                             if let Ok(type_str) = pii_type_str.extract::<String>() {
                                 if let Ok(pii_type) = self.str_to_pii_type(&type_str) {
-                                    let rust_items = self.py_list_to_detections(items)?;
+                                    let rust_items = self.py_list_to_detections(&items)?;
                                     all_detections
                                         .entry(pii_type)
                                         .or_default()
@@ -250,7 +259,7 @@ impl PIIDetectorRust {
             }
 
             let py_detections = self.rust_detections_to_py(py, &all_detections)?;
-            return Ok((modified, new_dict.into(), py_detections));
+            return Ok((modified, new_dict.into_any().unbind(), py_detections));
         }
 
         // Handle lists
@@ -262,18 +271,19 @@ impl PIIDetectorRust {
             for (idx, item) in list.iter().enumerate() {
                 let new_path = format!("{}[{}]", path, idx);
                 let (item_modified, new_item, item_detections) =
-                    self.process_nested(py, item, &new_path)?;
+                    self.process_nested(py, &item, &new_path)?;
 
                 if item_modified {
                     modified = true;
-                    new_list.append(new_item)?;
+                    new_list.append(new_item.bind(py))?;
 
                     // Merge detections
-                    if let Ok(det_dict) = item_detections.downcast::<PyDict>(py) {
+                    let det_bound = item_detections.bind(py);
+                    if let Ok(det_dict) = det_bound.downcast::<PyDict>() {
                         for (pii_type_str, items) in det_dict.iter() {
                             if let Ok(type_str) = pii_type_str.extract::<String>() {
                                 if let Ok(pii_type) = self.str_to_pii_type(&type_str) {
-                                    let rust_items = self.py_list_to_detections(items)?;
+                                    let rust_items = self.py_list_to_detections(&items)?;
                                     all_detections
                                         .entry(pii_type)
                                         .or_default()
@@ -288,11 +298,15 @@ impl PIIDetectorRust {
             }
 
             let py_detections = self.rust_detections_to_py(py, &all_detections)?;
-            return Ok((modified, new_list.into(), py_detections));
+            return Ok((modified, new_list.into_any().unbind(), py_detections));
         }
 
         // Other types: no processing
-        Ok((false, data.into(), PyDict::new(py).into()))
+        Ok((
+            false,
+            data.clone().unbind(),
+            PyDict::new(py).into_any().unbind(),
+        ))
     }
 }
 
@@ -376,7 +390,7 @@ impl PIIDetectorRust {
     /// Convert Python detections to Rust format
     fn py_detections_to_rust(
         &self,
-        detections: &PyAny,
+        detections: &Bound<'_, PyAny>,
     ) -> PyResult<HashMap<PIIType, Vec<Detection>>> {
         let mut rust_detections = HashMap::new();
 
@@ -384,7 +398,7 @@ impl PIIDetectorRust {
             for (key, value) in dict.iter() {
                 if let Ok(type_str) = key.extract::<String>() {
                     if let Ok(pii_type) = self.str_to_pii_type(&type_str) {
-                        let items = self.py_list_to_detections(value)?;
+                        let items = self.py_list_to_detections(&value)?;
                         rust_detections.insert(pii_type, items);
                     }
                 }
@@ -395,7 +409,7 @@ impl PIIDetectorRust {
     }
 
     /// Convert Python list to Vec<Detection>
-    fn py_list_to_detections(&self, py_list: &PyAny) -> PyResult<Vec<Detection>> {
+    fn py_list_to_detections(&self, py_list: &Bound<'_, PyAny>) -> PyResult<Vec<Detection>> {
         let mut detections = Vec::new();
 
         if let Ok(list) = py_list.downcast::<PyList>() {
@@ -433,7 +447,7 @@ impl PIIDetectorRust {
         &self,
         py: Python,
         detections: &HashMap<PIIType, Vec<Detection>>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let py_dict = PyDict::new(py);
 
         for (pii_type, items) in detections {
@@ -455,7 +469,7 @@ impl PIIDetectorRust {
             py_dict.set_item(pii_type.as_str(), py_list)?;
         }
 
-        Ok(py_dict.into())
+        Ok(py_dict.into_any().unbind())
     }
 
     /// Convert string to PIIType
