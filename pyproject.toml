@@ -46,13 +46,13 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "aiohttp>=3.12.15",
-    "alembic>=1.16.5",
+    "aiohttp>=3.13.1",
+    "alembic>=1.17.0",
     "argon2-cffi>=25.1.0",
-    "copier>=9.10.2",
-    "cryptography>=46.0.2",
-    "fastapi>=0.118.0",
-    "filelock>=3.19.1",
+    "copier>=9.10.3",
+    "cryptography>=46.0.3",
+    "fastapi>=0.119.0",
+    "filelock>=3.20.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
@@ -60,24 +60,24 @@ dependencies = [
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.1",
-    "mcp>=1.16.0",
+    "mcp>=1.18.0",
     "oauthlib>=3.3.1",
-    "orjson>=3.10.0",
+    "orjson>=3.11.3",
     "parse>=1.20.2",
-    "psutil>=7.1.0",
-    "pydantic>=2.11.10",
-    "pydantic[email]>=2.11.10",
+    "psutil>=7.1.1",
+    "pydantic>=2.12.3",
+    "pydantic[email]>=2.12.3",
     "pydantic-settings>=2.11.0",
     "pyjwt>=2.10.1",
-    "python-json-logger>=3.3.0",
+    "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
-    "sqlalchemy>=2.0.43",
+    "sqlalchemy>=2.0.44",
     "sse-starlette>=3.0.2",
     "starlette>=0.48.0",
-    "starlette-compress>=1.0.1",
+    "starlette-compress>=1.6.1",
     "typer>=0.19.2",
-    "uvicorn>=0.37.0",
+    "uvicorn>=0.38.0",
     "zeroconf>=0.148.0",
 ]
 
@@ -165,7 +165,7 @@ redis = [
 ]
 
 postgres = [
-    "psycopg2-binary>=2.9.10",
+    "psycopg2-binary>=2.9.11",
 ]
 
 mysql = [
@@ -173,19 +173,19 @@ mysql = [
 ]
 
 llmchat = [
-    "langchain-core>=0.3.0",
+    "langchain-core>=1.0.0",
     "langchain-mcp-adapters>=0.1.11",
-    "langgraph>=0.2.0",
-    "langchain-openai>=0.2.0",
-    "langchain-ollama>=0.1.0",
+    "langchain-ollama>=1.0.0",
+    "langchain-openai>=1.0.0",
+    "langgraph>=1.0.0",
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.138.16",
+    "hypothesis>=6.142.1",
     "pytest-benchmark>=5.1.0",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.1.4",
+    "schemathesis>=4.3.6",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -194,13 +194,13 @@ fuzz-atheris = [
 ]
 
 alembic = [
-    "alembic>=1.16.5",
+    "alembic>=1.17.0",
 ]
 
 # Observability dependencies (optional)
 observability = [
-    "opentelemetry-api>=1.37.0",
-    "opentelemetry-sdk>=1.37.0",
+    "opentelemetry-api>=1.38.0",
+    "opentelemetry-sdk>=1.38.0",
 ]
 
 # Async SQLite Driver (optional)
@@ -216,10 +216,10 @@ asyncpg = [
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
-    "grpcio>=1.62.0,<1.68.0",
-    "grpcio-reflection>=1.62.0,<1.68.0",
-    "grpcio-tools>=1.62.0,<1.68.0",
-    "protobuf>=4.25.0",
+    "grpcio>=1.75.1",
+    "grpcio-reflection>=1.75.1",
+    "grpcio-tools>=1.75.1",
+    "protobuf>=6.33.0",
 ]
 
 # UI Testing
