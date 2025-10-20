@@ -1,6 +1,6 @@
 # Best Practices
 
-## Input and output santitization
+## Input and output sanitization
 
 Ensure your inputs and outputs are sanitized. In Python, we recommend using Pydantic V2.
 
@@ -44,7 +44,7 @@ Make targets are grouped by functionality. Use `make help` to see them all in yo
 
 | Target               | Description |
 |----------------------|-------------|
-| `make lint`          | Run all linters (e.g., `ruff check`, `ruff format`). |
+| `make lint`          | Run all linters (e.g., `ruff check`, `black`, `isort`). |
 
 #### 🐳 CONTAINER BUILD & RUN
 
@@ -69,7 +69,7 @@ Each repo must include a `Containerfile` (Podman-compatible, Docker-compatible) 
 
 ### Containerfile Requirements:
 
-- Must start from a secure base (e.g., latest Red Hat UBI9 minimal image `registry.access.redhat.com/ubi9-minimal:9.5-1741850109`)
+- Must start from a secure base (e.g., latest Red Hat UBI10 minimal image `registry.access.redhat.com/ubi10-minimal:10.0-1755721767`)
 - Should use `uv` or `pdm` to install dependencies via `pyproject.toml`
 - Must run the server using the same entry point as `make serve`
 - Should expose relevant ports (`EXPOSE 8080`)
