@@ -1666,48 +1666,24 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 # help: jscpd                - Detect copy-pasted code in JS/HTML/CSS files
 # help: markuplint           - Modern HTML linting with markuplint
 # help: format-web           - Format HTML, CSS & JS files with Prettier
-# help: install-web-linters-with-lock - Install web linters WITH package-lock.json (enables npm audit)
-.PHONY: install-web-linters install-web-linters-with-lock nodejsscan lint-web jshint jscpd markuplint format-web
+.PHONY: install-web-linters nodejsscan lint-web jshint jscpd markuplint format-web
 
 install-web-linters:
-	@# Check if tools are already installed in node_modules, skip if they are
-	@if [ ! -d node_modules/htmlhint ] || [ ! -d node_modules/eslint ] || [ ! -d node_modules/stylelint ]; then \
-	  echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."; \
-	  if [ ! -f package.json ]; then \
-	    echo "📦 Initializing npm project..."; \
-	    npm init -y >/dev/null; \
-	  fi; \
-	  npm install --no-save \
-	    htmlhint \
-	    stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
-	    eslint eslint-config-standard eslint-plugin-import eslint-plugin-n eslint-plugin-promise \
-	    eslint-plugin-prettier eslint-config-prettier \
-	    retire \
-	    prettier \
-	    jshint \
-	    jscpd \
-	    markuplint; \
-	else \
-	  echo "✅ Web linters already installed, skipping..."; \
-	fi
-
-install-web-linters-with-lock:
-	@echo "🔧 Installing HTML/CSS/JS tools with package-lock.json (enables npm audit)..."
+	@echo "🔧 Installing HTML/CSS/JS lint, security & formatting tools..."
 	@if [ ! -f package.json ]; then \
 	  echo "📦 Initializing npm project..."; \
 	  npm init -y >/dev/null; \
 	fi
-	@npm install \
-	  htmlhint \
-	  stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
-	  eslint eslint-config-standard eslint-plugin-import eslint-plugin-n eslint-plugin-promise \
-	  eslint-plugin-prettier eslint-config-prettier \
-	  retire \
-	  prettier \
-	  jshint \
-	  jscpd \
-	  markuplint
-	@echo "✅ Lockfile created. npm audit is now available."
+	@npm install --no-save \
+		htmlhint \
+		stylelint stylelint-config-standard @stylistic/stylelint-config stylelint-order \
+		eslint eslint-config-standard eslint-plugin-import eslint-plugin-n eslint-plugin-promise \
+		eslint-plugin-prettier eslint-config-prettier \
+		retire \
+		prettier \
+		jshint \
+		jscpd \
+		markuplint
 
 nodejsscan:
 	@echo "🔒 Running nodejsscan for JavaScript security vulnerabilities..."
@@ -1723,11 +1699,11 @@ lint-web: install-web-linters nodejsscan
 	@find mcpgateway/static -name "*.js" -exec npx eslint {} + 2>/dev/null || true
 	@echo "🔒 Scanning for known JS/CSS library vulnerabilities with retire.js..."
 	@cd mcpgateway/static && npx retire . 2>/dev/null || true
-	@if [ -f package-lock.json ]; then \
+	@if [ -f package.json ]; then \
 	  echo "🔒 Running npm audit (high severity)..."; \
 	  npm audit --audit-level=high || true; \
 	else \
-	  echo "⚠️  Skipping npm audit: no package-lock.json found (run 'npm install' to create one)"; \
+	  echo "⚠️  Skipping npm audit: no package.json found"; \
 	fi
 
 jshint: install-web-linters
