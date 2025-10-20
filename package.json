@@ -1,15 +1,25 @@
 {
-  "devDependencies": {
-    "@biomejs/biome": "^2.1.1",
-    "@stylistic/eslint-plugin": "^5.1.0",
-    "eslint": "^8.57.1",
-    "eslint-config-prettier": "^10.1.5",
-    "eslint-config-standard": "^17.1.0",
-    "eslint-plugin-import": "^2.32.0",
-    "eslint-plugin-n": "^16.6.2",
-    "eslint-plugin-prettier": "^5.5.1",
-    "eslint-plugin-promise": "^6.6.0",
-    "prettier": "^3.6.2",
-    "stylelint-order": "^7.0.0"
-  }
+  "name": "mcp-context-forge",
+  "version": "1.0.0",
+  "description": "> Model Context Protocol gateway & proxy - unify REST, MCP, and A2A with federation, virtual servers, retries, security, and an optional admin UI.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IBM/mcp-context-forge.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/IBM/mcp-context-forge/issues"
+  },
+  "homepage": "https://github.com/IBM/mcp-context-forge#readme"
 }
