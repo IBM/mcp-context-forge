@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Custom JSON response class using orjson for high-performance JSON serialization.
 
 This module provides ORJSONResponse, a drop-in replacement for FastAPI's default

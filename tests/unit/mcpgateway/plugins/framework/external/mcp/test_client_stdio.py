@@ -62,6 +62,7 @@ async def test_client_load_stdio():
     del os.environ["PLUGINS_CONFIG_PATH"]
     del os.environ["PYTHONPATH"]
 
+@pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
 async def test_client_load_stdio_overrides():
     os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml"
@@ -221,6 +222,7 @@ async def test_hooks():
     assert result.continue_processing
     await plugin_manager.shutdown()
 
+@pytest.mark.slow  # Spawns real stdio subprocess - inherently slow
 @pytest.mark.asyncio
 async def test_errors():
     os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/error_plugin.yaml"
@@ -236,6 +238,7 @@ async def test_errors():
     await plugin_manager.shutdown()
 
 
+@pytest.mark.slow  # Spawns real stdio subprocesses - inherently slow
 @pytest.mark.asyncio
 async def test_shared_context_across_pre_post_hooks_multi_plugins():
     os.environ["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/context_multiplugins.yaml"
