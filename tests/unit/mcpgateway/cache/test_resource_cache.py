@@ -36,16 +36,23 @@ def test_get_missing(cache):
 
 
 def test_expiration(cache):
-    """Test that cache entry expires after TTL."""
-    # Use a more generous sleep duration to account for timing variability
-    cache.set("foo", "bar")
+    """Test that a cache entry expires after its TTL."""
+    
+    # Set a test key with a known short TTL (0.5 seconds)
+    test_key = "foo"
+    test_value = "bar"
+    
+    # Set the cache entry
+    cache.set(test_key, test_value)
 
-    # Sleep for 1.5 seconds (50% longer than TTL) to ensure expiration
-    # This accounts for system load, clock precision, and floating point issues
+    # Immediately check the value exists
+    assert cache.get(test_key) == test_value
+
+    # Sleep slightly longer than TTL to ensure expiration
     time.sleep(1.5)
 
-    # Entry should definitely be expired now
-    assert cache.get("foo") is None
+    # Now the cache entry should be expired
+    assert cache.get(test_key) is None
 
 
 def test_lru_eviction(cache):
