@@ -489,13 +489,13 @@ doctest:
 	@echo "🧪 Running doctest on all modules..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short"
+		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings"
 
 doctest-verbose:
 	@echo "🧪 Running doctest with verbose output..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short"
+		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings"
 
 doctest-coverage:
 	@echo "📊 Generating doctest coverage report..."
