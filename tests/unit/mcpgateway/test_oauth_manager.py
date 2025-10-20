@@ -261,7 +261,7 @@ class TestOAuthManager:
     @pytest.mark.asyncio
     async def test_get_access_token_authorization_code_fallback_failure(self):
         """Test authorization code flow with client credentials fallback failure."""
-        manager = OAuthManager()
+        manager = OAuthManager(max_retries=1)  # Reduce retries for faster test execution
         credentials = {"grant_type": "authorization_code", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token"}
 
         with patch("mcpgateway.services.oauth_manager.aiohttp.ClientSession") as mock_session_class:
@@ -853,7 +853,7 @@ class TestOAuthManager:
     @pytest.mark.asyncio
     async def test_exchange_code_for_tokens_error(self):
         """Test code exchange when server returns error."""
-        manager = OAuthManager()
+        manager = OAuthManager(max_retries=1)  # Reduce retries for faster test execution
 
         credentials = {"client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "redirect_uri": "https://gateway.example.com/callback"}
         code = "invalid_code"

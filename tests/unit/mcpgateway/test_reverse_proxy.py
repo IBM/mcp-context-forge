@@ -610,6 +610,7 @@ class TestReverseProxyClient:
     async def test_run_with_reconnect_success(self):
         """Test successful run with reconnection."""
         self.client.max_retries = 2
+        self.client.reconnect_delay = 0.01  # Fast for testing
         connect_count = 0
 
         async def mock_connect():
@@ -619,7 +620,7 @@ class TestReverseProxyClient:
                 # First connection succeeds
                 self.client.state = ConnectionState.CONNECTED
                 # Simulate disconnection after a short time
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.01)  # Reduced from 0.1 for faster test execution
                 self.client.state = ConnectionState.DISCONNECTED
             else:
                 # Second connection triggers shutdown

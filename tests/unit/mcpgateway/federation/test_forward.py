@@ -457,6 +457,11 @@ async def test_forward_to_gateway_timeout_retry(monkeypatch, fwd_service):
 
     monkeypatch.setattr(settings, "max_tool_retries", 3, raising=False)
 
+    # Mock asyncio.sleep to eliminate retry delays for faster test execution
+    async def fake_sleep(_duration):
+        pass
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
     gw = DummyGateway(1, "Alpha", "http://alpha")
     db = FakeSession(gateways=[gw])
 

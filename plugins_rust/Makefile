@@ -186,7 +186,28 @@ deps: ## Install/update dependencies
 	@command -v maturin >/dev/null 2>&1 || { echo "$(YELLOW)Installing maturin...$(NC)"; pip install maturin; }
 	@command -v cargo-audit >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-audit...$(NC)"; cargo install cargo-audit; }
 	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
+	@command -v cargo-upgrade >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-edit (cargo-upgrade)...$(NC)"; cargo install cargo-edit; }
+	@command -v cargo-outdated >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-outdated...$(NC)"; cargo install cargo-outdated; }
 	@echo "$(GREEN)Dependencies installed!$(NC)"
+
+upgrade-deps-check: ## Check for outdated dependencies (dry-run)
+	@echo "$(GREEN)Checking for outdated dependencies...$(NC)"
+	@command -v cargo-outdated >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-outdated...$(NC)"; cargo install cargo-outdated; }
+	cargo outdated
+
+upgrade-deps: ## Update dependencies to latest versions
+	@echo "$(GREEN)Updating Rust dependencies to latest versions...$(NC)"
+	@command -v cargo-upgrade >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-edit (cargo-upgrade)...$(NC)"; cargo install cargo-edit; }
+	@echo "$(YELLOW)Running cargo upgrade --incompatible...$(NC)"
+	cargo upgrade --incompatible
+	@echo "$(YELLOW)Updating Cargo.lock...$(NC)"
+	cargo update
+	@echo "$(YELLOW)Building release to verify compatibility...$(NC)"
+	cargo build --release
+	@echo "$(YELLOW)Running tests to verify functionality...$(NC)"
+	cargo test --lib --bins --no-default-features
+	@echo "$(GREEN)Dependencies updated successfully!$(NC)"
+	@echo "$(YELLOW)Review changes with: git diff Cargo.toml Cargo.lock$(NC)"
 
 # Release targets
 release-build: clean ## Build release packages for all platforms
@@ -242,6 +263,6 @@ qq: fmt test ## Very quick: format and test only (no clippy)
         coverage coverage-open \
         clean clean-all \
         dev-cycle ci pre-commit \
-        verify info deps \
+        verify info deps upgrade-deps-check upgrade-deps \
         release-build release-check release \
         watch watch-dev profile stats q qq

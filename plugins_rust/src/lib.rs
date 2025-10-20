@@ -39,7 +39,7 @@ pub mod pii_filter;
 /// print(masked)  # "My SSN is [REDACTED]"
 /// ```
 #[pymodule]
-fn plugins_rust(_py: Python, m: &PyModule) -> PyResult<()> {
+fn plugins_rust(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     // Export PII Filter Rust implementation
     m.add_class::<pii_filter::PIIDetectorRust>()?;
 
