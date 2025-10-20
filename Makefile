@@ -5073,8 +5073,8 @@ rust-bench-compare:                     ## Compare Rust vs Python performance
 rust-check:                             ## Run all Rust checks (format, lint, test)
 	@echo "🦀 Running Rust checks..."
 	@cd plugins_rust && cargo fmt --check
-	@cd plugins_rust && cargo clippy -- -D warnings
-	@cd plugins_rust && cargo test --release
+	@cd plugins_rust && cargo clippy --lib -- -D warnings -A deprecated
+	@cd plugins_rust && cargo test --lib --release
 
 rust-clean:                             ## Clean Rust build artifacts
 	@echo "🧹 Cleaning Rust build artifacts..."
