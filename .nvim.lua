@@ -1,5 +1,5 @@
 
--- Set colorcolumn to 100 for Python files only
+-- Set colorcolumn to 200 for Python files only
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "python",
   callback = function()
