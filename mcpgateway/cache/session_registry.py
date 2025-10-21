@@ -1567,6 +1567,7 @@ class SessionRegistry(SessionBackend):
     # ------------------------------
     # Observability
     # ------------------------------
+    
     def get_metrics(self) -> Dict[str, int]:
         """
         Retrieve internal metrics counters for the session registry.
@@ -1577,19 +1578,3 @@ class SessionRegistry(SessionBackend):
             values are their current counts (int).
         """
         return dict(self._metrics)
-
-    def get_session_sync(self, session_id: str) -> Optional[SSETransport]:
-        """
-        Get session transport synchronously from local cache only.
-
-        This is a non-blocking method that only checks the local cache,
-        not the distributed backend. Use this when you need quick access
-        and know the session should be local.
-
-        Args:
-            session_id: Session identifier to look up.
-
-        Returns:
-            SSETransport object if found in local cache, None otherwise.
-        """
-        return self._sessions.get(session_id)
