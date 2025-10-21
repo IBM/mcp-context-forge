@@ -43,7 +43,7 @@ import os
 import re
 
 # Third-Party
-from prometheus_client import Counter, Gauge, Histogram, REGISTRY
+from prometheus_client import Gauge, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import Response, status
 
