@@ -11,6 +11,7 @@ This module defines the base protocol for MCP transports.
 # Standard
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Dict
+import uuid
 
 
 class Transport(ABC):
@@ -46,6 +47,11 @@ class Transport(ABC):
         True
     """
     def __init__(self):
+        """Initialize the base transport.
+
+        Sets up common attributes like a unique session ID and connection state.
+        This method should be called by subclasses using `super().__init__()`.
+        """
         self.session_id = str(uuid.uuid4())
         self._connected = False
 
@@ -128,7 +134,7 @@ class Transport(ABC):
             >>> hasattr(Transport, 'is_connected')
             True
         """
-        
+
     async def validate_session(self) -> bool:
         """Validate session is still usable."""
         return await self.is_connected()

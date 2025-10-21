@@ -199,17 +199,21 @@ session_registry = SessionRegistry(
 # Initialize session pool globally
 session_pool: Optional[SessionPool] = None
 
+
 def init_session_pool():
     """Initialize the session pool with the session registry."""
     global session_pool
     session_pool = SessionPool(session_registry)
     logger.info("Global session pool initialized.")
 
+
 async def should_use_session_pooling(server_id: str) -> bool:
     """Determine if session pooling should be used for this server."""
     return settings.session_pooling_enabled
 
 # Helper function for authentication compatibility
+
+
 def get_user_email(user):
     """Extract email from user object, handling both string and dict formats.
 
@@ -1735,12 +1739,12 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
-        
+
         # Determine user and base URL
         user_id = get_user_email(user)
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
-        
+
         # Use pooling if enabled
         transport: SSETransport
         if await should_use_session_pooling(server_id):
@@ -1769,6 +1773,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
         # Cleanup when connection closes - only remove from registry if not pooled
         async def cleanup_session():
+            """Cleans up the session from the registry if it's not pooled."""
             if not transport._pooled:  # Only remove non-pooled sessions
                 await session_registry.remove_session(transport.session_id)
 
@@ -1791,6 +1796,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
     except Exception as e:
         logger.exception(f"SSE connection error for user={user}, server={server_id}: {e}")
         raise HTTPException(status_code=500, detail="SSE connection failed")
+
 
 @server_router.post("/{server_id}/message")
 @require_permission("servers.use")
@@ -1865,6 +1871,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
     except Exception as e:
         logger.error(f"Message handling error: {e}")
         raise HTTPException(status_code=500, detail="Failed to process message")
+
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
 @require_permission("servers.read")

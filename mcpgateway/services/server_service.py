@@ -50,8 +50,10 @@ class ServerError(Exception):
 class ServerNotFoundError(ServerError):
     """Raised when a requested server is not found."""
 
+
 class PermissionError(ServerError):
     """Raised when a user does not have permission to perform an action on a server."""
+
 
 class ServerNameConflictError(ServerError):
     """Raised when a server name conflicts with an existing one."""
@@ -643,7 +645,7 @@ class ServerService:
         server = db.get(DbServer, server_id)
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
-        
+
         try:
             effective_strategy = await self.get_session_strategy(db, server_id)
             logger.debug(f"Server {server_id} effective session strategy: {effective_strategy}")
@@ -1147,18 +1149,18 @@ class ServerService:
 
     async def get_session_strategy(self, db: Session, server_id: str) -> str:
         """Determine effective session strategy for server.
-        
+
         This method resolves the session strategy for a specific server, taking into account:
         1. Server-specific strategy (if configured)
         2. Global configuration as fallback
-        
+
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
-            
+
         Returns:
             str: The resolved session strategy ("user-server", "global", "disabled", or "inherit").
-            
+
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
             >>> from unittest.mock import MagicMock
@@ -1171,7 +1173,7 @@ class ServerService:
             >>> result = asyncio.run(service.get_session_strategy(db, 'test-server'))
             >>> result
             'user-server'
-            
+
             >>> # Test with "inherit" strategy
             >>> server.session_pooling_strategy = "inherit"
             >>> result = asyncio.run(service.get_session_strategy(db, 'test-server'))
@@ -1181,30 +1183,30 @@ class ServerService:
         server = db.get(DbServer, server_id)
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
-        
+
         # Check if server has its own strategy configured
         if hasattr(server, 'session_pooling_strategy') and server.session_pooling_strategy:
             if server.session_pooling_strategy == "inherit":
                 # Use global configuration if server strategy is "inherit"
                 return settings.session_pool_strategy
             return server.session_pooling_strategy
-        
+
         # Fallback to global configuration if server has no specific strategy
         return settings.session_pool_strategy if settings.session_pooling_enabled else "disabled"
 
     async def should_use_pooling(self, db: Session, server_id: str) -> bool:
         """Check if session pooling should be used for server.
-        
+
         Determines whether session pooling is enabled for a specific server based on
         the resolved session strategy.
-        
+
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
-            
+
         Returns:
             bool: True if session pooling should be used, False otherwise.
-            
+
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
             >>> from unittest.mock import MagicMock

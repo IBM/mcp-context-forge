@@ -12,6 +12,7 @@ full-duplex communication between client and server.
 # Standard
 import asyncio
 from typing import Any, AsyncGenerator, Dict, Optional
+import time
 
 # Third-Party
 from fastapi import WebSocket, WebSocketDisconnect
@@ -100,17 +101,17 @@ class WebSocketTransport(Transport):
         """Validate that the session is still valid for reuse."""
         if not self._connected:
             return False
-            
+
         # Check if the ping task is still running (connection alive)
         if self._ping_task and self._ping_task.done():
             return False
-            
+
         # Check idle time
         if (time.time() - self._last_activity) > settings.session_pool_max_idle_time:
             return False
-            
+
         return True
-    
+
     async def connect(self) -> None:
         """Set up WebSocket connection.
 
