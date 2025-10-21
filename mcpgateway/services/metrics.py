@@ -85,34 +85,6 @@ def setup_metrics(app):
     enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
 
     if enable_metrics:
-
-        http_requests_total = Counter(
-            "http_requests_total",
-            "Total number of HTTP requests",
-            labelnames=("method", "endpoint", "status_code"),
-        )
-
-        http_request_duration_seconds = Histogram(
-            "http_request_duration_seconds",
-            "Histogram of HTTP request durations",
-            labelnames=("method", "endpoint"),
-            buckets=(0.05, 0.1, 0.3, 1, 3, 5),
-        )
-
-        http_request_size_bytes = Histogram(
-            "http_request_size_bytes",
-            "Histogram of HTTP request sizes",
-            labelnames=("method", "endpoint"),
-            buckets=(100, 500, 1000, 5000, 10000),
-        )
-
-        http_response_size_bytes = Histogram(
-            "http_response_size_bytes",
-            "Histogram of HTTP response sizes",
-            labelnames=("method", "endpoint"),
-            buckets=(100, 500, 1000, 5000, 10000),
-        )
-
         # Custom labels gauge
         custom_labels = dict(kv.split("=") for kv in os.getenv("METRICS_CUSTOM_LABELS", "").split(",") if "=" in kv)
         if custom_labels:
