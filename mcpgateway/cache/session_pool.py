@@ -10,7 +10,7 @@ Session Pool
 import asyncio
 import time
 import logging
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, Any
 from enum import Enum
 from dataclasses import dataclass
 from mcpgateway.cache.session_registry import SessionRegistry
@@ -22,10 +22,12 @@ from mcpgateway.transports.base import Transport
 
 logger = logging.getLogger(__name__)
 
+
 class TransportType(Enum):
     """Enumeration of supported transport types."""
     SSE = "sse"
     WEBSOCKET = "websocket"
+
 
 @dataclass
 class PoolKey:
@@ -44,6 +46,7 @@ class PoolKey:
                 self.user_id == other.user_id and
                 self.server_id == other.server_id and
                 self.transport_type == other.transport_type)
+
 
 class PooledSession:
     """Wrapper around transport for pooling and metrics tracking."""
@@ -118,14 +121,14 @@ class SessionPool:
         if settings.session_pooling_enabled:
             self._start_cleanup_task()
             logger.info("Session pool initialized with cleanup interval=%s sec",
-                       settings.session_pool_cleanup_interval)
+                        settings.session_pool_cleanup_interval)
 
     # --------------------------------------------------------------------------
     # Core pooling logic with multi-transport support
     # --------------------------------------------------------------------------
 
     async def get_or_create_session(self, user_id: str, server_id: str, base_url: str,
-                                  transport_type: TransportType) -> Transport:
+                                    transport_type: TransportType) -> Transport:
         """Get an existing session for (user, server, transport) or create a new one."""
         if not settings.session_pooling_enabled:
             logger.debug("Session pooling disabled, creating fresh session.")
@@ -160,7 +163,7 @@ class SessionPool:
             return new_session.transport
 
     async def _create_new_session(self, user_id: str, server_id: str, base_url: str,
-                                transport_type: TransportType) -> PooledSession:
+                                  transport_type: TransportType) -> PooledSession:
         """Create and register a brand new transport session."""
         try:
             # Create transport instance based on type
@@ -185,7 +188,10 @@ class SessionPool:
             self._metrics["created"] += 1
 
             logger.info("Created new %s session for user=%s server=%s (session_id=%s)",
-                       transport_type.value, user_id, server_id, transport.session_id)
+                        transport_type.value, 
+                        user_id, 
+                        server_id, 
+                        transport.session_id)
             return session
 
         except Exception as e:
@@ -210,14 +216,14 @@ class SessionPool:
 
             if session.idle_time > settings.session_pool_max_idle_time:
                 logger.debug("Session %s idle too long (idle_time=%s).",
-                           session.transport.session_id, session.idle_time)
+                             session.transport.session_id, session.idle_time)
                 return False
 
             # Additional transport-specific validation
             if hasattr(session.transport, 'validate_session'):
                 if not await session.transport.validate_session():
                     logger.debug("Session %s failed transport-specific validation.",
-                               session.transport.session_id)
+                                 session.transport.session_id)
                     return False
 
             return True
@@ -331,7 +337,7 @@ class SessionPool:
         if not self._cleanup_task or self._cleanup_task.done():
             self._cleanup_task = asyncio.create_task(self.cleanup_expired_sessions())
             logger.info("Session cleanup task started (interval=%s).",
-                       settings.session_pool_cleanup_interval)
+                        settings.session_pool_cleanup_interval)
 
     async def shutdown(self):
         """Gracefully stop the session pool and cleanup task."""

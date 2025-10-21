@@ -138,3 +138,5 @@ class Transport(ABC):
     async def validate_session(self) -> bool:
         """Validate session is still usable."""
         return await self.is_connected()
+    
+    
