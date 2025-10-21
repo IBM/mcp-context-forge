@@ -73,6 +73,10 @@ spec:
 
       volumes:
         - name: postgredb
+          {{- if .Values.postgres.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: postgres-pv-claim   # keep aligned with templates/postgres-pvc.yaml
+            claimName: {{ include "mcp-stack.fullname" . }}-postgres-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
 {{- end }}

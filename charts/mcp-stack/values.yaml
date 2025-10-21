@@ -557,9 +557,13 @@ postgres:
   # PersistentVolumeClaim for data durability
   persistence:
     enabled: true
-    storageClassName: manual     # pick a StorageClass (e.g. gp2, standard)
-    accessModes: [ReadWriteMany]
+    storageClassName: ""         # Use empty string for default StorageClass
+    accessModes: [ReadWriteOnce]
     size: 5Gi
+    reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
+    annotations: {}              # Optional annotations for backup tools
+      # backup.velero.io/backup-volumes: "postgres-data"
+      # backup.policy/schedule: "daily"
 
   # Leave blank to autogenerate <release>-mcp-stack-postgres-secret.
   existingSecret: ""
@@ -641,6 +645,17 @@ redis:
       timeoutSeconds: 2
       successThreshold: 1
       failureThreshold: 5
+
+  # ─── Persistence configuration ───
+  persistence:
+    enabled: false               # Set to true to enable Redis persistence
+    storageClassName: ""         # Use empty string for default StorageClass
+    accessModes: [ReadWriteOnce]
+    size: 1Gi
+    reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
+    annotations: {}              # Optional annotations for backup tools
+      # backup.velero.io/backup-volumes: "redis-data"
+      # backup.policy/schedule: "daily"
 
 ########################################################################
 # PGADMIN - Web UI for Postgres
