@@ -280,6 +280,11 @@ DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/mcp
 └────────────┬────────────────────────────────┬───────────────┘
              │                                │
     ┌────────▼─────────┐            ┌────────▼─────────┐
+    │  Nginx Cache 1   │            │  Nginx Cache 2   │
+    │  (proxy layer)   │            │  (proxy layer)   │
+    └────────┬─────────┘            └────────┬─────────┘
+             │                                │
+    ┌────────▼─────────┐            ┌────────▼─────────┐
     │  Gateway Pod 1   │            │  Gateway Pod 2   │
     │  (8 workers)     │            │  (8 workers)     │
     └────────┬─────────┘            └────────┬─────────┘
@@ -674,6 +679,119 @@ HEALTH_CHECK_INTERVAL=60
 HEALTH_CHECK_TIMEOUT=10
 UNHEALTHY_THRESHOLD=3
 ```
+
+### Nginx Caching Proxy (CDN-like Performance)
+
+**Overview**: Deploy an nginx reverse proxy with intelligent caching to dramatically reduce backend load and improve response times.
+
+The MCP Gateway includes a production-ready nginx caching proxy configuration (`nginx/`) with three dedicated cache zones:
+
+1. **Static Assets Cache** (1GB, 30-day TTL): CSS, JS, images, fonts
+2. **API Response Cache** (512MB, 5-minute TTL): Read-only endpoints
+3. **Schema Cache** (256MB, 24-hour TTL): OpenAPI specs, docs
+
+**Performance Benefits**:
+
+- **Static assets**: 80-95% faster (20-50ms → 1-5ms)
+- **API endpoints**: 60-80% faster with cache hits
+- **Backend load**: 60-80% reduction in requests
+- **Cache hit rates**: 40-99% depending on endpoint type
+- **Database pressure**: 40-70% fewer queries
+
+**Docker Compose Setup**:
+
+```bash
+# Start with nginx caching proxy
+docker-compose up -d nginx
+
+# Access via caching proxy
+curl http://localhost:8080/health  # Cached
+curl http://localhost:4444/health  # Direct (bypass cache)
+
+# Verify caching
+curl -I http://localhost:8080/openapi.json | grep X-Cache-Status
+# X-Cache-Status: MISS (first request)
+# X-Cache-Status: HIT  (subsequent requests)
+```
+
+**Kubernetes Deployment**:
+
+Add nginx sidecar to gateway pods:
+
+```yaml
+# production-values.yaml
+mcpContextForge:
+  # Enable nginx caching sidecar
+  nginx:
+    enabled: true
+    cacheSize: 2Gi              # Total cache size
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+  # Gateway configuration remains the same
+  replicaCount: 5
+  resources:
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+```
+
+**Cache Configuration**:
+
+```bash
+# Nginx cache zones are pre-configured in nginx/nginx.conf
+# Adjust TTLs by editing nginx.conf:
+
+# Static assets: 30 days (aggressive caching)
+proxy_cache_valid 200 30d;
+
+# API responses: 5 minutes (balance freshness/performance)
+proxy_cache_valid 200 5m;
+
+# OpenAPI schema: 24 hours (rarely changes)
+proxy_cache_valid 200 24h;
+```
+
+**Cache Bypass Rules**:
+
+Nginx automatically bypasses cache for:
+
+- POST, PUT, PATCH, DELETE requests
+- WebSocket connections (`/servers/*/ws`)
+- Server-Sent Events (`/servers/*/sse`)
+- JSON-RPC endpoint (`/`)
+
+**Monitoring**:
+
+```bash
+# Check cache status (via X-Cache-Status header)
+curl -I http://localhost:8080/tools | grep X-Cache-Status
+
+# View cache size
+docker-compose exec nginx du -sh /var/cache/nginx/*
+
+# Analyze cache hit rate
+docker-compose exec nginx cat /var/log/nginx/access.log | \
+  grep -oP 'cache_status=\K\w+' | sort | uniq -c
+```
+
+**When to Use**:
+
+- ✅ High traffic (>1000 req/sec)
+- ✅ Read-heavy workloads
+- ✅ Static asset delivery
+- ✅ Mobile/remote clients (reduces bandwidth)
+- ❌ Write-heavy workloads (limited benefit)
+- ❌ Real-time updates required (<1 min staleness)
+
+**Documentation**: See `nginx/README.md` for detailed configuration.
+
+---
 
 ### Response Compression
 
