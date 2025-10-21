@@ -47,7 +47,7 @@ def client(monkeypatch):
 
 def test_metrics_endpoint(client):
     """✅ /metrics endpoint returns Prometheus format data."""
-    response = client.get("/metrics")
+    response = client.get("/metrics/prometheus")
     
     assert response.status_code == 200, f"Expected HTTP 200 OK, got {response.status_code}"
     assert "text/plain" in response.headers["content-type"]
@@ -56,7 +56,7 @@ def test_metrics_endpoint(client):
 
 def test_metrics_contains_standard_metrics(client):
     """✅ Standard Prometheus metrics families exist."""
-    response = client.get("/metrics")
+    response = client.get("/metrics/prometheus")
     text = response.text
 
     # Check for basic Prometheus format
@@ -67,14 +67,14 @@ def test_metrics_contains_standard_metrics(client):
 def test_metrics_counters_increment(client):
     """✅ Counters increment after a request."""
     # Initial scrape
-    resp1 = client.get("/metrics")
+    resp1 = client.get("/metrics/prometheus")
     before_lines = len(resp1.text.splitlines())
 
     # Trigger another request
     client.get("/health")
     
     # Second scrape
-    resp2 = client.get("/metrics")
+    resp2 = client.get("/metrics/prometheus")
     after_lines = len(resp2.text.splitlines())
 
     # At minimum, metrics should be present
@@ -106,7 +106,7 @@ def test_metrics_excluded_paths(monkeypatch):
 
     # Hit the /health endpoint
     client.get("/health")
-    resp = client.get("/metrics")
+    resp = client.get("/metrics/prometheus")
 
     # Just verify we get a response - exclusion testing is complex
     assert resp.status_code == 200, "Metrics endpoint should be accessible"
