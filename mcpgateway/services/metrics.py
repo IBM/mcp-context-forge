@@ -6,14 +6,33 @@ SPDX-License-Identifier: Apache-2.0
 
 MCP Gateway Metrics Service.
 
-This module provides Prometheus metrics instrumentation for the MCP Gateway.
-It configures and exposes HTTP metrics including request counts, latencies,
-and response sizes.
+This module provides comprehensive Prometheus metrics instrumentation for the MCP Gateway.
+It configures and exposes HTTP metrics including request counts, latencies, response sizes,
+and custom application metrics.
+
+The service automatically instruments FastAPI applications with standard HTTP metrics
+and provides configurable exclusion patterns for endpoints that should not be monitored.
+Metrics are exposed at the `/metrics/prometheus` endpoint in Prometheus format.
+
+Supported Metrics:
+- http_requests_total: Counter for total HTTP requests by method, endpoint, and status
+- http_request_duration_seconds: Histogram of request processing times
+- http_request_size_bytes: Histogram of incoming request payload sizes
+- http_response_size_bytes: Histogram of outgoing response payload sizes
+- app_info: Gauge with custom static labels for application metadata
 
 Environment Variables:
 - ENABLE_METRICS: Enable/disable metrics collection (default: "true")
 - METRICS_EXCLUDED_HANDLERS: Comma-separated regex patterns for excluded endpoints
 - METRICS_CUSTOM_LABELS: Custom labels for app_info gauge (format: "key1=value1,key2=value2")
+
+Usage:
+    from mcpgateway.services.metrics import setup_metrics
+    
+    app = FastAPI()
+    setup_metrics(app)  # Automatically instruments the app
+    
+    # Metrics available at: GET /metrics/prometheus
 
 Functions:
 - setup_metrics: Configure Prometheus instrumentation for FastAPI app
@@ -26,14 +45,50 @@ import re
 # Third-Party
 from prometheus_client import Counter, Gauge, Histogram, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
+from fastapi import Response, status
 
 # First-Party
 from mcpgateway.config import settings
 
 
 def setup_metrics(app):
+    """
+    Configure Prometheus metrics instrumentation for a FastAPI application.
+    
+    This function sets up comprehensive HTTP metrics collection including request counts,
+    latencies, and payload sizes. It also handles custom application labels and endpoint
+    exclusion patterns.
+    
+    Args:
+        app: FastAPI application instance to instrument
+        
+    Environment Variables Used:
+        ENABLE_METRICS (str): "true" to enable metrics, "false" to disable (default: "true")
+        METRICS_EXCLUDED_HANDLERS (str): Comma-separated regex patterns for endpoints
+                                        to exclude from metrics collection
+        METRICS_CUSTOM_LABELS (str): Custom labels in "key1=value1,key2=value2" format
+                                   for the app_info gauge metric
+    
+    Side Effects:
+        - Registers Prometheus metrics collectors with the global registry
+        - Adds middleware to the FastAPI app for request instrumentation
+        - Exposes /metrics/prometheus endpoint for Prometheus scraping
+        - Prints status messages to stdout
+        
+    Returns:
+        None
+        
+    Example:
+        >>> from fastapi import FastAPI
+        >>> from mcpgateway.services.metrics import setup_metrics
+        >>> 
+        >>> app = FastAPI()
+        >>> setup_metrics(app)
+        ✅ Metrics instrumentation enabled
+        >>> 
+        >>> # Metrics now available at GET /metrics/prometheus
+    """
     enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
-    [p.strip() for p in os.getenv("METRICS_EXCLUDED_HANDLERS", "").split(",") if p.strip()]
 
     if enable_metrics:
 
@@ -98,79 +153,13 @@ def setup_metrics(app):
         instrumentator.expose(app, endpoint="/metrics/prometheus", include_in_schema=False, should_gzip=True)
 
         print("✅ Metrics instrumentation enabled")
-
-
-# def setup_metrics(app):
-#     """Configure Prometheus metrics instrumentation for FastAPI application.
-
-#     Sets up HTTP request metrics including:
-#     - Request count by method, endpoint, and status code
-#     - Request duration histograms
-#     - Request/response size metrics
-#     - Custom application info gauge with labels
-
-#     Args:
-#         app: FastAPI application instance to instrument
-
-#     Environment Variables:
-#         ENABLE_METRICS: Set to "false" to disable metrics (default: "true")
-#         METRICS_EXCLUDED_HANDLERS: Comma-separated regex patterns for endpoints to exclude
-#         METRICS_CUSTOM_LABELS: Custom labels for app_info gauge
-#     """
-#     enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
-#     excluded_regex = os.getenv("METRICS_EXCLUDED_HANDLERS", "")
-#     excluded_patterns = [p.strip() for p in excluded_regex.split(",") if p.strip()]
-
-#     def excluded_handler(req):
-#         """Check if request should be excluded from metrics.
-
-#         Args:
-#             req: HTTP request object
-
-#         Returns:
-#             bool: True if request matches any exclusion pattern
-#         """
-#         return any(re.match(pat, req.url.path) for pat in excluded_patterns)
-
-#     if enable_metrics:
-#         # Parse custom labels from env
-#         custom_labels = dict(kv.split("=") for kv in os.getenv("METRICS_CUSTOM_LABELS", "").split(",") if "=" in kv)
-
-#         # Expose a custom gauge with labels (useful for dashboard filtering)
-#         if custom_labels:
-#             app_info_gauge = Gauge(
-#                 "app_info",
-#                 "Static labels for the application",
-#                 labelnames=list(custom_labels.keys()),
-#                 registry=REGISTRY,
-#             )
-#             app_info_gauge.labels(**custom_labels).set(1)
-
-#         excluded = [pattern.strip() for pattern in (settings.METRICS_EXCLUDED_HANDLERS or "").split(",") if pattern.strip()]
-
-#         instrumentator = Instrumentator(
-#             should_group_status_codes=False,
-#             should_ignore_untemplated=True,
-#             excluded_handlers=[re.compile(p) for p in excluded],
-#         )
-
-#         custom_duration_histogram = Histogram(
-#             "http_request_duration_seconds",
-#             "Request latency",
-#             buckets=(0.05, 0.1, 0.3, 1, 3, 5),
-#             labelnames=("handler", "method"),
-#         )
-
-#         instrumentator.add(custom_duration_histogram)
-
-#         instrumentator = Instrumentator(
-#             should_group_status_codes=False,
-#             should_ignore_untemplated=True,
-#             excluded_handlers=[re.compile(p) for p in excluded],
-#         )
-
-#         instrumentator.instrument(app)
-#         #instrumentator.expose(app, include_in_schema=False, should_gzip=True)
-#         instrumentator.expose(app, endpoint="/metrics/prometheus", include_in_schema=False, should_gzip=True)
-
-#         print("✅ Metrics instrumentation enabled")
+    else:
+        print("⚠️ Metrics instrumentation disabled")
+        
+        @app.get("/metrics/prometheus")
+        async def metrics_disabled():
+            return Response(
+                content='{"error": "Metrics collection is disabled"}',
+                media_type="application/json",
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
