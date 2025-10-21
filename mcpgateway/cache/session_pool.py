@@ -10,7 +10,9 @@ Session Pool
 import asyncio
 import time
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Any
+from enum import Enum
+from dataclasses import dataclass
 from mcpgateway.cache.session_registry import SessionRegistry
 from mcpgateway.config import settings
 from mcpgateway.transports.sse_transport import SSETransport
@@ -21,6 +23,7 @@ from mcpgateway.transports.base import Transport
 logger = logging.getLogger(__name__)
 
 class TransportType(Enum):
+    """Enumeration of supported transport types."""
     SSE = "sse"
     WEBSOCKET = "websocket"
 
@@ -30,12 +33,14 @@ class PoolKey:
     user_id: str
     server_id: str
     transport_type: TransportType
-    
+
     def __hash__(self):
+        """Compute hash based on user_id, server_id, and transport_type."""
         return hash((self.user_id, self.server_id, self.transport_type))
-    
+
     def __eq__(self, other):
-        return (isinstance(other, PoolKey) and 
+        """Equality check based on user_id, server_id, and transport_type."""
+        return (isinstance(other, PoolKey) and
                 self.user_id == other.user_id and
                 self.server_id == other.server_id and
                 self.transport_type == other.transport_type)
@@ -43,6 +48,7 @@ class PoolKey:
 class PooledSession:
     """Wrapper around transport for pooling and metrics tracking."""
     def __init__(self, transport: Transport, user_id: str, server_id: str, transport_type: TransportType):
+        """Initialize pooled session wrapper."""
         self.transport = transport
         self.user_id = user_id
         self.server_id = server_id
@@ -56,10 +62,12 @@ class PooledSession:
 
     @property
     def age(self) -> float:
+        """Get the age of the session in seconds."""
         return time.time() - self.created_at
 
     @property
     def idle_time(self) -> float:
+        """Get the idle time of the session in seconds."""
         return time.time() - self.last_used
 
     def capture_state(self) -> None:
@@ -84,7 +92,7 @@ class PooledSession:
 
 class SessionPool:
     """Enhanced session pool with multi-transport support and state continuity."""
-    
+
     # Transport class mapping
     TRANSPORT_CLASSES = {
         TransportType.SSE: SSETransport,
@@ -92,6 +100,7 @@ class SessionPool:
     }
 
     def __init__(self, session_registry: SessionRegistry):
+        """Initialize the session pool."""
         self._registry = session_registry
         self._pool: Dict[PoolKey, PooledSession] = {}
         self._lock = asyncio.Lock()
@@ -108,14 +117,14 @@ class SessionPool:
         # Start cleanup task if session pooling is enabled
         if settings.session_pooling_enabled:
             self._start_cleanup_task()
-            logger.info("Session pool initialized with cleanup interval=%s sec", 
+            logger.info("Session pool initialized with cleanup interval=%s sec",
                        settings.session_pool_cleanup_interval)
 
     # --------------------------------------------------------------------------
     # Core pooling logic with multi-transport support
     # --------------------------------------------------------------------------
 
-    async def get_or_create_session(self, user_id: str, server_id: str, base_url: str, 
+    async def get_or_create_session(self, user_id: str, server_id: str, base_url: str,
                                   transport_type: TransportType) -> Transport:
         """Get an existing session for (user, server, transport) or create a new one."""
         if not settings.session_pooling_enabled:
@@ -131,12 +140,12 @@ class SessionPool:
                     session.last_used = time.time()
                     session.use_count += 1
                     self._metrics["reused"] += 1
-                    
+
                     # Restore session state for continuity
                     session.restore_state()
                     if session.state_snapshot:
                         self._metrics["state_restored"] += 1
-                    
+
                     logger.debug(
                         "Reusing pooled session for user=%s server=%s type=%s (use_count=%s)",
                         user_id, server_id, transport_type.value, session.use_count,
@@ -150,7 +159,7 @@ class SessionPool:
             self._pool[pool_key] = new_session
             return new_session.transport
 
-    async def _create_new_session(self, user_id: str, server_id: str, base_url: str, 
+    async def _create_new_session(self, user_id: str, server_id: str, base_url: str,
                                 transport_type: TransportType) -> PooledSession:
         """Create and register a brand new transport session."""
         try:
@@ -158,7 +167,7 @@ class SessionPool:
             transport_class = self.TRANSPORT_CLASSES.get(transport_type)
             if not transport_class:
                 raise ValueError(f"Unsupported transport type: {transport_type}")
-            
+
             # Create transport with pooling enabled
             if transport_type == TransportType.SSE:
                 transport = transport_class(base_url=base_url, pooled=True, pool_key=f"{user_id}:{server_id}")
@@ -166,19 +175,19 @@ class SessionPool:
                 # For WebSocket, we'll need the actual WebSocket object which is provided later
                 # This is a placeholder - actual WebSocket creation happens in the endpoint
                 transport = transport_class  # This will be handled differently for WebSocket
-            
+
             # For SSE, we need to connect and register the session
             if transport_type == TransportType.SSE:
                 await transport.connect()
                 await self._registry.add_session(transport.session_id, transport, pooled=True)
-            
+
             session = PooledSession(transport, user_id, server_id, transport_type)
             self._metrics["created"] += 1
-            
-            logger.info("Created new %s session for user=%s server=%s (session_id=%s)", 
+
+            logger.info("Created new %s session for user=%s server=%s (session_id=%s)",
                        transport_type.value, user_id, server_id, transport.session_id)
             return session
-            
+
         except Exception as e:
             self._metrics["connection_errors"] += 1
             logger.error("Failed to create new session: %s", e)
@@ -200,14 +209,14 @@ class SessionPool:
                 return False
 
             if session.idle_time > settings.session_pool_max_idle_time:
-                logger.debug("Session %s idle too long (idle_time=%s).", 
+                logger.debug("Session %s idle too long (idle_time=%s).",
                            session.transport.session_id, session.idle_time)
                 return False
 
             # Additional transport-specific validation
             if hasattr(session.transport, 'validate_session'):
                 if not await session.transport.validate_session():
-                    logger.debug("Session %s failed transport-specific validation.", 
+                    logger.debug("Session %s failed transport-specific validation.",
                                session.transport.session_id)
                     return False
 
@@ -222,12 +231,12 @@ class SessionPool:
         try:
             # Capture final state before cleanup
             session.capture_state()
-            
+
             await session.transport.disconnect()
             self._metrics["cleaned"] += 1
             logger.info(
                 "Cleaned up session %s (user=%s, server=%s, type=%s)",
-                session.transport.session_id, session.user_id, session.server_id, 
+                session.transport.session_id, session.user_id, session.server_id,
                 session.transport_type.value
             )
         except Exception as e:
@@ -235,7 +244,7 @@ class SessionPool:
 
         # Remove from registry and pool
         await self._registry.remove_session(session.transport.session_id)
-        
+
         if pool_key in self._pool:
             del self._pool[pool_key]
 
@@ -256,11 +265,11 @@ class SessionPool:
                             total_cleaned += 1
                     if total_cleaned:
                         logger.debug("Session cleanup completed. %s sessions removed.", total_cleaned)
-                        
+
                 # Log metrics periodically
                 if settings.session_pool_metrics_enabled:
                     logger.info("Session pool metrics: %s", self._metrics)
-                        
+
             except Exception as e:
                 logger.exception("Error during periodic session cleanup: %s", e)
 
@@ -310,7 +319,7 @@ class SessionPool:
             "active_sessions": len(self._pool),
             "pool_keys": list(str(k) for k in self._pool.keys())
         }
-        
+
         return stats
 
     # --------------------------------------------------------------------------
@@ -321,13 +330,13 @@ class SessionPool:
         """Start background cleanup if enabled."""
         if not self._cleanup_task or self._cleanup_task.done():
             self._cleanup_task = asyncio.create_task(self.cleanup_expired_sessions())
-            logger.info("Session cleanup task started (interval=%s).", 
+            logger.info("Session cleanup task started (interval=%s).",
                        settings.session_pool_cleanup_interval)
 
     async def shutdown(self):
         """Gracefully stop the session pool and cleanup task."""
         logger.info("Shutting down session pool...")
-        
+
         if self._cleanup_task:
             self._cleanup_task.cancel()
             try:

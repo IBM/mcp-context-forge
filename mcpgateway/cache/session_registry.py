@@ -440,8 +440,8 @@ class SessionRegistry(SessionBackend):
                 await self._redis.setex(f"mcp:session:{session_id}", self._session_ttl, session_data)
                 # Publish event to notify other workers
                 await self._redis.publish("mcp_session_events", json.dumps({
-                    "type": "add", 
-                    "session_id": session_id, 
+                    "type": "add",
+                    "session_id": session_id,
                     "pooled": pooled,
                     "timestamp": time.time()
                 }))
@@ -526,7 +526,7 @@ class SessionRegistry(SessionBackend):
         # Skip for none backend
         if self._backend == "none":
             return None
-            
+
         # First check local cache
         async with self._lock:
             session_entry = self._sessions.get(session_id)
@@ -534,7 +534,7 @@ class SessionRegistry(SessionBackend):
                 logger.info(f"Session {session_id} exists in local cache")
                 # Return the transport object directly, not the dict
                 return session_entry['transport']
-                
+
         # If not in local cache, check if it exists in shared backend
         if self._backend == "redis":
             try:
@@ -587,6 +587,7 @@ class SessionRegistry(SessionBackend):
 
         Removes the session from both local cache and distributed backend.
         If a transport is found locally, it will be disconnected before removal.
+        *unless* the session is marked as pooled.
         For distributed backends, notifies other workers about the removal.
 
         Args:
@@ -615,7 +616,7 @@ class SessionRegistry(SessionBackend):
         # Skip for none backend
         if self._backend == "none":
             return
-            
+
         # Clean up local transport
         session_entry = None
         async with self._lock:
@@ -626,9 +627,9 @@ class SessionRegistry(SessionBackend):
 
         # Disconnect transport if found and not pooled
         if session_entry:
-            transport = session_entry['transport']
-            pooled = session_entry.get('pooled', False)
-            
+            transport = session_entry.get('transport') if isinstance(session_entry, dict) else session_entry
+            pooled = session_entry.get('pooled', False) if isinstance(session_entry, dict) else False
+
             if not pooled:  # Only disconnect non-pooled sessions
                 try:
                     await transport.disconnect()
@@ -643,8 +644,8 @@ class SessionRegistry(SessionBackend):
                 await self._redis.delete(f"mcp:session:{session_id}")
                 # Notify other workers
                 await self._redis.publish("mcp_session_events", json.dumps({
-                    "type": "remove", 
-                    "session_id": session_id, 
+                    "type": "remove",
+                    "session_id": session_id,
                     "timestamp": time.time()
                 }))
             except Exception as e:
@@ -683,13 +684,13 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error removing session {session_id}: {e}")
         logger.info(f"Removed session: {session_id}")
-    
+
     def is_session_pooled(self, session_id: str) -> bool:
         """Check if a session is pooled (should not be disconnected when removed from registry).
-        
+
         Args:
             session_id: Session identifier to check.
-            
+
         Returns:
             bool: True if session is pooled, False otherwise.
         """
@@ -700,12 +701,12 @@ class SessionRegistry(SessionBackend):
 
     def get_pooled_session_transport(self, session_id: str) -> Optional[SSETransport]:
         """Get the transport object for a pooled session directly from local cache.
-        
+
         This method is used by the SessionPool to access existing transports.
-        
+
         Args:
             session_id: Session identifier to look up.
-            
+
         Returns:
             SSETransport object if found and pooled, None otherwise.
         """
@@ -719,10 +720,10 @@ class SessionRegistry(SessionBackend):
 
     async def remove_session_from_registry_only(self, session_id: str) -> None:
         """Remove a session from the local registry without disconnecting the transport.
-        
+
         This is used when a pooled session needs to be removed from the registry
         but kept alive for reuse by the pool.
-        
+
         Args:
             session_id: Session identifier to remove from registry.
         """
@@ -1267,11 +1268,11 @@ class SessionRegistry(SessionBackend):
                                 'transport': entry,
                                 'pooled': False
                             }
-                
+
                 for session_id, session_data in local_sessions_copy.items():
                     transport = session_data['transport']
                     pooled = session_data['pooled']
-                    
+
                     try:
                         if not await transport.is_connected():
                             if pooled:
@@ -1501,8 +1502,28 @@ class SessionRegistry(SessionBackend):
     # Observability
     # ------------------------------
     def get_metrics(self) -> Dict[str, int]:
+        """
+        Retrieve internal metrics counters for the session registry.
+
+        Returns:
+            A dictionary containing various metrics like session counts
+            and message broadcast counts. Keys are metric names (str),
+            values are their current counts (int).
+        """
         return dict(self._metrics)
 
     def get_session_sync(self, session_id: str) -> Optional[SSETransport]:
-        """Fast local lookup."""
+        """
+        Get session transport synchronously from local cache only.
+
+        This is a non-blocking method that only checks the local cache,
+        not the distributed backend. Use this when you need quick access
+        and know the session should be local.
+
+        Args:
+            session_id: Session identifier to look up.
+
+        Returns:
+            SSETransport object if found in local cache, None otherwise.
+        """
         return self._sessions.get(session_id)
