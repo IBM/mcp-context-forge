@@ -380,6 +380,45 @@ preview = true
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 
+[tool.ruff.lint.isort]
+###############################################################################
+# Core behaviour
+###############################################################################
+# profile                    = "black"      # inherit Black's own import-sorting profile
+# line-length                = 200          # match Black's custom line length
+# multi-line-output          = 3            # vertical-hanging-indent style
+# include-trailing-comma     = true         # keep trailing commas for Black
+from-first                 = true         # place all "from ... import ..." before plain "import ..."
+
+###############################################################################
+# Section ordering & headings
+###############################################################################
+# sections                   = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+# import-heading-future      = "Future"       # header above FUTURE imports (if headings enabled)
+# import-heading-stdlib      = "Standard"     # header for built-in Stdlib imports
+# import-heading-thirdparty  = "Third-Party"  # header for pip-installed packages
+# import-heading-firstparty  = "First-Party"  # header for internal 'mcpgateway' code
+# import-heading-localfolder = "Local"        # header for ad-hoc scripts / tests
+
+###############################################################################
+# What belongs where
+###############################################################################
+known-first-party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
+known-local-folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known-third-party          = ["alembic"] # treat "alembic" as THIRDPARTY
+# src-paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
+
+###############################################################################
+# Style niceties
+###############################################################################
+force-sort-within-sections = true         # always alphabetise names inside each block
+order-by-type              = false        # don't group imports by "type vs. straight name"
+# balanced-wrapping          = true         # spread wrapped imports evenly between lines
+# lines-between-sections     = 1            # exactly one blank line between the five groups
+# lines-between-types        = 1            # one blank line between 'import X' and 'from X import ...'
+no-lines-before            = ["local-folder"]  # suppress blank line *before* the LOCALFOLDER block
+# ensure-newline-before-comments = true     # newline before any inline # comment after an import
+
 [tool.ruff.format]
 # Like Black, use double quotes for strings.
 quote-style = "double"
