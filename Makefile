@@ -801,7 +801,7 @@ images:
 # help: pydocstyle           - Docstring style checker
 # help: pycodestyle          - Simple PEP-8 checker
 # help: pre-commit           - Run all configured pre-commit hooks
-# help: ruff                 - Ruff linter + formatter
+# help: ruff                 - Ruff linter + (eventually) formatter
 # help: ty                   - Ty type checker from astral
 # help: pyright              - Static type-checking with Pyright
 # help: radon                - Code complexity & maintainability metrics
@@ -1064,8 +1064,9 @@ pre-commit:                         ## 🪄  Run pre-commit hooks
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pre-commit run --all-files --show-diff-on-failure"
 
-ruff:                               ## ⚡  Ruff lint + format
-	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET) && $(VENV_DIR)/bin/ruff format $(TARGET)
+ruff:                               ## ⚡  Ruff lint + (eventually) format
+	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
+	#                   && $(VENV_DIR)/bin/ruff format $(TARGET)
 
 # Separate ruff targets for different modes
 ruff-check:
@@ -1074,6 +1075,7 @@ ruff-check:
 ruff-fix:
 	@echo "⚡ ruff check --fix $(TARGET)..." && $(VENV_DIR)/bin/ruff check --fix $(TARGET)
 
+#  Nothing depends on this target yet, but kept for future and ad hoc use
 ruff-format:
 	@echo "⚡ ruff format $(TARGET)..." && $(VENV_DIR)/bin/ruff format $(TARGET)
 
