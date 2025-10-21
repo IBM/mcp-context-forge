@@ -11602,6 +11602,10 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         } else {
           banner.classList.add('hidden');
         }
+        document.addEventListener('passwordUpdated', () => {
+          banner.classList.add('hidden');
+          
+        });
       });
     </script>
     <!-- Add this helper just before </body> -->
