@@ -1,6 +1,7 @@
 nav:
   - index.md
   - configuration.md
+  - api-usage.md
   - scale.md
   - tuning.md
   - backup.md
