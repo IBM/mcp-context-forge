@@ -28,10 +28,10 @@ Environment Variables:
 
 Usage:
     from mcpgateway.services.metrics import setup_metrics
-    
+
     app = FastAPI()
     setup_metrics(app)  # Automatically instruments the app
-    
+
     # Metrics available at: GET /metrics/prometheus
 
 Functions:
@@ -54,39 +54,33 @@ from mcpgateway.config import settings
 def setup_metrics(app):
     """
     Configure Prometheus metrics instrumentation for a FastAPI application.
-    
+
     This function sets up comprehensive HTTP metrics collection including request counts,
     latencies, and payload sizes. It also handles custom application labels and endpoint
     exclusion patterns.
-    
+
     Args:
         app: FastAPI application instance to instrument
-        
+
     Environment Variables Used:
         ENABLE_METRICS (str): "true" to enable metrics, "false" to disable (default: "true")
         METRICS_EXCLUDED_HANDLERS (str): Comma-separated regex patterns for endpoints
                                         to exclude from metrics collection
         METRICS_CUSTOM_LABELS (str): Custom labels in "key1=value1,key2=value2" format
                                    for the app_info gauge metric
-    
+
     Side Effects:
         - Registers Prometheus metrics collectors with the global registry
         - Adds middleware to the FastAPI app for request instrumentation
         - Exposes /metrics/prometheus endpoint for Prometheus scraping
         - Prints status messages to stdout
-        
-    Returns:
-        None
-        
+
     Example:
         >>> from fastapi import FastAPI
         >>> from mcpgateway.services.metrics import setup_metrics
-        >>> 
         >>> app = FastAPI()
-        >>> setup_metrics(app)
-        ✅ Metrics instrumentation enabled
-        >>> 
-        >>> # Metrics now available at GET /metrics/prometheus
+        >>> # setup_metrics(app)  # Configures Prometheus metrics
+        >>> # Metrics available at GET /metrics/prometheus
     """
     enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
 
@@ -119,13 +113,6 @@ def setup_metrics(app):
             buckets=(100, 500, 1000, 5000, 10000),
         )
 
-        # Add metrics to instrumentator
-        instrumentator = Instrumentator()
-        instrumentator.add(http_requests_total)
-        instrumentator.add(http_request_duration_seconds)
-        instrumentator.add(http_request_size_bytes)
-        instrumentator.add(http_response_size_bytes)
-
         # Custom labels gauge
         custom_labels = dict(kv.split("=") for kv in os.getenv("METRICS_CUSTOM_LABELS", "").split(",") if "=" in kv)
         if custom_labels:
@@ -139,7 +126,7 @@ def setup_metrics(app):
 
         excluded = [pattern.strip() for pattern in (settings.METRICS_EXCLUDED_HANDLERS or "").split(",") if pattern.strip()]
 
-        # Create a single Instrumentator instance
+        # Create instrumentator instance
         instrumentator = Instrumentator(
             should_group_status_codes=False,
             should_ignore_untemplated=True,
@@ -155,7 +142,7 @@ def setup_metrics(app):
         print("✅ Metrics instrumentation enabled")
     else:
         print("⚠️ Metrics instrumentation disabled")
-        
+
         @app.get("/metrics/prometheus")
         async def metrics_disabled():
             return Response(
