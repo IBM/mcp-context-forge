@@ -634,6 +634,9 @@ class ToolService:
 
         query = select(DbTool)
 
+        offset = 0
+        per_page = settings.pagination_min_page_size
+
         # Apply active/inactive filter
         if not include_inactive:
             query = query.where(DbTool.enabled.is_(True))
@@ -649,6 +652,8 @@ class ToolService:
             access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
 
             query = query.where(or_(*access_conditions))
+
+            query = query.offset(offset).limit(per_page)
         else:
             # Get user's accessible teams
             # Build access conditions following existing patterns
@@ -666,6 +671,8 @@ class ToolService:
             access_conditions.append(DbTool.visibility == "public")
 
             query = query.where(or_(*access_conditions))
+
+            query = query.offset(offset).limit(per_page)
 
         # Apply visibility filter if specified
         if visibility:
