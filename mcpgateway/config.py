@@ -871,6 +871,15 @@ class Settings(BaseSettings):
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
 
+    # Session Pooling Configuration
+    session_pooling_enabled: bool = False
+    session_pool_strategy: str = "user-server"  # user-server, global, disabled
+    session_pool_ttl: int = 1800  # 30 minutes
+    session_pool_max_per_user: int = 10
+    session_pool_max_idle_time: int = 300  # 5 minutes
+    session_pool_cleanup_interval: int = 60  # 1 minute
+    session_pool_metrics_enabled: bool = True
+
     # Core plugin settings
     plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
     plugin_config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file")

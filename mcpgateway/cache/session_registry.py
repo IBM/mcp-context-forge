@@ -295,7 +295,13 @@ class SessionRegistry(SessionBackend):
         super().__init__(backend=backend, redis_url=redis_url, database_url=database_url, session_ttl=session_ttl, message_ttl=message_ttl)
         self._sessions: Dict[str, Any] = {}  # Local transport cache
         self._lock = asyncio.Lock()
-        self._cleanup_task = None
+        self._metrics = {
+            "sessions_added": 0,
+            "sessions_removed": 0,
+            "sessions_active": 0,
+            "sessions_expired": 0,
+            "messages_broadcast": 0,
+        }
 
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
@@ -373,7 +379,7 @@ class SessionRegistry(SessionBackend):
                 # >>> logger = logging.getLogger(__name__)
                 # >>> logger.error(f"Error closing Redis connection: Connection lost")  # doctest: +SKIP
 
-    async def add_session(self, session_id: str, transport: SSETransport) -> None:
+    async def add_session(self, session_id: str, transport: SSETransport, pooled: bool = False) -> None:
         """Add a session to the registry.
 
         Stores the session in both the local cache and the distributed backend
@@ -385,6 +391,7 @@ class SessionRegistry(SessionBackend):
                 unique string to avoid collisions.
             transport: SSE transport object for this session. Must implement
                 the SSETransport interface.
+            pooled: whether session is created for pooling (optional)
 
         Examples:
             >>> import asyncio
@@ -414,21 +421,35 @@ class SessionRegistry(SessionBackend):
             return
 
         async with self._lock:
-            self._sessions[session_id] = transport
+            # Store transport with pooling metadata
+            self._sessions[session_id] = {
+                'transport': transport,
+                'pooled': pooled,
+                'created_at': time.time()
+            }
+            self._metrics["sessions_added"] += 1
+            self._metrics["sessions_active"] = len(self._sessions)
 
         if self._backend == "redis":
-            # Store session marker in Redis
+            # Store session marker in Redis with pooling info
             try:
-                await self._redis.setex(f"mcp:session:{session_id}", self._session_ttl, "1")
+                session_data = json.dumps({
+                    'pooled': pooled,
+                    'created_at': time.time()
+                })
+                await self._redis.setex(f"mcp:session:{session_id}", self._session_ttl, session_data)
                 # Publish event to notify other workers
-                await self._redis.publish("mcp_session_events", json.dumps({"type": "add", "session_id": session_id, "timestamp": time.time()}))
+                await self._redis.publish("mcp_session_events", json.dumps({
+                    "type": "add",
+                    "session_id": session_id,
+                    "pooled": pooled,
+                    "timestamp": time.time()
+                }))
             except Exception as e:
                 logger.error(f"Redis error adding session {session_id}: {e}")
-
         elif self._backend == "database":
-            # Store session in database
+            # Store session in database with pooling flag
             try:
-
                 def _db_add() -> None:
                     """Store session record in the database.
 
@@ -451,7 +472,10 @@ class SessionRegistry(SessionBackend):
                     """
                     db_session = next(get_db())
                     try:
-                        session_record = SessionRecord(session_id=session_id)
+                        session_record = SessionRecord(
+                            session_id=session_id,
+                            pooled=pooled  # Add pooling flag to database record
+                        )
                         db_session.add(session_record)
                         db_session.commit()
                     except Exception as ex:
@@ -459,12 +483,11 @@ class SessionRegistry(SessionBackend):
                         raise ex
                     finally:
                         db_session.close()
-
                 await asyncio.to_thread(_db_add)
             except Exception as e:
                 logger.error(f"Database error adding session {session_id}: {e}")
 
-        logger.info(f"Added session: {session_id}")
+        logger.info(f"Added session: {session_id}, pooled: {pooled}")
 
     async def get_session(self, session_id: str) -> Any:
         """Get session transport by ID.
@@ -506,26 +529,25 @@ class SessionRegistry(SessionBackend):
 
         # First check local cache
         async with self._lock:
-            transport = self._sessions.get(session_id)
-            if transport:
+            session_entry = self._sessions.get(session_id)
+            if session_entry:
                 logger.info(f"Session {session_id} exists in local cache")
-                return transport
+                # Return the transport object directly, not the dict
+                return session_entry['transport']
 
         # If not in local cache, check if it exists in shared backend
         if self._backend == "redis":
             try:
-                exists = await self._redis.exists(f"mcp:session:{session_id}")
-                session_exists = bool(exists)
-                if session_exists:
+                session_data = await self._redis.get(f"mcp:session:{session_id}")
+                if session_data:
                     logger.info(f"Session {session_id} exists in Redis but not in local cache")
-                return None  # We don't have the transport locally
+                    # Return None since we don't have the transport locally
+                return None
             except Exception as e:
                 logger.error(f"Redis error checking session {session_id}: {e}")
                 return None
-
         elif self._backend == "database":
             try:
-
                 def _db_check() -> bool:
                     """Check if a session exists in the database.
 
@@ -546,11 +568,11 @@ class SessionRegistry(SessionBackend):
                     """
                     db_session = next(get_db())
                     try:
+                        # Query with pooled flag if needed
                         record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
                         return record is not None
                     finally:
                         db_session.close()
-
                 exists = await asyncio.to_thread(_db_check)
                 if exists:
                     logger.info(f"Session {session_id} exists in database but not in local cache")
@@ -558,7 +580,6 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error checking session {session_id}: {e}")
                 return None
-
         return None
 
     async def remove_session(self, session_id: str) -> None:
@@ -566,6 +587,7 @@ class SessionRegistry(SessionBackend):
 
         Removes the session from both local cache and distributed backend.
         If a transport is found locally, it will be disconnected before removal.
+        *unless* the session is marked as pooled.
         For distributed backends, notifies other workers about the removal.
 
         Args:
@@ -596,30 +618,40 @@ class SessionRegistry(SessionBackend):
             return
 
         # Clean up local transport
-        transport = None
+        session_entry = None
         async with self._lock:
             if session_id in self._sessions:
-                transport = self._sessions.pop(session_id)
+                session_entry = self._sessions.pop(session_id)
+                self._metrics["sessions_removed"] += 1
+                self._metrics["sessions_active"] = len(self._sessions)
 
-        # Disconnect transport if found
-        if transport:
-            try:
-                await transport.disconnect()
-            except Exception as e:
-                logger.error(f"Error disconnecting transport for session {session_id}: {e}")
+        # Disconnect transport if found and not pooled
+        if session_entry:
+            transport = session_entry.get('transport') if isinstance(session_entry, dict) else session_entry
+            pooled = session_entry.get('pooled', False) if isinstance(session_entry, dict) else False
+
+            if not pooled:  # Only disconnect non-pooled sessions
+                try:
+                    await transport.disconnect()
+                except Exception as e:
+                    logger.error(f"Error disconnecting transport for session {session_id}: {e}")
+            else:
+                logger.debug(f"Skipping disconnect for pooled session {session_id}, transport kept alive for reuse")
 
         # Remove from shared backend
         if self._backend == "redis":
             try:
                 await self._redis.delete(f"mcp:session:{session_id}")
                 # Notify other workers
-                await self._redis.publish("mcp_session_events", json.dumps({"type": "remove", "session_id": session_id, "timestamp": time.time()}))
+                await self._redis.publish("mcp_session_events", json.dumps({
+                    "type": "remove",
+                    "session_id": session_id,
+                    "timestamp": time.time()
+                }))
             except Exception as e:
                 logger.error(f"Redis error removing session {session_id}: {e}")
-
         elif self._backend == "database":
             try:
-
                 def _db_remove() -> None:
                     """Delete session record from the database.
 
@@ -648,12 +680,59 @@ class SessionRegistry(SessionBackend):
                         raise ex
                     finally:
                         db_session.close()
-
                 await asyncio.to_thread(_db_remove)
             except Exception as e:
                 logger.error(f"Database error removing session {session_id}: {e}")
-
         logger.info(f"Removed session: {session_id}")
+
+    def is_session_pooled(self, session_id: str) -> bool:
+        """Check if a session is pooled (should not be disconnected when removed from registry).
+
+        Args:
+            session_id: Session identifier to check.
+
+        Returns:
+            bool: True if session is pooled, False otherwise.
+        """
+        session_entry = self._sessions.get(session_id)
+        if session_entry and isinstance(session_entry, dict):
+            return session_entry.get('pooled', False)
+        return False
+
+    def get_pooled_session_transport(self, session_id: str) -> Optional[SSETransport]:
+        """Get the transport object for a pooled session directly from local cache.
+
+        This method is used by the SessionPool to access existing transports.
+
+        Args:
+            session_id: Session identifier to look up.
+
+        Returns:
+            SSETransport object if found and pooled, None otherwise.
+        """
+        session_entry = self._sessions.get(session_id)
+        if session_entry and isinstance(session_entry, dict):
+            pooled = session_entry.get('pooled', False)
+            transport = session_entry.get('transport')
+            if pooled and transport:
+                return transport
+        return None
+
+    async def remove_session_from_registry_only(self, session_id: str) -> None:
+        """Remove a session from the local registry without disconnecting the transport.
+
+        This is used when a pooled session needs to be removed from the registry
+        but kept alive for reuse by the pool.
+
+        Args:
+            session_id: Session identifier to remove from registry.
+        """
+        async with self._lock:
+            if session_id in self._sessions:
+                del self._sessions[session_id]
+                self._metrics["sessions_removed"] += 1
+                self._metrics["sessions_active"] = len(self._sessions)
+        logger.debug(f"Removed session {session_id} from registry only (transport kept alive)")
 
     async def broadcast(self, session_id: str, message: Dict[str, Any]) -> None:
         """Broadcast a message to a session.
@@ -694,8 +773,10 @@ class SessionRegistry(SessionBackend):
         if self._backend == "memory":
             if isinstance(message, (dict, list)):
                 msg_json = json.dumps(message)
+                self._metrics["messages_broadcast"] += 1
             else:
                 msg_json = json.dumps(str(message))
+                self._metrics["messages_broadcast"] += 1
 
             self._session_message: Dict[str, Any] = {"session_id": session_id, "message": msg_json}
 
@@ -703,8 +784,10 @@ class SessionRegistry(SessionBackend):
             try:
                 if isinstance(message, (dict, list)):
                     msg_json = json.dumps(message)
+                    self._metrics["messages_broadcast"] += 1
                 else:
                     msg_json = json.dumps(str(message))
+                    self._metrics["messages_broadcast"] += 1
 
                 await self._redis.publish(session_id, json.dumps({"type": "message", "message": msg_json, "timestamp": time.time()}))
             except Exception as e:
@@ -713,8 +796,10 @@ class SessionRegistry(SessionBackend):
             try:
                 if isinstance(message, (dict, list)):
                     msg_json = json.dumps(message)
+                    self._metrics["messages_broadcast"] += 1
                 else:
                     msg_json = json.dumps(str(message))
+                    self._metrics["messages_broadcast"] += 1
 
                 def _db_add() -> None:
                     """Store message in the database for inter-process communication.
@@ -1168,20 +1253,42 @@ class SessionRegistry(SessionBackend):
         while True:
             try:
                 # Check all local sessions
-                local_transports = {}
+                local_sessions_copy = {}
                 async with self._lock:
-                    local_transports = self._sessions.copy()
+                    # Create a copy of session data for checking
+                    for sid, entry in self._sessions.items():
+                        if isinstance(entry, dict):
+                            local_sessions_copy[sid] = {
+                                'transport': entry['transport'],
+                                'pooled': entry.get('pooled', False)
+                            }
+                        else:
+                            # For backward compatibility with direct transport storage
+                            local_sessions_copy[sid] = {
+                                'transport': entry,
+                                'pooled': False
+                            }
 
-                for session_id, transport in local_transports.items():
+                for session_id, session_data in local_sessions_copy.items():
+                    transport = session_data['transport']
+                    pooled = session_data['pooled']
+
                     try:
                         if not await transport.is_connected():
-                            await self.remove_session(session_id)
+                            if pooled:
+                                # For pooled sessions, remove from registry but don't disconnect
+                                await self.remove_session_from_registry_only(session_id)
+                            else:
+                                # For non-pooled sessions, full removal with disconnect
+                                await self.remove_session(session_id)
                     except Exception as e:
                         logger.error(f"Error checking session {session_id}: {e}")
-                        await self.remove_session(session_id)
-
+                        if pooled:
+                            await self.remove_session_from_registry_only(session_id)
+                        else:
+                            await self.remove_session(session_id)
+                        self._metrics["sessions_expired"] += 1
                 await asyncio.sleep(60)  # Run every minute
-
             except asyncio.CancelledError:
                 logger.info("Memory cleanup task cancelled")
                 break
@@ -1391,3 +1498,17 @@ class SessionRegistry(SessionBackend):
                             "params": {},
                         }
                     )
+    # ------------------------------
+    # Observability
+    # ------------------------------
+    
+    def get_metrics(self) -> Dict[str, int]:
+        """
+        Retrieve internal metrics counters for the session registry.
+
+        Returns:
+            A dictionary containing various metrics like session counts
+            and message broadcast counts. Keys are metric names (str),
+            values are their current counts (int).
+        """
+        return dict(self._metrics)
