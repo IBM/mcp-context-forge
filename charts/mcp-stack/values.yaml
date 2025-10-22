@@ -554,10 +554,15 @@ postgres:
     type: ClusterIP
     port: 5432
 
-  # PersistentVolumeClaim for data durability
+  # PersistentVolumeClaim for data durability - uses dynamic provisioning
   persistence:
     enabled: true
     storageClassName: ""         # Use empty string for default StorageClass
+                                # Production examples:
+                                #   AWS EKS: "gp3", "gp2", "io1", "io2"
+                                #   GKE: "standard", "ssd", "premium-rw"
+                                #   Azure AKS: "default", "managed-premium", "azurefile"
+                                #   Bare Metal: "local-path", "nfs-client"
     accessModes: [ReadWriteOnce]
     size: 5Gi
     reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
@@ -650,6 +655,11 @@ redis:
   persistence:
     enabled: false               # Set to true to enable Redis persistence
     storageClassName: ""         # Use empty string for default StorageClass
+                                # Production examples:
+                                #   AWS EKS: "gp3", "gp2", "io1", "io2"
+                                #   GKE: "standard", "ssd", "premium-rw"
+                                #   Azure AKS: "default", "managed-premium", "azurefile"
+                                #   Bare Metal: "local-path", "nfs-client"
     accessModes: [ReadWriteOnce]
     size: 1Gi
     reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
