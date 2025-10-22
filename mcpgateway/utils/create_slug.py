@@ -29,7 +29,7 @@ SPECIAL_CHAR_MAP = {
 }
 
 
-def slugify(text):
+def slugify(text: str) -> str:
     """Make an ASCII slug of text.
 
     Args:
