@@ -420,6 +420,136 @@ For production deployments, consider:
 3. **Database Dumps**: Regular `pg_dump` for PostgreSQL
 4. **Monitoring**: Set up alerts for storage usage
 
+### Manual Persistent Volume Creation (Advanced)
+
+For environments without dynamic provisioning support (bare-metal clusters, edge computing, air-gapped deployments), you can create PVs manually outside the Helm chart.
+
+#### Prerequisites
+
+- Kubernetes cluster without a dynamic provisioner
+- Direct access to cluster storage (hostPath, NFS, local volumes, etc.)
+- Understanding of PV/PVC binding mechanisms
+
+#### Step-by-Step Guide
+
+1. **Create your PV resource** (apply before installing the chart):
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: custom-postgres-pv
+spec:
+  storageClassName: ""  # Empty string - must match chart config
+  capacity:
+    storage: 10Gi       # Must be >= chart requested size
+  accessModes:
+    - ReadWriteOnce     # Must match or exceed chart access modes
+  persistentVolumeReclaimPolicy: Retain
+
+  # Choose your volume source (pick one):
+
+  # Option A: hostPath (single-node only)
+  hostPath:
+    path: "/mnt/data/postgres"
+    type: DirectoryOrCreate
+
+  # Option B: NFS (multi-node compatible)
+  # nfs:
+  #   server: nfs-server.example.com
+  #   path: "/exports/postgres"
+
+  # Option C: Local volume (node-specific)
+  # local:
+  #   path: "/mnt/disks/ssd1"
+  # nodeAffinity:
+  #   required:
+  #     nodeSelectorTerms:
+  #     - matchExpressions:
+  #       - key: kubernetes.io/hostname
+  #         operator: In
+  #         values: ["node-1"]
+```
+
+2. **Apply the PV**:
+```bash
+kubectl apply -f custom-postgres-pv.yaml
+kubectl get pv  # Verify PV is Available
+```
+
+3. **Configure the Helm chart** to use your manual PV:
+
+```yaml
+postgres:
+  persistence:
+    enabled: true
+    storageClassName: ""   # Empty string matches manual PVs without a class
+    accessModes: [ReadWriteOnce]
+    size: 5Gi              # Must be <= PV capacity (10Gi in example)
+```
+
+4. **Install the chart**:
+```bash
+helm install mcp-stack ./charts/mcp-stack -f my-values.yaml
+```
+
+The PVC will automatically bind to your manually-created PV based on:
+- Matching `storageClassName` (both empty `""`)
+- Sufficient capacity (PV ≥ PVC)
+- Compatible access modes
+- PV status: Available
+
+#### Redis Manual PV Example
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: custom-redis-pv
+spec:
+  storageClassName: ""
+  capacity:
+    storage: 2Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  hostPath:
+    path: "/mnt/data/redis"
+    type: DirectoryOrCreate
+```
+
+#### Troubleshooting Manual PVs
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| PVC stuck in `Pending` | No matching PV | Check storageClassName, size, accessModes match |
+| PVC binds to wrong PV | Multiple matching PVs | Use unique storageClassName or labels |
+| Pod can't mount volume | Path doesn't exist | Create directory on node: `mkdir -p /mnt/data/postgres` |
+| Permission denied | Wrong ownership | `chown -R 999:999 /mnt/data/postgres` (Postgres UID) |
+
+#### Security Considerations
+
+- **hostPath volumes** bypass pod security policies - use only in trusted environments
+- **NFS volumes** should use `root_squash` and proper export permissions
+- **Local volumes** require node affinity - pod will only schedule on nodes with the volume
+- Always use `Retain` reclaim policy to prevent accidental data loss
+
+#### Migration from Chart-Managed PVs
+
+If upgrading from a previous version that used chart-managed hostPath PVs:
+
+1. **Back up your data** before upgrading
+2. **Delete old Helm-managed PVs** (they won't be recreated):
+```bash
+kubectl delete pv mcp-stack-default-postgres-pv
+kubectl delete pv mcp-stack-default-redis-pv
+```
+3. **Create new manual PVs** pointing to the same paths:
+```yaml
+hostPath:
+  path: "/mnt/data/postgres"  # Same path as before
+```
+4. **Upgrade the chart** - PVCs will bind to your new PVs
+
 ---
 
 ## Troubleshooting
