@@ -887,6 +887,20 @@
               "description": "Storage size",
               "pattern": "^[0-9]+[KMGTPE]i?$",
               "default": "5Gi"
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Annotations for the PVC",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "reclaimPolicy": {
+              "type": "string",
+              "enum": ["Retain", "Recycle", "Delete"],
+              "description": "Reclaim policy for the PVC",
+              "default": "Retain"
             }
           },
           "additionalProperties": false
@@ -1007,6 +1021,52 @@
             "liveness": {
               "$ref": "#/$defs/probe",
               "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        },
+        "persistence": {
+          "type": "object",
+          "description": "Redis persistence configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable persistence",
+              "default": false
+            },
+            "storageClassName": {
+              "type": "string",
+              "description": "Storage class name",
+              "default": ""
+            },
+            "accessModes": {
+              "type": "array",
+              "description": "Access modes",
+              "items": {
+                "type": "string",
+                "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany", "ReadWriteOncePod"]
+              },
+              "default": ["ReadWriteOnce"]
+            },
+            "size": {
+              "type": "string",
+              "description": "Storage size",
+              "pattern": "^[0-9]+[KMGTPE]i?$",
+              "default": "1Gi"
+            },
+            "reclaimPolicy": {
+              "type": "string",
+              "enum": ["Retain", "Recycle", "Delete"],
+              "description": "Reclaim policy for the PVC",
+              "default": "Retain"
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Annotations for the PVC",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
             }
           },
           "additionalProperties": false

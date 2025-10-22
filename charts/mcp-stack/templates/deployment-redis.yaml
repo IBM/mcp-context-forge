@@ -35,7 +35,7 @@ spec:
         - name: redis
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
-          
+
           {{- if .Values.redis.persistence.enabled }}
           # Use custom redis.conf with persistence settings
           command: ["redis-server", "/usr/local/etc/redis/redis.conf"]

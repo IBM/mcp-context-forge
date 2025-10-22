@@ -14,9 +14,6 @@ metadata:
 spec:
   storageClassName: {{ .Values.postgres.persistence.storageClassName }}
   accessModes: {{- toYaml .Values.postgres.persistence.accessModes | nindent 4 }}
-  selector:
-    matchLabels:
-      app: {{ include "mcp-stack.fullname" . }}-postgres
   resources:
     requests:
       storage: {{ .Values.postgres.persistence.size }}

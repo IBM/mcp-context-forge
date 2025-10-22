@@ -14,9 +14,6 @@ metadata:
 spec:
   storageClassName: {{ .Values.redis.persistence.storageClassName }}
   accessModes: {{- toYaml .Values.redis.persistence.accessModes | nindent 4 }}
-  selector:
-    matchLabels:
-      app: {{ include "mcp-stack.fullname" . }}-redis
   resources:
     requests:
       storage: {{ .Values.redis.persistence.size }}
