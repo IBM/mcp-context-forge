@@ -1,7 +1,7 @@
 """" resize url and slug columns to 191"
 
 Revision ID: 878e287d2366
-Revises: 2f67b12600b4
+Revises: 3c89a45f32e5
 Create Date: 2025-10-08 09:08:35.363100
 
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '878e287d2366'
-down_revision: Union[str, Sequence[str], None] = '2f67b12600b4'
+down_revision: Union[str, Sequence[str], None] = '3c89a45f32e5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
