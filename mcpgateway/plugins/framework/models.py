@@ -667,12 +667,14 @@ class PluginErrorModel(BaseModel):
         code (str): an error code.
         details: (dict[str, Any]): additional error details.
         plugin_name (str): the plugin name.
+        mcp_error_code ([int]): The MCP error code passed back to the client. Defaults to Internal Error.
     """
 
     message: str
     code: Optional[str] = ""
     details: Optional[dict[str, Any]] = Field(default_factory=dict)
     plugin_name: str
+    mcp_error_code: int = -32603
 
 
 class PluginViolation(BaseModel):
@@ -684,6 +686,7 @@ class PluginViolation(BaseModel):
         code (str): a violation code.
         details: (dict[str, Any]): additional violation details.
         _plugin_name (str): the plugin name, private attribute set by the plugin manager.
+        mcp_error_code(Optional[int]): A valid mcp error code which will be sent back to the client if plugin enabled.
 
     Examples:
         >>> violation = PluginViolation(
@@ -706,6 +709,7 @@ class PluginViolation(BaseModel):
     code: str
     details: dict[str, Any]
     _plugin_name: str = PrivateAttr(default="")
+    mcp_error_code: Optional[int] = None
 
     @property
     def plugin_name(self) -> str:
