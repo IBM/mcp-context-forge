@@ -1,0 +1,6 @@
+description: "Uses JSON Processor from ALTK to extract data from long JSON responses"
+author: "Jason Tsay"
+version: "0.1.0"
+available_hooks:
+  - "tool_post_hook"
+default_configs:
