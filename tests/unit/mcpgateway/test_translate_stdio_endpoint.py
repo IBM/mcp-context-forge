@@ -8,7 +8,6 @@ Authors: Manav Gupta
 
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.
 """
-
 import sys
 import asyncio
 import pytest
@@ -256,15 +255,13 @@ sys.stdout.flush()
         pubsub = _PubSub()
 
         env_vars = os.environ.copy()
-        env_vars.update(
-            {
-                "GITHUB_TOKEN": "github-token-123",
-                "TENANT_ID": "acme-corp",
-                "API_KEY": "api-key-456",
-                "ENVIRONMENT": "production",
-                "DEBUG": "false",
-            }
-        )
+        env_vars.update({
+            "GITHUB_TOKEN": "github-token-123",
+            "TENANT_ID": "acme-corp",
+            "API_KEY": "api-key-456",
+            "ENVIRONMENT": "production",
+            "DEBUG": "false",
+        })
 
         endpoint = StdIOEndpoint(f"{sys.executable} {test_script}", pubsub, env_vars)
 
