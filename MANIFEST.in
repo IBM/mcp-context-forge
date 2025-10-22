@@ -61,6 +61,11 @@ recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
 
+# nginx configuration and docker files
+recursive-include nginx *.conf
+recursive-include nginx *.md
+include nginx/Dockerfile
+
 # Export/Import functionality (explicitly include new files)
 include mcpgateway/cli_export_import.py
 include mcpgateway/services/export_service.py
@@ -135,6 +140,7 @@ prune node_modules
 exclude .env
 exclude .env.backup
 exclude .env.ce.example
+exclude cookies.txt
 
 # Database and runtime files
 exclude *.db
