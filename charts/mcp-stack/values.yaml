@@ -11,6 +11,12 @@ global:
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
+  # --- Specific plugin file ----#
+  pluginConfig:
+    enabled: false
+    plugins: |
+      # plugin file
+  
   replicaCount: 2                           # horizontal scaling for the gateway
 
   # --- HORIZONTAL POD AUTOSCALER --------------------------------------
