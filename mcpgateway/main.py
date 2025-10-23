@@ -948,6 +948,7 @@ if plugin_manager:
 # Create API routers
 protocol_router = APIRouter(prefix="/protocol", tags=["Protocol"])
 tool_router = APIRouter(prefix="/tools", tags=["Tools"])
+toolops_router = APIRouter(prefix="/toolops", tags=["Toolops"])
 resource_router = APIRouter(prefix="/resources", tags=["Resources"])
 prompt_router = APIRouter(prefix="/prompts", tags=["Prompts"])
 gateway_router = APIRouter(prefix="/gateways", tags=["Gateways"])
@@ -1202,6 +1203,70 @@ def update_url_protocol(request: Request) -> str:
     new_parsed = parsed._replace(scheme=proto)
     # urlunparse keeps netloc and path intact
     return str(urlunparse(new_parsed)).rstrip("/")
+
+
+from mcpgateway.toolops.services import validation_generate_test_cases
+# Toolops APIs - Generating test cases , Tool enrichment #
+@toolops_router.post("/validation/generate_testcases")
+async def generate_testcases_for_tool(tool_id: str = Query(description="Tool ID",default='e228725d951f4877bcb80418e7a6f139')) -> List[Dict]:
+    """
+    Generate test cases for a tool
+
+    This endpoint handles the automated test case generation for a tool by accepting
+    a tool id . The `require_auth` dependency ensures that
+    the user is authenticated before proceeding.
+
+    Args:
+        tool_id: Tool ID in context forge.
+        user (str): The authenticated user (from `require_auth` dependency).
+
+    Returns:
+        List: A list of test cases generated for the tool
+
+    Raises:
+        HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
+    """
+    try:
+        print("Running test case geneation for Tool - ", tool_id)
+        #logger.debug(f"Authenticated user {user} is initializing the protocol.")
+        test_cases = await validation_generate_test_cases(tool_id)
+        return test_cases
+
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON in request body",
+        )
+
+@toolops_router.post("/enrichment/enrich_tool")
+async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID")) -> Dict:
+    """
+    Generate test cases for a tool
+
+    This endpoint handles the automated tool enrichment by accepting
+    a tool id . The `require_auth` dependency ensures that
+    the user is authenticated before proceeding.
+
+    Args:
+        tool_id: Tool ID in context forge.
+        user (str): The authenticated user (from `require_auth` dependency).
+
+    Returns:
+        List: A list of test cases generated for the tool
+
+    Raises:
+        HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
+    """
+    try:
+        print("Tool - ", tool_id)
+        #logger.debug(f"Authenticated user {user} is initializing the protocol.")
+        return {"enriched_tool":{"name":"test"}}
+
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON in request body",
+        )
 
 
 # Protocol APIs #
@@ -4332,6 +4397,7 @@ async def cleanup_import_statuses(max_age_hours: int = 24, user=Depends(get_curr
 app.include_router(version_router)
 app.include_router(protocol_router)
 app.include_router(tool_router)
+app.include_router(toolops_router)
 app.include_router(resource_router)
 app.include_router(prompt_router)
 app.include_router(gateway_router)
