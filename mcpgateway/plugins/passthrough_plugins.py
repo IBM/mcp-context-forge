@@ -266,7 +266,7 @@ async def on_passthrough_request(
         # Use default pre-processing chain from config
         chain = ["deny_filter", "pii_filter", "regex_filter", "resource_filter", "rate_limit"]
         
-    logger.debug(f"Executing pre-request plugin chain: {chain}")
+    logger.info(f"Executing pre-request plugin chain: {chain}")
     
     try:
         return await execute_plugin_chain_with_framework(

@@ -61,6 +61,7 @@ class PluginInstanceRegistry:
         """
         self._plugins: dict[str, PluginRef] = {}
         self._hooks: dict[HookType, list[PluginRef]] = defaultdict(list)
+        logger.info(f"Initialized hooks dict: {self._hooks}")
         self._priority_cache: dict[HookType, list[PluginRef]] = {}
 
     def register(self, plugin: Plugin) -> None:
@@ -72,12 +73,15 @@ class PluginInstanceRegistry:
         Raises:
             ValueError: if plugin is already registered.
         """
+        logger.info(f"Registering plugin: {plugin.name}")
         if plugin.name in self._plugins:
             raise ValueError(f"Plugin {plugin.name} already registered")
 
         plugin_ref = PluginRef(plugin)
+        logger.info(f"plugin_ref:: {plugin_ref}")
 
         self._plugins[plugin.name] = plugin_ref
+        logger.info(f"pluging.hooks:: {[h.name for h in plugin.hooks]}")
 
         # Register hooks
         for hook_type in plugin.hooks:

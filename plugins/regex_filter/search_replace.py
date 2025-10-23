@@ -27,6 +27,10 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokeResult,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
+    PassthroughPreRequestPayload,
+    PassthroughPreRequestResult,
+    PassthroughPostResponsePayload,
+    PassthroughPostResponseResult,
 )
 
 
@@ -140,3 +144,63 @@ class SearchReplacePlugin(Plugin):
             for pattern in self.__patterns:
                 payload.result = re.sub(pattern[0], pattern[1], payload.result)
         return ToolPostInvokeResult(modified_payload=payload)
+
+    async def passthrough_pre_request(self, payload: PassthroughPreRequestPayload, context: PluginContext) -> PassthroughPreRequestResult:
+        """Apply configured search/replace patterns to passthrough request fields."""
+        # Replace in URL
+        if payload.url:
+            for pattern in self.__patterns:
+                payload.url = re.sub(pattern[0], pattern[1], payload.url)
+
+        # Replace in headers
+        if payload.headers:
+            for k, v in list(payload.headers.items()):
+                try:
+                    if isinstance(v, str):
+                        nv = v
+                        for pattern in self.__patterns:
+                            nv = re.sub(pattern[0], pattern[1], nv)
+                        payload.headers[k] = nv
+                except Exception:
+                    continue
+
+        # Replace in params
+        if payload.params:
+            for k, v in list(payload.params.items()):
+                try:
+                    if isinstance(v, str):
+                        nv = v
+                        for pattern in self.__patterns:
+                            nv = re.sub(pattern[0], pattern[1], nv)
+                        payload.params[k] = nv
+                except Exception:
+                    continue
+
+        # Replace in body if string
+        if payload.body and isinstance(payload.body, str):
+            for pattern in self.__patterns:
+                payload.body = re.sub(pattern[0], pattern[1], payload.body)
+
+        return PassthroughPreRequestResult(modified_payload=payload)
+
+    async def passthrough_post_response(self, payload: PassthroughPostResponsePayload, context: PluginContext) -> PassthroughPostResponseResult:
+        """Apply configured search/replace patterns to passthrough response content."""
+        content = payload.content
+        # Try to extract textual content
+        if content is None and hasattr(payload.response, "text"):
+            try:
+                content = payload.response.text
+            except Exception:
+                content = None
+
+        if content and isinstance(content, (str, bytes)):
+            try:
+                s = content if isinstance(content, str) else content.decode("utf-8", errors="ignore")
+                for pattern in self.__patterns:
+                    s = re.sub(pattern[0], pattern[1], s)
+                payload.content = s
+            except Exception:
+                # ignore conversion errors
+                pass
+
+        return PassthroughPostResponseResult(modified_payload=payload)

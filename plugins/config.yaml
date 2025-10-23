@@ -70,7 +70,7 @@ plugins:
     description: "Detects and masks Personally Identifiable Information"
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke","passthrough_pre_request","passthrough_post_response"]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
     mode: "permissive"  # enforce | permissive | disabled
     priority: 50  # Lower number = higher priority (runs first)
@@ -105,9 +105,9 @@ plugins:
     description: "A plugin for finding and replacing words."
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke","passthrough_pre_request","passthrough_post_response"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "permissive"  # enforce | permissive | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -127,9 +127,9 @@ plugins:
     description: "A plugin that implements a deny list filter."
     version: "0.1.0"
     author: "Mihai Criveti"
-    hooks: ["prompt_pre_fetch"]
+    hooks: ["prompt_pre_fetch","passthrough_pre_request","passthrough_post_response"]
     tags: ["plugin", "filter", "denylist", "pre-post"]
-    mode: "disabled"  # enforce | permissive | disabled
+    mode: "permissive"  # enforce | permissive | disabled
     priority: 100
     conditions:
       # Apply to specific tools/servers

@@ -12,7 +12,18 @@ This module loads configurations for plugins.
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PluginViolation, PromptPrehookPayload, PromptPrehookResult
+from mcpgateway.plugins.framework import (
+    Plugin,
+    PluginConfig,
+    PluginContext,
+    PluginViolation,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+    PassthroughPreRequestPayload,
+    PassthroughPreRequestResult,
+    PassthroughPostResponsePayload,
+    PassthroughPostResponseResult,
+)
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -71,3 +82,74 @@ class DenyListPlugin(Plugin):
     async def shutdown(self) -> None:
         """Cleanup when plugin shuts down."""
         logger.info("Deny list plugin shutting down")
+
+    async def passthrough_pre_request(self, payload: PassthroughPreRequestPayload, context: PluginContext) -> PassthroughPreRequestResult:
+        """Inspect passthrough request and block when deny words are present.
+
+        This will scan URL, headers, params and body (stringified) for deny words.
+        """
+        # Helper to test a value for deny words
+        def _contains_deny(value: object) -> bool:
+            if value is None:
+                return False
+            try:
+                s = value if isinstance(value, str) else str(value)
+            except Exception:
+                return False
+            for word in self._deny_list:
+                if word in s:
+                    return True
+            return False
+
+        # Check URL
+        if _contains_deny(payload.url):
+            violation = PluginViolation(reason="Deny word in URL", description="A deny word was found in the request URL", code="deny", details={})
+            logger.warning("Deny word detected in passthrough request URL")
+            return PassthroughPreRequestResult(modified_payload=payload, violation=violation, continue_processing=False)
+
+        # Check headers
+        for _, v in (payload.headers or {}).items():
+            if _contains_deny(v):
+                violation = PluginViolation(reason="Deny word in header", description="A deny word was found in request headers", code="deny", details={})
+                logger.warning("Deny word detected in passthrough request headers")
+                return PassthroughPreRequestResult(modified_payload=payload, violation=violation, continue_processing=False)
+
+        # Check params
+        for _, v in (payload.params or {}).items():
+            if _contains_deny(v):
+                violation = PluginViolation(reason="Deny word in params", description="A deny word was found in query parameters", code="deny", details={})
+                logger.warning("Deny word detected in passthrough request params")
+                return PassthroughPreRequestResult(modified_payload=payload, violation=violation, continue_processing=False)
+
+        # Check body (stringify non-None values)
+        if _contains_deny(payload.body):
+            violation = PluginViolation(reason="Deny word in body", description="A deny word was found in request body", code="deny", details={})
+            logger.warning("Deny word detected in passthrough request body")
+            return PassthroughPreRequestResult(modified_payload=payload, violation=violation, continue_processing=False)
+
+        return PassthroughPreRequestResult(modified_payload=payload)
+
+    async def passthrough_post_response(self, payload: PassthroughPostResponsePayload, context: PluginContext) -> PassthroughPostResponseResult:
+        """Inspect passthrough response content for deny words and optionally block.
+
+        Scans the response content (string/bytes) and returns a violation if a deny word is found.
+        """
+        content = payload.content
+        if content is None and hasattr(payload.response, "text"):
+            try:
+                content = payload.response.text
+            except Exception:
+                content = None
+
+        try:
+            s = content if isinstance(content, str) else (content.decode("utf-8", errors="ignore") if isinstance(content, (bytes, bytearray)) else str(content))
+        except Exception:
+            s = ""
+
+        for word in self._deny_list:
+            if word in s:
+                violation = PluginViolation(reason="Deny word in response", description="A deny word was found in response content", code="deny", details={})
+                logger.warning("Deny word detected in passthrough response content")
+                return PassthroughPostResponseResult(modified_payload=payload, violation=violation, continue_processing=False)
+
+        return PassthroughPostResponseResult(modified_payload=payload)

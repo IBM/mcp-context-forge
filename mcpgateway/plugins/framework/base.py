@@ -311,6 +311,7 @@ class PluginRef:
             >>> isinstance(ref._uuid, uuid.UUID)
             True
         """
+        print(f"Creating PluginRef for plugin: {plugin}")
         self._plugin = plugin
         self._uuid = uuid.uuid4()
 

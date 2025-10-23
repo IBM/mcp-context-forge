@@ -39,7 +39,7 @@ import httpx
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
 from mcpgateway.db import get_db
 from mcpgateway.auth import require_auth
-from mcpgateway.plugins.framework.manager import on_passthrough_request, on_passthrough_response
+from mcpgateway.plugins.passthrough_plugins import on_passthrough_request, on_passthrough_response
 from mcpgateway.utils.passthrough_config import get_passthrough_config
 
 logger = logging.getLogger(__name__)

@@ -481,9 +481,9 @@ async def pre_passthrough_request(plugin: PluginRef, payload: PassthroughPreRequ
     Returns:
         Result containing processed payload or violation information
     """
-    logger.debug(f"Executing passthrough pre-request hook for plugin: {plugin.config.name}")
+    logger.debug(f"Executing passthrough pre-request hook for plugin: {plugin.name}")
     # Prefer plugin.plugin interface (consistent with other hooks)
-    if hasattr(plugin.plugin, "on_passthrough_request"):
+    if hasattr(plugin.plugin, "passthrough_pre_request"):
         return await plugin.plugin.passthrough_pre_request(payload, context)
 
     logger.warning(f"Plugin {plugin.name} does not implement passthrough_pre_request")
@@ -501,7 +501,7 @@ async def post_passthrough_response(plugin: PluginRef, payload: PassthroughPostR
     Returns:
         Result containing processed payload or violation information
     """
-    logger.debug(f"Executing passthrough post-response hook for plugin: {plugin.config.name}")
+    logger.info(f"Executing passthrough post-response hook for plugin: {plugin.name}")
     if hasattr(plugin.plugin, "passthrough_post_response"):
         return await plugin.plugin.passthrough_post_response(payload, context)
 
@@ -788,7 +788,12 @@ class PluginManager:
         await self._cleanup_old_contexts()
 
         # Get plugins configured for this hook
+        logger.info(f"HookType.PROMPT_PRE_FETCH::{HookType.PROMPT_PRE_FETCH}")
         plugins = self._registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+        logger.info(f"Executing prompt pre-fetch with {len(plugins)} plugins")
+
+        # Log the original plugin names
+        logger.info(f"Original plugins: {[p.name for p in plugins]}")
 
         # Execute plugins
         result = await self._pre_prompt_executor.execute(plugins, payload, global_context, pre_prompt_fetch, pre_prompt_matches, local_contexts, violations_as_exceptions)
@@ -1086,21 +1091,25 @@ class PluginManager:
             >>> #     # Use processed request
             >>> #     processed_request = result.modified_payload
         """
-        # Get plugins configured for this hook
+        logger.info(f"Plugin chain: {plugin_chain}")
+
+        # Always retrieve PluginRef objects from registry for this hook
         plugins = self._registry.get_plugins_for_hook(HookType.PASSTHROUGH_PRE_REQUEST)
 
-        # If a plugin_chain was provided, try to filter the plugins to that list.
-        # Note: the plugin_chain is expected to contain plugin names as registered in the framework.
+        # If a plugin_chain was provided (list of plugin names), filter plugin refs by name
         if plugin_chain:
             try:
-                filtered = [p for p in plugins if p.name in set(plugin_chain)]
-                # Fall back to full list if filtering yields nothing
+                names = set(plugin_chain)
+                filtered = [p for p in plugins if p.name in names]
+                # If filtering yields a non-empty list, use it; otherwise keep full plugin list
                 if filtered:
+                    logger.info(f"Filtered plugins for PASSTHROUGH_PRE_REQUEST: {[p.name for p in filtered]}")
                     plugins = filtered
             except Exception:
-                # If anything goes wrong while filtering, keep full plugin list
+                # On any error, fall back to the full plugin list
                 pass
-
+        logger.info(f"Found {len(plugins)} plugins for PASSTHROUGH_PRE_REQUEST hook")
+        logger.info(f"Filtered plugins: {[p.name for p in plugins]}")
         # Execute plugins using the passthrough executor and in-file hook
         result = await self._pre_passthrough_executor.execute(
             plugins, payload, global_context, pre_passthrough_request, pre_passthrough_matches, local_contexts, violations_as_exceptions
@@ -1146,11 +1155,15 @@ class PluginManager:
         """
         # Get plugins configured for this hook
         plugins = self._registry.get_plugins_for_hook(HookType.PASSTHROUGH_POST_RESPONSE)
+        logger.info(f"Found {len(plugins)} plugins for PASSTHROUGH_POST_RESPONSE hook")
+        logger.info(f"Original plugins: {[p.name for p in plugins]}")
+        logger.info(f"Plugin chain: {plugin_chain}")
 
-        # If a plugin_chain was provided, filter the plugin list
+        # If a plugin_chain was provided (list of plugin names), filter plugin refs by name
         if plugin_chain:
             try:
-                filtered = [p for p in plugins if p.name in set(plugin_chain)]
+                names = set(plugin_chain)
+                filtered = [p for p in plugins if p.name in names]
                 if filtered:
                     plugins = filtered
             except Exception:
