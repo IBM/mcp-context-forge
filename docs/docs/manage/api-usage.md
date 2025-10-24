@@ -110,8 +110,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "name": "my-mcp-server",
     "url": "http://localhost:9000/mcp",
     "description": "My custom MCP server",
-    "enabled": true,
-    "request_type": "STREAMABLEHTTP"
+    "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways | jq '.'
 ```
@@ -137,8 +136,7 @@ GATEWAY_RESPONSE=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "name": "git-server",
     "url": "http://localhost:9000/mcp",
     "description": "Git operations MCP server",
-    "enabled": true,
-    "request_type": "STREAMABLEHTTP"
+    "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways)
 
@@ -166,7 +164,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle gateway enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/gateways/$GATEWAY_ID/toggle | jq '.'
+  $BASE_URL/gateways/$GATEWAY_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Gateway
@@ -213,20 +211,24 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.output
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "weather-api",
-    "description": "Get weather information for a city",
-    "url": "https://api.weather.com/v1/current",
-    "request_type": "REST",
-    "integration_type": "REST",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "city": {
-          "type": "string",
-          "description": "City name"
-        }
-      },
-      "required": ["city"]
+    "tool": {
+      "name": "weather-api",
+      "description": "Get weather information for a city",
+      "url": "https://api.weather.com/v1/current",
+      "integration_type": "REST",
+      "request_type": "POST",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
     }
   }' \
   $BASE_URL/tools | jq '.'
@@ -235,16 +237,13 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 ### Invoke a Tool
 
 ```bash
+export TOOL_NAME="your-tool-name"
 # Execute a tool with arguments
+jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"value1","param2":"value2"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "arguments": {
-      "param1": "value1",
-      "param2": "value2"
-    }
-  }' \
-  $BASE_URL/tools/$TOOL_ID | jq '.'
+  -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
 ```
 
 #### Complete Example: Tool Invocation
@@ -262,14 +261,11 @@ echo "Input schema:"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.inputSchema'
 
 # 3. Invoke the tool
+jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"test_value"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "arguments": {
-      "param1": "test_value"
-    }
-  }' \
-  $BASE_URL/tools/$TOOL_ID | jq '.'
+  -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
 ```
 
 ### Update Tool
@@ -290,7 +286,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle tool enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/tools/$TOOL_ID/toggle | jq '.'
+  $BASE_URL/tools/$TOOL_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Tool
@@ -312,6 +308,22 @@ Virtual servers allow you to compose multiple MCP servers and tools into unified
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers | jq '.'
 ```
 
+### Create Virtual Server
+
+```bash
+# Create a new virtual server
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "server": {
+    "name": "my-virtual-server",
+    "description": "Composed server with multiple tools",
+    "associated_tools": ["'$TOOL_ID'"]
+    }
+  }' \
+  $BASE_URL/servers | jq '.'
+```
+
 ### Get Server Details
 
 ```bash
@@ -320,37 +332,25 @@ export SERVER_ID="your-server-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers/$SERVER_ID | jq '.'
 ```
 
-### Create Virtual Server
 
-```bash
-# Create a new virtual server
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "my-virtual-server",
-    "description": "Composed server with multiple tools",
-    "associated_gateways": ["'$GATEWAY_ID'"],
-    "enabled": true
-  }' \
-  $BASE_URL/servers | jq '.'
-```
 
 #### Complete Example: Virtual Server Creation
 
 ```bash
-# 1. Get gateway IDs to associate
-GATEWAYS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways)
-export GW1_ID=$(echo $GATEWAYS | jq -r '.[0].id')
-export GW2_ID=$(echo $GATEWAYS | jq -r '.[1].id')
+# 1. Get tools IDs to associate
+TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools)
+export TOOL1_ID=$(echo $TOOLS | jq -r '.[0].id')
+export TOOL2_ID=$(echo $TOOLS | jq -r '.[1].id')
 
 # 2. Create virtual server with multiple gateways
 SERVER_RESPONSE=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "unified-server",
-    "description": "Combines multiple MCP servers",
-    "associated_gateways": ["'$GW1_ID'", "'$GW2_ID'"],
-    "enabled": true
+  "server": {
+    "name": "my-virtual-server",
+    "description": "Composed server with multiple tools",
+    "associated_tools": ["'$TOOL1_ID'", "'$TOOL2_ID'"]
+    }
   }' \
   $BASE_URL/servers)
 
@@ -409,7 +409,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle server enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/servers/$SERVER_ID/toggle | jq '.'
+  $BASE_URL/servers/$SERVER_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Server
@@ -431,6 +431,25 @@ Resources are data sources (files, documents, database queries) exposed by MCP s
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources | jq '.'
 ```
 
+### Register a Resource
+
+```bash
+# Register a new resource
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '
+  {"resource": 
+    {
+      "name": "config-file",
+      "uri": "file:///etc/config.json",
+      "description": "Application configuration file",
+      "mime_type": "application/json",
+      "content": "{'key': 'value'}"
+    }
+  }' \
+  $BASE_URL/resources | jq '.'
+```
+
 ### Get Resource Details
 
 ```bash
@@ -439,27 +458,13 @@ export RESOURCE_ID="your-resource-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources/$RESOURCE_ID | jq '.'
 ```
 
-### Register a Resource
-
-```bash
-# Register a new resource
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "config-file",
-    "uri": "file:///etc/config.yaml",
-    "description": "Application configuration file",
-    "mime_type": "application/yaml"
-  }' \
-  $BASE_URL/resources | jq '.'
-```
 
 ### Read Resource Content
 
 ```bash
 # Get resource content
 curl -s -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/resources/$RESOURCE_ID | jq '.content'
+  $BASE_URL/resources/$RESOURCE_ID | jq '.text'
 ```
 
 ### Subscribe to Resource Updates
@@ -496,7 +501,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle resource enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/resources/$RESOURCE_ID/toggle | jq '.'
+  $BASE_URL/resources/$RESOURCE_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Resource
@@ -518,33 +523,34 @@ Prompts are reusable templates with arguments for AI interactions.
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts | jq '.'
 ```
 
-### Get Prompt Details
-
-```bash
-# Get specific prompt
-export PROMPT_ID="your-prompt-id"
-curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts/$PROMPT_ID | jq '.'
-```
-
 ### Register a Prompt
 
 ```bash
 # Register a new prompt template
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "code-review",
-    "description": "Review code for best practices",
-    "content": "Review the following code and suggest improvements:\n\n{{code}}",
-    "arguments": [
-      {
-        "name": "code",
-        "description": "Code to review",
-        "required": true
-      }
-    ]
+  -d '{"prompt": {
+      "name": "code-review",
+      "description": "Review code for best practices",
+      "template": "Review the following code and suggest improvements:\n\n{{code}}",
+      "arguments": [
+        {
+          "name": "code",
+          "description": "Code to review",
+          "required": true
+        }
+      ]
+    }
   }' \
   $BASE_URL/prompts | jq '.'
+```
+
+### Get Prompt Details
+
+```bash
+# Get specific prompt
+export PROMPT_ID="your-prompt-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts/$PROMPT_ID | jq '.'
 ```
 
 ### Execute Prompt (Get Rendered Content)
@@ -554,9 +560,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "arguments": {
-      "code": "def hello():\n    print(\"Hello\")"
-    }
+    "code": "def hello():\n    print(\"Hello\")"
   }' \
   $BASE_URL/prompts/$PROMPT_ID | jq '.'
 ```
@@ -579,7 +583,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle prompt enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/prompts/$PROMPT_ID/toggle | jq '.'
+  $BASE_URL/prompts/$PROMPT_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Prompt
@@ -598,50 +602,19 @@ Tags organize and categorize gateway resources.
 
 ```bash
 # List all available tags
-curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tags | jq '.'
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tags?entity_types=gateways%2Cservers%2Ctools%2Cresources%2Cprompts&include_entities=false" \
+| jq '.'
 ```
 
-### Create Tag
-
-```bash
-# Create a new tag
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "production",
-    "description": "Production-ready tools",
-    "color": "#00FF00"
-  }' \
-  $BASE_URL/tags | jq '.'
-```
-
-### Get Tag Details
+### Get Tag Entities
 
 ```bash
 # Get specific tag
-export TAG_ID="your-tag-id"
-curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tags/$TAG_ID | jq '.'
-```
-
-### Update Tag
-
-```bash
-# Update tag
-curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "Updated description",
-    "color": "#FF0000"
-  }' \
-  $BASE_URL/tags/$TAG_ID | jq '.'
-```
-
-### Delete Tag
-
-```bash
-# Delete tag
-curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/tags/$TAG_ID | jq '.'
+export TAG_NAME="your-tag-name"
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tags/$TAG_NAME/entities" \
+| jq '.'
 ```
 
 ## Bulk Operations
@@ -655,7 +628,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 # Export specific entities
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/export?include_tools=true&include_gateways=true" | \
+  "$BASE_URL/export?types=tools%2Cgateways" | \
   jq '.' > partial-export.json
 ```
 
@@ -663,10 +636,21 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ```bash
 # Import configuration from file
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+payload=$(jq -n \
+  --arg conflict "skip" \
+  --argjson dry_run false \
+  --argjson import_data "$(cat gateway-export.json)" '
+  {
+    conflict_strategy: $conflict,
+    dry_run: $dry_run,
+    import_data: $import_data
+  }')
+
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d @gateway-export.json \
-  $BASE_URL/import | jq '.'
+  -d "$payload" \
+  "$BASE_URL/import" | jq '.'
 ```
 
 ### Bulk Import Tools
@@ -676,20 +660,54 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "tools": [
-      {
-        "name": "tool1",
-        "description": "First tool",
-        "url": "http://example.com/api1"
-      },
-      {
-        "name": "tool2",
-        "description": "Second tool",
-        "url": "http://example.com/api2"
+    "conflict_strategy": "update",
+    "dry_run": false,
+    "import_data": {
+      "version": "2025-03-26",
+      "exported_at": "2025-10-24T18:41:55.776238Z",
+      "exported_by": "admin@example.com",
+      "source_gateway": "http://0.0.0.0:4444",
+      "encryption_method": "AES-256-GCM",
+      "entities": {
+        "tools": [
+          {
+            "name": "tool1",
+            "displayName": "tool1",
+            "url": "http://example.com/api1",
+            "integration_type": "REST",
+            "request_type": "POST",
+            "description": "First tool",
+            "headers": {},
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "param": { "type": "string", "description": "Parameter name" }
+              },
+              "required": ["param"]
+            }
+          },
+          {
+            "name": "tool2",
+            "displayName": "tool2",
+            "url": "http://example.com/api2",
+            "integration_type": "REST",
+            "request_type": "GET",
+            "description": "Second tool",
+            "headers": {},
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string", "description": "Query string" }
+              },
+              "required": ["query"]
+            }
+          }
+        ]
       }
-    ]
+    },
+    "rekey_secret": null
   }' \
-  $BASE_URL/bulk-import | jq '.'
+  "$BASE_URL/import" | jq '.'
 ```
 
 ## A2A Agent Management
@@ -712,13 +730,14 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/a2a | jq '.'
 # Register an OpenAI agent
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "openai-assistant",
-    "agent_type": "openai",
-    "endpoint": "https://api.openai.com/v1/chat/completions",
-    "api_key": "sk-...",
-    "model": "gpt-4",
-    "description": "OpenAI GPT-4 assistant"
+  -d '{"agent": {
+      "name": "openai-assistant",
+      "agent_type": "openai",
+      "endpoint_url": "https://api.openai.com/v1/chat/completions",
+      "description": "OpenAI GPT-4 assistant",
+      "auth_type": "bearer",
+      "auth_value": "OPENAI_API_KEY"
+    }
   }' \
   $BASE_URL/a2a | jq '.'
 ```
@@ -735,12 +754,14 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/a2a/$A2A_ID | jq '.'
 
 ```bash
 # Execute agent with message
+export A2A_NAME="openai-assistant"
+
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Explain quantum computing in simple terms"
   }' \
-  $BASE_URL/a2a/$A2A_ID/invoke | jq '.'
+  $BASE_URL/a2a/$A2A_NAME/invoke | jq '.'
 ```
 
 ### Update A2A Agent
@@ -822,8 +843,7 @@ GATEWAY=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "name": "test-server",
     "url": "http://localhost:9000/mcp",
     "description": "Test MCP server",
-    "enabled": true,
-    "request_type": "STREAMABLEHTTP"
+    "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways)
 
@@ -842,6 +862,7 @@ echo "4. Discovering tools..."
 sleep 2  # Wait for gateway to sync
 TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools)
 export TOOL_ID=$(echo $TOOLS | jq -r '.[0].id')
+export TOOL_NAME=$(echo $TOOLS | jq -r '.[0].name')
 echo "Found tools:"
 echo $TOOLS | jq '.[] | {name: .name, description: .description}' | head -20
 echo
@@ -854,15 +875,12 @@ echo $TOOL_DETAILS | jq '{name: .name, description: .description, inputSchema: .
 echo
 
 # 6. Invoke the tool
-echo "6. Invoking tool..."
-RESULT=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+echo "6. Invoking tool: $TOOL_NAME"
+RESULT=$(jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"test_value"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "arguments": {
-      "param1": "test_value"
-    }
-  }' \
-  $BASE_URL/tools/$TOOL_ID)
+  -d @- "$BASE_URL/rpc")
 echo $RESULT | jq '.'
 echo
 
@@ -871,10 +889,11 @@ echo "7. Creating virtual server..."
 SERVER=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+  "server": {
     "name": "test-virtual-server",
     "description": "Unified server for testing",
-    "associated_gateways": ["'$GATEWAY_ID'"],
-    "enabled": true
+    "associated_tools": ["'$TOOL_ID'"]
+    }
   }' \
   $BASE_URL/servers)
 
@@ -892,7 +911,7 @@ echo
 # 9. Export configuration
 echo "9. Exporting gateway configuration..."
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/export | \
-  jq '{gateways: .gateways | length, tools: .tools | length}' > export-summary.json
+  jq '{gateways: .entities.gateways | length, tools: .entities.tools | length}' > export-summary.json
 cat export-summary.json
 echo
 
@@ -999,22 +1018,6 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
 # Extract specific fields
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
   jq '[.[] | {id, name, description, enabled}]'
-```
-
-### Pagination and Filtering
-
-```bash
-# Get first 10 tools
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?limit=10&offset=0" | jq '.'
-
-# Filter by tag
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?tag=production" | jq '.'
-
-# Search by name
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?search=weather" | jq '.'
 ```
 
 ### Batch Operations Script
