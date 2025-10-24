@@ -261,9 +261,11 @@ class GrpcEndpoint:
         except KeyError as e:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
-        # Create message classes
+        # pylint: disable-next=no-member
         request_class = self._factory.GetPrototype(input_desc)
+        # pylint: disable-next=no-member
         response_class = self._factory.GetPrototype(output_desc)
+
 
         # Convert JSON to protobuf message
         request_msg = json_format.ParseDict(request_data, request_class())
@@ -334,9 +336,12 @@ class GrpcEndpoint:
         except KeyError as e:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
-        # Create message classes
+        
+        # pylint: disable-next=no-member
         request_class = self._factory.GetPrototype(input_desc)
+        # pylint: disable-next=no-member
         response_class = self._factory.GetPrototype(output_desc)
+
 
         # Convert JSON to protobuf message
         request_msg = json_format.ParseDict(request_data, request_class())
