@@ -110,8 +110,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "name": "my-mcp-server",
     "url": "http://localhost:9000/mcp",
     "description": "My custom MCP server",
-    "enabled": true,
-    "request_type": "STREAMABLEHTTP"
+    "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways | jq '.'
 ```
@@ -137,8 +136,7 @@ GATEWAY_RESPONSE=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "name": "git-server",
     "url": "http://localhost:9000/mcp",
     "description": "Git operations MCP server",
-    "enabled": true,
-    "request_type": "STREAMABLEHTTP"
+    "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways)
 
@@ -166,7 +164,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle gateway enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/gateways/$GATEWAY_ID/toggle | jq '.'
+  $BASE_URL/gateways/$GATEWAY_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Gateway
