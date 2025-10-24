@@ -11,20 +11,17 @@ Author: Mihai Criveti
 # Standard
 import os
 from pathlib import Path
-from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
-# Third-Party
-from fastapi import HTTPException
+from pydantic import SecretStr
 
+# Third-Party
 # Third-party
 import pytest
 
 # First-Party
 from mcpgateway.config import (
-    extract_using_jq,
     get_settings,
-    jsonpath_modifier,
     Settings,
 )
 
@@ -55,7 +52,7 @@ def test_parse_federation_peers_json_and_csv():
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #
-def test_database_settings_sqlite_and_non_sqlite(tmp_path: Path):
+def test_database_settings_sqlite_and_non_sqlite(tmp_path: Path) -> None:
     """connect_args differs for sqlite vs everything else."""
     # sqlite -> check_same_thread flag present
     db_file = tmp_path / "foo" / "bar.db"
@@ -68,7 +65,7 @@ def test_database_settings_sqlite_and_non_sqlite(tmp_path: Path):
     assert s_pg.database_settings["connect_args"] == {}
 
 
-def test_validate_database_creates_missing_parent(tmp_path: Path):
+def test_validate_database_creates_missing_parent(tmp_path: Path) -> None:
     db_file = tmp_path / "newdir" / "db.sqlite"
     url = f"sqlite:///{db_file}"
     s = Settings(database_url=url, _env_file=None)
@@ -101,65 +98,6 @@ def test_cors_settings_branches():
     s_disabled = Settings(cors_enabled=False, _env_file=None)
     result = s_disabled.cors_settings
     assert result == {}  # Empty dict when disabled
-
-
-# --------------------------------------------------------------------------- #
-#                               extract_using_jq                              #
-# --------------------------------------------------------------------------- #
-def test_extract_using_jq_happy_path():
-    data = {"a": 123}
-
-    with patch("mcpgateway.config.jq.all", return_value=[123]) as mock_jq:
-        out = extract_using_jq(data, ".a")
-        mock_jq.assert_called_once_with(".a", data)
-        assert out == [123]
-
-
-def test_extract_using_jq_short_circuits_and_errors():
-    # Empty filter returns data unmodified
-    orig = {"x": "y"}
-    assert extract_using_jq(orig) is orig
-
-    # Non-JSON string
-    assert extract_using_jq("this isn't json", ".foo") == ["Invalid JSON string provided."]
-
-    # Unsupported input type
-    assert extract_using_jq(42, ".foo") == ["Input data must be a JSON string, dictionary, or list."]
-
-
-# --------------------------------------------------------------------------- #
-#                               jsonpath_modifier                             #
-# --------------------------------------------------------------------------- #
-@pytest.fixture(scope="module")
-def sample_people() -> List[Dict[str, Any]]:
-    return [
-        {"name": "Ada", "id": 1},
-        {"name": "Bob", "id": 2},
-    ]
-
-
-def test_jsonpath_modifier_basic_match(sample_people):
-    # Pull out names directly
-    names = jsonpath_modifier(sample_people, "$[*].name")
-    assert names == ["Ada", "Bob"]
-
-    # Same query but with a mapping
-    mapped = jsonpath_modifier(sample_people, "$[*]", mappings={"n": "$.name"})
-    assert mapped == [{"n": "Ada"}, {"n": "Bob"}]
-
-
-def test_jsonpath_modifier_single_dict_collapse():
-    person = {"name": "Zoe", "id": 10}
-    out = jsonpath_modifier(person, "$")
-    assert out == person  # single-item dict collapses to dict, not list
-
-
-def test_jsonpath_modifier_invalid_expressions(sample_people):
-    with pytest.raises(HTTPException):
-        jsonpath_modifier(sample_people, "$[")  # invalid main expr
-
-    with pytest.raises(HTTPException):
-        jsonpath_modifier(sample_people, "$[*]", mappings={"bad": "$["})  # invalid mapping expr
 
 
 # --------------------------------------------------------------------------- #
@@ -200,7 +138,7 @@ def test_settings_default_values():
         assert settings.port == 4444
         assert settings.database_url == "sqlite:///./mcp.db"
         assert settings.basic_auth_user == "admin"
-        assert settings.basic_auth_password == "changeme"
+        assert settings.basic_auth_password == SecretStr("changeme")
         assert settings.auth_required is True
         assert settings.jwt_secret_key.get_secret_value() == "x" * 32
         assert settings.auth_encryption_secret.get_secret_value() == "dummy-secret"

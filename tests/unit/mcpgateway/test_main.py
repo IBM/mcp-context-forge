@@ -17,6 +17,7 @@ import os
 from unittest.mock import ANY, MagicMock, patch
 
 # Third-Party
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import jwt
 import pytest
@@ -691,6 +692,7 @@ class TestResourceEndpoints:
         """Test reading resource content."""
         # Clear the resource cache to avoid stale/cached values
         from mcpgateway import main as mcpgateway_main
+
         mcpgateway_main.resource_cache.clear()
 
         mock_read_resource.return_value = ResourceContent(
@@ -1536,3 +1538,47 @@ class TestErrorHandling:
         """Test GET /redoc with authentication returns 200 or redirect."""
         response = test_client.get("/redoc", headers=auth_headers)
         assert response.status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+#                               jsonpath_modifier                             #
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="module")
+def sample_people():
+    return [
+        {"name": "Ada", "id": 1},
+        {"name": "Bob", "id": 2},
+    ]
+
+
+def test_jsonpath_modifier_basic_match(sample_people):
+    # First-Party
+    from mcpgateway.main import jsonpath_modifier
+
+    # Pull out names directly
+    names = jsonpath_modifier(sample_people, "$[*].name")
+    assert names == ["Ada", "Bob"]
+
+    # Same query but with a mapping
+    mapped = jsonpath_modifier(sample_people, "$[*]", mappings={"n": "$.name"})
+    assert mapped == [{"n": "Ada"}, {"n": "Bob"}]
+
+
+def test_jsonpath_modifier_single_dict_collapse():
+    # First-Party
+    from mcpgateway.main import jsonpath_modifier
+
+    person = {"name": "Zoe", "id": 10}
+    out = jsonpath_modifier(person, "$")
+    assert out == person  # single-item dict collapses to dict, not list
+
+
+def test_jsonpath_modifier_invalid_expressions(sample_people):
+    # First-Party
+    from mcpgateway.main import jsonpath_modifier
+
+    with pytest.raises(HTTPException):
+        jsonpath_modifier(sample_people, "$[")  # invalid main expr
+
+    with pytest.raises(HTTPException):
+        jsonpath_modifier(sample_people, "$[*]", mappings={"bad": "$["})  # invalid mapping expr
