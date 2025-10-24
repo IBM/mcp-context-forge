@@ -142,6 +142,8 @@ class MultiProgressTracker:
         self.max_log_lines = max_log_lines
         self.log_buffer: deque = deque(maxlen=max_log_lines)
         self.show_logs = True
+        self.is_interactive = sys.stdout.isatty()
+        self.last_status_print = 0
 
     def add_task(self, name: str, total: int, desc: str):
         """Add a new progress task.
@@ -176,6 +178,11 @@ class MultiProgressTracker:
         if name in self.tasks:
             self.progress.update(self.tasks[name], visible=True)
             self.stats[name]["start_time"] = time.time()
+
+            # For non-interactive terminals, print start message
+            if not self.is_interactive:
+                total = self.stats[name]["total"]
+                self.console.print(f"[yellow]⚡[/yellow] Starting [cyan]{name}[/cyan]: {total:,} records")
 
     def update(self, name: str, n: int = 1):
         """Update a specific task.
@@ -212,9 +219,21 @@ class MultiProgressTracker:
         if name in self.tasks:
             # Ensure completed count matches total
             total = self.stats[name]["total"]
-            self.stats[name]["completed"] = total
+            current_completed = self.stats[name].get("completed", 0)
+
+            # Update total_completed with any remaining records
+            remaining = total - current_completed
+            if remaining > 0:
+                self.total_completed += remaining
+
+            self.stats[name]["completed"] = total  # Always set to total when completing
             self.stats[name]["end_time"] = time.time()
             self.progress.update(self.tasks[name], completed=total)
+
+            # For non-interactive terminals, print completion message
+            if not self.is_interactive:
+                rate = self.stats[name].get("rate", 0)
+                self.console.print(f"[green]✓[/green] Completed [cyan]{name}[/cyan]: {total:,} records ([cyan]{rate:,.0f}/s[/cyan])")
 
     def log(self, message: str, style: str = "dim"):
         """Add a log message to the scrolling log panel.
@@ -287,12 +306,15 @@ class MultiProgressTracker:
         in_progress = []
         pending = []
 
-        for name, task_id in self.tasks.items():
-            task_info = self.stats[name]
-            total = task_info["total"]
-            current = task_info["completed"]
+        for name in self.tasks.keys():
+            if name not in self.stats:
+                continue  # Skip if stats not initialized
 
-            if current >= total:
+            task_info = self.stats[name]
+            total = task_info.get("total", 0)
+            current = task_info.get("completed", 0)
+
+            if current >= total and total > 0:
                 status = "completed"
                 completed.append((name, task_info))
             elif current > 0:
@@ -302,7 +324,7 @@ class MultiProgressTracker:
                 status = "pending"
                 pending.append((name, task_info))
 
-        # Add summary row
+        # Add summary row with counts
         total_generators = len(self.tasks)
         table.add_row(
             f"[bold]Summary: {total_generators} generators[/bold]",
@@ -310,13 +332,16 @@ class MultiProgressTracker:
             "",
             "",
         )
-        table.add_section()
+
+        # Only add section separator if there are generators to show
+        if completed or in_progress or pending:
+            table.add_section()
 
         # Show in-progress generators first
         for name, info in in_progress:
-            rate = info["rate"]
-            current = info["completed"]
-            total = info["total"]
+            rate = info.get("rate", 0)
+            current = info.get("completed", 0)
+            total = info.get("total", 0)
             pct = (current / total * 100) if total > 0 else 0
 
             table.add_row(
@@ -328,19 +353,20 @@ class MultiProgressTracker:
 
         # Show completed generators
         for name, info in completed:
-            rate = info["rate"]
-            total = info["total"]
+            rate = info.get("rate", 0)
+            total = info.get("total", 0)
+            current = info.get("completed", 0)
 
             table.add_row(
                 name,
                 "[green]✓ Done[/green]",
-                f"[green]{total:,}/{total:,} (100%)[/green]",
+                f"[green]{current:,}/{total:,} (100%)[/green]",
                 f"[dim]{rate:,.0f}/s[/dim]"
             )
 
         # Show pending generators
         for name, info in pending:
-            total = info["total"]
+            total = info.get("total", 0)
 
             table.add_row(
                 name,
@@ -418,14 +444,27 @@ class MultiProgressTracker:
             Self for chaining
         """
         try:
-            with Live(
-                self._make_layout(),
-                console=self.console,
-                refresh_per_second=10,  # Increased from 4 to 10 for more responsive updates
-                transient=False,
-            ) as live:
-                self.live = live
+            if self.is_interactive:
+                # Use Rich Live display for interactive terminals
+                with Live(
+                    self._make_layout(),
+                    console=self.console,
+                    refresh_per_second=10,  # Increased from 4 to 10 for more responsive updates
+                    transient=False,
+                    auto_refresh=True,  # Force auto-refresh
+                ) as live:
+                    self.live = live
+                    yield self
+            else:
+                # For non-interactive terminals (piped output), use simple console prints
+                self.console.print("[bold cyan]Starting data generation...[/bold cyan]")
+                self.console.print(f"[dim]Total generators: {len(self.tasks)}[/dim]")
+                self.console.print(f"[dim]Total records: {self.total_records:,}[/dim]")
+                self.console.print()
                 yield self
+                # Print final summary
+                self.console.print()
+                self._print_final_summary()
         finally:
             self.live = None
 
@@ -433,6 +472,70 @@ class MultiProgressTracker:
         """Refresh the live display."""
         if self.live:
             self.live.update(self._make_layout())
+        elif not self.is_interactive:
+            # For non-interactive terminals, print periodic status updates
+            current_time = time.time()
+            if current_time - self.last_status_print >= 5.0:  # Print every 5 seconds
+                self._print_status_update()
+                self.last_status_print = current_time
+
+    def _print_status_update(self):
+        """Print a status update to console (for non-interactive terminals)."""
+        # Count generators by status
+        completed_count = 0
+        in_progress_count = 0
+        pending_count = 0
+
+        for name in self.tasks.keys():
+            if name not in self.stats:
+                continue
+            task_info = self.stats[name]
+            total = task_info.get("total", 0)
+            current = task_info.get("completed", 0)
+
+            if current >= total and total > 0:
+                completed_count += 1
+            elif current > 0:
+                in_progress_count += 1
+            else:
+                pending_count += 1
+
+        elapsed = time.time() - self.start_time
+        overall_rate = self.total_completed / elapsed if elapsed > 0 else 0
+        pct = (self.total_completed / self.total_records * 100) if self.total_records > 0 else 0
+
+        self.console.print(
+            f"[cyan]Progress:[/cyan] {self.total_completed:,}/{self.total_records:,} ({pct:.1f}%) | "
+            f"[green]✓ {completed_count}[/green] [yellow]⚡ {in_progress_count}[/yellow] [dim]⏳ {pending_count}[/dim] | "
+            f"[cyan]{overall_rate:,.0f} rec/s[/cyan]"
+        )
+
+    def _print_final_summary(self):
+        """Print final summary for non-interactive terminals."""
+        elapsed = time.time() - self.start_time
+        overall_rate = self.total_completed / elapsed if elapsed > 0 else 0
+
+        self.console.print("[bold green]Generation Complete![/bold green]")
+        self.console.print(f"Total Records: {self.total_completed:,}/{self.total_records:,}")
+        self.console.print(f"Duration: {elapsed:.2f}s")
+        self.console.print(f"Overall Rate: {overall_rate:,.0f} records/s")
+        self.console.print()
+
+        # Print generator breakdown
+        table = Table(show_header=True, box=None, padding=(0, 1))
+        table.add_column("Generator", style="cyan", no_wrap=True)
+        table.add_column("Records", justify="right", style="green")
+        table.add_column("Rate", justify="right", style="yellow")
+
+        for name in self.tasks.keys():
+            if name not in self.stats:
+                continue
+            task_info = self.stats[name]
+            total = task_info.get("total", 0)
+            rate = task_info.get("rate", 0)
+            table.add_row(name, f"{total:,}", f"{rate:,.0f}/s")
+
+        self.console.print(table)
 
     def close_all(self):
         """Close all progress trackers."""

@@ -147,19 +147,25 @@ class BaseGenerator(ABC):
         # Start progress tracking if available
         if self.progress_tracker:
             self.progress_tracker.start_task(self.get_name())
-            # Live display will auto-refresh
+            self.progress_tracker.refresh()  # Force refresh to show task started
 
         batch = []
         commit_frequency = self.config.get("performance", {}).get("commit_frequency", 10000)
+        last_refresh_count = 0
+        refresh_frequency = self.progress_update_frequency * 10  # Refresh every 1000 records (10x update frequency)
 
         for record in self.generate():
             batch.append(record)
             self.generated_count += 1
 
-            # Update progress periodically (Live display auto-refreshes at its own rate)
+            # Update progress periodically
             if self.progress_tracker and self.generated_count % self.progress_update_frequency == 0:
                 self.progress_tracker.update(self.get_name(), self.progress_update_frequency)
-                # Note: No manual refresh() call needed - Live display handles it
+
+                # Refresh display less frequently to avoid overhead
+                if self.generated_count - last_refresh_count >= refresh_frequency:
+                    self.progress_tracker.refresh()
+                    last_refresh_count = self.generated_count
 
             if len(batch) >= self.batch_size:
                 self.batch_insert(batch)
@@ -178,11 +184,14 @@ class BaseGenerator(ABC):
 
         # Update progress to completion
         if self.progress_tracker:
-            remaining = self.get_count() - (self.generated_count // self.progress_update_frequency * self.progress_update_frequency)
+            # Calculate how many updates we've already sent
+            updates_sent = (self.generated_count // self.progress_update_frequency) * self.progress_update_frequency
+            # Calculate remaining records that haven't been reported
+            remaining = self.generated_count - updates_sent
             if remaining > 0:
                 self.progress_tracker.update(self.get_name(), remaining)
             self.progress_tracker.complete_task(self.get_name())
-            # Live display will auto-refresh to show completion
+            self.progress_tracker.refresh()  # Force refresh to show completion
 
         duration = time.time() - start_time
 
