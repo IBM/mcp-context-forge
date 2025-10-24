@@ -8890,8 +8890,8 @@ async def admin_export_configuration(
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
 
         # Perform export
         export_data = await export_service.export_configuration(
@@ -8962,8 +8962,11 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
+
         # Perform selective export
-        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username)
+        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username, root_path=root_path)
 
         # Generate filename
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
