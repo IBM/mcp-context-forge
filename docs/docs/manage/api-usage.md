@@ -602,50 +602,18 @@ Tags organize and categorize gateway resources.
 
 ```bash
 # List all available tags
-curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tags | jq '.'
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tags?entity_types=gateways%2Cservers%2Ctools%2Cresources%2Cprompts&include_entities=false" \
+| jq '.'
 ```
 
-### Create Tag
-
-```bash
-# Create a new tag
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "production",
-    "description": "Production-ready tools",
-    "color": "#00FF00"
-  }' \
-  $BASE_URL/tags | jq '.'
-```
-
-### Get Tag Details
+### Get Tag Entities
 
 ```bash
 # Get specific tag
-export TAG_ID="your-tag-id"
-curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tags/$TAG_ID | jq '.'
-```
-
-### Update Tag
-
-```bash
-# Update tag
-curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "Updated description",
-    "color": "#FF0000"
-  }' \
-  $BASE_URL/tags/$TAG_ID | jq '.'
-```
-
-### Delete Tag
-
-```bash
-# Delete tag
-curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/tags/$TAG_ID | jq '.'
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tags?entity_types=gateways%2Cservers%2Ctools%2Cresources%2Cprompts&include_entities=true" \
+| jq '.'
 ```
 
 ## Bulk Operations
