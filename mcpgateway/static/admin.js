@@ -11722,6 +11722,9 @@ function displayTokensList(tokens) {
         const expiresText = token.expires_at
             ? new Date(token.expires_at).toLocaleDateString()
             : "Never";
+        const createdText = token.created_at
+            ? new Date(token.created_at).toLocaleDateString()
+            : "Never";
         const lastUsedText = token.last_used
             ? new Date(token.last_used).toLocaleDateString()
             : "Never";
@@ -11740,7 +11743,7 @@ function displayTokensList(tokens) {
                         ${token.description ? `<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">${escapeHtml(token.description)}</p>` : ""}
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
                             <div>
-                                <span class="font-medium">Created:</span> ${new Date(token.createdAt).toLocaleDateString()}
+                                <span class="font-medium">Created:</span> ${createdText}
                             </div>
                             <div>
                                 <span class="font-medium">Expires:</span> ${expiresText}
