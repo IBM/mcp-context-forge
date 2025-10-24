@@ -730,13 +730,14 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/a2a | jq '.'
 # Register an OpenAI agent
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "openai-assistant",
-    "agent_type": "openai",
-    "endpoint": "https://api.openai.com/v1/chat/completions",
-    "api_key": "sk-...",
-    "model": "gpt-4",
-    "description": "OpenAI GPT-4 assistant"
+  -d '{"agent": {
+      "name": "openai-assistant",
+      "agent_type": "openai",
+      "endpoint_url": "https://api.openai.com/v1/chat/completions",
+      "description": "OpenAI GPT-4 assistant",
+      "auth_type": "bearer",
+      "auth_value": "OPENAI_API_KEY"
+    }
   }' \
   $BASE_URL/a2a | jq '.'
 ```
@@ -753,12 +754,14 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/a2a/$A2A_ID | jq '.'
 
 ```bash
 # Execute agent with message
+export A2A_NAME="openai-assistant"
+
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Explain quantum computing in simple terms"
   }' \
-  $BASE_URL/a2a/$A2A_ID/invoke | jq '.'
+  $BASE_URL/a2a/$A2A_NAME/invoke | jq '.'
 ```
 
 ### Update A2A Agent
