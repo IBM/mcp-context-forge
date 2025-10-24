@@ -211,20 +211,24 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.output
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "weather-api",
-    "description": "Get weather information for a city",
-    "url": "https://api.weather.com/v1/current",
-    "request_type": "REST",
-    "integration_type": "REST",
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "city": {
-          "type": "string",
-          "description": "City name"
-        }
-      },
-      "required": ["city"]
+    "tool": {
+      "name": "weather-api",
+      "description": "Get weather information for a city",
+      "url": "https://api.weather.com/v1/current",
+      "integration_type": "REST",
+      "request_type": "POST",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
     }
   }' \
   $BASE_URL/tools | jq '.'
@@ -233,16 +237,13 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 ### Invoke a Tool
 
 ```bash
+export TOOL_NAME="your-tool-name"
 # Execute a tool with arguments
+jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"value1","param2":"value2"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "arguments": {
-      "param1": "value1",
-      "param2": "value2"
-    }
-  }' \
-  $BASE_URL/tools/$TOOL_ID | jq '.'
+  -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
 ```
 
 #### Complete Example: Tool Invocation
@@ -260,14 +261,11 @@ echo "Input schema:"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.inputSchema'
 
 # 3. Invoke the tool
+jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"test_value"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "arguments": {
-      "param1": "test_value"
-    }
-  }' \
-  $BASE_URL/tools/$TOOL_ID | jq '.'
+  -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
 ```
 
 ### Update Tool
@@ -288,7 +286,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle tool enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/tools/$TOOL_ID/toggle | jq '.'
+  $BASE_URL/tools/$TOOL_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Tool
