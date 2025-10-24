@@ -409,7 +409,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle server enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/servers/$SERVER_ID/toggle | jq '.'
+  $BASE_URL/servers/$SERVER_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Server
