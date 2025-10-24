@@ -843,8 +843,7 @@ GATEWAY=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
     "name": "test-server",
     "url": "http://localhost:9000/mcp",
     "description": "Test MCP server",
-    "enabled": true,
-    "request_type": "STREAMABLEHTTP"
+    "transport": "STREAMABLEHTTP"
   }' \
   $BASE_URL/gateways)
 
@@ -863,6 +862,7 @@ echo "4. Discovering tools..."
 sleep 2  # Wait for gateway to sync
 TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools)
 export TOOL_ID=$(echo $TOOLS | jq -r '.[0].id')
+export TOOL_NAME=$(echo $TOOLS | jq -r '.[0].name')
 echo "Found tools:"
 echo $TOOLS | jq '.[] | {name: .name, description: .description}' | head -20
 echo
@@ -875,15 +875,12 @@ echo $TOOL_DETAILS | jq '{name: .name, description: .description, inputSchema: .
 echo
 
 # 6. Invoke the tool
-echo "6. Invoking tool..."
-RESULT=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+echo "6. Invoking tool: $TOOL_NAME"
+RESULT=$(jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"test_value"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "arguments": {
-      "param1": "test_value"
-    }
-  }' \
-  $BASE_URL/tools/$TOOL_ID)
+  -d @- "$BASE_URL/rpc")
 echo $RESULT | jq '.'
 echo
 
@@ -892,10 +889,11 @@ echo "7. Creating virtual server..."
 SERVER=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+  "server": {
     "name": "test-virtual-server",
     "description": "Unified server for testing",
-    "associated_gateways": ["'$GATEWAY_ID'"],
-    "enabled": true
+    "associated_tools": ["'$TOOL_ID'"]
+    }
   }' \
   $BASE_URL/servers)
 
@@ -913,7 +911,7 @@ echo
 # 9. Export configuration
 echo "9. Exporting gateway configuration..."
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/export | \
-  jq '{gateways: .gateways | length, tools: .tools | length}' > export-summary.json
+  jq '{gateways: .entities.gateways | length, tools: .entities.tools | length}' > export-summary.json
 cat export-summary.json
 echo
 
@@ -1020,22 +1018,6 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
 # Extract specific fields
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
   jq '[.[] | {id, name, description, enabled}]'
-```
-
-### Pagination and Filtering
-
-```bash
-# Get first 10 tools
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?limit=10&offset=0" | jq '.'
-
-# Filter by tag
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?tag=production" | jq '.'
-
-# Search by name
-curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tools?search=weather" | jq '.'
 ```
 
 ### Batch Operations Script
