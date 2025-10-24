@@ -523,33 +523,34 @@ Prompts are reusable templates with arguments for AI interactions.
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts | jq '.'
 ```
 
-### Get Prompt Details
-
-```bash
-# Get specific prompt
-export PROMPT_ID="your-prompt-id"
-curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts/$PROMPT_ID | jq '.'
-```
-
 ### Register a Prompt
 
 ```bash
 # Register a new prompt template
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "code-review",
-    "description": "Review code for best practices",
-    "content": "Review the following code and suggest improvements:\n\n{{code}}",
-    "arguments": [
-      {
-        "name": "code",
-        "description": "Code to review",
-        "required": true
-      }
-    ]
+  -d '{"prompt": {
+      "name": "code-review",
+      "description": "Review code for best practices",
+      "template": "Review the following code and suggest improvements:\n\n{{code}}",
+      "arguments": [
+        {
+          "name": "code",
+          "description": "Code to review",
+          "required": true
+        }
+      ]
+    }
   }' \
   $BASE_URL/prompts | jq '.'
+```
+
+### Get Prompt Details
+
+```bash
+# Get specific prompt
+export PROMPT_ID="your-prompt-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts/$PROMPT_ID | jq '.'
 ```
 
 ### Execute Prompt (Get Rendered Content)
@@ -559,9 +560,7 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "arguments": {
-      "code": "def hello():\n    print(\"Hello\")"
-    }
+    "code": "def hello():\n    print(\"Hello\")"
   }' \
   $BASE_URL/prompts/$PROMPT_ID | jq '.'
 ```
@@ -584,7 +583,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle prompt enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/prompts/$PROMPT_ID/toggle | jq '.'
+  $BASE_URL/prompts/$PROMPT_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Prompt
