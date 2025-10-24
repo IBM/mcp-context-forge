@@ -308,6 +308,22 @@ Virtual servers allow you to compose multiple MCP servers and tools into unified
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers | jq '.'
 ```
 
+### Create Virtual Server
+
+```bash
+# Create a new virtual server
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "server": {
+    "name": "my-virtual-server",
+    "description": "Composed server with multiple tools",
+    "associated_tools": ["'$TOOL_ID'"]
+    }
+  }' \
+  $BASE_URL/servers | jq '.'
+```
+
 ### Get Server Details
 
 ```bash
@@ -316,37 +332,25 @@ export SERVER_ID="your-server-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers/$SERVER_ID | jq '.'
 ```
 
-### Create Virtual Server
 
-```bash
-# Create a new virtual server
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "my-virtual-server",
-    "description": "Composed server with multiple tools",
-    "associated_gateways": ["'$GATEWAY_ID'"],
-    "enabled": true
-  }' \
-  $BASE_URL/servers | jq '.'
-```
 
 #### Complete Example: Virtual Server Creation
 
 ```bash
-# 1. Get gateway IDs to associate
-GATEWAYS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways)
-export GW1_ID=$(echo $GATEWAYS | jq -r '.[0].id')
-export GW2_ID=$(echo $GATEWAYS | jq -r '.[1].id')
+# 1. Get tools IDs to associate
+TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools)
+export TOOL1_ID=$(echo $TOOLS | jq -r '.[0].id')
+export TOOL2_ID=$(echo $TOOLS | jq -r '.[1].id')
 
 # 2. Create virtual server with multiple gateways
 SERVER_RESPONSE=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "unified-server",
-    "description": "Combines multiple MCP servers",
-    "associated_gateways": ["'$GW1_ID'", "'$GW2_ID'"],
-    "enabled": true
+  "server": {
+    "name": "my-virtual-server",
+    "description": "Composed server with multiple tools",
+    "associated_tools": ["'$TOOL1_ID'", "'$TOOL2_ID'"]
+    }
   }' \
   $BASE_URL/servers)
 
