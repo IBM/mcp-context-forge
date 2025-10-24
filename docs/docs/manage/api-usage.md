@@ -628,7 +628,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 # Export specific entities
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/export?include_tools=true&include_gateways=true" | \
+  "$BASE_URL/export?types=tools%2Cgateways" | \
   jq '.' > partial-export.json
 ```
 
