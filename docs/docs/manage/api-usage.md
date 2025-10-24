@@ -636,10 +636,21 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ```bash
 # Import configuration from file
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+payload=$(jq -n \
+  --arg conflict "skip" \
+  --argjson dry_run false \
+  --argjson import_data "$(cat gateway-export.json)" '
+  {
+    conflict_strategy: $conflict,
+    dry_run: $dry_run,
+    import_data: $import_data
+  }')
+
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d @gateway-export.json \
-  $BASE_URL/import | jq '.'
+  -d "$payload" \
+  "$BASE_URL/import" | jq '.'
 ```
 
 ### Bulk Import Tools
@@ -649,20 +660,54 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "tools": [
-      {
-        "name": "tool1",
-        "description": "First tool",
-        "url": "http://example.com/api1"
-      },
-      {
-        "name": "tool2",
-        "description": "Second tool",
-        "url": "http://example.com/api2"
+    "conflict_strategy": "update",
+    "dry_run": false,
+    "import_data": {
+      "version": "2025-03-26",
+      "exported_at": "2025-10-24T18:41:55.776238Z",
+      "exported_by": "admin@example.com",
+      "source_gateway": "http://0.0.0.0:4444",
+      "encryption_method": "AES-256-GCM",
+      "entities": {
+        "tools": [
+          {
+            "name": "tool1",
+            "displayName": "tool1",
+            "url": "http://example.com/api1",
+            "integration_type": "REST",
+            "request_type": "POST",
+            "description": "First tool",
+            "headers": {},
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "param": { "type": "string", "description": "Parameter name" }
+              },
+              "required": ["param"]
+            }
+          },
+          {
+            "name": "tool2",
+            "displayName": "tool2",
+            "url": "http://example.com/api2",
+            "integration_type": "REST",
+            "request_type": "GET",
+            "description": "Second tool",
+            "headers": {},
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string", "description": "Query string" }
+              },
+              "required": ["query"]
+            }
+          }
+        ]
       }
-    ]
+    },
+    "rekey_secret": null
   }' \
-  $BASE_URL/bulk-import | jq '.'
+  "$BASE_URL/import" | jq '.'
 ```
 
 ## A2A Agent Management
