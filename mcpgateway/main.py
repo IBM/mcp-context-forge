@@ -4068,7 +4068,7 @@ async def get_entities_by_tag(
 @export_import_router.get("/export", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_configuration(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     export_format: str = "json",  # pylint: disable=unused-argument
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
@@ -4122,8 +4122,8 @@ async def export_configuration(
         else:
             username = None
 
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
 
         # Perform export
         export_data = await export_service.export_configuration(
@@ -4184,7 +4184,12 @@ async def export_selective_configuration(
         elif isinstance(user, dict):
             username = user.get("email")
 
-        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown")
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
+
+        export_data = await export_service.export_selective(
+            db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown", root_path=root_path
+        )
 
         return export_data
 
