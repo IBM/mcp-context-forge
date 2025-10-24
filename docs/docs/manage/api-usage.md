@@ -431,6 +431,25 @@ Resources are data sources (files, documents, database queries) exposed by MCP s
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources | jq '.'
 ```
 
+### Register a Resource
+
+```bash
+# Register a new resource
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '
+  {"resource": 
+    {
+      "name": "config-file",
+      "uri": "file:///etc/config.json",
+      "description": "Application configuration file",
+      "mime_type": "application/json",
+      "content": "{'key': 'value'}"
+    }
+  }' \
+  $BASE_URL/resources | jq '.'
+```
+
 ### Get Resource Details
 
 ```bash
@@ -439,27 +458,13 @@ export RESOURCE_ID="your-resource-id"
 curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources/$RESOURCE_ID | jq '.'
 ```
 
-### Register a Resource
-
-```bash
-# Register a new resource
-curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "config-file",
-    "uri": "file:///etc/config.yaml",
-    "description": "Application configuration file",
-    "mime_type": "application/yaml"
-  }' \
-  $BASE_URL/resources | jq '.'
-```
 
 ### Read Resource Content
 
 ```bash
 # Get resource content
 curl -s -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/resources/$RESOURCE_ID | jq '.content'
+  $BASE_URL/resources/$RESOURCE_ID | jq '.text'
 ```
 
 ### Subscribe to Resource Updates
@@ -496,7 +501,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ```bash
 # Toggle resource enabled status
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/resources/$RESOURCE_ID/toggle | jq '.'
+  $BASE_URL/resources/$RESOURCE_ID/toggle?activate=false | jq '.'
 ```
 
 ### Delete Resource
