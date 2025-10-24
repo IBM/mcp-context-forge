@@ -39,6 +39,14 @@ mcpContextForge:
 
   containerPort: 4444           # port the app listens on inside the pod
 
+  # Metrics configuration
+  metrics:
+    enabled: true
+    port: 8000
+    serviceMonitor:
+      enabled: true
+    customLabels: {}
+
   # Health & readiness probes
   probes:
     startup:
