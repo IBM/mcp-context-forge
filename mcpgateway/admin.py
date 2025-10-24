@@ -8843,7 +8843,7 @@ async def admin_export_logs(
 
 @admin_router.get("/export/configuration")
 async def admin_export_configuration(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
     tags: Optional[str] = None,

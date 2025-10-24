@@ -4068,7 +4068,7 @@ async def get_entities_by_tag(
 @export_import_router.get("/export", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_configuration(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     export_format: str = "json",  # pylint: disable=unused-argument
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
