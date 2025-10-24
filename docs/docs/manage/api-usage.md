@@ -611,8 +611,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ```bash
 # Get specific tag
+export TAG_NAME="your-tag-name"
 curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE_URL/tags?entity_types=gateways%2Cservers%2Ctools%2Cresources%2Cprompts&include_entities=true" \
+  "$BASE_URL/tags/$TAG_NAME/entities" \
 | jq '.'
 ```
 
