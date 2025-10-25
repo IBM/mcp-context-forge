@@ -12,7 +12,7 @@ vim.api.nvim_create_autocmd("FileType", {
 --  ALE is available at https://github.com/dense-analysis/ale
 vim.g.ale_linters = {
   make = {},
-  python = { "mypy", "ruff" },
+  python = { "mypy", "ruff", "flake8", "pylint" },
   markdown = { "markdownlint" },
 }
 vim.g.ale_python_auto_uv = 1
