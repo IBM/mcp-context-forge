@@ -34,7 +34,7 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_s
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.models import ImageContent
+from mcpgateway.models import Annotations, ImageContent
 from mcpgateway.models import Prompt as MCPPrompt
 from mcpgateway.models import Resource as MCPResource
 from mcpgateway.models import ResourceContent, TextContent
@@ -1805,6 +1805,7 @@ class ResourceRead(BaseModelWithConfigDict):
 
     # MCP protocol fields
     title: Optional[str] = Field(None, description="Human-readable title for the resource")
+    annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
 

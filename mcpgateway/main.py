@@ -3633,7 +3633,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
             result = {}
+        elif method == "roots/list":
+            # MCP spec-compliant method name
+            roots = await root_service.list_roots()
+            result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
+            # Catch-all for other roots/* methods (currently unsupported)
             result = {}
         elif method.startswith("notifications/"):
             result = {}

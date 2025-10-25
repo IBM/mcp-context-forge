@@ -1247,7 +1247,7 @@ class SessionRegistry(SessionBackend):
                 tools={"listChanged": True},
                 logging={},
                 completions={},  # Advertise completions capability per MCP spec
-                # roots={"listChanged": True}
+                roots={"listChanged": True},  # Advertise roots capability (roots/list now implemented)
             ),
             serverInfo=Implementation(name=settings.app_name, version=__version__),
             instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),

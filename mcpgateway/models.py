@@ -163,17 +163,6 @@ class TextContent(BaseModelWithConfigDict):
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta")
 
 
-class JSONContent(BaseModel):
-    """JSON content for messages.
-    Attributes:
-        type (Literal["text"]): The fixed content type identifier for text.
-        json (dict): The actual text message.
-    """
-
-    type: Literal["text"]
-    text: dict
-
-
 class ImageContent(BaseModelWithConfigDict):
     """Image content for messages (MCP spec-compliant).
 
@@ -275,7 +264,7 @@ class ResourceContent(BaseModel):
     blob: Optional[bytes] = None
 
 
-ContentType = Union[TextContent, JSONContent, ImageContent, ResourceContent]
+ContentType = Union[TextContent, ImageContent, ResourceContent]
 
 
 # Reference types - needed early for completion
@@ -711,6 +700,7 @@ class ResourceTemplate(BaseModelWithConfigDict):
         description (Optional[str]): A description of the template.
         mime_type (Optional[str]): The MIME type associated with the template.
                                    Will be serialized as 'mimeType' in JSON.
+        annotations (Optional[Annotations]): Optional annotations for client rendering hints.
         meta (Optional[Dict[str, Any]]): Optional metadata for protocol extension.
                                         Serialized as '_meta' in JSON.
     """
@@ -719,6 +709,7 @@ class ResourceTemplate(BaseModelWithConfigDict):
     name: str
     description: Optional[str] = None
     mime_type: Optional[str] = None
+    annotations: Optional[Annotations] = None
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta")
 
 
