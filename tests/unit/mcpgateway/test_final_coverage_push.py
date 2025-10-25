@@ -52,13 +52,16 @@ def test_log_level_enum_comprehensive():
 
 def test_content_types():
     """Test content type models."""
+    import base64
+
     # Test TextContent
     text = TextContent(type="text", text="Hello world")
     assert text.type == "text"
     assert text.text == "Hello world"
 
-    # Test ImageContent
-    image_data = b"fake_image_bytes"
+    # Test ImageContent - now uses base64-encoded string per MCP spec
+    image_bytes = b"fake_image_bytes"
+    image_data = base64.b64encode(image_bytes).decode('utf-8')
     image = ImageContent(type="image", data=image_data, mime_type="image/png")
     assert image.type == "image"
     assert image.data == image_data
