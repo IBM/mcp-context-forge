@@ -103,12 +103,27 @@ endef
 # 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
 # =============================================================================
 # help: 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
+# help: uv                   - Ensure uv is installed or install it if needed
 # help: venv                 - Create a fresh virtual environment with uv & friends
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
 # help: install-db           - Install project (incl. postgres and redis) into venv
 # help: update               - Update all installed deps inside the venv
+.PHONY: uv
+uv:
+	@if ! type uv >/dev/null 2>&1; then \
+		echo "🔧 'uv' not found - installing..."; \
+		if type brew >/dev/null 2>&1; then \
+			echo "🍺 Installing 'uv' via Homebrew..."; \
+			brew install uv; \
+		else \
+			echo "🐍 Installing 'uv' via local install script..."; \
+			curl -LsSf https://astral.sh/uv/install.sh | sh ; \
+			echo "💡  Make sure to add 'uv' to your PATH if not done automatically."; \
+		fi; \
+	fi
+
 .PHONY: venv
 venv:
 	@rm -Rf "$(VENV_DIR)"
@@ -1010,8 +1025,9 @@ isort-check:
 flake8:                             ## 🐍  flake8 checks
 	@echo "🐍 flake8 $(TARGET)..." && $(VENV_DIR)/bin/flake8 $(TARGET)
 
-pylint:                             ## 🐛  pylint checks
-	@echo "🐛 pylint $(TARGET) (parallel)..." && $(VENV_DIR)/bin/pylint -j 8 $(TARGET)
+pylint: uv                             ## 🐛  pylint checks
+	@echo "🐛 pylint $(TARGET) (parallel)..."
+	uv run pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present
