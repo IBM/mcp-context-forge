@@ -53,7 +53,8 @@ def get_security_warnings(settings: Settings) -> list[str]:
         warnings.append(f"PORT: Out of allowed range (1-65535). Got: {settings.port}")
 
     # --- PLATFORM_ADMIN_PASSWORD ---
-    pw = settings.platform_admin_password
+    pw = settings.platform_admin_password.get_secret_value() if isinstance(settings.platform_admin_password, SecretStr) else settings.platform_admin_password
+
     if not pw or pw.lower() in ("changeme", "admin", "password"):
         warnings.append("Default admin password detected! Please change PLATFORM_ADMIN_PASSWORD immediately.")
     min_length = settings.password_min_length
@@ -64,7 +65,7 @@ def get_security_warnings(settings: Settings) -> list[str]:
         warnings.append("Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
 
     # --- BASIC_AUTH_PASSWORD ---
-    basic_pw = settings.basic_auth_password
+    basic_pw = settings.basic_auth_password.get_secret_value() if isinstance(settings.basic_auth_password, SecretStr) else settings.basic_auth_password
     if not basic_pw or basic_pw.lower() in ("changeme", "password"):
         warnings.append("Default BASIC_AUTH_PASSWORD detected! Please change it immediately.")
     min_length = settings.password_min_length

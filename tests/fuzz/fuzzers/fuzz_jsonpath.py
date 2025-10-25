@@ -24,7 +24,7 @@ try:
     from fastapi import HTTPException
 
     # First-Party
-    from mcpgateway.config import jsonpath_modifier
+    from mcpgateway.main import jsonpath_modifier
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)

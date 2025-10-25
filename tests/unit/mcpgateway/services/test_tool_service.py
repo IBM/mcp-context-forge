@@ -24,6 +24,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
+    extract_using_jq,
     TextContent,
     ToolError,
     ToolInvocationError,
@@ -1324,7 +1325,7 @@ class TestToolService:
 
         # Mock decode_auth to return empty dict when auth_value is None
         # Mock extract_using_jq to return the input unmodified when filter is empty
-        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}), patch("mcpgateway.config.extract_using_jq", return_value={"result": "REST tool response"}):
+        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}), patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}):
             # Invoke tool
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
@@ -2046,7 +2047,7 @@ class TestToolService:
         # Mock metrics recording
         tool_service._record_tool_metric = AsyncMock()
 
-        with patch("mcpgateway.config.extract_using_jq", return_value={"result": "OAuth success"}):
+        with patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "OAuth success"}):
             # Invoke tool
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
@@ -2166,7 +2167,7 @@ class TestToolService:
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.tool_service.get_passthrough_headers", side_effect=mock_passthrough),
-            patch("mcpgateway.config.extract_using_jq", return_value={"result": "success with headers"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "success with headers"}),
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
 
@@ -2259,7 +2260,7 @@ class TestToolService:
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
-            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "original response"}),
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
@@ -2303,7 +2304,7 @@ class TestToolService:
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
-            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "original response"}),
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
@@ -2347,7 +2348,7 @@ class TestToolService:
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
-            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "original response"}),
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
@@ -2393,7 +2394,7 @@ class TestToolService:
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
-            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "original response"}),
         ):
             with pytest.raises(Exception) as exc_info:
                 await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
@@ -2427,7 +2428,7 @@ class TestToolService:
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
-            patch("mcpgateway.config.extract_using_jq", return_value={"result": "original response"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "original response"}),
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
@@ -2484,3 +2485,27 @@ class TestToolService:
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         await tool_service._plugin_manager.shutdown()
+
+
+# --------------------------------------------------------------------------- #
+#                               extract_using_jq                              #
+# --------------------------------------------------------------------------- #
+def test_extract_using_jq_happy_path():
+    data = {"a": 123}
+
+    with patch("mcpgateway.services.tool_service.jq.all", return_value=[123]) as mock_jq:
+        out = extract_using_jq(data, ".a")
+        mock_jq.assert_called_once_with(".a", data)
+        assert out == [123]
+
+
+def test_extract_using_jq_short_circuits_and_errors():
+    # Empty filter returns data unmodified
+    orig = {"x": "y"}
+    assert extract_using_jq(orig) is orig
+
+    # Non-JSON string
+    assert extract_using_jq("this isn't json", ".foo") == ["Invalid JSON string provided."]
+
+    # Unsupported input type
+    assert extract_using_jq(42, ".foo") == ["Input data must be a JSON string, dictionary, or list."]

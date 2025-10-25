@@ -12,6 +12,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -30,7 +31,7 @@ def mock_settings():
     settings = Mock()
     settings.email_auth_enabled = True
     settings.platform_admin_email = "admin@example.com"
-    settings.platform_admin_password = "secure_password"
+    settings.platform_admin_password = SecretStr("secure_password")
     settings.platform_admin_full_name = "Platform Admin"
     settings.auto_create_personal_teams = True
     settings.database_url = "sqlite:///:memory:"
@@ -124,20 +125,25 @@ class TestBootstrapAdminUser:
         mock_email_auth_service.get_user_by_email.return_value = None
         mock_email_auth_service.create_user.return_value = mock_admin_user
 
-        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-            with patch("mcpgateway.bootstrap_db.SessionLocal", return_value=mock_db_session):
-                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
-                    with patch("mcpgateway.db.utc_now") as mock_utc_now:
-                        mock_utc_now.return_value = "2024-01-01T00:00:00Z"
-                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                            await bootstrap_admin_user()
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.SessionLocal", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now") as mock_utc_now,
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            mock_utc_now.return_value = "2024-01-01T00:00:00Z"
+            await bootstrap_admin_user()
 
-                            mock_email_auth_service.create_user.assert_called_once_with(
-                                email=mock_settings.platform_admin_email, password=mock_settings.platform_admin_password, full_name=mock_settings.platform_admin_full_name, is_admin=True
-                            )
-                            assert mock_admin_user.email_verified_at == "2024-01-01T00:00:00Z"
-                            assert mock_db_session.commit.call_count == 2
-                            mock_logger.info.assert_any_call(f"Platform admin user created successfully: {mock_settings.platform_admin_email}")
+            mock_email_auth_service.create_user.assert_called_once_with(
+                email=mock_settings.platform_admin_email,
+                password=mock_settings.platform_admin_password.get_secret_value(),
+                full_name=mock_settings.platform_admin_full_name,
+                is_admin=True,
+            )
+            assert mock_admin_user.email_verified_at == "2024-01-01T00:00:00Z"
+            assert mock_db_session.commit.call_count == 2
+            mock_logger.info.assert_any_call(f"Platform admin user created successfully: {mock_settings.platform_admin_email}")
 
     @pytest.mark.asyncio
     async def test_bootstrap_admin_user_with_personal_team(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user):

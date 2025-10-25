@@ -34,6 +34,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 from fastapi.testclient import TestClient
 import jwt
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -157,7 +158,7 @@ async def test_require_auth_missing_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_verify_basic_credentials_success(monkeypatch):
     monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
-    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
 
     creds = HTTPBasicCredentials(username="alice", password="secret")
     assert await vc.verify_basic_credentials(creds) == "alice"
@@ -166,7 +167,7 @@ async def test_verify_basic_credentials_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_verify_basic_credentials_failure(monkeypatch):
     monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
-    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
 
     creds = HTTPBasicCredentials(username="bob", password="wrong")
     with pytest.raises(HTTPException) as exc:
@@ -237,7 +238,7 @@ async def test_require_auth_override_basic_auth_enabled_success(monkeypatch):
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
-    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
     basic_auth_header = f"Basic {base64.b64encode('alice:secret'.encode()).decode()}"
     result = await vc.require_auth_override(auth_header=basic_auth_header)
     assert result == vc.settings.basic_auth_user
@@ -249,7 +250,7 @@ async def test_require_auth_override_basic_auth_enabled_failure(monkeypatch):
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
-    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
 
     # case1. format is wrong
     header = "Basic fakeAuth"
@@ -313,7 +314,7 @@ async def test_docs_both_auth_methods_work_simultaneously(monkeypatch):
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
-    monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
@@ -335,7 +336,7 @@ async def test_docs_invalid_basic_auth_fails(monkeypatch):
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
-    monkeypatch.setattr(vc.settings, "basic_auth_password", "correct", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("correct"), raising=False)
     # Send wrong Basic Auth
     wrong_basic = f"Basic {base64.b64encode(b'admin:wrong').decode()}"
     with pytest.raises(HTTPException) as exc:
@@ -349,7 +350,7 @@ async def test_integration_docs_endpoint_both_auth_methods(test_client, monkeypa
     """Integration test: /docs accepts both auth methods when enabled."""
     monkeypatch.setattr("mcpgateway.config.settings.docs_allow_basic_auth", True)
     monkeypatch.setattr("mcpgateway.config.settings.basic_auth_user", "admin")
-    monkeypatch.setattr("mcpgateway.config.settings.basic_auth_password", "changeme")
+    monkeypatch.setattr("mcpgateway.config.settings.basic_auth_password", SecretStr("changeme"))
     monkeypatch.setattr("mcpgateway.config.settings.jwt_secret_key", SECRET)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_algorithm", ALGO)
     monkeypatch.setattr("mcpgateway.config.settings.jwt_audience", "mcpgateway-api")

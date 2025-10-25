@@ -10,6 +10,7 @@ for securing API endpoints. It supports authentication via Authorization
 headers and cookies.
 Examples:
     >>> from mcpgateway.utils import verify_credentials as vc
+    >>> from pydantic import SecretStr
     >>> class DummySettings:
     ...     jwt_secret_key = 'secret'
     ...     jwt_algorithm = 'HS256'
@@ -17,7 +18,7 @@ Examples:
     ...     jwt_issuer = 'mcpgateway'
     ...     jwt_audience_verification = True
     ...     basic_auth_user = 'user'
-    ...     basic_auth_password = 'pass'
+    ...     basic_auth_password = SecretStr('pass')
     ...     auth_required = True
     ...     require_token_expiration = False
     ...     docs_allow_basic_auth = False
@@ -153,6 +154,7 @@ async def verify_credentials(token: str) -> dict:
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
         ...     jwt_algorithm = 'HS256'
@@ -160,7 +162,7 @@ async def verify_credentials(token: str) -> dict:
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
-        ...     basic_auth_password = 'pass'
+        ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     require_token_expiration = False
         ...     docs_allow_basic_auth = False
@@ -202,6 +204,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
         ...     jwt_algorithm = 'HS256'
@@ -209,7 +212,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
-        ...     basic_auth_password = 'pass'
+        ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     mcp_client_auth_enabled = True
         ...     trust_proxy_auth = False
@@ -306,6 +309,7 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
         ...     jwt_algorithm = 'HS256'
@@ -313,7 +317,7 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
-        ...     basic_auth_password = 'pass'
+        ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
@@ -330,7 +334,7 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
         error
     """
     is_valid_user = credentials.username == settings.basic_auth_user
-    is_valid_pass = credentials.password == settings.basic_auth_password
+    is_valid_pass = credentials.password == settings.basic_auth_password.get_secret_value()
 
     if not (is_valid_user and is_valid_pass):
         raise HTTPException(
@@ -359,6 +363,7 @@ async def require_basic_auth(credentials: HTTPBasicCredentials = Depends(basic_s
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
         ...     jwt_algorithm = 'HS256'
@@ -366,7 +371,7 @@ async def require_basic_auth(credentials: HTTPBasicCredentials = Depends(basic_s
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
-        ...     basic_auth_password = 'pass'
+        ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     docs_allow_basic_auth = False
         >>> vc.settings = DummySettings()
@@ -420,6 +425,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
         ...     jwt_algorithm = 'HS256'
@@ -427,7 +433,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
-        ...     basic_auth_password = 'pass'
+        ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     require_token_expiration = False
         ...     docs_allow_basic_auth = True
@@ -633,6 +639,7 @@ async def require_auth_override(
 
     Examples:
         >>> from mcpgateway.utils import verify_credentials as vc
+        >>> from pydantic import SecretStr
         >>> class DummySettings:
         ...     jwt_secret_key = 'secret'
         ...     jwt_algorithm = 'HS256'
@@ -640,7 +647,7 @@ async def require_auth_override(
         ...     jwt_issuer = 'mcpgateway'
         ...     jwt_audience_verification = True
         ...     basic_auth_user = 'user'
-        ...     basic_auth_password = 'pass'
+        ...     basic_auth_password = SecretStr('pass')
         ...     auth_required = True
         ...     mcp_client_auth_enabled = True
         ...     trust_proxy_auth = False
