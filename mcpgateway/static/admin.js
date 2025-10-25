@@ -10942,6 +10942,35 @@ window.updateAvailableTags = updateAvailableTags;
 // ===================================================================
 
 /**
+ * Toggle masking for sensitive text inputs (passwords, tokens, headers)
+ * @param {HTMLElement|string} inputOrId - Target input element or its ID
+ * @param {HTMLElement} button - Button triggering the toggle
+ */
+function toggleInputMask(inputOrId, button) {
+    const input =
+        typeof inputOrId === "string"
+            ? document.getElementById(inputOrId)
+            : inputOrId;
+
+    if (!input || !button) {
+        return;
+    }
+
+    const revealing = input.type === "password";
+    input.type = revealing ? "text" : "password";
+
+    const label = input.getAttribute("data-sensitive-label") || "value";
+    button.textContent = revealing ? "Hide" : "Show";
+    button.setAttribute("aria-pressed", revealing ? "true" : "false");
+    button.setAttribute(
+        "aria-label",
+        `${revealing ? "Hide" : "Show"} ${label}`.trim(),
+    );
+}
+
+window.toggleInputMask = toggleInputMask;
+
+/**
  * Global counter for unique header IDs
  */
 let headerCounter = 0;
@@ -10958,6 +10987,7 @@ function addAuthHeader(containerId) {
     }
 
     const headerId = `auth-header-${++headerCounter}`;
+    const valueInputId = `${headerId}-value`;
 
     const headerRow = document.createElement("div");
     headerRow.className = "flex items-center space-x-2";
@@ -10973,12 +11003,25 @@ function addAuthHeader(containerId) {
             />
         </div>
         <div class="flex-1">
-            <input
-                type="password"
-                placeholder="Header Value"
-                class="auth-header-value block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
-                oninput="updateAuthHeadersJSON('${containerId}')"
-            />
+            <div class="relative">
+                <input
+                    type="password"
+                    id="${valueInputId}"
+                    placeholder="Header Value"
+                    data-sensitive-label="header value"
+                    class="auth-header-value block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
+                    oninput="updateAuthHeadersJSON('${containerId}')"
+                />
+                <button
+                    type="button"
+                    class="absolute inset-y-0 right-0 flex items-center px-2 text-xs font-medium text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-indigo-300"
+                    onclick="toggleInputMask('${valueInputId}', this)"
+                    aria-pressed="false"
+                    aria-label="Show header value"
+                >
+                    Show
+                </button>
+            </div>
         </div>
         <button
             type="button"
