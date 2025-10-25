@@ -34,7 +34,8 @@ from pydantic import ValidationError, SecretStr
 import pytest
 
 # First-Party
-from mcpgateway.schemas import AdminToolCreate, encode_datetime, GatewayCreate, PromptArgument, PromptCreate, ResourceCreate, RPCRequest, ServerCreate, to_camel_case, ToolCreate, ToolInvocation
+from mcpgateway.schemas import AdminToolCreate, encode_datetime, GatewayCreate, PromptArgument, PromptCreate, ResourceCreate, RPCRequest, ServerCreate, ToolCreate, ToolInvocation
+from mcpgateway.utils.base_models import to_camel_case
 from mcpgateway.validators import SecurityValidator
 
 # Configure logging for better test debugging

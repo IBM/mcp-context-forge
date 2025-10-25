@@ -163,7 +163,7 @@ class Settings(BaseSettings):
     app_root_path: str = ""
 
     # Protocol
-    protocol_version: str = "2025-03-26"
+    protocol_version: str = "2025-06-18"
 
     # Authentication
     basic_auth_user: str = "admin"

@@ -1246,6 +1246,7 @@ class SessionRegistry(SessionBackend):
                 resources={"subscribe": True, "listChanged": True},
                 tools={"listChanged": True},
                 logging={},
+                completions={},  # Advertise completions capability per MCP spec
                 # roots={"listChanged": True}
             ),
             serverInfo=Implementation(name=settings.app_name, version=__version__),

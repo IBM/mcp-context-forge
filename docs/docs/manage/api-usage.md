@@ -438,7 +438,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources | jq '.'
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '
-  {"resource": 
+  {"resource":
     {
       "name": "config-file",
       "uri": "file:///etc/config.json",
