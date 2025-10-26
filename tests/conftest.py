@@ -23,18 +23,9 @@ from mcpgateway.config import Settings
 from mcpgateway.db import Base
 
 # Local
-# Test utilities - import before mcpgateway modules
 
 # Skip session-level RBAC patching for now - let individual tests handle it
 # _session_rbac_originals = patch_rbac_decorators()
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for each test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture(scope="session")
@@ -141,17 +132,6 @@ def mock_websocket():
     mock.receive_json = AsyncMock()
     mock.close = AsyncMock()
     return mock
-
-
-# @pytest.fixture(scope="session", autouse=True)
-# def _patch_stdio_first():
-#     """
-#     Runs once, *before* the test session collects other modules,
-#     so no rogue coroutine can be created.
-#     """
-#     import mcpgateway.translate as translate
-#     translate._run_stdio_to_sse = AsyncMock(return_value=None)
-#     translate._run_sse_to_stdio = AsyncMock(return_value=None)
 
 
 @pytest.fixture(scope="module")  # one DB per test module is usually fine

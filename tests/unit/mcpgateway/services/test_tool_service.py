@@ -1114,8 +1114,8 @@ class TestToolService:
         # Mock DB get to return None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
-        test_db.commit = AsyncMock()
-        test_db.refresh = AsyncMock()
+        test_db.commit = Mock()  # SQLAlchemy commit is synchronous
+        test_db.refresh = Mock()  # SQLAlchemy refresh is synchronous
 
         # Create update request
         tool_update = ToolUpdate(integration_type="REST", request_type="POST", headers={"key": "value"}, input_schema={"key2": "value2"}, annotations={"key3": "value3"}, jsonpath_filter="test_filter")
@@ -1136,8 +1136,8 @@ class TestToolService:
         # Mock DB get to return None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
-        test_db.commit = AsyncMock()
-        test_db.refresh = AsyncMock()
+        test_db.commit = Mock()  # SQLAlchemy commit is synchronous
+        test_db.refresh = Mock()  # SQLAlchemy refresh is synchronous
 
         # Basic auth_value
         # Create auth_value with the following values
@@ -1162,8 +1162,8 @@ class TestToolService:
         # Mock DB get to return None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
-        test_db.commit = AsyncMock()
-        test_db.refresh = AsyncMock()
+        test_db.commit = Mock()  # SQLAlchemy commit is synchronous
+        test_db.refresh = Mock()  # SQLAlchemy refresh is synchronous
 
         # Bearer auth_value
         # Create auth_value with the following values
@@ -1183,8 +1183,8 @@ class TestToolService:
         # Mock DB get to return None
         mock_tool.id = "999"
         test_db.get = Mock(return_value=mock_tool)
-        test_db.commit = AsyncMock()
-        test_db.refresh = AsyncMock()
+        test_db.commit = Mock()  # SQLAlchemy commit is synchronous
+        test_db.refresh = Mock()  # SQLAlchemy refresh is synchronous
 
         # Create update request
         tool_update = ToolUpdate(auth=AuthenticationValues())
@@ -1243,7 +1243,7 @@ class TestToolService:
 
         # --------------- HTTP ------------------
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         # <-- make json() *synchronous*
         mock_response.json = Mock(return_value={"result": "REST tool response"})
@@ -1268,7 +1268,7 @@ class TestToolService:
 
         # Test 204 status
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 204
         mock_response.json = Mock(return_value=ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")]))
 
@@ -1284,7 +1284,7 @@ class TestToolService:
 
         # Test 205 status
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 205
         mock_response.json = Mock(return_value=ToolResult(content=[TextContent(type="text", text="Tool error encountered")]))
 
@@ -1314,7 +1314,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "REST tool response"})  # Make json() synchronous
         tool_service._http_client.request.return_value = mock_response
@@ -2038,7 +2038,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "OAuth success"})
         tool_service._http_client.request.return_value = mock_response
@@ -2150,7 +2150,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "success with headers"})
         tool_service._http_client.request.return_value = mock_response
@@ -2242,7 +2242,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "original response"})
         tool_service._http_client.request.return_value = mock_response
@@ -2283,7 +2283,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "original response"})
         tool_service._http_client.request.return_value = mock_response
@@ -2327,7 +2327,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "original response"})
         tool_service._http_client.request.return_value = mock_response
@@ -2371,7 +2371,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "original response"})
         tool_service._http_client.request.return_value = mock_response
@@ -2414,7 +2414,7 @@ class TestToolService:
 
         # Mock HTTP client response
         mock_response = AsyncMock()
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "original response"})
         tool_service._http_client.request.return_value = mock_response
