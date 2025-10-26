@@ -362,11 +362,13 @@ class ClientCapabilities(BaseModel):
     Attributes:
         roots (Optional[Dict[str, bool]]): Capabilities related to root management.
         sampling (Optional[Dict[str, Any]]): Capabilities related to LLM sampling.
+        elicitation (Optional[Dict[str, Any]]): Capabilities related to elicitation (MCP 2025-06-18).
         experimental (Optional[Dict[str, Dict[str, Any]]]): Experimental capabilities.
     """
 
     roots: Optional[Dict[str, bool]] = None
     sampling: Optional[Dict[str, Any]] = None
+    elicitation: Optional[Dict[str, Any]] = None
     experimental: Optional[Dict[str, Dict[str, Any]]] = None
 
 
@@ -769,6 +771,91 @@ class ListResourceTemplatesResult(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
+
+
+# Elicitation types (MCP 2025-06-18)
+class ElicitationCapability(BaseModelWithConfigDict):
+    """Client capability for elicitation operations (MCP 2025-06-18).
+
+    Per MCP spec: Clients that support elicitation MUST declare this capability
+    during initialization. Elicitation allows servers to request structured
+    information from users through the client during interactive workflows.
+
+    Example:
+        {"capabilities": {"elicitation": {}}}
+    """
+
+    # Empty object per MCP spec, follows MCP SDK pattern
+    model_config = ConfigDict(extra="allow")
+
+
+class ElicitRequestParams(BaseModelWithConfigDict):
+    """Parameters for elicitation/create requests (MCP spec-compliant).
+
+    Elicitation requests allow servers to ask for user input with a structured
+    schema. The schema is restricted to flat objects with primitive types only.
+
+    Attributes:
+        message: Human-readable message to present to user
+        requestedSchema: JSON Schema defining expected response structure.
+                        Per MCP spec, must be type 'object' with primitive properties only:
+                        - string (optional format: email, uri, date, date-time)
+                        - number/integer (optional min/max)
+                        - boolean
+                        - enum (string values)
+                        No nested objects or arrays allowed.
+
+    Example:
+        {
+            "message": "Please provide your contact information",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Your full name"},
+                    "email": {"type": "string", "format": "email"}
+                },
+                "required": ["name", "email"]
+            }
+        }
+    """
+
+    message: str
+    requestedSchema: Dict[str, Any]  # JSON Schema (validated by ElicitationService)  # noqa: N815 (MCP spec requires camelCase)
+    model_config = ConfigDict(extra="allow")
+
+
+class ElicitResult(BaseModelWithConfigDict):
+    """Client response to elicitation request (MCP spec three-action model).
+
+    The MCP specification defines three distinct user actions to differentiate
+    between explicit approval, explicit rejection, and dismissal without choice.
+
+    Attributes:
+        action: User's response action:
+                - "accept": User explicitly approved and submitted data
+                             (content field MUST be populated)
+                - "decline": User explicitly declined the request
+                             (content typically None/omitted)
+                - "cancel": User dismissed without making an explicit choice
+                            (content typically None/omitted)
+        content: Submitted form data matching requestedSchema.
+                Only present when action is "accept".
+                Contains primitive values: str, int, float, bool, or None.
+
+    Examples:
+        Accept response:
+            {"action": "accept", "content": {"name": "John", "email": "john@example.com"}}
+
+        Decline response:
+            {"action": "decline"}
+
+        Cancel response:
+            {"action": "cancel"}
+    """
+
+    action: Literal["accept", "decline", "cancel"]
+    content: Optional[Dict[str, Union[str, int, float, bool, None]]] = None
+    model_config = ConfigDict(extra="allow")
 
 
 # Root types

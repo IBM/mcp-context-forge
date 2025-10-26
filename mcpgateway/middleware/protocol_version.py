@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Middleware to validate MCP-Protocol-Version header per MCP spec 2025-06-18."""
 
 # Standard

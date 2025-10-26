@@ -405,6 +405,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
+
+        # Initialize elicitation service
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            elicitation_service = get_elicitation_service()
+            await elicitation_service.start()
+            logger.info("Elicitation service initialized")
+
         refresh_slugs_on_startup()
 
         # Bootstrap SSO providers from environment configuration
@@ -463,6 +473,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         if a2a_service:
             services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
+
+        # Add elicitation service if enabled
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            elicitation_service = get_elicitation_service()
+            services_to_shutdown.insert(5, elicitation_service)
 
         for service in services_to_shutdown:
             try:
@@ -1749,10 +1767,34 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 
         message = await request.json()
 
-        await session_registry.broadcast(
-            session_id=session_id,
-            message=message,
-        )
+        # Check if this is an elicitation response (JSON-RPC response with result containing action)
+        is_elicitation_response = False
+        if "result" in message and isinstance(message.get("result"), dict):
+            result_data = message["result"]
+            if "action" in result_data and result_data.get("action") in ["accept", "decline", "cancel"]:
+                # This looks like an elicitation response
+                request_id = message.get("id")
+                if request_id:
+                    # Try to complete the elicitation
+                    # First-Party
+                    from mcpgateway.models import ElicitResult  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+                    elicitation_service = get_elicitation_service()
+                    try:
+                        elicit_result = ElicitResult(**result_data)
+                        if elicitation_service.complete_elicitation(request_id, elicit_result):
+                            logger.info(f"Completed elicitation {request_id} from session {session_id}")
+                            is_elicitation_response = True
+                    except Exception as e:
+                        logger.warning(f"Failed to process elicitation response: {e}")
+
+        # If not an elicitation response, broadcast normally
+        if not is_elicitation_response:
+            await session_registry.broadcast(
+                session_id=session_id,
+                message=message,
+            )
 
         return JSONResponse(content={"status": "success"}, status_code=202)
     except ValueError as e:
@@ -3556,7 +3598,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         if method == "initialize":
-            result = await session_registry.handle_initialize_logic(body.get("params", {}))
+            # Extract session_id from params or query string (for capability tracking)
+            init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
+            result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id)
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
@@ -3695,7 +3739,89 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method.startswith("sampling/"):
             # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
+        elif method == "elicitation/create":
+            # MCP spec 2025-06-18: Elicitation support (server-to-client requests)
+            # Elicitation allows servers to request structured user input through clients
+
+            # Check if elicitation is enabled
+            if not settings.mcpgateway_elicitation_enabled:
+                raise JSONRPCError(-32601, "Elicitation feature is disabled", {"feature": "elicitation", "config": "MCPGATEWAY_ELICITATION_ENABLED=false"})
+
+            # Validate params
+            # First-Party
+            from mcpgateway.models import ElicitRequestParams  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            try:
+                elicit_params = ElicitRequestParams(**params)
+            except Exception as e:
+                raise JSONRPCError(-32602, f"Invalid elicitation params: {e}", params)
+
+            # Get target session (from params or find elicitation-capable session)
+            target_session_id = params.get("session_id") or params.get("sessionId")
+            if not target_session_id:
+                # Find an elicitation-capable session
+                capable_sessions = await session_registry.get_elicitation_capable_sessions()
+                if not capable_sessions:
+                    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
+                target_session_id = capable_sessions[0]
+                logger.debug(f"Selected session {target_session_id} for elicitation")
+
+            # Verify session has elicitation capability
+            if not await session_registry.has_elicitation_capability(target_session_id):
+                raise JSONRPCError(-32000, f"Session {target_session_id} does not support elicitation", {"session_id": target_session_id})
+
+            # Get elicitation service and create request
+            elicitation_service = get_elicitation_service()
+
+            # Extract timeout from params or use default
+            timeout = params.get("timeout", settings.mcpgateway_elicitation_timeout)
+
+            try:
+                # Create elicitation request - this stores it and waits for response
+                # For now, use dummy upstream_session_id - in full bidirectional proxy,
+                # this would be the session that initiated the request
+                upstream_session_id = "gateway"
+
+                # Start the elicitation (creates pending request and future)
+                elicitation_task = asyncio.create_task(
+                    elicitation_service.create_elicitation(
+                        upstream_session_id=upstream_session_id, downstream_session_id=target_session_id, message=elicit_params.message, requested_schema=elicit_params.requestedSchema, timeout=timeout
+                    )
+                )
+
+                # Get the pending elicitation to extract request_id
+                # Wait a moment for it to be created
+                await asyncio.sleep(0.01)
+                pending_elicitations = [e for e in elicitation_service._pending.values() if e.downstream_session_id == target_session_id]  # pylint: disable=protected-access
+                if not pending_elicitations:
+                    raise JSONRPCError(-32000, "Failed to create elicitation request", {})
+
+                pending = pending_elicitations[-1]  # Get most recent
+
+                # Send elicitation request to client via broadcast
+                elicitation_request = {
+                    "jsonrpc": "2.0",
+                    "id": pending.request_id,
+                    "method": "elicitation/create",
+                    "params": {"message": elicit_params.message, "requestedSchema": elicit_params.requestedSchema},
+                }
+
+                await session_registry.broadcast(target_session_id, elicitation_request)
+                logger.debug(f"Sent elicitation request {pending.request_id} to session {target_session_id}")
+
+                # Wait for response
+                elicit_result = await elicitation_task
+
+                # Return result
+                result = elicit_result.model_dump(by_alias=True, exclude_none=True)
+
+            except asyncio.TimeoutError:
+                raise JSONRPCError(-32000, f"Elicitation timed out after {timeout}s", {"message": elicit_params.message, "timeout": timeout})
+            except ValueError as e:
+                raise JSONRPCError(-32000, str(e), {"message": elicit_params.message})
         elif method.startswith("elicitation/"):
+            # Catch-all for other elicitation/* methods
             result = {}
         elif method == "completion/complete":
             # MCP spec-compliant completion endpoint
