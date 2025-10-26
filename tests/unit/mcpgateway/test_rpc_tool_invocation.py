@@ -100,7 +100,7 @@ class TestRPCToolInvocation:
                 with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock) as mock_list:
                     sample_tool = MagicMock()
                     sample_tool.model_dump.return_value = {"name": "test_tool", "description": "A test tool"}
-                    mock_list.return_value = [sample_tool]
+                    mock_list.return_value = ([sample_tool], None)
 
                     request_body = {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2}
 
@@ -181,9 +181,9 @@ class TestRPCToolInvocation:
         with patch("mcpgateway.config.settings.auth_required", False):
             with patch("mcpgateway.main.get_db", return_value=mock_db):
                 # Mock all possible service methods
-                with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock, return_value=[]):
-                    with patch("mcpgateway.main.resource_service.list_resources", new_callable=AsyncMock, return_value=[]):
-                        with patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock, return_value=[]):
+                with patch("mcpgateway.main.tool_service.list_tools", new_callable=AsyncMock, return_value=([], None)):
+                    with patch("mcpgateway.main.resource_service.list_resources", new_callable=AsyncMock, return_value=([], None)):
+                        with patch("mcpgateway.main.prompt_service.list_prompts", new_callable=AsyncMock, return_value=([], None)):
                             with patch("mcpgateway.main.gateway_service.list_gateways", new_callable=AsyncMock, return_value=[]):
                                 with patch("mcpgateway.main.root_service.list_roots", new_callable=AsyncMock, return_value=[]):
                                     request_body = {"jsonrpc": "2.0", "method": method, "params": {}, "id": 100}

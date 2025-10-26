@@ -2264,7 +2264,7 @@ async def list_tools(
             data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
     else:
         # Use existing method for backward compatibility when no team filtering
-        data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
     if apijsonpath is None:
         return data
@@ -2630,7 +2630,7 @@ async def list_resources(
         logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
         if cached := resource_cache.get("resource_list"):
             return cached
-        data = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
         resource_cache.set("resource_list", data)
     return data
 
@@ -2960,7 +2960,7 @@ async def list_prompts(
     else:
         # Use existing method for backward compatibility when no team filtering
         logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-        data = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
     return data
 
 

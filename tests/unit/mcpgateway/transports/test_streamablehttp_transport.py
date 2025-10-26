@@ -294,7 +294,7 @@ async def test_list_tools_no_server_id(monkeypatch):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=[mock_tool]))
+    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([mock_tool], None)))
 
     # Ensure server_id is None
     token = server_id_var.set(None)
@@ -407,7 +407,7 @@ async def test_list_prompts_no_server_id(monkeypatch):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(prompt_service, "list_prompts", AsyncMock(return_value=[mock_prompt]))
+    monkeypatch.setattr(prompt_service, "list_prompts", AsyncMock(return_value=([mock_prompt], None)))
 
     token = server_id_var.set(None)
     result = await list_prompts()
@@ -642,7 +642,7 @@ async def test_list_resources_no_server_id(monkeypatch):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(resource_service, "list_resources", AsyncMock(return_value=[mock_resource]))
+    monkeypatch.setattr(resource_service, "list_resources", AsyncMock(return_value=([mock_resource], None)))
 
     token = server_id_var.set(None)
     result = await list_resources()
