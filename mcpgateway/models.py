@@ -380,6 +380,7 @@ class ServerCapabilities(BaseModel):
         resources (Optional[Dict[str, bool]]): Capability for resource support.
         tools (Optional[Dict[str, bool]]): Capability for tool support.
         logging (Optional[Dict[str, Any]]): Capability for logging support.
+        completions (Optional[Dict[str, Any]]): Capability for completion support.
         experimental (Optional[Dict[str, Dict[str, Any]]]): Experimental capabilities.
     """
 
@@ -387,6 +388,7 @@ class ServerCapabilities(BaseModel):
     resources: Optional[Dict[str, bool]] = None
     tools: Optional[Dict[str, bool]] = None
     logging: Optional[Dict[str, Any]] = None
+    completions: Optional[Dict[str, Any]] = None
     experimental: Optional[Dict[str, Dict[str, Any]]] = None
 
 
