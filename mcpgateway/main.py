@@ -3653,7 +3653,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = result.model_dump(by_alias=True, exclude_none=True)
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
-            result = {}
+            # MCP spec-compliant resource templates list endpoint
+            resource_templates = await resource_service.list_resource_templates(db)
+            result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
         elif method == "roots/list":
             # MCP spec-compliant method name
             roots = await root_service.list_roots()
