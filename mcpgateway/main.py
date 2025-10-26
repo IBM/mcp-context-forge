@@ -3606,15 +3606,21 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "tools/list":
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools = await tool_service.list_tools(db, cursor=cursor)
-            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools = await tool_service.list_tools(db, cursor=cursor)
-            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "list_gateways":
             gateways = await gateway_service.list_gateways(db, include_inactive=False)
             result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
@@ -3624,9 +3630,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "resources/list":
             if server_id:
                 resources = await resource_service.list_server_resources(db, server_id)
+                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
-                resources = await resource_service.list_resources(db)
-            result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor)
+                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "resources/read":
             uri = params.get("uri")
             request_id = params.get("requestId", None)
@@ -3668,9 +3677,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "prompts/list":
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
+                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
-                prompts = await prompt_service.list_prompts(db, cursor=cursor)
-            result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor)
+                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "prompts/get":
             name = params.get("name")
             arguments = params.get("arguments", {})

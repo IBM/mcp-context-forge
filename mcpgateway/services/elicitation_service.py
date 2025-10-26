@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Elicitation service for tracking and routing elicitation requests.
 
 This service manages the lifecycle of MCP elicitation requests, which allow
