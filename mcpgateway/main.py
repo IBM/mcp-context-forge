@@ -3607,6 +3607,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
             await resource_service.subscribe_resource(db, subscription)
             result = {}
+        elif method == "resources/unsubscribe":
+            # MCP spec-compliant resource unsubscription endpoint
+            uri = params.get("uri")
+            if not uri:
+                raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            # Get user email for subscriber ID
+            user_email = get_user_email(user)
+            subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+            await resource_service.unsubscribe_resource(db, subscription)
+            result = {}
         elif method == "prompts/list":
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
