@@ -58,6 +58,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
@@ -598,10 +599,6 @@ class ToolService:
             >>> isinstance(tools, list)
             True
         """
-        # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-        from mcpgateway.utils.pagination import decode_cursor, encode_cursor  # pylint: disable=import-outside-toplevel
-
         page_size = settings.pagination_default_page_size
         query = select(DbTool).order_by(DbTool.id)  # Consistent ordering for cursor pagination
 

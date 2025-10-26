@@ -41,6 +41,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
@@ -51,6 +52,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Plugin support imports (conditional)
@@ -121,9 +123,6 @@ class ResourceService:
         self._plugin_manager = None
         if PLUGINS_AVAILABLE:
             try:
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Support env overrides for testability without reloading settings
                 env_flag = os.getenv("PLUGINS_ENABLED")
                 if env_flag is not None:
@@ -448,10 +447,6 @@ class ResourceService:
             >>> isinstance(result2, list)
             True
         """
-        # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-        from mcpgateway.utils.pagination import decode_cursor, encode_cursor  # pylint: disable=import-outside-toplevel
-
         page_size = settings.pagination_default_page_size
         query = select(DbResource).order_by(DbResource.id)  # Consistent ordering for cursor pagination
 

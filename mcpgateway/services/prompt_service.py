@@ -40,6 +40,7 @@ from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptPos
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Initialize logging service first
@@ -448,10 +449,6 @@ class PromptService:
             >>> prompts == ['prompt_read']
             True
         """
-        # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-        from mcpgateway.utils.pagination import decode_cursor, encode_cursor  # pylint: disable=import-outside-toplevel
-
         page_size = settings.pagination_default_page_size
         query = select(DbPrompt).order_by(DbPrompt.id)  # Consistent ordering for cursor pagination
 
