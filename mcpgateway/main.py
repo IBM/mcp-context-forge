@@ -89,6 +89,7 @@ from mcpgateway.schemas import (
     PromptUpdate,
     ResourceCreate,
     ResourceRead,
+    ResourceSubscription,
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
@@ -3596,6 +3597,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+        elif method == "resources/subscribe":
+            # MCP spec-compliant resource subscription endpoint
+            uri = params.get("uri")
+            if not uri:
+                raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            # Get user email for subscriber ID
+            user_email = get_user_email(user)
+            subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+            await resource_service.subscribe_resource(db, subscription)
+            result = {}
         elif method == "prompts/list":
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
@@ -3640,15 +3651,49 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method.startswith("roots/"):
             # Catch-all for other roots/* methods (currently unsupported)
             result = {}
-        elif method.startswith("notifications/"):
+        elif method == "notifications/initialized":
+            # MCP spec-compliant notification: client initialized
+            logger.info("Client initialized")
+            await logging_service.notify("Client initialized", LogLevel.INFO)
             result = {}
+        elif method == "notifications/cancelled":
+            # MCP spec-compliant notification: request cancelled
+            request_id = params.get("requestId")
+            logger.info(f"Request cancelled: {request_id}")
+            await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
+            result = {}
+        elif method == "notifications/message":
+            # MCP spec-compliant notification: log message
+            await logging_service.notify(
+                params.get("data"),
+                LogLevel(params.get("level", "info")),
+                params.get("logger"),
+            )
+            result = {}
+        elif method.startswith("notifications/"):
+            # Catch-all for other notifications/* methods (currently unsupported)
+            result = {}
+        elif method == "sampling/createMessage":
+            # MCP spec-compliant sampling endpoint
+            result = await sampling_handler.create_message(db, params)
         elif method.startswith("sampling/"):
+            # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
         elif method.startswith("elicitation/"):
             result = {}
+        elif method == "completion/complete":
+            # MCP spec-compliant completion endpoint
+            result = await completion_service.handle_completion(db, params)
         elif method.startswith("completion/"):
+            # Catch-all for other completion/* methods (currently unsupported)
+            result = {}
+        elif method == "logging/setLevel":
+            # MCP spec-compliant logging endpoint
+            level = LogLevel(params.get("level"))
+            await logging_service.set_level(level)
             result = {}
         elif method.startswith("logging/"):
+            # Catch-all for other logging/* methods (currently unsupported)
             result = {}
         else:
             # Backward compatibility: Try to invoke as a tool directly
