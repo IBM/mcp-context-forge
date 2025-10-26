@@ -67,6 +67,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
@@ -986,6 +987,9 @@ else:
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
+app.add_middleware(MCPProtocolVersionMiddleware)
 
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
