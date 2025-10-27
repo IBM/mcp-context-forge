@@ -2609,7 +2609,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
