@@ -1238,29 +1238,35 @@ async def generate_testcases_for_tool(tool_id: str = Query(description="Tool ID"
             detail="Invalid JSON in request body",
         )
 
+from mcpgateway.toolops.services import enrich_tool
 @toolops_router.post("/enrichment/enrich_tool")
-async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID")) -> Dict:
+async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: Session = Depends(get_db)) -> dict[str, Any]:
     """
-    Generate test cases for a tool
-
-    This endpoint handles the automated tool enrichment by accepting
-    a tool id . The `require_auth` dependency ensures that
-    the user is authenticated before proceeding.
+    Enriches an input tool
 
     Args:
         tool_id: Tool ID in context forge.
-        user (str): The authenticated user (from `require_auth` dependency).
+        db (Session): The database session used to interact with the data store.
 
     Returns:
-        List: A list of test cases generated for the tool
+        Dict: A dict having the keys "tool_id", "tool_name", "original_desc" and "enriched_desc" with their corresponding values
 
     Raises:
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
-        print("Tool - ", tool_id)
+        logger.info("Tool - " + tool_id)
+        enriched_tool_description, tool_schema = await enrich_tool(tool_id, tool_service, db)
+        result: dict[str, Any] = {}
+        result["tool_id"] = tool_id
+        result["tool_name"] = tool_schema.name
+        result["original_desc"] = tool_schema.description
+        result["enriched_desc"] = enriched_tool_description
+        logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
+
         #logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        return {"enriched_tool":{"name":"test"}}
+        # return {"enriched_tool":{"name":"test"}}
+        return result
 
     except json.JSONDecodeError:
         raise HTTPException(
