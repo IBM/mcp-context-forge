@@ -460,7 +460,7 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
 # ---------- SESSION STORAGE HELPERS ----------
 
 # Identify this worker uniquely (used for sticky session ownership)
-WORKER_ID = os.getenv("WORKER_ID") or os.getenv("HOSTNAME") or str(os.getpid())
+WORKER_ID = str(os.getpid())
 
 # Tunables (can set via environment)
 SESSION_TTL = int(os.getenv("SESSION_TTL", "300"))  # seconds for active_session key TTL
