@@ -37,11 +37,17 @@ class PoolKey:
     transport_type: TransportType
 
     def __hash__(self):
-        """Compute hash based on user_id, server_id, and transport_type."""
+        """Compute hash based on user_id, server_id, and transport_type.
+        Returns:
+            int: Hash value"""
         return hash((self.user_id, self.server_id, self.transport_type))
 
     def __eq__(self, other):
-        """Equality check based on user_id, server_id, and transport_type."""
+        """Equality check based on user_id, server_id, and transport_type.
+        Args:
+            other (PoolKey): Another PoolKey instance to compare with.
+        Returns:
+            bool: True if equal, False otherwise."""
         return (isinstance(other, PoolKey) and
                 self.user_id == other.user_id and
                 self.server_id == other.server_id and
@@ -51,7 +57,12 @@ class PoolKey:
 class PooledSession:
     """Wrapper around transport for pooling and metrics tracking."""
     def __init__(self, transport: Transport, user_id: str, server_id: str, transport_type: TransportType):
-        """Initialize pooled session wrapper."""
+        """Initialize pooled session wrapper.
+        Args:
+            transport (Transport): The transport instance
+            user_id (str): Identifier for the user
+            server_id (str): Identifier for the server
+            transport_type (TransportType): Type of transport"""
         self.transport = transport
         self.user_id = user_id
         self.server_id = server_id
@@ -65,12 +76,16 @@ class PooledSession:
 
     @property
     def age(self) -> float:
-        """Get the age of the session in seconds."""
+        """Get the age of the session in seconds.
+        Returns:
+            float: Age of the session in seconds."""
         return time.time() - self.created_at
 
     @property
     def idle_time(self) -> float:
-        """Get the idle time of the session in seconds."""
+        """Get the idle time of the session in seconds.
+        Returns:
+            float: Idle time of the session in seconds."""
         return time.time() - self.last_used
 
     def capture_state(self) -> None:
@@ -103,7 +118,9 @@ class SessionPool:
     }
 
     def __init__(self, session_registry: SessionRegistry):
-        """Initialize the session pool."""
+        """Initialize the session pool.
+        Args:
+            session_registry (SessionRegistry): Registry to track active sessions"""
         self._registry = session_registry
         self._pool: Dict[PoolKey, PooledSession] = {}
         self._lock = asyncio.Lock()
@@ -129,7 +146,21 @@ class SessionPool:
 
     async def get_or_create_session(self, user_id: str, server_id: str, base_url: str,
                                     transport_type: TransportType) -> Transport:
-        """Get an existing session for (user, server, transport) or create a new one."""
+        """
+        Get an existing session for (user, server, transport) or create a new one.
+
+        Args:
+            user_id: Identifier for the user
+            server_id: Identifier for the server
+            base_url: Base URL for transport connection
+            transport_type: Type of transport to use
+
+        Returns:
+            Transport: An active transport session
+
+        Raises:
+            Exception: If session creation fails
+        """
         if not settings.session_pooling_enabled:
             logger.debug("Session pooling disabled, creating fresh session.")
             return await self._create_new_session(user_id, server_id, base_url, transport_type)
@@ -164,7 +195,22 @@ class SessionPool:
 
     async def _create_new_session(self, user_id: str, server_id: str, base_url: str,
                                   transport_type: TransportType) -> PooledSession:
-        """Create and register a brand new transport session."""
+        """
+        Create and register a brand new transport session.
+
+        Args:
+            user_id: Identifier for the user
+            server_id: Identifier for the server
+            base_url: Base URL for transport connection
+            transport_type: Type of transport to create
+
+        Raises:
+            ValueError: If the transport type is unsupported
+
+        Returns:
+            PooledSession: The newly created pooled session
+
+        """
         try:
             # Create transport instance based on type
             transport_class = self.TRANSPORT_CLASSES.get(transport_type)
@@ -188,9 +234,9 @@ class SessionPool:
             self._metrics["created"] += 1
 
             logger.info("Created new %s session for user=%s server=%s (session_id=%s)",
-                        transport_type.value, 
-                        user_id, 
-                        server_id, 
+                        transport_type.value,
+                        user_id,
+                        server_id,
                         transport.session_id)
             return session
 
@@ -204,7 +250,11 @@ class SessionPool:
     # --------------------------------------------------------------------------
 
     async def _is_session_valid(self, session: PooledSession) -> bool:
-        """Check whether a pooled session is still alive and eligible for reuse."""
+        """Check whether a pooled session is still alive and eligible for reuse.
+        Args:
+            session (PooledSession): The session to validate
+        Returns:
+            bool: True if valid, False otherwise"""
         try:
             if not await session.transport.is_connected():
                 logger.debug("Session %s disconnected.", session.transport.session_id)
@@ -233,7 +283,10 @@ class SessionPool:
             return False
 
     async def _cleanup_session(self, pool_key: PoolKey, session: PooledSession) -> None:
-        """Safely close and remove a single session."""
+        """Safely close and remove a single session.
+        Args:
+            pool_key (PoolKey): The key identifying the session in the pool
+            session (PooledSession): The session to clean up"""
         try:
             # Capture final state before cleanup
             session.capture_state()
@@ -286,7 +339,10 @@ class SessionPool:
     # --------------------------------------------------------------------------
 
     async def capture_all_states(self) -> Dict[str, Any]:
-        """Capture states from all active sessions for persistence."""
+        """Capture states from all active sessions for persistence.
+        Returns:
+            Dict[str, Any]: Mapping of session IDs to their captured states
+        """
         states = {}
         async with self._lock:
             for pool_key, session in self._pool.items():
@@ -303,7 +359,12 @@ class SessionPool:
         return states
 
     async def restore_session_state(self, session_id: str, state: Dict[str, Any]) -> bool:
-        """Restore state to a specific session."""
+        """Restore state to a specific session.
+        Args:
+            session_id (str): The session ID to restore state to
+            state (Dict[str, Any]): The state data to restore
+        Returns:
+            bool: True if restoration was successful, False otherwise"""
         async with self._lock:
             for pool_key, session in self._pool.items():
                 if session.transport.session_id == session_id:
@@ -319,7 +380,10 @@ class SessionPool:
     # --------------------------------------------------------------------------
 
     def get_pool_stats(self) -> Dict[str, Any]:
-        """Get comprehensive pool statistics."""
+        """Get comprehensive pool statistics.
+        Returns:
+            Dict[str, Any]: Current pool statistics
+        """
         stats = {
             "metrics": self._metrics.copy(),
             "active_sessions": len(self._pool),

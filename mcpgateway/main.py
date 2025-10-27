@@ -4007,7 +4007,7 @@ async def websocket_endpoint(websocket: WebSocket):
         # Identify user and server for pooling key
         user_id = proxy_user or "anonymous"
         server_id = websocket.query_params.get("server_id", "default-server")
-        base_url = f"ws://localhost:{settings.port}{settings.app_root_path}/ws"
+        # base_url = f"ws://localhost:{settings.port}{settings.app_root_path}/ws"
 
         # Session Pooling logic
         transport = None
