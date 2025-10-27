@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """MCP RSS Search Server - Advanced RSS feed parsing, searching, and analysis."""
 
