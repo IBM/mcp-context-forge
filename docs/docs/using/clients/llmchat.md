@@ -1,6 +1,6 @@
 # 🚀 LLM Chat - Integrated MCP Client within Context Forge Gateway
 
-The LLM Chat feature enables interactive conversations with AI language models while leveraging tools from MCP (Model Context Protocol) servers. This powerful combination allows the LLM to access external capabilities through registered tools, creating an enhanced AI experience.
+The LLM Chat feature enables interactive conversations with AI language models while leveraging tools from Virtual MCP servers. Once a virtual server is created, the user can use the integrated mcp client with agentic capabilities to test the tools.
 
 ## 📖 Overview
 
