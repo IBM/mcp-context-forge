@@ -463,11 +463,10 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
 WORKER_ID = str(os.getpid())
 
 # Tunables (can set via environment)
-SESSION_TTL = int(os.getenv("SESSION_TTL", "300"))  # seconds for active_session key TTL
-LOCK_TTL = int(os.getenv("SESSION_LOCK_TTL", "30"))  # seconds for lock expiry
-LOCK_RETRIES = int(os.getenv("SESSION_LOCK_RETRIES", "10"))  # how many times to poll while waiting
-LOCK_WAIT = float(os.getenv("SESSION_LOCK_WAIT", "0.2"))  # seconds between polls
-
+SESSION_TTL = settings.llmchat_session_ttl        # seconds for active_session key TTL
+LOCK_TTL = settings.llmchat_session_lock_ttl      # seconds for lock expiry
+LOCK_RETRIES = settings.llmchat_session_lock_retries  # how many times to poll while waiting
+LOCK_WAIT = settings.llmchat_session_lock_wait    # seconds between polls
 
 # Redis key helpers
 def _cfg_key(user_id: str) -> str:
