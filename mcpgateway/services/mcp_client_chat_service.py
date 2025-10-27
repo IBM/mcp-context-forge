@@ -1188,14 +1188,14 @@ class WatsonxProvider:
         config: IBM watsonx.ai configuration object.
 
     Examples:
-        >>> config = WatsonxConfig(
+        >>> config = WatsonxConfig(  # doctest: +SKIP
         ...     api_key="key",
         ...     url="https://us-south.ml.cloud.ibm.com",
         ...     project_id="project-id",
         ...     model_id="ibm/granite-13b-chat-v2"
         ... )
-        >>> provider = WatsonxProvider(config)
-        >>> provider.get_model_name()
+        >>> provider = WatsonxProvider(config)  # doctest: +SKIP
+        >>> provider.get_model_name()  # doctest: +SKIP
         'ibm/granite-13b-chat-v2'
 
     Note:
@@ -1213,13 +1213,13 @@ class WatsonxProvider:
             ImportError: If langchain-ibm is not installed.
 
         Examples:
-            >>> config = WatsonxConfig(
+            >>> config = WatsonxConfig(  # doctest: +SKIP
             ...     api_key="key",
             ...     url="https://us-south.ml.cloud.ibm.com",
             ...     project_id="project-id",
             ...     model_id="ibm/granite-13b-chat-v2"
             ... )
-            >>> provider = WatsonxProvider(config)
+            >>> provider = WatsonxProvider(config)  # doctest: +SKIP
         """
         if not _WATSONX_AVAILABLE:
             raise ImportError("IBM watsonx.ai provider requires langchain-ibm package. Install it with: pip install langchain-ibm")
@@ -1241,13 +1241,13 @@ class WatsonxProvider:
             Exception: If LLM initialization fails (e.g., invalid credentials).
 
         Examples:
-            >>> config = WatsonxConfig(
+            >>> config = WatsonxConfig(  # doctest: +SKIP
             ...     api_key="key",
             ...     url="https://us-south.ml.cloud.ibm.com",
             ...     project_id="project-id",
             ...     model_id="ibm/granite-13b-chat-v2"
             ... )
-            >>> provider = WatsonxProvider(config)
+            >>> provider = WatsonxProvider(config)  # doctest: +SKIP
             >>> #llm = provider.get_llm()  # Returns WatsonxLLM instance
         """
         if self.llm is None:
@@ -1287,14 +1287,14 @@ class WatsonxProvider:
             str: The model ID configured for this provider.
 
         Examples:
-            >>> config = WatsonxConfig(
+            >>> config = WatsonxConfig(  # doctest: +SKIP
             ...     api_key="key",
             ...     url="https://us-south.ml.cloud.ibm.com",
             ...     project_id="project-id",
             ...     model_id="ibm/granite-13b-chat-v2"
             ... )
-            >>> provider = WatsonxProvider(config)
-            >>> provider.get_model_name()
+            >>> provider = WatsonxProvider(config)  # doctest: +SKIP
+            >>> provider.get_model_name()  # doctest: +SKIP
             'ibm/granite-13b-chat-v2'
         """
         return self.config.model_id
