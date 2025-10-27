@@ -394,7 +394,7 @@ class Settings(BaseSettings):
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
 
-    #redis configurations for Maintaining Chat Sessions in multi-worker environment
+    # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
     llmchat_session_lock_ttl: int = Field(default=30, description="Seconds for lock expiry")
     llmchat_session_lock_retries: int = Field(default=10, description="How many times to poll while waiting")
