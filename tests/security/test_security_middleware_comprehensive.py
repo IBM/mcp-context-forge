@@ -281,7 +281,7 @@ class TestCSPConfiguration:
 
             # Verify essential directives
             assert "default-src 'self'" in csp
-            assert "frame-ancestors 'none'" in csp
+            assert "frame-ancestors 'self'" in csp
             assert csp.endswith(";")
 
     def test_csp_includes_admin_ui_cdns(self):
@@ -337,7 +337,7 @@ class TestMiddlewareIntegration:
         client = TestClient(app)
         response = client.get("/test")
 
-        assert response.headers["X-Frame-Options"] == "DENY"
+        assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
         assert response.headers["X-Content-Type-Options"] == "nosniff"
         assert "Content-Security-Policy" in response.headers
         assert "<html>" in response.text
@@ -455,7 +455,7 @@ class TestAllConfigurationCombinations:
 
             # All headers should be present
             assert response.headers["X-Content-Type-Options"] == "nosniff"
-            assert response.headers["X-Frame-Options"] == "DENY"
+            assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
             assert response.headers["X-XSS-Protection"] == "0"
             assert response.headers["X-Download-Options"] == "noopen"
             assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
