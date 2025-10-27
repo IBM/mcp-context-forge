@@ -480,6 +480,8 @@ app = FastAPI(
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
 )
 
+# Setup metrics instrumentation
+setup_metrics(app)
 async def validate_security_configuration():
     """Validate security configuration on startup."""
     logger.info("🔒 Validating security configuration...")
@@ -3949,12 +3951,12 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
 
+
 # Define the /prometheus endpoint
 @metrics_router.get("/prometheus", summary="Prometheus Metrics", description="Expose Prometheus metrics for monitoring.")
 def prometheus_metrics():
     """Endpoint to expose Prometheus metrics."""
     return setup_metrics(app)
-
 
 ####################
 # Healthcheck      #
