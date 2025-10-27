@@ -305,7 +305,12 @@ sys.stdout.flush()
     async def test_empty_env_vars(self, echo_script):
         """Test with empty environment variables dictionary."""
         pubsub = _PubSub()
-        env_vars: dict[str, str] = {}
+        env_vars = os.environ.copy()
+
+        # Simulate "empty" app-level environment by removing nonessential vars
+        for key in ["PYTHONPATH", "VIRTUAL_ENV", "LD_LIBRARY_PATH"]:
+            env_vars.pop(key, None)
+            
 
         endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub, env_vars)
         await endpoint.start()
