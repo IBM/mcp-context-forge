@@ -635,7 +635,7 @@ class ToolService:
         query = select(DbTool)
 
         offset = 0
-        per_page = settings.pagination_min_page_size
+        per_page = settings.pagination_default_page_size
 
         # Apply active/inactive filter
         if not include_inactive:
