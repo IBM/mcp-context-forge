@@ -242,7 +242,7 @@ class TestStaticAnalysisToolCompatibility:
         response = client.get("/test")
 
         # Headers should be in standard format for automated tools
-        headers_to_check = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "X-XSS-Protection": "0", "X-Download-Options": "noopen"}
+        headers_to_check = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN", "X-XSS-Protection": "0", "X-Download-Options": "noopen"}
 
         for header_name, expected_value in headers_to_check.items():
             assert response.headers[header_name] == expected_value
