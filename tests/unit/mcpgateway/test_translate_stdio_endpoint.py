@@ -310,7 +310,7 @@ sys.stdout.flush()
         # Simulate "empty" app-level environment by removing nonessential vars
         for key in ["PYTHONPATH", "VIRTUAL_ENV", "LD_LIBRARY_PATH"]:
             env_vars.pop(key, None)
-            
+
 
         endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub, env_vars)
         await endpoint.start()
