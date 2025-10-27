@@ -47,6 +47,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     MCPServerConfig,
     OllamaConfig,
     OpenAIConfig,
+    WatsonxConfig,
 )
 
 # Load environment variables
@@ -287,7 +288,7 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
     cfg = llm.config if llm else {}
 
     # Validate provider
-    valid_providers = ["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama"]
+    valid_providers = ["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama", "watsonx"]
     if provider not in valid_providers:
         raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: {', '.join(valid_providers)}")
 
@@ -383,6 +384,32 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
                 base_url=fallback(cfg.get("base_url"), "OLLAMA_BASE_URL", "http://localhost:11434"),
                 timeout=cfg.get("timeout"),
                 num_ctx=cfg.get("num_ctx"),
+            ),
+        )
+
+    elif provider == "watsonx":
+        apikey = fallback(cfg.get("apikey"), "WATSONX_APIKEY")
+        project_id = fallback(cfg.get("projectid"), "WATSONX_PROJECT_ID")
+
+        if not apikey:
+            raise ValueError("IBM watsonx.ai API key is required but not provided")
+        if not project_id:
+            raise ValueError("IBM watsonx.ai project ID is required but not provided")
+
+        return LLMConfig(
+            provider="watsonx",
+            config=WatsonxConfig(
+                apikey=apikey,
+                url=fallback(cfg.get("url"), "WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
+                project_id=project_id,
+                model_id=fallback(cfg.get("model_id"), "WATSONX_MODEL_ID", "ibm/granite-13b-chat-v2"),
+                temperature=fallback(cfg.get("temperature"), "WATSONX_TEMPERATURE", 0.7),
+                max_new_tokens=cfg.get("max_tokens", 1024),
+                min_new_tokens=cfg.get("min_tokens", 1),
+                decoding_method=fallback(cfg.get("decoding_method"), "WATSONX_DECODING_METHOD", "sample"),
+                top_k=cfg.get("top_k", 50),
+                top_p=cfg.get("top_p", 1.0),
+                timeout=cfg.get("timeout"),
             ),
         )
 

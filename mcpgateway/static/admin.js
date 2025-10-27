@@ -15037,6 +15037,7 @@ function handleLLMProviderChange() {
     const openaiFields = document.getElementById("openai-fields");
     const anthropicFields = document.getElementById("anthropic-fields");
     const awsBedrockFields = document.getElementById("aws-bedrock-fields");
+    const watsonxFields = document.getElementById("watsonx-fields");
     const ollamaFields = document.getElementById("ollama-fields");
 
     // Hide all fields first
@@ -15044,6 +15045,7 @@ function handleLLMProviderChange() {
     openaiFields.classList.add("hidden");
     anthropicFields.classList.add("hidden");
     awsBedrockFields.classList.add("hidden");
+    watsonxFields.classList.add("hidden");
     ollamaFields.classList.add("hidden");
 
     // Show relevant fields
@@ -15055,6 +15057,8 @@ function handleLLMProviderChange() {
         anthropicFields.classList.remove("hidden");
     } else if (provider === "aws_bedrock") {
         awsBedrockFields.classList.remove("hidden");
+    } else if (provider === "watsonx") {
+        watsonxFields.classList.remove("hidden");
     } else if (provider === "ollama") {
         ollamaFields.classList.remove("hidden");
     }
@@ -15371,6 +15375,47 @@ function buildLLMConfig(provider) {
         if (maxTokens) {
             config.config.max_tokens = parseInt(maxTokens, 10);
         }
+    } else if (provider === "watsonx") {
+        const apiKey = document.getElementById("watsonx-api-key").value.trim();
+        const url = document.getElementById("watsonx-url").value.trim();
+        const projectId = document
+            .getElementById("watsonx-project-id")
+            .value.trim();
+        const modelId = document
+            .getElementById("watsonx-model-id")
+            .value.trim();
+        const temperature = document
+            .getElementById("watsonx-temperature")
+            .value.trim();
+        const maxNewTokens = document
+            .getElementById("watsonx-max-new-tokens")
+            .value.trim();
+        const decodingMethod = document
+            .getElementById("watsonx-decoding-method")
+            .value.trim();
+
+        // Only include non-empty values
+        if (apiKey) {
+            config.config.apikey = apiKey;
+        }
+        if (url) {
+            config.config.url = url;
+        }
+        if (projectId) {
+            config.config.projectid = projectId;
+        }
+        if (modelId) {
+            config.config.modelid = modelId;
+        }
+        if (temperature) {
+            config.config.temperature = parseFloat(temperature);
+        }
+        if (maxNewTokens) {
+            config.config.maxnewtokens = parseInt(maxNewTokens, 10);
+        }
+        if (decodingMethod) {
+            config.config.decodingmethod = decodingMethod;
+        }
     } else if (provider === "ollama") {
         const model = document.getElementById("ollama-model").value.trim();
         const baseUrl = document.getElementById("ollama-base-url").value.trim();
@@ -15417,6 +15462,12 @@ ANTHROPIC_MAX_TOKENS=4096`,
 AWS_BEDROCK_REGION=us-east-1
 AWS_ACCESS_KEY_ID=<optional>
 AWS_SECRET_ACCESS_KEY=<optional>`,
+
+        watsonx: `WATSONX_APIKEY=apikey
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_PROJECT_ID=project-id
+WATSONX_MODEL_ID=ibm/granite-13b-chat-v2
+WATSONX_TEMPERATURE=0.7`,
 
         ollama: `OLLAMA_MODEL=llama3
 OLLAMA_BASE_URL=http://localhost:11434`,
