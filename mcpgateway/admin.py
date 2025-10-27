@@ -4561,7 +4561,7 @@ async def admin_update_user(
         default_admin_username = settings.platform_admin_email
 
         if decoded_email.lower() == default_admin_username.lower():
-            if password == "changeme":
+            if password == "changeme":  # nosec B105
                 response.set_cookie(
                     key="pwd_is_default",
                     value="true",
