@@ -958,8 +958,12 @@ def test_module_entrypoint(monkeypatch, translate):
     assert executed == ["main_called"]
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_stdio(monkeypatch, translate):
-    """Test main() function with --stdio argument."""
+    """Test main() function with --stdio argument.
+
+    Note: This test closes coroutines which may generate RuntimeWarnings during garbage collection.
+    """
     executed: list[str] = []
 
     async def _fake_stdio_runner(*args):
@@ -982,8 +986,12 @@ def test_main_function_stdio(monkeypatch, translate):
     assert "asyncio_run" in executed
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_sse(monkeypatch, translate):
-    """Test main() function with --sse argument."""
+    """Test main() function with --sse argument.
+
+    Note: This test closes coroutines which may generate RuntimeWarnings during garbage collection.
+    """
     executed: list[str] = []
 
     async def _fake_sse_runner(*args):
@@ -1003,8 +1011,13 @@ def test_main_function_sse(monkeypatch, translate):
     assert "asyncio_run" in executed
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_keyboard_interrupt(monkeypatch, translate, capsys):
-    """Test main() function handles KeyboardInterrupt gracefully."""
+    """Test main() function handles KeyboardInterrupt gracefully.
+
+    Note: This test raises KeyboardInterrupt which prevents the coroutine from being awaited,
+    resulting in a RuntimeWarning during garbage collection. This is expected behavior.
+    """
 
     def _raise_keyboard_interrupt(*args):
         raise KeyboardInterrupt()
@@ -1019,8 +1032,13 @@ def test_main_function_keyboard_interrupt(monkeypatch, translate, capsys):
     assert captured.out == "\n"  # Should print newline to restore shell prompt
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_not_implemented_error(monkeypatch, translate, capsys):
-    """Test main() function handles NotImplementedError."""
+    """Test main() function handles NotImplementedError.
+
+    Note: This test raises NotImplementedError which prevents the coroutine from being awaited,
+    resulting in a RuntimeWarning during garbage collection. This is expected behavior.
+    """
 
     # def _raise_not_implemented(coro, *a, **kw):
     #     # close the coroutine if the autouse fixture didn't remove it
@@ -1405,28 +1423,8 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
         def add_middleware(self, middleware_class, **kwargs):
             calls.append(f"add_middleware_{middleware_class.__name__}")
 
-    # Mock Starlette CORS middleware import
-    class MockCORSMiddleware:
-        def __init__(self, **kwargs):
-            pass
-
-    # Mock the import path for CORS middleware
-    # Standard
-    import types
-
-    cors_module = types.ModuleType("cors")
-    cors_module.CORSMiddleware = MockCORSMiddleware
-    middleware_module = types.ModuleType("middleware")
-    middleware_module.cors = cors_module
-    starlette_module = types.ModuleType("starlette")
-    starlette_module.middleware = middleware_module
-
     # Standard
     import sys
-
-    sys.modules["starlette"] = starlette_module
-    sys.modules["starlette.middleware"] = middleware_module
-    sys.modules["starlette.middleware.cors"] = cors_module
 
     class MockTask:
         def cancel(self):
@@ -1470,7 +1468,7 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
         await translate._run_stdio_to_streamable_http("echo test", 8000, "info", cors=["http://example.com"])
 
         # Verify CORS middleware was added (using our Mock class name)
-        assert "add_middleware_MockCORSMiddleware" in calls
+        assert "add_middleware_CORSMiddleware" in calls
     finally:
         # Clean up sys.modules to avoid affecting other tests
         sys.modules.pop("starlette", None)

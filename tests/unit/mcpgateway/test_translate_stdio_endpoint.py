@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+#│ -*- coding: utf-8 -*-
 """Unit tests for StdIOEndpoint with environment variable support.
 
 Location: ./tests/unit/mcpgateway/test_translate_stdio_endpoint.py
@@ -9,49 +9,47 @@ Authors: Manav Gupta
 Tests for StdIOEndpoint class modifications to support dynamic environment variables.
 """
 
-import sys
 import asyncio
-import pytest
-import tempfile
+import json
+import logging
 import os
+import sys
+import tempfile
 from unittest.mock import Mock, patch
 
+import pytest
+
 # First-Party
-from mcpgateway.translate import StdIOEndpoint, _PubSub
+from mcpgateway.translate import _PubSub, StdIOEndpoint
 
 
 class TestStdIOEndpointEnvironmentVariables:
     """Test StdIOEndpoint with environment variable support."""
 
+    async def _read_output(self, pubsub: _PubSub, timeout: float = 2.0) -> str:
+        """Helper method to read output from pubsub subscriber.
+
+        Args:
+            pubsub: The pubsub instance to subscribe to
+            timeout: Maximum time to wait for output in seconds
+
+        Returns:
+            The output string received from the subprocess
+
+        Raises:
+            asyncio.TimeoutError: If no output received within timeout
+        """
+        queue = pubsub.subscribe()
+        try:
+            output = await asyncio.wait_for(queue.get(), timeout=timeout)
+            return output
+        finally:
+            pubsub.unsubscribe(queue)
+
     @pytest.fixture
     def test_script(self):
-        """Create a test script that prints environment variables."""
-        script_content = """#!/usr/bin/env python3
-import os
-import json
-import sys
-
-# Print specified environment variables
-env_vars = {}
-for var in sys.argv[1:]:
-    if var in os.environ:
-        env_vars[var] = os.environ[var]
-
-print(json.dumps(env_vars))
-sys.stdout.flush()
-"""
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(script_content)
-            f.flush()
-            os.chmod(f.name, 0o755)
-            try:
-                yield f.name
-            finally:
-                try:
-                    os.unlink(f.name)
-                except OSError:
-                    pass
+        """Return the path to the test script that echoes environment variables."""
+        return os.path.join(os.path.dirname(__file__), "fixtures", "stdio_echo_env.py")
 
     @pytest.fixture
     def echo_script(self):
@@ -98,22 +96,28 @@ sys.stdout.flush()
         assert endpoint._pubsub is pubsub
         assert endpoint._env_vars == {}
         assert endpoint._proc is None
+        assert endpoint._stdin is None
+        assert endpoint._pump_task is None
 
     @pytest.mark.asyncio
-    async def test_start_with_initial_env_vars(self, test_script):
+    async def test_start_with_initial_env_vars(self, test_script, caplog):
         """Test starting StdIOEndpoint with initial environment variables."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.translate")
         pubsub = _PubSub()
         env_vars = {"GITHUB_TOKEN": "test-token-123", "TENANT_ID": "acme-corp"}
 
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
+        # Pass env var names as command line arguments, not via stdin
+        endpoint = StdIOEndpoint("jq -cMn env", pubsub, env_vars)
         await endpoint.start()
 
         try:
-            # Send request to check environment variables
-            await endpoint.send('["GITHUB_TOKEN", "TENANT_ID"]\n')
+            # Read output from pubsub to verify environment variables were set
+            output = await self._read_output(pubsub)
+            result = json.loads(output.strip())
 
-            # Wait for response
-            await asyncio.sleep(0.1)
+            # Verify environment variables were properly set
+            assert result["GITHUB_TOKEN"] == "test-token-123"
+            assert result["TENANT_ID"] == "acme-corp"
 
             # Check that process was started
             assert endpoint._proc is not None
@@ -124,21 +128,26 @@ sys.stdout.flush()
             await endpoint.stop()
 
     @pytest.mark.asyncio
-    async def test_start_with_additional_env_vars(self, test_script):
+    async def test_start_with_additional_env_vars(self, test_script, caplog):
         """Test starting StdIOEndpoint with additional environment variables."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.translate")
         pubsub = _PubSub()
         initial_env_vars = {"BASE_VAR": "base-value"}
         additional_env_vars = {"GITHUB_TOKEN": "additional-token", "TENANT_ID": "additional-tenant"}
 
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, initial_env_vars)
+        # Pass env var names as command line arguments
+        endpoint = StdIOEndpoint("jq -cMn env", pubsub, initial_env_vars)
         await endpoint.start(additional_env_vars=additional_env_vars)
 
         try:
-            # Send request to check environment variables
-            await endpoint.send('["BASE_VAR", "GITHUB_TOKEN", "TENANT_ID"]\n')
+            # Read output from pubsub to verify environment variables
+            output = await self._read_output(pubsub)
+            result = json.loads(output.strip())
 
-            # Wait for response
-            await asyncio.sleep(0.1)
+            # Verify all environment variables were properly set
+            assert result["BASE_VAR"] == "base-value"
+            assert result["GITHUB_TOKEN"] == "additional-token"
+            assert result["TENANT_ID"] == "additional-tenant"
 
             # Check that process was started
             assert endpoint._proc is not None
@@ -147,21 +156,25 @@ sys.stdout.flush()
             await endpoint.stop()
 
     @pytest.mark.asyncio
-    async def test_environment_variable_override(self, test_script):
+    async def test_environment_variable_override(self, test_script, caplog):
         """Test that additional environment variables override initial ones."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.translate")
         pubsub = _PubSub()
         initial_env_vars = {"GITHUB_TOKEN": "initial-token", "BASE_VAR": "base-value"}
         additional_env_vars = {"GITHUB_TOKEN": "override-token"}  # Override initial
 
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, initial_env_vars)
+        # Pass env var names as command line arguments
+        endpoint = StdIOEndpoint("jq -cMn env", pubsub, initial_env_vars)
         await endpoint.start(additional_env_vars=additional_env_vars)
 
         try:
-            # Send request to check environment variables
-            await endpoint.send('["GITHUB_TOKEN", "BASE_VAR"]\n')
+            # Read output from pubsub to verify environment variables
+            output = await self._read_output(pubsub)
+            result = json.loads(output.strip())
 
-            # Wait for response
-            await asyncio.sleep(0.1)
+            # Verify that additional env var overrode the initial one
+            assert result["GITHUB_TOKEN"] == "override-token"
+            assert result["BASE_VAR"] == "base-value"
 
             # Check that process was started
             assert endpoint._proc is not None
@@ -174,7 +187,7 @@ sys.stdout.flush()
         """Test starting StdIOEndpoint without environment variables."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
+        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
         await endpoint.start()
 
         try:
@@ -191,11 +204,12 @@ sys.stdout.flush()
             await endpoint.stop()
 
     @pytest.mark.asyncio
+    @pytest.mark.filterwarnings("error::RuntimeWarning")
     async def test_start_twice_handled_gracefully(self, echo_script):
         """Test that starting an already started endpoint is handled gracefully."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
+        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
         await endpoint.start()
 
         try:
@@ -232,7 +246,7 @@ sys.stdout.flush()
         """Test stopping after starting."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
+        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
         await endpoint.start()
 
         assert endpoint._proc is not None
@@ -251,31 +265,35 @@ sys.stdout.flush()
             assert endpoint._pump_task.done()  # Task should be finished
 
     @pytest.mark.asyncio
-    async def test_multiple_env_vars(self, test_script):
+    async def test_multiple_env_vars(self, test_script, caplog):
         """Test with multiple environment variables."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.translate")
+
         pubsub = _PubSub()
 
-        env_vars = os.environ.copy()
-        env_vars.update(
-            {
-                "GITHUB_TOKEN": "github-token-123",
-                "TENANT_ID": "acme-corp",
-                "API_KEY": "api-key-456",
-                "ENVIRONMENT": "production",
-                "DEBUG": "false",
-            }
-        )
+        env_vars = {
+            "GITHUB_TOKEN": "github-token-123",
+            "TENANT_ID": "acme-corp",
+            "API_KEY": "api-key-456",
+            "ENVIRONMENT": "production",
+            "DEBUG": "false",
+        }
 
-        endpoint = StdIOEndpoint(f"{sys.executable} {test_script}", pubsub, env_vars)
+        endpoint = StdIOEndpoint( "jq -cMn env", pubsub, env_vars)
 
         await endpoint.start()
 
         try:
-            # Send request to check all environment variables
-            await endpoint.send('["GITHUB_TOKEN", "TENANT_ID", "API_KEY", "ENVIRONMENT", "DEBUG"]\n')
+            # Read output from pubsub to verify environment variables
+            output = await self._read_output(pubsub)
+            result = json.loads(output.strip())
 
-            # Wait for response
-            await asyncio.sleep(0.1)
+            # Verify all environment variables were properly set
+            assert result["GITHUB_TOKEN"] == "github-token-123"
+            assert result["TENANT_ID"] == "acme-corp"
+            assert result["API_KEY"] == "api-key-456"
+            assert result["ENVIRONMENT"] == "production"
+            assert result["DEBUG"] == "false"
 
             # Check that process was started
             assert endpoint._proc is not None
@@ -289,7 +307,7 @@ sys.stdout.flush()
         pubsub = _PubSub()
         env_vars: dict[str, str] = {}
 
-        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub, env_vars)
+        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub, env_vars)
         await endpoint.start()
 
         try:
@@ -310,7 +328,7 @@ sys.stdout.flush()
         """Test with None environment variables."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub, None)
+        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub, None)
         await endpoint.start()
 
         try:
@@ -327,8 +345,9 @@ sys.stdout.flush()
             await endpoint.stop()
 
     @pytest.mark.asyncio
-    async def test_env_vars_with_special_characters(self, test_script):
+    async def test_env_vars_with_special_characters(self, test_script, caplog):
         """Test environment variables with special characters."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.translate")
         pubsub = _PubSub()
         env_vars = {
             "API_TOKEN": "Bearer token-123!@#$%^&*()",
@@ -336,15 +355,19 @@ sys.stdout.flush()
             "JSON_CONFIG": '{"key": "value", "number": 123}',
         }
 
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
+        # Pass env var names as command line arguments
+        endpoint = StdIOEndpoint("jq -cMn env", pubsub, env_vars)
         await endpoint.start()
 
         try:
-            # Send request to check environment variables
-            await endpoint.send('["API_TOKEN", "URL", "JSON_CONFIG"]\n')
+            # Read output from pubsub to verify environment variables
+            output = await self._read_output(pubsub)
+            result = json.loads(output.strip())
 
-            # Wait for response
-            await asyncio.sleep(0.1)
+            # Verify environment variables with special characters were properly set
+            assert result["API_TOKEN"] == "Bearer token-123!@#$%^&*()"
+            assert result["URL"] == "https://api.example.com/v1"
+            assert result["JSON_CONFIG"] == '{"key": "value", "number": 123}'
 
             # Check that process was started
             assert endpoint._proc is not None
@@ -353,8 +376,10 @@ sys.stdout.flush()
             await endpoint.stop()
 
     @pytest.mark.asyncio
-    async def test_large_env_vars(self, test_script):
+    async def test_large_env_vars(self, test_script, caplog):
         """Test with large environment variable values."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.translate")
+
         pubsub = _PubSub()
         large_value = "x" * 1000  # 1KB value
         env_vars = {
@@ -362,15 +387,18 @@ sys.stdout.flush()
             "NORMAL_VAR": "normal",
         }
 
-        endpoint = StdIOEndpoint(f"python3 {test_script}", pubsub, env_vars)
+        # Pass env var names as command line arguments
+        endpoint = StdIOEndpoint("jq -cMn env", pubsub, env_vars)
         await endpoint.start()
 
         try:
-            # Send request to check environment variables
-            await endpoint.send('["LARGE_TOKEN", "NORMAL_VAR"]\n')
+            # Read output from pubsub to verify environment variables
+            output = await self._read_output(pubsub)
+            result = json.loads(output.strip())
 
-            # Wait for response
-            await asyncio.sleep(0.1)
+            # Verify large environment variable was properly set
+            assert result["LARGE_TOKEN"] == large_value
+            assert result["NORMAL_VAR"] == "normal"
 
             # Check that process was started
             assert endpoint._proc is not None
@@ -495,7 +523,7 @@ sys.stdout.flush()
         """Test that old start method still works."""
         pubsub = _PubSub()
 
-        endpoint = StdIOEndpoint(f"python3 {echo_script}", pubsub)
+        endpoint = StdIOEndpoint(f"{sys.executable} {echo_script}", pubsub)
         await endpoint.start()  # No additional_env_vars parameter
 
         try:
