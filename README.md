@@ -1261,6 +1261,16 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 - **AWS Bedrock**: Requires `AWS_BEDROCK_MODEL_ID` and `pip install langchain-aws boto3`. Uses AWS credential chain if explicit credentials not provided.
 - **Ollama**: Requires local Ollama instance running (default: `http://localhost:11434`)
 
+**Redis Configurations:** For maintaining Chat Sessions in multi-worker environment
+
+| Setting         | Description                           | Default | Options |
+| ----------------| --------------------------------------| ------- | ------- |
+| `SESSION_TTL`   | Seconds for active_session key TTL    | `300`   | int     |
+| `LOCK_TTL`      | Seconds for lock expiry               | `30`    | int     |
+| `LOCK_RETRIES`  | How many times to poll while waiting  | `10`    | int     |
+| `LOCK_WAIT`     | Seconds between polls                 | `0.2`   | float   |
+
+
 **Documentation:**
 - [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/manage/llm-chat/) - Complete LLM Chat setup and provider configuration
 
