@@ -2609,7 +2609,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
+        from mcpgateway.services.email_auth_service import EmailAuthService # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -2622,7 +2622,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
         # First-Party
-        from mcpgateway.routers.email_auth import create_access_token
+        from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
 
         token, _ = await create_access_token(user)
 
@@ -2630,7 +2630,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
         # First-Party
-        from mcpgateway.utils.security_cookies import set_auth_cookie
+        from mcpgateway.utils.security_cookies import set_auth_cookie  # pylint: disable=import-outside-toplevel
 
         set_auth_cookie(response, token, remember_me=False)
         default_admin_username = settings.platform_admin_email
