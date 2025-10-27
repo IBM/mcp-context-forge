@@ -887,7 +887,7 @@ plugins:
     config:
       jsonprocessor_query: ""
       llm_provider: "watsonx" # one of watsonx, ollama, openai, anthropic
-      watsonx:
+      watsonx: # each section of providers is optional
         wx_api_key: "" # optional, can define WX_API_KEY instead
         wx_project_id: "" # optional, can define WX_PROJECT_ID instead
         wx_url: "https://us-south.ml.cloud.ibm.com"

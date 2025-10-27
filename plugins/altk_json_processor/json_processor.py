@@ -71,21 +71,24 @@ class ALTKJsonProcessor(Plugin):
             if len(self._cfg["watsonx"]["wx_api_key"]) > 0:
                 api_key = self._cfg["watsonx"]["wx_api_key"]
             else:
-                # Note that we assume here this env var exists and should throw an error if not
-                api_key = os.environ["WX_API_KEY"]
+                api_key = os.getenv("WX_API_KEY")
+                if not api_key:
+                    raise ValueError("WatsonX api key not found, provide WX_API_KEY either in the plugin config or as an env var.")
             if len(self._cfg["watsonx"]["wx_project_id"]) > 0:
                 project_id = self._cfg["watsonx"]["wx_project_id"]
             else:
-                # Note that we assume here this env var exists and should throw an error if not
-                project_id = os.environ["WX_PROJECT_ID"]
+                project_id = os.getenv("WX_PROJECT_ID")
+                if not project_id:
+                    raise ValueError("WatsonX project id not found, project WX_PROJECT_ID either in the plugin config or as an env var.")
             llm_client = watsonx_client(model_id=self._cfg["model_id"], api_key=api_key, project_id=project_id, url=self._cfg["watsonx"]["wx_url"])
         elif provider == "openai":
             openai_client = get_llm("openai.sync")
             if len(self._cfg["openai"]["api_key"]) > 0:
                 api_key = self._cfg["openai"]["api_key"]
             else:
-                # Note that we assume here this env var exists and should throw an error if not
-                api_key = os.environ["OPENAI_API_KEY"]
+                api_key = os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    raise ValueError("OpenAI api key not found, provide OPENAI_API_KEY either in the plugin config or as an env var.")
             llm_client = openai_client(api_key=api_key, model=self._cfg["model_id"])
         elif provider == "ollama":
             ollama_client = get_llm("litellm.ollama")
@@ -96,9 +99,13 @@ class ALTKJsonProcessor(Plugin):
             if len(self._cfg["anthropic"]["api_key"]) > 0:
                 api_key = self._cfg["anthropic"]["api_key"]
             else:
-                # Note that we assume here this env var exists and should throw an error if not
-                api_key = os.environ["ANTHROPIC_API_KEY"]
+                api_key = os.getenv("ANTHROPIC_API_KEY")
+                if not api_key:
+                    raise ValueError("Anthropic api key not found, provide ANTHROPIC_API_KEY either in the plugin config or as an env var.")
             llm_client = anthropic_client(model_name=model_path, api_key=api_key)
+        elif provider == "pytestmock":
+            # only meant to be used for unit tests
+            llm_client = None
         else:
             raise ValueError("Unknown provider given for 'llm_provider' in plugin config!")
 
@@ -111,21 +118,28 @@ class ALTKJsonProcessor(Plugin):
                 content = payload.result["content"][0]
                 if "type" in content and content["type"] == "text":
                     response_str = content["text"]
-                    try:
-                        response_json = json.loads(response_str)
-                    except json.decoder.JSONDecodeError:
-                        # ignore anything that's not json
-                        pass
 
-        if response_json and response_str and len(response_str) > self._cfg["length_threshold"]:
+                    if len(response_str) > self._cfg["length_threshold"]:
+                        try:
+                            response_json = json.loads(response_str)
+                        except json.decoder.JSONDecodeError:
+                            # ignore anything that's not json
+                            pass
+
+        # Should only get here if response is long enough and is valid JSON
+        if response_json:
             logger.info("Long JSON response detected, using ALTK JSON Processor...")
-            codegen = CodeGenerationComponent(config=config)
-            nl_query = self._cfg["jsonprocessor_query"]
-            input_data = CodeGenerationRunInput(messages=[], nl_query=nl_query, tool_response=response_json)
-            output = codegen.process(input_data, AgentPhase.RUNTIME)
-            output = cast(CodeGenerationRunOutput, output)
-            payload.result["content"][0]["text"] = output.result
-            logger.debug(f"ALTK processed response: {output.result}")
+            if provider == "pytestmock":
+                # only meant for unit testing
+                payload.result["content"][0]["text"] = "(filtered response)"
+            else:
+                codegen = CodeGenerationComponent(config=config)
+                nl_query = self._cfg.get("jsonprocessor_query", "")
+                input_data = CodeGenerationRunInput(messages=[], nl_query=nl_query, tool_response=response_json)
+                output = codegen.process(input_data, AgentPhase.RUNTIME)
+                output = cast(CodeGenerationRunOutput, output)
+                payload.result["content"][0]["text"] = output.result
+                logger.debug(f"ALTK processed response: {output.result}")
             return ToolPostInvokeResult(continue_processing=True, modified_payload=payload)
 
         return ToolPostInvokeResult(continue_processing=True)
