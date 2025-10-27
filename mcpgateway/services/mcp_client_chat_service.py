@@ -83,6 +83,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.config import settings
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -651,7 +652,7 @@ class MCPClientConfig(BaseModel):
 
     mcp_server: MCPServerConfig = Field(..., description="MCP server configuration")
     llm: LLMConfig = Field(..., description="LLM provider configuration")
-    chat_history_max_messages: int = Field(default=50, gt=0, description="Maximum messages to keep in chat history")
+    chat_history_max_messages: int = settings.llmchat_chat_history_max_messages
     enable_streaming: bool = Field(default=True, description="Enable streaming responses")
 
     model_config = {
@@ -1947,7 +1948,7 @@ class MCPChatService:
         self.llm_provider = LLMProviderFactory.create(config.llm)
 
         # Initialize centralized chat history manager
-        self.history_manager = ChatHistoryManager(redis_client=redis_client, max_messages=config.chat_history_max_messages, ttl=int(os.getenv("CHAT_HISTORY_TTL", "3600")))
+        self.history_manager = ChatHistoryManager(redis_client=redis_client, max_messages=config.chat_history_max_messages, ttl=settings.llmchat_chat_history_ttl)
 
         self._agent = None
         self._initialized = False
