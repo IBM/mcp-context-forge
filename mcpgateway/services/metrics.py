@@ -43,9 +43,9 @@ import os
 import re
 
 # Third-Party
+from fastapi import Response, status
 from prometheus_client import Gauge, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import Response, status
 
 # First-Party
 from mcpgateway.config import settings
@@ -108,8 +108,9 @@ def setup_metrics(app):
         # Instrument FastAPI app
         instrumentator.instrument(app)
 
-        # Expose Prometheus metrics at /metrics/prometheus
-        instrumentator.expose(app, endpoint="/metrics/prometheus", include_in_schema=False, should_gzip=True)
+        # Expose Prometheus metrics at /metrics/prometheus and include
+        # the endpoint in the OpenAPI schema so it appears in Swagger UI.
+        instrumentator.expose(app, endpoint="/metrics/prometheus", include_in_schema=True, should_gzip=True)
 
         print("✅ Metrics instrumentation enabled")
     else:
@@ -117,8 +118,4 @@ def setup_metrics(app):
 
         @app.get("/metrics/prometheus")
         async def metrics_disabled():
-            return Response(
-                content='{"error": "Metrics collection is disabled"}',
-                media_type="application/json",
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+            return Response(content='{"error": "Metrics collection is disabled"}', media_type="application/json", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)

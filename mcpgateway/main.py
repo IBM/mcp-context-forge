@@ -482,6 +482,8 @@ app = FastAPI(
 
 # Setup metrics instrumentation
 setup_metrics(app)
+
+
 async def validate_security_configuration():
     """Validate security configuration on startup."""
     logger.info("🔒 Validating security configuration...")
@@ -1031,8 +1033,6 @@ metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 export_import_router = APIRouter(tags=["Export/Import"])
 a2a_router = APIRouter(prefix="/a2a", tags=["A2A Agents"])
-# Create a metrics router for Prometheus metrics
-metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 
 # Basic Auth setup
 
@@ -3951,12 +3951,6 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
         raise HTTPException(status_code=400, detail="Invalid entity type for metrics reset")
     return {"status": "success", "message": f"Metrics reset for {entity if entity else 'all entities'}"}
 
-
-# Define the /prometheus endpoint
-@metrics_router.get("/prometheus", summary="Prometheus Metrics", description="Expose Prometheus metrics for monitoring.")
-def prometheus_metrics():
-    """Endpoint to expose Prometheus metrics."""
-    return setup_metrics(app)
 
 ####################
 # Healthcheck      #
