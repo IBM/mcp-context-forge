@@ -1752,6 +1752,9 @@ class MCPClient:
                 if self.config.args:
                     server_config["args"] = self.config.args
 
+            if not MultiServerMCPClient:
+                logger.error("Some dependencies are missing. Install those with: pip install '.[llmchat]'")
+                
             # Create MultiServerMCPClient with single server
             self._client = MultiServerMCPClient({"default": server_config})
             self._connected = True
