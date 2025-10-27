@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./tests/e2e/test_main_apis.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -107,7 +108,11 @@ JWT_ALGORITHM = "HS256"  # Must match mcpgateway.config.Settings.jwt_algorithm
 
 
 def generate_test_jwt():
-    payload = {"sub": "test_user", "exp": int(time.time()) + 3600}
+    payload = {
+        "sub": "test_user",
+        "exp": int(time.time()) + 3600,
+        "teams": [],  # Empty teams list allows access to public resources and own private resources
+    }
     secret = settings.jwt_secret_key.get_secret_value()
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
@@ -972,7 +977,7 @@ class TestResourceAPIs:
         import urllib.parse
 
         resource_data = {
-            "resource": urllib.parse.quote_plus('{"uri":"config/formtest","name":"form_test","description":"Form resource","mimeType":"application/json","content":"{"key":"value"}"}'),
+            "resource": urllib.parse.quote_plus(r'{"uri":"config/formtest","name":"form_test","description":"Form resource","mimeType":"application/json","content":"{\"key\":\"value\"}"}'),
             "team_id": "",
             "visibility": "private",
         }
@@ -1068,7 +1073,7 @@ class TestResourceAPIs:
     # API should probably return 409 instead of 400 for non-existent resource
     async def test_resource_uri_conflict(self, client: AsyncClient, mock_auth):
         """Test creating resource with duplicate URI."""
-        resource_data = {"resource": {"uri": "duplicate/resource", "name": "duplicate", "content": "test", "team_id": None, "visibility": "private"}}
+        resource_data = {"resource": {"uri": "duplicate/resource", "name": "duplicate", "content": "test", "team_id": None, "visibility": "public"}}
 
         # Create first resource
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
