@@ -37,11 +37,13 @@ def post_process_nl_test_cases(nl_test_cases):
     return test_cases
             
 
-async def validation_generate_test_cases(tool_id,LLM_PLATFORM = 'WATSONX',LLM_MODEL_ID = 'mistralai/mistral-medium-2505',
+async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: Session,LLM_PLATFORM = 'WATSONX',LLM_MODEL_ID = 'mistralai/mistral-medium-2505',
                                    NUMBER_OF_TESTCASES = 5,NUMBER_OF_UTTERANCES = 2):
     test_cases = []
     try:
-        mcp_cf_tool=get_mcp_cf_tool(tool_id)
+        #mcp_cf_tool=get_mcp_cf_tool(tool_id)
+        tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
+        mcp_cf_tool = tool_schema.to_dict(use_alias=True)
         if mcp_cf_tool is not None:
             wxo_tool_spec = convert_to_wxo_tool_spec(mcp_cf_tool)
             tc_generator = TestcaseGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_number_testcases_to_generate=NUMBER_OF_TESTCASES)

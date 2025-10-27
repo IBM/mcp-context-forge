@@ -256,3 +256,4 @@ tmp/
 plugins_rust/target/
 plugins_rust/**/*.rs.bk
 plugins_rust/Cargo.lock
+.env.example

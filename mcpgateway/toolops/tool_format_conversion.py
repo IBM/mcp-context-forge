@@ -38,14 +38,18 @@ def convert_to_wxo_tool_spec(mcp_cf_tool):
     wxo_tool_spec['input_schema']['properties']=mcp_cf_tool.get('inputSchema',{}).get('properties',{})
     wxo_tool_spec['input_schema']['required']=mcp_cf_tool.get('inputSchema',{}).get('required',[])
     wxo_tool_spec['name']=mcp_cf_tool.get('name',None)
-    wxo_tool_spec['output_schema']['description']=mcp_cf_tool.get('outputSchema',{}).get('description',None)
-    wxo_tool_spec['output_schema']['properties']=mcp_cf_tool.get('outputSchema',{}).get('properties',{})
-    wxo_tool_spec['output_schema']['required']=mcp_cf_tool.get('outputSchema',{}).get('required',[])
+    if mcp_cf_tool.get('outputSchema') is not None:
+        wxo_tool_spec['output_schema']['description']=mcp_cf_tool.get('outputSchema',{}).get('description',None)
+        wxo_tool_spec['output_schema']['properties']=mcp_cf_tool.get('outputSchema',{}).get('properties',{})
+        wxo_tool_spec['output_schema']['required']=mcp_cf_tool.get('outputSchema',{}).get('required',[])
+    else:
+        wxo_tool_spec['output_schema']={}
     return wxo_tool_spec
 
 
 if __name__=="__main__":
-    mcp_cf_tools = json.load(open('./list_of_tools_from_mcp_cf.json','r'))
+    #mcp_cf_tools = json.load(open('./list_of_tools_from_mcp_cf.json','r'))
+    mcp_cf_tools = [json.load(open('mcp_cf_spec.json','r'))]
     for mcp_cf_tool in mcp_cf_tools:
         wxo_tool_spec = convert_to_wxo_tool_spec(mcp_cf_tool)
         print(wxo_tool_spec)
