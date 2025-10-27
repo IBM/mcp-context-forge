@@ -1284,7 +1284,7 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 
 
 **Documentation:**
-- [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/manage/llm-chat/) - Complete LLM Chat setup and provider configuration
+- [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/using/clients/llm-chat) - Complete LLM Chat setup and provider configuration
 
 ### Email-Based Authentication & User Management
 
