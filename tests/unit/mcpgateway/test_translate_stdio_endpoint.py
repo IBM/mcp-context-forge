@@ -1,4 +1,4 @@
-#│ -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Unit tests for StdIOEndpoint with environment variable support.
 
 Location: ./tests/unit/mcpgateway/test_translate_stdio_endpoint.py
