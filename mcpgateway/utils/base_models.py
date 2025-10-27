@@ -52,15 +52,50 @@ def to_camel_case(s: str) -> str:
 class BaseModelWithConfigDict(BaseModel):
     """Base model with common configuration for MCP protocol types.
 
-    Provides:
-    - ORM mode for SQLAlchemy integration
-    - Automatic conversion from snake_case to camelCase for output
-    - Populate by name for flexible field naming
+    This base class provides automatic snake_case → camelCase field name conversion
+    to comply with the MCP specification's JSON naming conventions.
+
+    Key Features:
+    - **Automatic camelCase conversion**: Field names like `stop_reason` automatically
+      serialize as `stopReason` when FastAPI returns the response (via jsonable_encoder).
+    - **ORM mode**: Can be constructed from SQLAlchemy models (from_attributes=True).
+    - **Flexible input**: Accepts both snake_case and camelCase in input (populate_by_name=True).
+    - **Enum values**: Enums serialize as their values, not names (use_enum_values=True).
+
+    Usage:
+        Models extending this class will automatically serialize field names to camelCase:
+
+        >>> class MyModel(BaseModelWithConfigDict):
+        ...     my_field: str = "value"
+        ...     another_field: int = 42
+        >>>
+        >>> obj = MyModel()
+        >>> obj.model_dump(by_alias=True)
+        {'myField': 'value', 'anotherField': 42}
+
+    Important:
+        FastAPI's default response serialization uses `by_alias=True`, so models extending
+        this class will automatically use camelCase in JSON responses without any additional
+        code changes. This is critical for MCP spec compliance.
+
+    Examples:
+        >>> from mcpgateway.utils.base_models import BaseModelWithConfigDict
+        >>> class CreateMessageResult(BaseModelWithConfigDict):
+        ...     stop_reason: str = "endTurn"
+        >>>
+        >>> result = CreateMessageResult()
+        >>> # Without by_alias (internal Python usage):
+        >>> result.model_dump()
+        {'stop_reason': 'endTurn'}
+        >>>
+        >>> # With by_alias (FastAPI automatic serialization):
+        >>> result.model_dump(by_alias=True)
+        {'stopReason': 'endTurn'}
     """
 
     model_config = ConfigDict(
         from_attributes=True,
-        alias_generator=to_camel_case,
+        alias_generator=to_camel_case,  # Automatic snake_case → camelCase conversion
         populate_by_name=True,
         use_enum_values=True,
         extra="ignore",

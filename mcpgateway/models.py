@@ -339,8 +339,11 @@ class ModelHint(BaseModel):
     name: Optional[str] = None
 
 
-class ModelPreferences(BaseModel):
+class ModelPreferences(BaseModelWithConfigDict):
     """Server preferences for model selection.
+
+    Uses BaseModelWithConfigDict for automatic snake_case → camelCase conversion.
+    Fields serialize as: costPriority, speedPriority, intelligencePriority.
 
     Attributes:
         cost_priority (float): Priority for cost efficiency (0 to 1).
@@ -480,8 +483,11 @@ class PromptMessage(BaseModelWithConfigDict):
 
 
 # Sampling types for the client features
-class CreateMessageResult(BaseModel):
+class CreateMessageResult(BaseModelWithConfigDict):
     """Result from a sampling/createMessage request.
+
+    Uses BaseModelWithConfigDict for automatic snake_case → camelCase conversion.
+    The stop_reason field serializes as stopReason per MCP spec.
 
     Attributes:
         content (Union[TextContent, ImageContent]): The generated content.
