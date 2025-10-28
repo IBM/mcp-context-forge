@@ -41,11 +41,8 @@
     window._toolsScrollHandlerAttached = true;
     
     htmx.on('htmx:afterSettle', function(evt) {
-      console.log('[HTMX] afterSettle event fired');
       // Only handle tool pagination requests
       if (evt.detail.pathInfo.requestPath && evt.detail.pathInfo.requestPath.includes('/admin/tools/partial')) {
-        console.log('[HTMX] Tool pagination detected');
-        
         // Use a slight delay to ensure DOM is fully updated
         setTimeout(() => {
           // Find which container actually triggered the request by checking the target
@@ -72,17 +69,12 @@
             }
           }
           
-          console.log('[HTMX] Container:', container ? container.id : 'NOT FOUND');
-          
           if (container) {
             const selectAllInput = container.querySelector('input[name=selectAllTools]');
-            console.log('[HTMX] selectAllTools input:', selectAllInput ? selectAllInput.value : 'NOT FOUND');
             
             // Check if Select All is active
             if (selectAllInput && selectAllInput.value === 'true') {
-              console.log('[HTMX] Select All mode - auto-checking new tools');
               const newCheckboxes = container.querySelectorAll('input[data-auto-check=true]');
-              console.log('[HTMX] Found', newCheckboxes.length, 'new checkboxes');
               
               newCheckboxes.forEach(cb => {
                 cb.checked = true;
