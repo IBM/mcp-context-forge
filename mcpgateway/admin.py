@@ -43,6 +43,7 @@ import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -5074,6 +5075,77 @@ async def admin_get_all_tool_ids(
     tool_ids = [row[0] for row in db.execute(query).all()]
     
     return {"tool_ids": tool_ids, "count": len(tool_ids)}
+
+
+@admin_router.get("/tools/search", response_class=JSONResponse)
+async def admin_search_tools(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Search tools by name, ID, or description.
+    
+    This endpoint searches tools across all accessible tools for the current user,
+    returning both IDs and names for use in search functionality like the Add Server page.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    
+    if not search_query:
+        # If no search query, return empty list
+        return {"tools": [], "count": 0}
+    
+    # Build base query
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+    
+    query = select(DbTool.id, DbTool.original_name, DbTool.custom_name, DbTool.display_name, DbTool.description)
+    
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+    
+    # Build access conditions
+    access_conditions = [
+        DbTool.owner_email == user_email,
+        DbTool.visibility == "public"
+    ]
+    if team_ids:
+        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+    
+    query = query.where(or_(*access_conditions))
+    
+    # Add search conditions - search in display fields and description  
+    # Using the same priority as display: displayName -> customName -> original_name
+    search_conditions = [
+        func.lower(coalesce(DbTool.display_name, '')).contains(search_query),
+        func.lower(coalesce(DbTool.custom_name, '')).contains(search_query),
+        func.lower(DbTool.original_name).contains(search_query),
+        func.lower(coalesce(DbTool.description, '')).contains(search_query)
+    ]
+    
+    query = query.where(or_(*search_conditions))
+    
+    # Order by original name for consistent results
+    query = query.order_by(func.lower(DbTool.original_name)).limit(limit)
+    
+    # Execute query
+    results = db.execute(query).all()
+    
+    # Format results
+    tools = []
+    for row in results:
+        tools.append({
+            "id": row.id,
+            "name": row.original_name,  # original_name for search matching
+            "display_name": row.display_name,
+            "custom_name": row.custom_name
+        })
+    
+    return {"tools": tools, "count": len(tools)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)

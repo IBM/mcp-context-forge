@@ -9739,17 +9739,22 @@ function setupFormHandlers() {
  * Setup search functionality for multi-select dropdowns
  */
 function setupSelectorSearch() {
-    // Tools search
+    // Tools search - server-side search
     const searchTools = safeGetElement("searchTools", true);
     if (searchTools) {
+        let searchTimeout;
         searchTools.addEventListener("input", function () {
-            filterSelectorItems(
-                this.value,
-                "#associatedTools",
-                ".tool-item",
-                "noToolsMessage",
-                "searchQuery",
-            );
+            const searchTerm = this.value;
+            
+            // Clear previous timeout
+            if (searchTimeout) {
+                clearTimeout(searchTimeout);
+            }
+            
+            // Debounce search to avoid too many API calls
+            searchTimeout = setTimeout(() => {
+                serverSideToolSearch(searchTerm);
+            }, 300);
         });
     }
 
@@ -16428,6 +16433,131 @@ function initializeChatInputResize() {
             });
         }
     }
+}
+/**
+ * Perform server-side search for tools and update the tool list
+ */
+async function serverSideToolSearch(searchTerm) {
+    const container = document.getElementById('associatedTools');
+    const noResultsMessage = safeGetElement('noToolsMessage', true);
+    const searchQuerySpan = safeGetElement('searchQuery', true);
+    
+    if (!container) {
+        console.error('associatedTools container not found');
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching tools...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === '') {
+        // If search term is empty, reload the default tool list
+        try {
+            const response = await fetch(`${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`);
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+                
+                // Hide no results message
+                if (noResultsMessage) noResultsMessage.style.display = 'none';
+                
+                // Update tool mapping if needed
+                updateToolMapping(container);
+            } else {
+                container.innerHTML = '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
+            }
+        } catch (error) {
+            console.error('Error loading tools:', error);
+            container.innerHTML = '<div class="text-center py-4 text-red-600">Error loading tools</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the new search API
+        const response = await fetch(`${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.tools && data.tools.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = '';
+            data.tools.forEach(tool => {
+                // Create a label element similar to the ones in tools_selector_items.html
+                // Use the same name priority as the template: displayName or customName or original_name
+                const displayName = tool.display_name || tool.custom_name || tool.name || tool.id;
+                
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+                        data-tool-id="${escapeHtml(tool.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedTools"
+                            value="${escapeHtml(tool.id)}"
+                            data-tool-name="${escapeHtml(displayName)}"
+                            class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+            
+            container.innerHTML = searchResultsHtml;
+            
+            // Update tool mapping with search results
+            updateToolMapping(container);
+            
+            // Hide no results message
+            if (noResultsMessage) noResultsMessage.style.display = 'none';
+        } else {
+            // Show no results message
+            container.innerHTML = '';
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = 'block';
+            }
+        }
+    } catch (error) {
+        console.error('Error searching tools:', error);
+        container.innerHTML = '<div class="text-center py-4 text-red-600">Error searching tools</div>';
+        
+        // Hide no results message in case of error
+        if (noResultsMessage) noResultsMessage.style.display = 'none';
+    }
+}
+
+/**
+ * Update the tool mapping with tools in the given container
+ */
+function updateToolMapping(container) {
+    if (!window.toolMapping) {
+        window.toolMapping = {};
+    }
+    
+    const checkboxes = container.querySelectorAll('input[name="associatedTools"]');
+    checkboxes.forEach(checkbox => {
+        const toolId = checkbox.value;
+        const toolName = checkbox.getAttribute('data-tool-name');
+        if (toolId && toolName) {
+            window.toolMapping[toolId] = toolName;
+        }
+    });
 }
 
 // Add CSS for streaming indicator animation
