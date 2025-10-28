@@ -40,7 +40,7 @@ def test_security_headers_middleware_basic():
 
     # Check that security headers are present
     assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["X-XSS-Protection"] == "0"
     assert response.headers["X-Download-Options"] == "noopen"
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
@@ -110,7 +110,7 @@ def test_csp_header_structure():
     assert "img-src 'self'" in csp
     assert "font-src 'self'" in csp
     assert "connect-src 'self'" in csp
-    assert "frame-ancestors 'self'" in csp
+    assert "frame-ancestors 'none'" in csp
 
     # Check that required CDN domains are allowed for Admin UI
     assert "https://cdnjs.cloudflare.com" in csp

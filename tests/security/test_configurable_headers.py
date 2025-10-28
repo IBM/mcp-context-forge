@@ -142,7 +142,7 @@ def test_all_headers_with_default_config():
 
     # All default headers should be present
     assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["X-XSS-Protection"] == "0"
     assert response.headers["X-Download-Options"] == "noopen"
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"

@@ -29,7 +29,7 @@ class TestSecurityHeaders:
 
         # Essential security headers
         assert response.headers["X-Content-Type-Options"] == "nosniff"
-        assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+        assert response.headers["X-Frame-Options"] == "DENY"
         assert response.headers["X-XSS-Protection"] == "0"
         assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
         assert "Content-Security-Policy" in response.headers
@@ -37,7 +37,7 @@ class TestSecurityHeaders:
         # Verify CSP contains essential directives
         csp = response.headers["Content-Security-Policy"]
         assert "default-src 'self'" in csp
-        assert "frame-ancestors 'self'" in csp
+        assert "frame-ancestors 'none'" in csp
 
     def test_security_headers_present_on_api_endpoints(self, client: TestClient):
         """Test security headers on API endpoints."""
@@ -46,7 +46,7 @@ class TestSecurityHeaders:
             response = client.get("/tools")
 
             assert response.headers["X-Content-Type-Options"] == "nosniff"
-            assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+            assert response.headers["X-Frame-Options"] == "DENY"
             assert response.headers["X-XSS-Protection"] == "0"
             assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
             assert "Content-Security-Policy" in response.headers
@@ -88,7 +88,7 @@ class TestSecurityHeaders:
         assert "img-src 'self'" in csp
         assert "font-src 'self'" in csp
         assert "connect-src 'self'" in csp
-        assert "frame-ancestors 'self'" in csp
+        assert "frame-ancestors 'none'" in csp
 
         # Verify CSP ends with semicolon
         assert csp.endswith(";")
@@ -196,7 +196,7 @@ class TestSecurityHeadersEdgeCases:
 
         # Even 404 responses should have security headers
         assert response.headers["X-Content-Type-Options"] == "nosniff"
-        assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+        assert response.headers["X-Frame-Options"] == "DENY"
         assert "Content-Security-Policy" in response.headers
 
     def test_security_headers_on_method_not_allowed(self, client: TestClient):
@@ -206,7 +206,7 @@ class TestSecurityHeadersEdgeCases:
 
         assert response.status_code == 405
         assert response.headers["X-Content-Type-Options"] == "nosniff"
-        assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+        assert response.headers["X-Frame-Options"] == "DENY"
         assert "Content-Security-Policy" in response.headers
 
     @pytest.mark.parametrize("forwarded_proto", ["http", "https", "invalid"])
