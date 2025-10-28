@@ -78,7 +78,7 @@ async def bootstrap_admin_user() -> None:
             logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
             admin_user = await auth_service.create_user(
                 email=settings.platform_admin_email,
-                password=settings.platform_admin_password,
+                password=settings.platform_admin_password.get_secret_value(),
                 full_name=settings.platform_admin_full_name,
                 is_admin=True,
             )
