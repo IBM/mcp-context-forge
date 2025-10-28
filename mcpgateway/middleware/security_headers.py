@@ -255,8 +255,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if settings.x_content_type_options_enabled:
             response.headers["X-Content-Type-Options"] = "nosniff"
 
-        if settings.x_frame_options:
-            response.headers["X-Frame-Options"] = settings.x_frame_options
+        # Handle X-Frame-Options: None = don't set header, empty string = allow all, other values = set header
+        if settings.x_frame_options is not None:
+            if settings.x_frame_options:  # Non-empty string
+                response.headers["X-Frame-Options"] = settings.x_frame_options
+            # Empty string means user wants to disable the header (allow all frames)
+            # Don't set the header in this case
 
         if settings.x_xss_protection_enabled:
             response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP instead
@@ -268,22 +272,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Content Security Policy
         # This CSP is designed to work with the Admin UI while providing security
-        # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting
-        x_frame = str(settings.x_frame_options)
-        x_frame_upper = x_frame.upper()
-
-        if x_frame_upper == "DENY":
-            frame_ancestors = "'none'"
-        elif x_frame_upper == "SAMEORIGIN":
+        # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting to stay consistent
+        if settings.x_frame_options is None:
+            # No X-Frame-Options configured, default to self
             frame_ancestors = "'self'"
-        elif x_frame_upper.startswith("ALLOW-FROM"):
-            allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
-            frame_ancestors = allowed_uri
-        elif not x_frame:  # Empty string means allow all
-            frame_ancestors = "*"
         else:
-            # Default to none for unknown values
-            frame_ancestors = "'none'"
+            x_frame = str(settings.x_frame_options)
+            x_frame_upper = x_frame.upper()
+
+            if x_frame_upper == "DENY":
+                frame_ancestors = "'none'"
+            elif x_frame_upper == "SAMEORIGIN":
+                frame_ancestors = "'self'"
+            elif x_frame_upper.startswith("ALLOW-FROM"):
+                allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
+                frame_ancestors = allowed_uri
+            elif not x_frame:  # Empty string means allow all
+                frame_ancestors = "*"
+            else:
+                # Default to self for unknown values
+                frame_ancestors = "'self'"
 
         csp_directives = [
             "default-src 'self'",
