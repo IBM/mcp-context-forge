@@ -1073,7 +1073,7 @@ pycodestyle:                        ## 📝  Simple PEP-8 checker
 
 pre-commit: uv                      ## 🪄  Run pre-commit tool
 	@echo "🪄  Running pre-commit hooks..."
-	uv pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure
+	uv run pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure
 
 ruff:                               ## ⚡  Ruff lint + (eventually) format
 	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
