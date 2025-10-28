@@ -1,3 +1,162 @@
+document.addEventListener("DOMContentLoaded", () => {
+    const checkboxes = document.querySelectorAll(".tool-checkbox");
+    const selectedList = document.getElementById("selectedList");
+    const selectedCount = document.getElementById("selectedCount");
+    const searchBox = document.getElementById("searchBox");
+    const showInactive = document.getElementById("showInactive");
+    const toolRows = document.querySelectorAll("#toolBody tr");
+
+    const viewButtons = document.querySelectorAll(".view-btn");
+    const modal = document.getElementById("toolModal");
+    const modalContent = document.getElementById("modalContent");
+    const closeModal = document.getElementById("closeModal");
+  
+    let selectedTools = [];
+  
+    // --- Selection logic ---
+    checkboxes.forEach(cb => {
+      cb.addEventListener("change", () => {
+        const toolName = cb.getAttribute("data-tool");
+        if (cb.checked) {
+          if (!selectedTools.includes(toolName)) {
+            selectedTools.push(toolName);
+          }
+        } else {
+          selectedTools = selectedTools.filter(t => t !== toolName);
+        }
+        updateSelectedList();
+      });
+    });
+  
+    function updateSelectedList() {
+      selectedList.innerHTML = "";
+      if (selectedTools.length === 0) {
+        selectedList.textContent = "No tools selected";
+      } else {
+        selectedTools.forEach(tool => {
+          const item = document.createElement("div");
+          item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+          item.innerHTML = `<span>${tool}</span><button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>`;
+          item.querySelector(".remove-btn").addEventListener("click", () => {
+            selectedTools = selectedTools.filter(t => t !== tool);
+            document.querySelector(`.tool-checkbox[data-tool="${tool}"]`).checked = false;
+            updateSelectedList();
+          });
+          selectedList.appendChild(item);
+        });
+      }
+      selectedCount.textContent = selectedTools.length;
+    }
+  
+    // --- Search logic ---
+    searchBox.addEventListener("input", () => {
+      const query = searchBox.value.trim().toLowerCase();
+      toolRows.forEach(row => {
+        const name = row.dataset.name;
+        row.style.display = name.includes(query) ? "" : "none";
+      });
+    });
+  
+    // --- Show inactive toggle ---
+    showInactive.addEventListener("change", () => {
+      const show = showInactive.checked;
+      toolRows.forEach(row => {
+        const status = row.dataset.status;
+        if (status === "Inactive") {
+          row.style.display = show ? "" : "none";
+        }
+      });
+    });
+    // 👁 View modal
+  viewButtons.forEach(btn => {
+    btn.addEventListener("click", () => {
+      modalContent.innerHTML = `
+        <p><strong>Name:</strong> ${btn.dataset.name}</p>
+        <p><strong>Type:</strong> ${btn.dataset.type}</p>
+        <p><strong>Status:</strong> Inactive </p>
+        <p><strong>Description:</strong> ${btn.dataset.desc}</p>
+      `;
+      modal.classList.remove("hidden");
+    });
+  });
+
+  closeModal.addEventListener("click", () => modal.classList.add("hidden"));
+  
+  // Generic API call for Enrich/Validate
+  async function callToolOpsAPI(endpoint) {
+    // const selectedTools = getSelectedTools();
+    console.log('global selected Tools...')
+    console.log(selectedTools)
+    const responseDiv = document.getElementById("toolOpsResponse");
+  
+    if (selectedTools.length === 0) {
+      responseDiv.textContent = "⚠️ Please select at least one tool.";
+      return;
+    }
+  
+    responseDiv.textContent = `Running ${endpoint.replace("_", " ")} for ${selectedTools.length} tools...`;
+  
+    try {
+      const res = await fetch(`/${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tools: selectedTools }),
+      });
+  
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const data = await res.json();
+      if (endpoint === "tool_validation") {
+        console.log(JSON.stringify(data));
+        openValidationModal(data.details);
+      } else {
+        responseDiv.textContent = data.message || "Enrich Tools completed successfully.";
+      }
+  
+    } catch (err) {
+      responseDiv.textContent = `❌ Error: ${err.message}`;
+    }
+  }
+
+  // Modal Logic
+   function openValidationModal(results) {
+    const modal = document.getElementById("validationModal");
+    const tableBody = document.getElementById("validationResultsTable");
+    tableBody.innerHTML = "";
+  
+    results.forEach(item => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td class="border px-4 py-2">${item.tool}</td>
+        <td class="border px-4 py-2">${item.status}</td>
+      `;
+      tableBody.appendChild(row);
+    });
+  
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+  }
+
+  document.getElementById("closeValidationModal").addEventListener("click", () => {
+    const modal = document.getElementById("validationModal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  });
+
+  document.getElementById("crossValidationModal").addEventListener("click", () => {
+    const modal = document.getElementById("validationModal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  });
+  
+  // Button listeners
+  document.getElementById("enrichToolsBtn").addEventListener("click", () => callToolOpsAPI("enrich_tools"));
+  document.getElementById("validateToolsBtn").addEventListener("click", () => callToolOpsAPI("tool_validation"));
+  });
+
+  
+  
+  
+
 // Add three fields to passthrough section on Advanced button click
 function handleAddPassthrough() {
     const passthroughContainer = safeGetElement("passthrough-container");
@@ -6254,6 +6413,7 @@ async function testTool(toolId) {
         }
     }
 }
+  
 
 async function runToolTest() {
     const form = safeGetElement("tool-test-form");
@@ -9726,6 +9886,7 @@ window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;
+window.validateTool = validateTool;
 window.viewResource = viewResource;
 window.editResource = editResource;
 window.viewPrompt = viewPrompt;

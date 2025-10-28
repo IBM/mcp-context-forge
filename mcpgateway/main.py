@@ -37,7 +37,7 @@ from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect, Form
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
@@ -123,6 +123,8 @@ from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
+from mcpgateway.toolops import router as toolops_router
+
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
@@ -4341,6 +4343,7 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+app.include_router(toolops_router)
 
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:
@@ -4533,3 +4536,5 @@ else:
 # Expose some endpoints at the root level as well
 app.post("/initialize")(initialize)
 app.post("/notifications")(handle_notification)
+
+
