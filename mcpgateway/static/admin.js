@@ -4227,7 +4227,7 @@ async function viewServer(serverId) {
 
                 const maxToShow = 3;
                 const toolsToShow = server.associatedTools.slice(0, maxToShow);
-                
+
                 toolsToShow.forEach((toolId) => {
                     const toolItem = document.createElement("div");
                     toolItem.className = "flex items-center space-x-2";
@@ -4249,19 +4249,19 @@ async function viewServer(serverId) {
                     toolItem.appendChild(toolIdSpan);
                     toolsList.appendChild(toolItem);
                 });
-                
+
                 // If more than maxToShow, add a summary badge
                 if (server.associatedTools.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
-                    
+
                     const moreBadge = document.createElement("span");
                     moreBadge.className =
                         "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full cursor-pointer dark:bg-green-900 dark:text-green-200";
                     moreBadge.title = "Total tools associated";
                     const remaining = server.associatedTools.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
-                    
+
                     moreItem.appendChild(moreBadge);
                     toolsList.appendChild(moreItem);
                 }
@@ -4288,7 +4288,10 @@ async function viewServer(serverId) {
                 resourcesList.className = "mt-1 space-y-1";
 
                 const maxToShow = 3;
-                const resourcesToShow = server.associatedResources.slice(0, maxToShow);
+                const resourcesToShow = server.associatedResources.slice(
+                    0,
+                    maxToShow,
+                );
 
                 resourcesToShow.forEach((resourceId) => {
                     const resourceItem = document.createElement("div");
@@ -4312,19 +4315,20 @@ async function viewServer(serverId) {
                     resourceItem.appendChild(resourceIdSpan);
                     resourcesList.appendChild(resourceItem);
                 });
-                
+
                 // If more than maxToShow, add a summary badge
                 if (server.associatedResources.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
-                    
+
                     const moreBadge = document.createElement("span");
                     moreBadge.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full cursor-pointer dark:bg-blue-900 dark:text-blue-200";
                     moreBadge.title = "Total resources associated";
-                    const remaining = server.associatedResources.length - maxToShow;
+                    const remaining =
+                        server.associatedResources.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
-                    
+
                     moreItem.appendChild(moreBadge);
                     resourcesList.appendChild(moreItem);
                 }
@@ -4351,7 +4355,10 @@ async function viewServer(serverId) {
                 promptsList.className = "mt-1 space-y-1";
 
                 const maxToShow = 3;
-                const promptsToShow = server.associatedPrompts.slice(0, maxToShow);
+                const promptsToShow = server.associatedPrompts.slice(
+                    0,
+                    maxToShow,
+                );
 
                 promptsToShow.forEach((promptId) => {
                     const promptItem = document.createElement("div");
@@ -4374,19 +4381,20 @@ async function viewServer(serverId) {
                     promptItem.appendChild(promptIdSpan);
                     promptsList.appendChild(promptItem);
                 });
-                
+
                 // If more than maxToShow, add a summary badge
                 if (server.associatedPrompts.length > maxToShow) {
                     const moreItem = document.createElement("div");
                     moreItem.className = "flex items-center space-x-2";
-                    
+
                     const moreBadge = document.createElement("span");
                     moreBadge.className =
                         "inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full cursor-pointer dark:bg-purple-900 dark:text-purple-200";
                     moreBadge.title = "Total prompts associated";
-                    const remaining = server.associatedPrompts.length - maxToShow;
+                    const remaining =
+                        server.associatedPrompts.length - maxToShow;
                     moreBadge.textContent = `+${remaining} more`;
-                    
+
                     moreItem.appendChild(moreBadge);
                     promptsList.appendChild(moreItem);
                 }
@@ -4657,9 +4665,12 @@ async function editServer(serverId) {
         window.currentEditingServer = server;
 
         // Set associated tools data attribute on the container for reference by initToolSelect
-        const editToolsContainer = document.getElementById('edit-server-tools');
+        const editToolsContainer = document.getElementById("edit-server-tools");
         if (editToolsContainer && server.associatedTools) {
-            editToolsContainer.setAttribute('data-server-tools', JSON.stringify(server.associatedTools));
+            editToolsContainer.setAttribute(
+                "data-server-tools",
+                JSON.stringify(server.associatedTools),
+            );
         }
 
         openModal("server-edit-modal");
@@ -4683,7 +4694,8 @@ async function editServer(serverId) {
                     const toolName = window.toolMapping[checkbox.value];
 
                     // Check if this tool name is in the associated tools array
-                    isChecked = toolName && server.associatedTools.includes(toolName);
+                    isChecked =
+                        toolName && server.associatedTools.includes(toolName);
                 }
 
                 checkbox.checked = isChecked;
@@ -4853,128 +4865,161 @@ function setEditServerAssociations(server) {
 
 // Set up HTMX handler for auto-checking newly loaded tools when Select All is active or Edit Server mode
 if (window.htmx && !window._toolsHtmxHandlerAttached) {
-  window._toolsHtmxHandlerAttached = true;
-  
-  htmx.on('htmx:afterSettle', function(evt) {
-    // Only handle tool pagination requests
-    if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath && evt.detail.pathInfo.requestPath.includes('/admin/tools/partial')) {
-      // Use a slight delay to ensure DOM is fully updated
-      setTimeout(() => {
-        // Find which container actually triggered the request by checking the target
-        let container = null;
-        const target = evt.detail.target;
-        
-        // Check if the target itself is the edit server tools container (most common case for infinite scroll)
-        if (target && target.id === 'edit-server-tools') {
-          container = target;
-        } 
-        // Or if target is the associated tools container (for add server)
-        else if (target && target.id === 'associatedTools') {
-          container = target;
-        }
-        // Otherwise try to find the container using closest
-        else if (target) {
-          container = target.closest('#associatedTools') || target.closest('#edit-server-tools');
-        }
-        
-        // Fallback logic if container still not found
-        if (!container) {
-          // Check which modal/dialog is currently open to determine the correct container
-          const editModal = document.getElementById('server-edit-modal');
-          const isEditModalOpen = editModal && !editModal.classList.contains('hidden');
-          
-          if (isEditModalOpen) {
-            container = document.getElementById('edit-server-tools');
-          } else {
-            container = document.getElementById('associatedTools');
-          }
-        }
-        
-        // Final safety check - use direct lookup if still not found
-        if (!container) {
-          const addServerContainer = document.getElementById('associatedTools');
-          const editServerContainer = document.getElementById('edit-server-tools');
-          
-          // Check if edit server container has the server tools data attribute set
-          if (editServerContainer && editServerContainer.getAttribute('data-server-tools')) {
-            container = editServerContainer;
-          } else if (addServerContainer && addServerContainer.offsetParent !== null) {
-            container = addServerContainer;
-          } else if (editServerContainer && editServerContainer.offsetParent !== null) {
-            container = editServerContainer;
-          } else {
-            // Last resort: just pick one that exists
-            container = addServerContainer || editServerContainer;
-          }
-        }
-        
-        if (container) {
-          // Update tool mapping for newly loaded tools
-          const newCheckboxes = container.querySelectorAll('input[data-auto-check=true]');
-          
-          if (!window.toolMapping) {
-            window.toolMapping = {};
-          }
-          
-          newCheckboxes.forEach(cb => {
-            const toolId = cb.value;
-            const toolName = cb.getAttribute('data-tool-name');
-            if (toolId && toolName) {
-              window.toolMapping[toolId] = toolName;
-            }
-          });
-          
-          const selectAllInput = container.querySelector('input[name="selectAllTools"]');
-          
-          // Check if Select All is active
-          if (selectAllInput && selectAllInput.value === 'true') {
-            newCheckboxes.forEach(cb => {
-              cb.checked = true;
-              cb.removeAttribute('data-auto-check');
-            });
-            
-            if (newCheckboxes.length > 0) {
-              const event = new Event('change', { bubbles: true });
-              container.dispatchEvent(event);
-            }
-          }
-          // Check if we're in Edit Server mode and need to pre-select tools
-          else if (container.id === 'edit-server-tools') {
-            // Try to get server tools from data attribute (primary source)
-            let serverTools = null;
-            const dataAttr = container.getAttribute('data-server-tools');
-            
-            if (dataAttr) {
-              try {
-                serverTools = JSON.parse(dataAttr);
-              } catch (e) {
-                console.error('Failed to parse data-server-tools:', e);
-              }
-            }
-            
-            if (serverTools && serverTools.length > 0) {
-              newCheckboxes.forEach(cb => {
-                const toolId = cb.value;
-                const toolName = cb.getAttribute('data-tool-name'); // Use the data attribute directly
-                if (toolId && toolName) {
-                  // Check if this tool name exists in server associated tools
-                  if (serverTools.includes(toolName)) {
-                    cb.checked = true;
-                  }
+    window._toolsHtmxHandlerAttached = true;
+
+    window.htmx.on("htmx:afterSettle", function (evt) {
+        // Only handle tool pagination requests
+        if (
+            evt.detail.pathInfo &&
+            evt.detail.pathInfo.requestPath &&
+            evt.detail.pathInfo.requestPath.includes("/admin/tools/partial")
+        ) {
+            // Use a slight delay to ensure DOM is fully updated
+            setTimeout(() => {
+                // Find which container actually triggered the request by checking the target
+                let container = null;
+                const target = evt.detail.target;
+
+                // Check if the target itself is the edit server tools container (most common case for infinite scroll)
+                if (target && target.id === "edit-server-tools") {
+                    container = target;
                 }
-                cb.removeAttribute('data-auto-check');
-              });
-              
-              // Trigger an update to display the correct count based on server.associatedTools
-              // This will make sure the pill counters reflect the total associated tools count
-              const event = new Event('change', { bubbles: true });
-              container.dispatchEvent(event);
-            }
-          }
+                // Or if target is the associated tools container (for add server)
+                else if (target && target.id === "associatedTools") {
+                    container = target;
+                }
+                // Otherwise try to find the container using closest
+                else if (target) {
+                    container =
+                        target.closest("#associatedTools") ||
+                        target.closest("#edit-server-tools");
+                }
+
+                // Fallback logic if container still not found
+                if (!container) {
+                    // Check which modal/dialog is currently open to determine the correct container
+                    const editModal =
+                        document.getElementById("server-edit-modal");
+                    const isEditModalOpen =
+                        editModal && !editModal.classList.contains("hidden");
+
+                    if (isEditModalOpen) {
+                        container =
+                            document.getElementById("edit-server-tools");
+                    } else {
+                        container = document.getElementById("associatedTools");
+                    }
+                }
+
+                // Final safety check - use direct lookup if still not found
+                if (!container) {
+                    const addServerContainer =
+                        document.getElementById("associatedTools");
+                    const editServerContainer =
+                        document.getElementById("edit-server-tools");
+
+                    // Check if edit server container has the server tools data attribute set
+                    if (
+                        editServerContainer &&
+                        editServerContainer.getAttribute("data-server-tools")
+                    ) {
+                        container = editServerContainer;
+                    } else if (
+                        addServerContainer &&
+                        addServerContainer.offsetParent !== null
+                    ) {
+                        container = addServerContainer;
+                    } else if (
+                        editServerContainer &&
+                        editServerContainer.offsetParent !== null
+                    ) {
+                        container = editServerContainer;
+                    } else {
+                        // Last resort: just pick one that exists
+                        container = addServerContainer || editServerContainer;
+                    }
+                }
+
+                if (container) {
+                    // Update tool mapping for newly loaded tools
+                    const newCheckboxes = container.querySelectorAll(
+                        "input[data-auto-check=true]",
+                    );
+
+                    if (!window.toolMapping) {
+                        window.toolMapping = {};
+                    }
+
+                    newCheckboxes.forEach((cb) => {
+                        const toolId = cb.value;
+                        const toolName = cb.getAttribute("data-tool-name");
+                        if (toolId && toolName) {
+                            window.toolMapping[toolId] = toolName;
+                        }
+                    });
+
+                    const selectAllInput = container.querySelector(
+                        'input[name="selectAllTools"]',
+                    );
+
+                    // Check if Select All is active
+                    if (selectAllInput && selectAllInput.value === "true") {
+                        newCheckboxes.forEach((cb) => {
+                            cb.checked = true;
+                            cb.removeAttribute("data-auto-check");
+                        });
+
+                        if (newCheckboxes.length > 0) {
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
+                        }
+                    }
+                    // Check if we're in Edit Server mode and need to pre-select tools
+                    else if (container.id === "edit-server-tools") {
+                        // Try to get server tools from data attribute (primary source)
+                        let serverTools = null;
+                        const dataAttr =
+                            container.getAttribute("data-server-tools");
+
+                        if (dataAttr) {
+                            try {
+                                serverTools = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Failed to parse data-server-tools:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        if (serverTools && serverTools.length > 0) {
+                            newCheckboxes.forEach((cb) => {
+                                const toolId = cb.value;
+                                const toolName =
+                                    cb.getAttribute("data-tool-name"); // Use the data attribute directly
+                                if (toolId && toolName) {
+                                    // Check if this tool name exists in server associated tools
+                                    if (serverTools.includes(toolName)) {
+                                        cb.checked = true;
+                                    }
+                                }
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            // Trigger an update to display the correct count based on server.associatedTools
+                            // This will make sure the pill counters reflect the total associated tools count
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
+                        }
+                    }
+                }
+            }, 10); // Small delay to ensure DOM is updated
         }
-      }, 10); // Small delay to ensure DOM is updated
-    }
-  });
+    });
 }
 
 // ===================================================================
@@ -5817,19 +5862,25 @@ function initToolSelect(
 
     function update() {
         try {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-            
+
             // Check if "Select All" mode is active
-            const selectAllInput = container.querySelector('input[name="selectAllTools"]');
-            const allIdsInput = container.querySelector('input[name="allToolIds"]');
-            
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllTools"]',
+            );
+            const allIdsInput = container.querySelector(
+                'input[name="allToolIds"]',
+            );
+
             // Check if this is the edit server tools container
-            const isEditServerMode = selectId === 'edit-server-tools';
+            const isEditServerMode = selectId === "edit-server-tools";
             let serverTools = null;
-            
+
             if (isEditServerMode) {
-                const dataAttr = container.getAttribute('data-server-tools');
+                const dataAttr = container.getAttribute("data-server-tools");
                 if (dataAttr) {
                     try {
                         serverTools = JSON.parse(dataAttr);
@@ -5838,11 +5889,15 @@ function initToolSelect(
                     }
                 }
             }
-            
+
             let count = checked.length;
-            
+
             // If Select All mode is active, use the count from allToolIds
-            if (selectAllInput && selectAllInput.value === 'true' && allIdsInput) {
+            if (
+                selectAllInput &&
+                selectAllInput.value === "true" &&
+                allIdsInput
+            ) {
                 try {
                     const allIds = JSON.parse(allIdsInput.value);
                     count = allIds.length;
@@ -5851,25 +5906,34 @@ function initToolSelect(
                 }
             }
             // If in edit server mode and we have server tools data, use that count
-            else if (isEditServerMode && serverTools && Array.isArray(serverTools)) {
+            else if (
+                isEditServerMode &&
+                serverTools &&
+                Array.isArray(serverTools)
+            ) {
                 count = serverTools.length;
             }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
-            
+
             // In edit server mode, we want to show the server tools rather than just currently checked ones
             let pillsToDisplay = checked;
-            if (isEditServerMode && serverTools && Array.isArray(serverTools) && window.toolMapping) {
+            if (
+                isEditServerMode &&
+                serverTools &&
+                Array.isArray(serverTools) &&
+                window.toolMapping
+            ) {
                 // Create a list of tools that exist both in serverTools and currently loaded tools
                 const allLoadedTools = Array.from(checkboxes);
-                pillsToDisplay = allLoadedTools.filter(checkbox => {
+                pillsToDisplay = allLoadedTools.filter((checkbox) => {
                     const toolName = window.toolMapping[checkbox.value];
                     return toolName && serverTools.includes(toolName);
                 });
             }
-            
+
             pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
@@ -5877,7 +5941,7 @@ function initToolSelect(
                     cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
-            
+
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
                 const span = document.createElement("span");
@@ -5905,21 +5969,27 @@ function initToolSelect(
         const newClearBtn = clearBtn.cloneNode(true);
         newClearBtn.dataset.listenerAttached = "true";
         clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
-        
+
         newClearBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             checkboxes.forEach((cb) => (cb.checked = false));
-            
+
             // Clear the "select all" flag
-            const selectAllInput = container.querySelector('input[name="selectAllTools"]');
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllTools"]',
+            );
             if (selectAllInput) {
                 selectAllInput.remove();
             }
-            const allIdsInput = container.querySelector('input[name="allToolIds"]');
+            const allIdsInput = container.querySelector(
+                'input[name="allToolIds"]',
+            );
             if (allIdsInput) {
                 allIdsInput.remove();
             }
-            
+
             update();
         });
     }
@@ -5929,53 +5999,62 @@ function initToolSelect(
         const newSelectBtn = selectBtn.cloneNode(true);
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
-        
+
         newSelectBtn.addEventListener("click", async () => {
             // Disable button and show loading state
             const originalText = newSelectBtn.textContent;
             newSelectBtn.disabled = true;
             newSelectBtn.textContent = "Selecting all tools...";
-            
+
             try {
                 // Fetch all tool IDs from the server
-                const response = await fetch(`${window.ROOT_PATH}/admin/tools/ids`);
-                if (!response.ok) throw new Error("Failed to fetch tool IDs");
-                
+                const response = await fetch(
+                    `${window.ROOT_PATH}/admin/tools/ids`,
+                );
+                if (!response.ok) {
+                    throw new Error("Failed to fetch tool IDs");
+                }
+
                 const data = await response.json();
                 const allToolIds = data.tool_ids || [];
-                
+
                 // Check all currently loaded checkboxes
-                const loadedCheckboxes = container.querySelectorAll('input[type="checkbox"]');
+                const loadedCheckboxes = container.querySelectorAll(
+                    'input[type="checkbox"]',
+                );
                 loadedCheckboxes.forEach((cb) => (cb.checked = true));
-                
+
                 // Add a hidden input to indicate "select all" mode
                 // Remove any existing one first
-                let selectAllInput = container.querySelector('input[name="selectAllTools"]');
+                let selectAllInput = container.querySelector(
+                    'input[name="selectAllTools"]',
+                );
                 if (!selectAllInput) {
-                    selectAllInput = document.createElement('input');
-                    selectAllInput.type = 'hidden';
-                    selectAllInput.name = 'selectAllTools';
+                    selectAllInput = document.createElement("input");
+                    selectAllInput.type = "hidden";
+                    selectAllInput.name = "selectAllTools";
                     container.appendChild(selectAllInput);
                 }
-                selectAllInput.value = 'true';
-                
+                selectAllInput.value = "true";
+
                 // Also store the IDs as a JSON array for the backend
-                let allIdsInput = container.querySelector('input[name="allToolIds"]');
+                let allIdsInput = container.querySelector(
+                    'input[name="allToolIds"]',
+                );
                 if (!allIdsInput) {
-                    allIdsInput = document.createElement('input');
-                    allIdsInput.type = 'hidden';
-                    allIdsInput.name = 'allToolIds';
+                    allIdsInput = document.createElement("input");
+                    allIdsInput.type = "hidden";
+                    allIdsInput.name = "allToolIds";
                     container.appendChild(allIdsInput);
                 }
                 allIdsInput.value = JSON.stringify(allToolIds);
-                
+
                 update();
-                
+
                 newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
                 setTimeout(() => {
                     newSelectBtn.textContent = originalText;
                 }, 2000);
-                
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all tools. Please try again.");
@@ -5988,23 +6067,31 @@ function initToolSelect(
     }
 
     update(); // Initial render
-    
+
     // Attach change listeners to checkboxes (using delegation for dynamic content)
     if (!container.dataset.changeListenerAttached) {
         container.dataset.changeListenerAttached = "true";
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
                 // Check if we're in "Select All" mode
-                const selectAllInput = container.querySelector('input[name="selectAllTools"]');
-                const allIdsInput = container.querySelector('input[name="allToolIds"]');
-                
-                if (selectAllInput && selectAllInput.value === 'true' && allIdsInput) {
+                const selectAllInput = container.querySelector(
+                    'input[name="selectAllTools"]',
+                );
+                const allIdsInput = container.querySelector(
+                    'input[name="allToolIds"]',
+                );
+
+                if (
+                    selectAllInput &&
+                    selectAllInput.value === "true" &&
+                    allIdsInput
+                ) {
                     // User is manually checking/unchecking after Select All
                     // Update the allToolIds array to reflect the change
                     try {
                         let allIds = JSON.parse(allIdsInput.value);
                         const toolId = e.target.value;
-                        
+
                         if (e.target.checked) {
                             // Add the ID if it's not already there
                             if (!allIds.includes(toolId)) {
@@ -6012,33 +6099,38 @@ function initToolSelect(
                             }
                         } else {
                             // Remove the ID from the array
-                            allIds = allIds.filter(id => id !== toolId);
+                            allIds = allIds.filter((id) => id !== toolId);
                         }
-                        
+
                         // Update the hidden field
                         allIdsInput.value = JSON.stringify(allIds);
                     } catch (error) {
-                        console.error('Error updating allToolIds:', error);
+                        console.error("Error updating allToolIds:", error);
                     }
                 }
                 // Check if we're in edit server mode
-                else if (selectId === 'edit-server-tools') {
+                else if (selectId === "edit-server-tools") {
                     // In edit server mode, update the server tools data based on checkbox state
-                    const dataAttr = container.getAttribute('data-server-tools');
+                    const dataAttr =
+                        container.getAttribute("data-server-tools");
                     let serverTools = [];
-                    
+
                     if (dataAttr) {
                         try {
                             serverTools = JSON.parse(dataAttr);
                         } catch (e) {
-                            console.error('Error parsing data-server-tools:', e);
+                            console.error(
+                                "Error parsing data-server-tools:",
+                                e,
+                            );
                         }
                     }
-                    
+
                     // Get the tool name from toolMapping to update serverTools array
                     const toolId = e.target.value;
-                    const toolName = window.toolMapping && window.toolMapping[toolId];
-                    
+                    const toolName =
+                        window.toolMapping && window.toolMapping[toolId];
+
                     if (toolName) {
                         if (e.target.checked) {
                             // Add tool name to server tools if not already there
@@ -6047,14 +6139,19 @@ function initToolSelect(
                             }
                         } else {
                             // Remove tool name from server tools
-                            serverTools = serverTools.filter(name => name !== toolName);
+                            serverTools = serverTools.filter(
+                                (name) => name !== toolName,
+                            );
                         }
-                        
+
                         // Update the data attribute
-                        container.setAttribute('data-server-tools', JSON.stringify(serverTools));
+                        container.setAttribute(
+                            "data-server-tools",
+                            JSON.stringify(serverTools),
+                        );
                     }
                 }
-                
+
                 update();
             }
         });
@@ -6087,14 +6184,16 @@ function initResourceSelect(
 
     function update() {
         try {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
             const count = checked.length;
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
-            
+
             checked.slice(0, maxPillsToShow).forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
@@ -6102,7 +6201,7 @@ function initResourceSelect(
                     cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
-            
+
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
                 const span = document.createElement("span");
@@ -6130,9 +6229,11 @@ function initResourceSelect(
         const newClearBtn = clearBtn.cloneNode(true);
         newClearBtn.dataset.listenerAttached = "true";
         clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
-        
+
         newClearBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             checkboxes.forEach((cb) => (cb.checked = false));
             update();
         });
@@ -6143,16 +6244,18 @@ function initResourceSelect(
         const newSelectBtn = selectBtn.cloneNode(true);
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
-        
+
         newSelectBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             checkboxes.forEach((cb) => (cb.checked = true));
             update();
         });
     }
 
     update(); // Initial render
-    
+
     // Attach change listeners using delegation for dynamic content
     if (!container.dataset.changeListenerAttached) {
         container.dataset.changeListenerAttached = "true";
@@ -6190,14 +6293,16 @@ function initPromptSelect(
 
     function update() {
         try {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
             const count = checked.length;
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
-            
+
             checked.slice(0, maxPillsToShow).forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
@@ -6205,7 +6310,7 @@ function initPromptSelect(
                     cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
-            
+
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
                 const span = document.createElement("span");
@@ -6233,9 +6338,11 @@ function initPromptSelect(
         const newClearBtn = clearBtn.cloneNode(true);
         newClearBtn.dataset.listenerAttached = "true";
         clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
-        
+
         newClearBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             checkboxes.forEach((cb) => (cb.checked = false));
             update();
         });
@@ -6246,16 +6353,18 @@ function initPromptSelect(
         const newSelectBtn = selectBtn.cloneNode(true);
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
-        
+
         newSelectBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
             checkboxes.forEach((cb) => (cb.checked = true));
             update();
         });
     }
 
     update(); // Initial render
-    
+
     // Attach change listeners using delegation for dynamic content
     if (!container.dataset.changeListenerAttached) {
         container.dataset.changeListenerAttached = "true";
@@ -9452,7 +9561,7 @@ function initializeToolSelects() {
         "selectAllToolsBtn",
         "clearAllToolsBtn",
     );
-    
+
     initResourceSelect(
         "associatedResources",
         "selectedResourcesPills",
@@ -9461,7 +9570,7 @@ function initializeToolSelects() {
         "selectAllResourcesBtn",
         "clearAllResourcesBtn",
     );
-    
+
     initPromptSelect(
         "associatedPrompts",
         "selectedPromptsPills",
@@ -9470,7 +9579,7 @@ function initializeToolSelects() {
         "selectAllPromptsBtn",
         "clearAllPromptsBtn",
     );
-    
+
     // Edit Server form
     initToolSelect(
         "edit-server-tools",
@@ -9745,12 +9854,12 @@ function setupSelectorSearch() {
         let searchTimeout;
         searchTools.addEventListener("input", function () {
             const searchTerm = this.value;
-            
+
             // Clear previous timeout
             if (searchTimeout) {
                 clearTimeout(searchTimeout);
             }
-            
+
             // Debounce search to avoid too many API calls
             searchTimeout = setTimeout(() => {
                 serverSideToolSearch(searchTerm);
@@ -16438,12 +16547,12 @@ function initializeChatInputResize() {
  * Perform server-side search for tools and update the tool list
  */
 async function serverSideToolSearch(searchTerm) {
-    const container = document.getElementById('associatedTools');
-    const noResultsMessage = safeGetElement('noToolsMessage', true);
-    const searchQuerySpan = safeGetElement('searchQuery', true);
-    
+    const container = document.getElementById("associatedTools");
+    const noResultsMessage = safeGetElement("noToolsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQuery", true);
+
     if (!container) {
-        console.error('associatedTools container not found');
+        console.error("associatedTools container not found");
         return;
     }
 
@@ -16458,47 +16567,59 @@ async function serverSideToolSearch(searchTerm) {
         </div>
     `;
 
-    if (searchTerm.trim() === '') {
+    if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool list
         try {
-            const response = await fetch(`${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`);
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+            );
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
-                
+
                 // Hide no results message
-                if (noResultsMessage) noResultsMessage.style.display = 'none';
-                
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
                 // Update tool mapping if needed
                 updateToolMapping(container);
             } else {
-                container.innerHTML = '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
             }
         } catch (error) {
-            console.error('Error loading tools:', error);
-            container.innerHTML = '<div class="text-center py-4 text-red-600">Error loading tools</div>';
+            console.error("Error loading tools:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading tools</div>';
         }
         return;
     }
 
     try {
         // Call the new search API
-        const response = await fetch(`${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`);
-        
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        
+
         const data = await response.json();
-        
+
         if (data.tools && data.tools.length > 0) {
             // Create HTML for search results
-            let searchResultsHtml = '';
-            data.tools.forEach(tool => {
+            let searchResultsHtml = "";
+            data.tools.forEach((tool) => {
                 // Create a label element similar to the ones in tools_selector_items.html
                 // Use the same name priority as the template: displayName or customName or original_name
-                const displayName = tool.display_name || tool.custom_name || tool.name || tool.id;
-                
+                const displayName =
+                    tool.display_name ||
+                    tool.custom_name ||
+                    tool.name ||
+                    tool.id;
+
                 searchResultsHtml += `
                     <label
                         class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
@@ -16515,30 +16636,35 @@ async function serverSideToolSearch(searchTerm) {
                     </label>
                 `;
             });
-            
+
             container.innerHTML = searchResultsHtml;
-            
+
             // Update tool mapping with search results
             updateToolMapping(container);
-            
+
             // Hide no results message
-            if (noResultsMessage) noResultsMessage.style.display = 'none';
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
         } else {
             // Show no results message
-            container.innerHTML = '';
+            container.innerHTML = "";
             if (noResultsMessage) {
                 if (searchQuerySpan) {
                     searchQuerySpan.textContent = searchTerm;
                 }
-                noResultsMessage.style.display = 'block';
+                noResultsMessage.style.display = "block";
             }
         }
     } catch (error) {
-        console.error('Error searching tools:', error);
-        container.innerHTML = '<div class="text-center py-4 text-red-600">Error searching tools</div>';
-        
+        console.error("Error searching tools:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching tools</div>';
+
         // Hide no results message in case of error
-        if (noResultsMessage) noResultsMessage.style.display = 'none';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
     }
 }
 
@@ -16549,11 +16675,13 @@ function updateToolMapping(container) {
     if (!window.toolMapping) {
         window.toolMapping = {};
     }
-    
-    const checkboxes = container.querySelectorAll('input[name="associatedTools"]');
-    checkboxes.forEach(checkbox => {
+
+    const checkboxes = container.querySelectorAll(
+        'input[name="associatedTools"]',
+    );
+    checkboxes.forEach((checkbox) => {
         const toolId = checkbox.value;
-        const toolName = checkbox.getAttribute('data-tool-name');
+        const toolName = checkbox.getAttribute("data-tool-name");
         if (toolId && toolName) {
             window.toolMapping[toolId] = toolName;
         }
