@@ -170,8 +170,8 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 
 #### **💻 Admin UI enhancements** (#1336)
 * **Inspectable auth passwords, tokens and headers** (#1336) - Admins can now view and verify passwords, tokens and custom headers they set when creating or editing MCP servers.
-  
-    
+
+
 ### Fixed
 
 #### **🐛 Critical Multi-Tenancy & RBAC Bugs**
