@@ -42,7 +42,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, case, desc, func, Integer, or_, select
 from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -5129,8 +5129,16 @@ async def admin_search_tools(
     
     query = query.where(or_(*search_conditions))
     
-    # Order by original name for consistent results
-    query = query.order_by(func.lower(DbTool.original_name)).limit(limit)
+    # Order by relevance - prioritize matches at start of names
+    query = query.order_by(
+        case(
+            (func.lower(DbTool.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbTool.custom_name, '')).startswith(search_query), 1), 
+            (func.lower(coalesce(DbTool.display_name, '')).startswith(search_query), 1),
+            else_=2
+        ),
+        func.lower(DbTool.original_name)
+    ).limit(limit)
     
     # Execute query
     results = db.execute(query).all()
