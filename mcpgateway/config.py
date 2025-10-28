@@ -394,6 +394,14 @@ class Settings(BaseSettings):
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
 
+    # redis configurations for Maintaining Chat Sessions in multi-worker environment
+    llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
+    llmchat_session_lock_ttl: int = Field(default=30, description="Seconds for lock expiry")
+    llmchat_session_lock_retries: int = Field(default=10, description="How many times to poll while waiting")
+    llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
+    llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
+    llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
     def validate_secrets(cls, v: Any, info: ValidationInfo) -> SecretStr:

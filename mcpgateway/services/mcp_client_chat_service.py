@@ -21,7 +21,6 @@ The module consists of several key components:
 # Standard
 from datetime import datetime, timezone
 import json
-import os
 import time
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
@@ -69,10 +68,20 @@ except ImportError:
     _BEDROCK_AVAILABLE = False
     ChatBedrock = None  # type: ignore
 
+try:
+    # Third-Party
+    from langchain_ibm import WatsonxLLM
+
+    _WATSONX_AVAILABLE = True
+except ImportError:
+    _WATSONX_AVAILABLE = False
+    WatsonxLLM = None  # type: ignore
+
 # Third-Party
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 
 logging_service = LoggingService()
@@ -452,6 +461,62 @@ class AWSBedrockConfig(BaseModel):
     }
 
 
+class WatsonxConfig(BaseModel):
+    """
+    Configuration for IBM watsonx.ai provider.
+
+    Defines parameters for connecting to IBM watsonx.ai services.
+
+    Attributes:
+        api_key: IBM Cloud API key for authentication.
+        url: IBM watsonx.ai service endpoint URL.
+        project_id: IBM watsonx.ai project ID for context.
+        model_id: Model identifier (e.g., ibm/granite-13b-chat-v2, meta-llama/llama-3-70b-instruct).
+        temperature: Sampling temperature for response generation (0.0-2.0).
+        max_new_tokens: Maximum number of tokens to generate.
+        min_new_tokens: Minimum number of tokens to generate.
+        decoding_method: Decoding method ('sample', 'greedy').
+        top_k: Top-K sampling parameter.
+        top_p: Top-P (nucleus) sampling parameter.
+        timeout: Request timeout duration in seconds.
+
+    Examples:
+        >>> config = WatsonxConfig(
+        ...     api_key="your-api-key",
+        ...     url="https://us-south.ml.cloud.ibm.com",
+        ...     project_id="your-project-id",
+        ...     model_id="ibm/granite-13b-chat-v2"
+        ... )
+        >>> config.model_id
+        'ibm/granite-13b-chat-v2'
+    """
+
+    api_key: str = Field(..., description="IBM Cloud API key")
+    url: str = Field(default="https://us-south.ml.cloud.ibm.com", description="watsonx.ai endpoint URL")
+    project_id: str = Field(..., description="watsonx.ai project ID")
+    model_id: str = Field(default="ibm/granite-13b-chat-v2", description="Model identifier")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+    max_new_tokens: Optional[int] = Field(default=1024, gt=0, description="Maximum tokens to generate")
+    min_new_tokens: Optional[int] = Field(default=1, gt=0, description="Minimum tokens to generate")
+    decoding_method: str = Field(default="sample", description="Decoding method (sample or greedy)")
+    top_k: Optional[int] = Field(default=50, gt=0, description="Top-K sampling")
+    top_p: Optional[float] = Field(default=1.0, ge=0.0, le=1.0, description="Top-P sampling")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "api_key": "your-api-key",
+                "url": "https://us-south.ml.cloud.ibm.com",
+                "project_id": "your-project-id",
+                "model_id": "ibm/granite-13b-chat-v2",
+                "temperature": 0.7,
+                "max_new_tokens": 1024,
+            }
+        }
+    }
+
+
 class LLMConfig(BaseModel):
     """
     Configuration for LLM provider.
@@ -494,14 +559,26 @@ class LLMConfig(BaseModel):
         ... )
         >>> config.provider
         'ollama'
+
+        >>> # Watsonx configuration
+        >>> config = LLMConfig(
+        ...     provider="watsonx",
+        ...     config=WatsonxConfig(
+        ...         url="https://us-south.ml.cloud.ibm.com",
+        ...         model_id="ibm/granite-13b-instruct-v2",
+        ...         project_id="YOUR_PROJECT_ID",
+        ...         api_key="YOUR_API")
+        ... )
+        >>> config.provider
+        'watsonx'
     """
 
-    provider: Literal["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama"] = Field(..., description="LLM provider type")
-    config: Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig] = Field(..., description="Provider-specific configuration")
+    provider: Literal["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama", "watsonx"] = Field(..., description="LLM provider type")
+    config: Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig, WatsonxConfig] = Field(..., description="Provider-specific configuration")
 
     @field_validator("config", mode="before")
     @classmethod
-    def validate_config_type(cls, v: Any, info) -> Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig]:
+    def validate_config_type(cls, v: Any, info) -> Union[AzureOpenAIConfig, OpenAIConfig, AnthropicConfig, AWSBedrockConfig, OllamaConfig, WatsonxConfig]:
         """
         Validate and convert config dictionary to appropriate provider type.
 
@@ -534,6 +611,8 @@ class LLMConfig(BaseModel):
                 return AWSBedrockConfig(**v)
             if provider == "ollama":
                 return OllamaConfig(**v)
+            if provider == "watsonx":
+                return WatsonxConfig(**v)
 
         return v
 
@@ -572,7 +651,7 @@ class MCPClientConfig(BaseModel):
 
     mcp_server: MCPServerConfig = Field(..., description="MCP server configuration")
     llm: LLMConfig = Field(..., description="LLM provider configuration")
-    chat_history_max_messages: int = Field(default=50, gt=0, description="Maximum messages to keep in chat history")
+    chat_history_max_messages: int = settings.llmchat_chat_history_max_messages
     enable_streaming: bool = Field(default=True, description="Enable streaming responses")
 
     model_config = {
@@ -1099,6 +1178,128 @@ class AWSBedrockProvider:
         return self.config.model_id
 
 
+class WatsonxProvider:
+    """
+    IBM watsonx.ai provider implementation.
+
+    Manages connection and interaction with IBM watsonx.ai services.
+
+    Attributes:
+        config: IBM watsonx.ai configuration object.
+
+    Examples:
+        >>> config = WatsonxConfig(  # doctest: +SKIP
+        ...     api_key="key",
+        ...     url="https://us-south.ml.cloud.ibm.com",
+        ...     project_id="project-id",
+        ...     model_id="ibm/granite-13b-chat-v2"
+        ... )
+        >>> provider = WatsonxProvider(config)  # doctest: +SKIP
+        >>> provider.get_model_name()  # doctest: +SKIP
+        'ibm/granite-13b-chat-v2'
+
+    Note:
+        Requires langchain-ibm package to be installed.
+    """
+
+    def __init__(self, config: WatsonxConfig):
+        """
+        Initialize IBM watsonx.ai provider.
+
+        Args:
+            config: IBM watsonx.ai configuration with credentials and settings.
+
+        Raises:
+            ImportError: If langchain-ibm is not installed.
+
+        Examples:
+            >>> config = WatsonxConfig(  # doctest: +SKIP
+            ...     api_key="key",
+            ...     url="https://us-south.ml.cloud.ibm.com",
+            ...     project_id="project-id",
+            ...     model_id="ibm/granite-13b-chat-v2"
+            ... )
+            >>> provider = WatsonxProvider(config)  # doctest: +SKIP
+        """
+        if not _WATSONX_AVAILABLE:
+            raise ImportError("IBM watsonx.ai provider requires langchain-ibm package. Install it with: pip install langchain-ibm")
+        self.config = config
+        self.llm = None
+        logger.info(f"Initializing IBM watsonx.ai provider with model {config.model_id}")
+
+    def get_llm(self) -> WatsonxLLM:
+        """
+        Get IBM watsonx.ai LLM instance with lazy initialization.
+
+        Creates and caches the watsonx LLM instance on first call.
+        Subsequent calls return the cached instance.
+
+        Returns:
+            WatsonxLLM: Configured IBM watsonx.ai LLM model.
+
+        Raises:
+            Exception: If LLM initialization fails (e.g., invalid credentials).
+
+        Examples:
+            >>> config = WatsonxConfig(  # doctest: +SKIP
+            ...     api_key="key",
+            ...     url="https://us-south.ml.cloud.ibm.com",
+            ...     project_id="project-id",
+            ...     model_id="ibm/granite-13b-chat-v2"
+            ... )
+            >>> provider = WatsonxProvider(config)  # doctest: +SKIP
+            >>> #llm = provider.get_llm()  # Returns WatsonxLLM instance
+        """
+        if self.llm is None:
+            try:
+                # Build parameters dict
+                params = {
+                    "decoding_method": self.config.decoding_method,
+                    "temperature": self.config.temperature,
+                    "max_new_tokens": self.config.max_new_tokens,
+                    "min_new_tokens": self.config.min_new_tokens,
+                }
+
+                if self.config.top_k is not None:
+                    params["top_k"] = self.config.top_k
+                if self.config.top_p is not None:
+                    params["top_p"] = self.config.top_p
+
+                # Initialize WatsonxLLM
+                self.llm = WatsonxLLM(
+                    apikey=self.config.api_key,
+                    url=self.config.url,
+                    project_id=self.config.project_id,
+                    model_id=self.config.model_id,
+                    params=params,
+                )
+                logger.info("IBM watsonx.ai LLM instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create IBM watsonx.ai LLM: {e}")
+                raise
+        return self.llm
+
+    def get_model_name(self) -> str:
+        """
+        Get the IBM watsonx.ai model ID.
+
+        Returns:
+            str: The model ID configured for this provider.
+
+        Examples:
+            >>> config = WatsonxConfig(  # doctest: +SKIP
+            ...     api_key="key",
+            ...     url="https://us-south.ml.cloud.ibm.com",
+            ...     project_id="project-id",
+            ...     model_id="ibm/granite-13b-chat-v2"
+            ... )
+            >>> provider = WatsonxProvider(config)  # doctest: +SKIP
+            >>> provider.get_model_name()  # doctest: +SKIP
+            'ibm/granite-13b-chat-v2'
+        """
+        return self.config.model_id
+
+
 class LLMProviderFactory:
     """
     Factory for creating LLM providers.
@@ -1121,7 +1322,7 @@ class LLMProviderFactory:
     """
 
     @staticmethod
-    def create(llm_config: LLMConfig) -> Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider]:
+    def create(llm_config: LLMConfig) -> Union[AzureOpenAIProvider, OpenAIProvider, AnthropicProvider, AWSBedrockProvider, OllamaProvider, WatsonxProvider]:
         """
         Create an LLM provider based on configuration.
 
@@ -1176,6 +1377,7 @@ class LLMProviderFactory:
             "anthropic": AnthropicProvider,
             "aws_bedrock": AWSBedrockProvider,
             "ollama": OllamaProvider,
+            "watsonx": WatsonxProvider,
         }
 
         provider_class = provider_map.get(llm_config.provider)
@@ -1550,6 +1752,9 @@ class MCPClient:
                 if self.config.args:
                     server_config["args"] = self.config.args
 
+            if not MultiServerMCPClient:
+                logger.error("Some dependencies are missing. Install those with: pip install '.[llmchat]'")
+
             # Create MultiServerMCPClient with single server
             self._client = MultiServerMCPClient({"default": server_config})
             self._connected = True
@@ -1742,7 +1947,7 @@ class MCPChatService:
         self.llm_provider = LLMProviderFactory.create(config.llm)
 
         # Initialize centralized chat history manager
-        self.history_manager = ChatHistoryManager(redis_client=redis_client, max_messages=config.chat_history_max_messages, ttl=int(os.getenv("CHAT_HISTORY_TTL", "3600")))
+        self.history_manager = ChatHistoryManager(redis_client=redis_client, max_messages=config.chat_history_max_messages, ttl=settings.llmchat_chat_history_ttl)
 
         self._agent = None
         self._initialized = False
