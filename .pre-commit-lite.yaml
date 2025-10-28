@@ -190,6 +190,11 @@ repos:
         description: Removes UTF-8 byte order marker.
         types: [text]
 
+      - id: fix-encoding-pragma
+        name: 🧹 Fix Python Encoding Pragma
+        description: "Adds # -*- coding: utf-8 -*- to the top of python files."
+        types: [python]
+
       - id: mixed-line-ending
         name: 🧹 Mixed Line Ending
         description: Replaces or checks mixed line ending.
@@ -366,12 +371,12 @@ repos:
         exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load)/.*\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
-  - repo: https://github.com/pycqa/flake8
-    rev: 7.2.0
-    hooks:
-      - id: flake8
-        name: 🐍 Flake8 - Python Linter
-        description: Tool for style guide enforcement.
+  # - repo: https://github.com/pycqa/flake8
+  #   rev: 7.2.0
+  #   hooks:
+  #     - id: flake8
+  #       name: 🐍 Flake8 - Python Linter
+  #       description: Tool for style guide enforcement.
 
   # - repo: https://github.com/pycqa/bandit
   #   rev: 1.8.3
@@ -399,27 +404,27 @@ repos:
   # -----------------------------------------------------------------------------
   # 🐍 Python Formatting Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.11.12
-    hooks:
-      # Run the linter.
-      - id: ruff-check
-        types_or: [ python, pyi ]
-        args: [ --fix ]
-        files: ^mcpgateway/
+  # - repo: https://github.com/astral-sh/ruff-pre-commit
+  #   # Ruff version.
+  #   rev: v0.11.12
+  #   hooks:
+  #     # Run the linter.
+  #     - id: ruff-check
+  #       types_or: [ python, pyi ]
+  #       args: [ --fix ]
+  #       files: ^mcpgateway/
       # Run the formatter.
       # - id: ruff-format
       #   types_or: [ python, pyi ]
       #   files: ^mcpgateway/
 
-  - repo: https://github.com/psf/black
-    rev: 25.1.0
-    hooks:
-      - id: black
-        name: 🐍 Black - Python Code Formatter
-        description: The uncompromising Python code formatter.
-        language_version: python3
+  # - repo: https://github.com/psf/black
+  #   rev: 25.1.0
+  #   hooks:
+  #     - id: black
+  #       name: 🐍 Black - Python Code Formatter
+  #       description: The uncompromising Python code formatter.
+  #       language_version: python3
 
   # - repo: https://github.com/pycqa/isort
   #   rev: 6.0.1
