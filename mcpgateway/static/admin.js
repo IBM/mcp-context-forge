@@ -9274,14 +9274,25 @@ function setupSelectorSearch() {
     // Tools search
     const searchTools = safeGetElement("searchTools", true);
     if (searchTools) {
-        searchTools.addEventListener("input", function () {
-            filterSelectorItems(
-                this.value,
+        // Debounced input handler and keyboard navigation to provide a
+        // VSCode-like quick search experience (fuzzy matching, highlighting,
+        // and arrow-key navigation).
+        const debounced = debounce((ev) => {
+            enhancedFilterSelectorItems(
+                ev.target.value,
                 "#associatedTools",
                 ".tool-item",
                 "noToolsMessage",
                 "searchQuery",
             );
+        }, 150);
+
+        searchTools.addEventListener("input", debounced);
+
+        // Keyboard navigation: ArrowDown/ArrowUp to move through visible items,
+        // Enter to toggle the focused item's checkbox.
+        searchTools.addEventListener("keydown", function (ev) {
+            handleSelectorKeyDown(ev, "#associatedTools", ".tool-item");
         });
     }
 
@@ -9317,7 +9328,7 @@ function setupSelectorSearch() {
 /**
  * Generic function to filter items in multi-select dropdowns with no results message
  */
-function filterSelectorItems(
+function enhancedFilterSelectorItems(
     searchText,
     containerSelector,
     itemSelector,
@@ -9329,31 +9340,95 @@ function filterSelectorItems(
         return;
     }
 
-    const items = container.querySelectorAll(itemSelector);
+    const items = Array.from(container.querySelectorAll(itemSelector));
     const search = searchText.toLowerCase().trim();
     let hasVisibleItems = false;
 
-    items.forEach((item) => {
-        let textContent = "";
+    // Clear any previous active index when the value changes
+    container.dataset.searchIndex = -1;
 
-        // Get text from all text nodes within the item
-        const textElements = item.querySelectorAll(
-            "span, .text-xs, .font-medium",
-        );
+    items.forEach((item) => {
+        // Gather searchable text
+        let textContent = "";
+        const textElements = item.querySelectorAll("span, .text-xs, .font-medium");
         textElements.forEach((el) => {
             textContent += " " + el.textContent;
         });
-
-        // Also get direct text content
         textContent += " " + item.textContent;
 
-        if (search === "" || textContent.toLowerCase().includes(search)) {
+        const lower = textContent.toLowerCase();
+
+        let matched = false;
+
+        if (search === "") {
+            matched = true;
+        } else {
+            // Prefer contiguous substring match
+            if (lower.indexOf(search) !== -1) {
+                matched = true;
+            } else {
+                // Fallback to simple fuzzy subsequence match
+                matched = fuzzyMatch(search, lower);
+            }
+        }
+
+        let score = 0;
+        if (matched) {
             item.style.display = "";
             hasVisibleItems = true;
+
+            // Scoring: prefer contiguous substring matches and earlier positions
+            const fullText = textContent.trim();
+            const idx = fullText.toLowerCase().indexOf(search);
+            if (search !== "" && idx !== -1) {
+                // contiguous match score: higher when earlier in the text and shorter text
+                score = 1000 - idx - fullText.length;
+            } else if (search === "") {
+                score = 100; // default for empty search
+            } else {
+                // fuzzy match fallback: moderate score favoring shorter text
+                score = 500 - fullText.length;
+            }
+
+            // Attach score for sorting later
+            item.dataset.matchScore = score;
+
+            // Ensure a small metadata line exists (tool id, path-like info)
+            try {
+                ensureItemMeta(item);
+            } catch (e) {
+                console.error("Meta ensure error:", e);
+            }
+
+            // Highlight contiguous matches if present
+            try {
+                highlightMatchesInItem(item, search);
+            } catch (e) {
+                // Ignore highlighting errors to avoid breaking filtering
+                console.error("Highlight error:", e);
+            }
         } else {
             item.style.display = "none";
+            // Clear any previous highlights and score
+            clearHighlightsInItem(item);
+            delete item.dataset.matchScore;
         }
     });
+
+    // Reorder visible items by match score (desc) to mimic VSCode quick-open ranking
+    try {
+        const visible = items.filter((it) => getComputedStyle(it).display !== "none");
+        visible.sort((a, b) => {
+            const sa = parseInt(a.dataset.matchScore || 0, 10);
+            const sb = parseInt(b.dataset.matchScore || 0, 10);
+            return sb - sa;
+        });
+        // Append in sorted order to container
+        visible.forEach((it) => container.appendChild(it));
+    } catch (e) {
+        // Non-fatal
+        console.error("Sorting visible items error:", e);
+    }
 
     // Handle no results message
     const noResultsMessage = safeGetElement(noResultsId, true);
@@ -9371,6 +9446,144 @@ function filterSelectorItems(
             noResultsMessage.style.display = "none";
         }
     }
+}
+
+// Debounce utility to avoid excessive filtering during fast typing
+function debounce(fn, wait) {
+    let t;
+    return function (...args) {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(this, args), wait);
+    };
+}
+
+// Simple fuzzy subsequence matcher: returns true if all chars in query appear in order in text
+function fuzzyMatch(query, text) {
+    if (!query) return true;
+    let qi = 0;
+    for (let i = 0; i < text.length && qi < query.length; i++) {
+        if (text[i] === query[qi]) qi++;
+    }
+    return qi === query.length;
+}
+
+// Highlight contiguous matches inside item spans; clears old highlights first
+function highlightMatchesInItem(item, query) {
+    const q = (query || "").trim();
+    const els = item.querySelectorAll("span, .text-xs, .font-medium");
+    els.forEach((el) => {
+        // Clear existing HTML and escape text
+        const text = el.textContent || "";
+        el.innerHTML = escapeHtml(text);
+        if (!q) return;
+        const idx = text.toLowerCase().indexOf(q.toLowerCase());
+        if (idx !== -1) {
+            // Wrap the matched substring with a <mark> for visibility
+            const before = escapeHtml(text.slice(0, idx));
+            const match = escapeHtml(text.slice(idx, idx + q.length));
+            const after = escapeHtml(text.slice(idx + q.length));
+            el.innerHTML = `${before}<mark class="bg-yellow-200 dark:bg-yellow-600">${match}</mark>${after}`;
+        }
+    });
+}
+
+function ensureItemMeta(item) {
+    // If a metadata line (tool id) doesn't exist, create one using the input's value
+    // Expected DOM structure: label .tool-item > input[type=checkbox] + span (name)
+    let meta = item.querySelector('.tool-meta');
+    if (!meta) {
+        const chk = item.querySelector('input[type="checkbox"]');
+        const nameSpan = item.querySelector('span');
+        meta = document.createElement('div');
+        meta.className = 'tool-meta text-xs text-gray-500 dark:text-gray-400 truncate';
+        // show the raw id or value (acts like a path/secondary info)
+        // Prefer the tool name from the server-side mapping if available
+        const idVal = chk ? chk.value : '';
+        let displayMeta = '';
+        if (idVal) {
+            try {
+                if (window && window.toolMapping && window.toolMapping[idVal]) {
+                    displayMeta = window.toolMapping[idVal];
+                } else {
+                    displayMeta = idVal;
+                }
+            } catch (e) {
+                displayMeta = idVal;
+            }
+        }
+        meta.textContent = displayMeta ? `(${displayMeta})` : '';
+        if (nameSpan && nameSpan.parentElement) {
+            // place meta after the name span
+            nameSpan.parentElement.appendChild(meta);
+        } else {
+            item.appendChild(meta);
+        }
+    }
+}
+
+function clearHighlightsInItem(item) {
+    const els = item.querySelectorAll("span, .text-xs, .font-medium");
+    els.forEach((el) => {
+        const text = el.textContent || "";
+        el.innerHTML = escapeHtml(text);
+    });
+}
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+// Handle arrow navigation and Enter key for selector lists
+function handleSelectorKeyDown(ev, containerSelector, itemSelector) {
+    const container = document.querySelector(containerSelector);
+    if (!container) return;
+
+    const visibleItems = Array.from(container.querySelectorAll(itemSelector)).filter(
+        (it) => getComputedStyle(it).display !== "none",
+    );
+    if (visibleItems.length === 0) return;
+
+    let idx = parseInt(container.dataset.searchIndex || -1, 10);
+
+    if (ev.key === "ArrowDown") {
+        ev.preventDefault();
+        idx = Math.min(idx + 1, visibleItems.length - 1);
+        container.dataset.searchIndex = idx;
+        focusItemCheckbox(visibleItems[idx]);
+    } else if (ev.key === "ArrowUp") {
+        ev.preventDefault();
+        idx = Math.max(idx - 1, 0);
+        container.dataset.searchIndex = idx;
+        focusItemCheckbox(visibleItems[idx]);
+    } else if (ev.key === "Enter") {
+        ev.preventDefault();
+        if (idx >= 0 && idx < visibleItems.length) {
+            const chk = visibleItems[idx].querySelector('input[type="checkbox"]');
+            if (chk) chk.click();
+        }
+    }
+}
+
+function focusItemCheckbox(item) {
+    if (!item) return;
+    // remove any previous highlight class
+    const parent = item.parentElement;
+    if (parent) {
+        parent.querySelectorAll('.tool-item, .resource-item, .prompt-item').forEach((el) => el.classList.remove('ring-2', 'ring-indigo-300'));
+    }
+    item.classList.add('ring-2', 'ring-indigo-300');
+    const chk = item.querySelector('input[type="checkbox"]');
+    if (chk) chk.focus();
+}
+
+// Backwards-compatible alias used by older code
+function filterSelectorItems(searchText, containerSelector, itemSelector, noResultsId, searchQueryId) {
+    return enhancedFilterSelectorItems(searchText, containerSelector, itemSelector, noResultsId, searchQueryId);
 }
 
 /**
