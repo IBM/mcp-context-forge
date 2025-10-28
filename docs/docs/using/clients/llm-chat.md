@@ -456,7 +456,7 @@ The LLM Chat system follows a **three-tier architecture** with clear separation 
 
 ### 🔄 Entire Workflow
 
-![alt text](<Untitled diagram-2025-10-27-134134.png>)
+![LLM Chat Workflow Architecture](llm-chat-workflow-architecture.png)
 
 
 ### 🏛️ Core Components
@@ -497,7 +497,7 @@ The LLM Chat system follows a **three-tier architecture** with clear separation 
 - **Redis Integration** (optional): Distributed session storage with TTL and worker affinity
 - **Sticky Sessions**: Workers use locks to prevent race conditions during session initialization
 
-![alt text](<Untitled diagram-2025-10-27-134308.png>)
+![LLM Chat Session Management](llm-chat-session-management.png)
 
 **🔐 Authentication**:
 
