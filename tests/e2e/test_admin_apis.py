@@ -36,7 +36,7 @@ os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for e2e tests
 
 # Standard
 import logging
-from unittest.mock import patch
+from unittest.mock import MagicMock
 from urllib.parse import quote
 import uuid
 
@@ -45,16 +45,8 @@ from httpx import AsyncClient
 import pytest
 import pytest_asyncio
 
-# from mcpgateway.db import Base
-# from mcpgateway.main import app, get_db
 
-
-# Configure logging for debugging
-def setup_logging():
-    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-setup_logging()
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 # pytest.skip("Temporarily disabling this suite", allow_module_level=True)
@@ -79,6 +71,7 @@ def create_test_jwt_token():
         "exp": int(expire.timestamp()),
         "iss": "mcpgateway",
         "aud": "mcpgateway-api",
+        "teams": [],  # Empty teams list allows access to public resources and own private resources
     }
 
     # Use the test JWT secret key
@@ -161,19 +154,15 @@ async def mock_settings():
     # First-Party
     from mcpgateway.config import settings as real_settings
 
-    with patch("mcpgateway.config.settings") as mock_settings:
-        # Copy all existing settings
-        for attr in dir(real_settings):
-            if not attr.startswith("_"):
-                setattr(mock_settings, attr, getattr(real_settings, attr))
+    MockSettings = MagicMock(wrap=real_settings)
 
-        # Override specific settings for testing
-        mock_settings.cache_type = "database"
-        mock_settings.mcpgateway_admin_api_enabled = True
-        mock_settings.mcpgateway_ui_enabled = False
-        mock_settings.auth_required = False
+    # Override specific settings for testing
+    mock_settings.cache_type = "database"
+    mock_settings.mcpgateway_admin_api_enabled = True
+    mock_settings.mcpgateway_ui_enabled = False
+    mock_settings.auth_required = False
 
-        yield mock_settings
+    yield mock_settings
 
 
 # -------------------------
@@ -227,6 +216,7 @@ class TestAdminServerAPIs:
             "associatedTools": "",  # Empty initially
             "associatedResources": "",
             "associatedPrompts": "",
+            "visibility": "public",  # Make public to allow access with public-only token
         }
 
         # POST to /admin/servers should redirect
@@ -254,6 +244,7 @@ class TestAdminServerAPIs:
             "associatedTools": "",
             "associatedResources": "",
             "associatedPrompts": "",
+            "visibility": "public",  # Keep public visibility
         }
         response = await client.post(f"/admin/servers/{server_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
@@ -497,6 +488,7 @@ class TestAdminPromptAPIs:
             "description": "Test prompt via admin",
             "template": "Hello {{name}}, this is a test prompt",
             "arguments": '[{"name": "name", "description": "User name", "required": true}]',
+            "visibility": "public",  # Make public to allow access with public-only token
         }
 
         # POST to /admin/prompts should redirect
@@ -522,6 +514,7 @@ class TestAdminPromptAPIs:
             "description": "Updated description",
             "template": "Updated {{greeting}}",
             "arguments": '[{"name": "greeting", "description": "Greeting", "required": false}]',
+            "visibility": "public",  # Keep public visibility
         }
         response = await client.post(f"/admin/prompts/{prompt_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
