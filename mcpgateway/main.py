@@ -45,6 +45,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jsonpath_ng.ext import parse
+from jsonpath_ng.jsonpath import JSONPath
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -61,7 +63,7 @@ from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
-from mcpgateway.config import jsonpath_modifier, settings
+from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
@@ -102,9 +104,8 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
-from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
+from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError, ImportService, ImportValidationError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
@@ -262,6 +263,75 @@ def get_user_email(user):
 
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
+
+
+def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
+    """
+    Applies the given JSONPath expression and mappings to the data.
+    Only return data that is required by the user dynamically.
+
+    Args:
+        data: The JSON data to query.
+        jsonpath: The JSONPath expression to apply.
+        mappings: Optional dictionary of mappings where keys are new field names
+                  and values are JSONPath expressions.
+
+    Returns:
+        Union[List, Dict]: A list (or mapped list) or a Dict of extracted data.
+
+    Raises:
+        HTTPException: If there's an error parsing or executing the JSONPath expressions.
+
+    Examples:
+        >>> jsonpath_modifier({'a': 1, 'b': 2}, '$.a')
+        [1]
+        >>> jsonpath_modifier([{'a': 1}, {'a': 2}], '$[*].a')
+        [1, 2]
+        >>> jsonpath_modifier({'a': {'b': 2}}, '$.a.b')
+        [2]
+        >>> jsonpath_modifier({'a': 1}, '$.b')
+        []
+    """
+    if not jsonpath:
+        jsonpath = "$[*]"
+
+    try:
+        main_expr: JSONPath = parse(jsonpath)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid main JSONPath expression: {e}")
+
+    try:
+        main_matches = main_expr.find(data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error executing main JSONPath: {e}")
+
+    results = [match.value for match in main_matches]
+
+    if mappings:
+        mapped_results = []
+        for item in results:
+            mapped_item = {}
+            for new_key, mapping_expr_str in mappings.items():
+                try:
+                    mapping_expr = parse(mapping_expr_str)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
+                try:
+                    mapping_matches = mapping_expr.find(item)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+                if not mapping_matches:
+                    mapped_item[new_key] = None
+                elif len(mapping_matches) == 1:
+                    mapped_item[new_key] = mapping_matches[0].value
+                else:
+                    mapped_item[new_key] = [m.value for m in mapping_matches]
+            mapped_results.append(mapped_item)
+        results = mapped_results
+
+    if len(results) == 1 and isinstance(results[0], dict):
+        return results[0]
+    return results
 
 
 ####################
@@ -432,7 +502,7 @@ async def validate_security_configuration():
     if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:  # nosec B105 - checking for default value
         critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
 
-    if settings.basic_auth_password == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
+    if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
     if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
@@ -469,7 +539,7 @@ async def validate_security_configuration():
             logger.info("  • Generate a strong JWT secret:")
             logger.info("    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'")
 
-        if settings.basic_auth_password == "changeme":  # nosec B105 - checking for default value
+        if settings.basic_auth_password.get_secret_value() == "changeme":  # nosec B105 - checking for default value
             logger.info("  • Set a strong admin password in BASIC_AUTH_PASSWORD")
 
         if not settings.auth_required:
@@ -1011,9 +1081,10 @@ def require_api_key(api_key: str) -> None:
 
     Examples:
         >>> from mcpgateway.config import settings
+        >>> from pydantic import SecretStr
         >>> settings.auth_required = True
         >>> settings.basic_auth_user = "admin"
-        >>> settings.basic_auth_password = "secret"
+        >>> settings.basic_auth_password = SecretStr("secret")
         >>>
         >>> # Valid API key
         >>> require_api_key("admin:secret")  # Should not raise
@@ -1026,7 +1097,7 @@ def require_api_key(api_key: str) -> None:
         401
     """
     if settings.auth_required:
-        expected = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
+        expected = f"{settings.basic_auth_user}:{settings.basic_auth_password.get_secret_value()}"
         if api_key != expected:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -2623,8 +2694,8 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        from mcpgateway.models import ResourceContent  # pylint: disable=import-outside-toplevel
-        from mcpgateway.models import TextContent  # pylint: disable=import-outside-toplevel
+        # pylint: disable=import-outside-toplevel
+        from mcpgateway.models import ResourceContent, TextContent
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):

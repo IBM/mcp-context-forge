@@ -28,6 +28,7 @@ import uuid
 
 # Third-Party
 import httpx
+import jq
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -62,12 +63,59 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
-# Local
-from ..config import extract_using_jq
-
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def extract_using_jq(data, jq_filter=""):
+    """
+    Extracts data from a given input (string, dict, or list) using a jq filter string.
+
+    Args:
+        data (str, dict, list): The input JSON data. Can be a string, dict, or list.
+        jq_filter (str): The jq filter string to extract the desired data.
+
+    Returns:
+        The result of applying the jq filter to the input data.
+
+    Examples:
+        >>> extract_using_jq('{"a": 1, "b": 2}', '.a')
+        [1]
+        >>> extract_using_jq({'a': 1, 'b': 2}, '.b')
+        [2]
+        >>> extract_using_jq('[{"a": 1}, {"a": 2}]', '.[].a')
+        [1, 2]
+        >>> extract_using_jq('not a json', '.a')
+        ['Invalid JSON string provided.']
+        >>> extract_using_jq({'a': 1}, '')
+        {'a': 1}
+    """
+    if jq_filter == "":
+        return data
+    if isinstance(data, str):
+        # If the input is a string, parse it as JSON
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return ["Invalid JSON string provided."]
+
+    elif not isinstance(data, (dict, list)):
+        # If the input is not a string, dict, or list, raise an error
+        return ["Input data must be a JSON string, dictionary, or list."]
+
+    # Apply the jq filter to the data
+    try:
+        # Pylint can't introspect C-extension modules, so it doesn't know that jq really does export an all() function.
+        # pylint: disable=c-extension-no-member
+        result = jq.all(jq_filter, data)  # Use `jq.all` to get all matches (returns a list)
+        if result == [None]:
+            result = "Error applying jsonpath filter"
+    except Exception as e:
+        message = "Error applying jsonpath filter: " + str(e)
+        return message
+
+    return result
 
 
 class ToolError(Exception):
