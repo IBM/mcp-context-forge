@@ -1173,23 +1173,38 @@
                                   <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Environment Variables</h3>
                                   <div class="mt-2 text-xs text-blue-800 dark:text-blue-300 space-y-1">
                                       <p>Configure LLM via environment:</p>
-                                      <ul class="list-none mt-1 space-y-0.5 ml-2">
-                                          <li>
-                                              <button onclick="copyEnvVariables('azure')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
-                                                  Copy Azure OpenAI variables
-                                              </button>
-                                          </li>
-                                          <li>
-                                              <button onclick="copyEnvVariables('ollama')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
-                                                  Copy Ollama variables
-                                              </button>
-                                          </li>
-                                          <li>
-                                              <button onclick="copyEnvVariables('openai')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
-                                                  Copy OpenAI variables
-                                              </button>
-                                          </li>
-                                      </ul>
+                <ul class="grid grid-cols-2 gap-2 mt-1 pl-4 list-none">
+                    <li class="flex items-center">
+                        <button onclick="copyEnvVariables('azure')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
+                            Azure
+                        </button>
+                    </li>
+                    <li class="flex items-center">
+                        <button onclick="copyEnvVariables('openai')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
+                            Ollama
+                        </button>
+                    </li>
+                    <li class="flex items-center">
+                        <button onclick="copyEnvVariables('anthropic')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
+                            Anthropic Claude
+                        </button>
+                    </li>
+                    <li class="flex items-center">
+                        <button onclick="copyEnvVariables('aws_bedrock')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
+                            AWS Bedrock
+                        </button>
+                    </li>
+                    <li class="flex items-center">
+                        <button onclick="copyEnvVariables('watsonx')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
+                            IBM WatsonX
+                        </button>
+                    </li>
+                    <li class="flex items-center">
+                        <button onclick="copyEnvVariables('ollama')" class="text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 underline hover:no-underline transition-colors">
+                            Ollama
+                        </button>
+                    </li>
+                </ul>
                                   </div>
                               </div>
                           </div>
@@ -1270,6 +1285,7 @@
                                           <option value="openai">OpenAI</option>
                                           <option value="anthropic">Anthropic Claude</option>
                                           <option value="aws_bedrock">AWS Bedrock</option>
+                                          <option value="watsonx">IBM watsonx.ai</option>
                                           <option value="ollama">Ollama</option>
                                       </select>
                                   </div>
@@ -1365,6 +1381,43 @@
                                       <div>
                                           <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max Tokens</label>
                                           <input type="number" id="aws-bedrock-max-tokens" value="4096" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                                      </div>
+                                  </div>
+
+                                  <!-- IBM watsonx.ai Fields -->
+                                  <div id="watsonx-fields" class="hidden space-y-3">
+                                      <div>
+                                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
+                                          <input type="password" id="watsonx-api-key" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="Enter IBM Cloud API key" />
+                                      </div>
+                                      <div>
+                                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Service URL</label>
+                                          <input type="url" id="watsonx-url" value="https://us-south.ml.cloud.ibm.com" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="https://us-south.ml.cloud.ibm.com" />
+                                      </div>
+                                      <div>
+                                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Project ID</label>
+                                          <input type="text" id="watsonx-project-id" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="Enter watsonx.ai project ID" />
+                                      </div>
+                                      <div>
+                                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Model ID</label>
+                                          <input type="text" id="watsonx-model-id" value="ibm/granite-13b-chat-v2" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="ibm/granite-13b-chat-v2" />
+                                      </div>
+                                      <div class="grid grid-cols-2 gap-3">
+                                          <div>
+                                              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Temperature (0-2)</label>
+                                              <input type="number" id="watsonx-temperature" min="0" max="2" step="0.1" value="0.7" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" />
+                                          </div>
+                                          <div>
+                                              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Max New Tokens</label>
+                                              <input type="number" id="watsonx-max-new-tokens" value="1024" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" />
+                                          </div>
+                                      </div>
+                                      <div>
+                                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Decoding Method</label>
+                                          <select id="watsonx-decoding-method" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                                              <option value="sample" selected>Sample</option>
+                                              <option value="greedy">Greedy</option>
+                                          </select>
                                       </div>
                                   </div>
 

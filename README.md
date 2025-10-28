@@ -1237,6 +1237,17 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `AWS_SECRET_ACCESS_KEY`       | AWS secret access key (optional)       | (none)  | string  |
 | `AWS_SESSION_TOKEN`           | AWS session token (optional)           | (none)  | string  |
 
+
+**IBM WatsonX AI**
+| Setting                 | Description                     | Default                        | Options         |
+| ----------------------- | --------------------------------| ------------------------------ | ----------------|
+| `WATSONX_URL`           | watsonx url                     | (none)                         | string          |
+| `WATSONX_APIKEY`        | API key                         | (none)                         | string          |
+| `WATSONX_PROJECT_ID`    | Project Id for WatsonX          | (none)                         | string          |
+| `WATSONX_MODEL_ID`      | Watsonx model id                | `ibm/granite-13b-chat-v2`      | string          |
+| `WATSONX_TEMPERATURE`   | temperature (optional)          | `0.7`                          | float (0.0-1.0) |
+
+
 **Ollama Configuration:**
 
 | Setting                        | Description                            | Default | Options |
@@ -1259,10 +1270,22 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 - **OpenAI**: Requires `OPENAI_API_KEY`
 - **Anthropic**: Requires `ANTHROPIC_API_KEY` and `pip install langchain-anthropic`
 - **AWS Bedrock**: Requires `AWS_BEDROCK_MODEL_ID` and `pip install langchain-aws boto3`. Uses AWS credential chain if explicit credentials not provided.
+**IBM WatsonX AI**: Requires `WATSONX_URL`, `WATSONX_APIKEY`, `WATSONX_PROJECT_ID`, `WATSONX_MODEL_ID` and `pip install langchain-ibm `.
 - **Ollama**: Requires local Ollama instance running (default: `http://localhost:11434`)
 
+**Redis Configurations:** For maintaining Chat Sessions in multi-worker environment
+
+| Setting                              | Description                                | Default | Options |
+| -------------------------------------| -------------------------------------------| ------- | ------- |
+| `LLMCHAT_SESSION_TTL`                | Seconds for active_session key TTL         | `300`   | int     |
+| `LLMCHAT_SESSION_LOCK_TTL`           | Seconds for lock expiry                    | `30`    | int     |
+| `LLMCHAT_SESSION_LOCK_RETRIES`       | How many times to poll while waiting       | `10`    | int     |
+| `LLMCHAT_SESSION_LOCK_WAIT`          | Seconds between polls                      | `0.2`   | float   |
+| `LLMCHAT_CHAT_HISTORY_TTL`           | Seconds for chat history expiry            | `3600`  | int     |
+| `LLMCHAT_CHAT_HISTORY_MAX_MESSAGES`  | Maximum message history to store per user  | `50`    | int     |
+
 **Documentation:**
-- [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/manage/llm-chat/) - Complete LLM Chat setup and provider configuration
+- [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/using/clients/llm-chat) - Complete LLM Chat setup and provider configuration
 
 ### Email-Based Authentication & User Management
 
