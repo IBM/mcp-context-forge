@@ -276,29 +276,29 @@ make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint ve
 ### Core Features
 - [A2A Agent Integration](docs/docs/using/agents/a2a.md) - Agent-to-Agent setup, authentication, monitoring
 - [Plugin Development](docs/docs/architecture/plugins.md) - Plugin framework, hooks, creating custom plugins
-- [Virtual Servers](docs/docs/manage/virtual-servers.md) - Creating and managing composite MCP servers
+- [Virtual Servers](docs/docs/manage/api-usage.md#virtual-server-management) - Creating and managing composite MCP servers
 - [Export/Import Reference](docs/docs/manage/export-import-reference.md) - Bulk operations and configuration migration
 
 ### Architecture & Design
-- [Architecture Overview](docs/docs/architecture/README.md) - System design, components, data flow
-- [ADR Index](docs/docs/architecture/adr/README.md) - Architecture Decision Records
-- [Security Architecture](docs/docs/architecture/security.md) - Authentication, authorization, security features
+- [Architecture Overview](docs/docs/architecture/index.md) - System design, components, data flow
+- [ADR Index](docs/docs/architecture/adr/index.md) - Architecture Decision Records
+- [Security Architecture](docs/docs/architecture/security-features.md) - Authentication, authorization, security features
 - [Multi-Transport Design](docs/docs/architecture/adr/003-expose-multi-transport-endpoints.md) - HTTP, WebSocket, SSE, STDIO
 
 ### Operations & Management
 - [Logging & Monitoring](docs/docs/manage/logging.md) - Log configuration, rotation, analysis
 - [Performance Tuning](docs/docs/testing/performance.md) - Benchmarks, optimization, profiling
-- [Scaling & High Availability](docs/docs/manage/scaling.md) - Horizontal scaling, load balancing, federation
+- [Scaling & High Availability](docs/docs/manage/scale.md) - Horizontal scaling, load balancing, federation
 - [Well-Known URIs](docs/docs/manage/well-known-uris.md) - Standard endpoints (robots.txt, security.txt)
 
 ### Deployment
-- [Docker/Podman Deployment](docs/docs/deployment/docker.md) - Container setup and configuration
+- [Container Deployment](docs/docs/deployment/container.md) - Docker/Podman setup and configuration
 - [Kubernetes Deployment](docs/docs/deployment/kubernetes.md) - K8s manifests and Helm charts
 - [Cloud Deployments](docs/docs/deployment/) - AWS, Azure, GCP, Fly.io guides
 
 ### Testing & Quality
 - [Testing Guide](docs/docs/testing/basic.md) - Unit, integration, E2E, security testing
-- [Security Testing](docs/docs/testing/security.md) - Vulnerability scanning, penetration testing
+- [Fuzzing & Property Testing](docs/docs/testing/fuzzing.md) - Advanced testing techniques
 - [Documentation Standards](docs/docs/development/documentation.md) - Writing and maintaining docs
 
 ### Integration Guides
