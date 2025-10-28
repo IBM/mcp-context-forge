@@ -4986,6 +4986,18 @@ async def admin_tools_partial_html(
             },
         )
 
+    # If render=selector, return tool selector items for infinite scroll
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "tools_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
     # Render template with paginated data
     return request.app.state.templates.TemplateResponse(
         "tools_partial.html",
