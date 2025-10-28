@@ -2694,10 +2694,8 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        from mcpgateway.models import (
-            ResourceContent,  # pylint: disable=import-outside-toplevel
-            TextContent,  # pylint: disable=import-outside-toplevel
-        )
+        # pylint: disable=import-outside-toplevel
+        from mcpgateway.models import ResourceContent, TextContent
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
