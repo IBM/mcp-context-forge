@@ -3967,13 +3967,13 @@ async def websocket_endpoint(websocket: WebSocket):
     Args:
         websocket: The WebSocket connection instance.
     """
+    transport = None
+    proxy_user = None
+    token = None
     try:
         # Authenticate WebSocket connection
         if settings.mcp_client_auth_enabled or settings.auth_required:
             # Extract auth from query params or headers
-            token = None
-            proxy_user = None
-
             # Try to get token from query parameter
             if "token" in websocket.query_params:
                 token = websocket.query_params["token"]
@@ -4001,9 +4001,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     await websocket.close(code=1008, reason="Invalid authentication")
                     return
 
-        await websocket.accept()
-        logger.info("WebSocket connection accepted")
-
         # Identify user and server for pooling key
         user_id = proxy_user or "anonymous"
         server_id = websocket.query_params.get("server_id", "default-server")
@@ -4013,21 +4010,16 @@ async def websocket_endpoint(websocket: WebSocket):
         transport = None
         if await should_use_session_pooling(server_id):
             # Use existing or create pooled session
-            # Note: WebSocket transport needs the actual WebSocket object, so pooling works differently
             transport = WebSocketTransport(websocket, pooled=True, pool_key=f"{user_id}:{server_id}")
             await transport.connect()
             await session_registry.add_session(transport.session_id, transport, pooled=True)
-            logger.info(
-                f"Created pooled WebSocket session for user={user_id}, server={server_id}, session={transport.session_id}"
-            )
+            logger.info(f"Created pooled WebSocket session for user={user_id}, server={server_id}, session={transport.session_id}")
         else:
             # Fallback: create new transport
             transport = WebSocketTransport(websocket)
             await transport.connect()
             await session_registry.add_session(transport.session_id, transport)
-            logger.info(
-                f"Created new WebSocket session for user={user_id}, server={server_id}, session={transport.session_id}"
-            )
+            logger.info(f"Created new WebSocket session for user={user_id}, server={server_id}, session={transport.session_id}")
 
         while True:
             try:
@@ -4058,10 +4050,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 break
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
-        # Cleanup pooled session if needed
         if transport and hasattr(transport, '_pooled') and transport._pooled:
-            # For pooled sessions, we don't immediately remove from registry
-            # They get cleaned up by the pool's background task
+            # For pooled sessions, we don't immediately remove from registry. They get cleaned up by the pool's background task
             pass
         else:
             # For non-pooled sessions, remove from registry

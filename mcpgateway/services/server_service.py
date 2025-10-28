@@ -15,6 +15,7 @@ It also publishes event notifications for server changes.
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
+import builtins
 
 # Third-Party
 import httpx
@@ -51,7 +52,7 @@ class ServerNotFoundError(ServerError):
     """Raised when a requested server is not found."""
 
 
-class PermissionError(ServerError):
+class PermissionError(builtins.PermissionError, ServerError):
     """Raised when a user does not have permission to perform an action on a server."""
 
 
@@ -647,7 +648,7 @@ class ServerService:
             raise ServerNotFoundError(f"Server not found: {server_id}")
 
         try:
-            effective_strategy = await self.get_session_strategy(db, server_id)
+            effective_strategy = await self.get_session_strategy(db, server_id, server=server)
             logger.debug(f"Server {server_id} effective session strategy: {effective_strategy}")
         except Exception as e:
             logger.warning(f"Could not determine session strategy for server {server_id}: {e}")
@@ -998,13 +999,14 @@ class ServerService:
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
-            # Check ownership if user_email provided
+            # Always perform ownership check if user_email is provided
             if user_email:
                 # First-Party
                 from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, server):
+                can_delete = await permission_service.check_resource_ownership(user_email, server)
+                if not can_delete:
                     raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
@@ -1147,7 +1149,7 @@ class ServerService:
         }
         await self._publish_event(event)
 
-    async def get_session_strategy(self, db: Session, server_id: str) -> str:
+    async def get_session_strategy(self, db: Session, server_id: str, server: Optional[DbServer] = None) -> str:
         """Determine effective session strategy for server.
 
         This method resolves the session strategy for a specific server, taking into account:
@@ -1180,7 +1182,12 @@ class ServerService:
             >>> result == settings.session_pool_strategy
             True
         """
-        server = db.get(DbServer, server_id)
+        # server = db.get(DbServer, server_id)
+        # if not server:
+        #     raise ServerNotFoundError(f"Server not found: {server_id}")
+        # Allow callers to pass an already-loaded server object to avoid repeated DB lookups.
+        if server is None:
+            server = db.get(DbServer, server_id)
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
 

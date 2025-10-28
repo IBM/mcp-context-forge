@@ -202,18 +202,37 @@ class TestServerServiceOwnership:
         mock_server = MagicMock(spec=Server)
         mock_server.id = "server-1"
         mock_server.owner_email = "owner@example.com"
-
+        mock_server.team_id = None
+        mock_server.visibility = "private"
+        mock_server.name = "Test Server"
+        mock_server.session_pooling_strategy = "inherit"
+        
         mock_db_session.get.return_value = mock_server
+        mock_db_session.rollback = MagicMock()
+        mock_db_session.commit = MagicMock()
+        mock_db_session.delete = MagicMock()
 
         with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
             mock_perm_service = mock_perm_service_class.return_value
             mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
+            server_service._notify_server_deleted = AsyncMock()
 
-            with pytest.raises(PermissionError, match="Only the owner can delete this server"):
-                await server_service.delete_server(mock_db_session, "server-1", user_email="other@example.com")
+            try:
+                with pytest.raises(PermissionError, match="Only the owner can delete this server"):
+                    await server_service.delete_server(mock_db_session, "server-1", user_email="other@example.com")
+            except AssertionError as e:
+                # This will help us understand if we're getting a different error message
+                print(f"Test failed because: {e}")
+                raise
+            except Exception as e:
+                print(f"Unexpected error: {e}")
+                raise
 
+            # Verify the expectations
             mock_db_session.delete.assert_not_called()
-
+            mock_db_session.rollback.assert_called_once()
+            mock_perm_service.check_resource_ownership.assert_called_once_with("other@example.com", mock_server)
+            mock_db_session.commit.assert_not_called()
 
 class TestToolServiceOwnership:
     """Test ownership checks in ToolService delete/update methods."""

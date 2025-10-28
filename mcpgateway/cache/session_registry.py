@@ -1235,7 +1235,12 @@ class SessionRegistry(SessionBackend):
                     transport = session_data['transport']
                     try:
                         if not await transport.is_connected():
-                            await self.remove_session(session_id)
+                            if pooled:
+                                # For pooled sessions, remove from registry but don't disconnect
+                                await self.remove_session_from_registry_only(session_id)
+                            else:
+                                # For non-pooled sessions, full removal with disconnect
+                                await self.remove_session(session_id)
                             continue
 
                         # Refresh session in database

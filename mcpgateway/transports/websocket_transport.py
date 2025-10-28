@@ -128,8 +128,9 @@ class WebSocketTransport(Transport):
             >>> mock_ws.accept.called
             True
         """
-        await self._websocket.accept()
-        self._connected = True
+        if not self._connected:
+            await self._websocket.accept()
+            self._connected = True
 
         # Start ping task
         if settings.websocket_ping_interval > 0:
