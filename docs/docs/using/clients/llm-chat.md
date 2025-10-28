@@ -87,33 +87,33 @@ OLLAMA_TEMPERATURE=0.7
 
 ```bash
 # ===== Redis Connection =====
-CACHE_TYPE=redis                          # Enable Redis 
+CACHE_TYPE=redis                          # Enable Redis
 REDIS_URL=redis://localhost:6379/0       # Redis connection string
 
 # ===== Session Management =====
-SESSION_TTL=300                           # Active session ownership TTL (seconds)
+LLMCHAT_SESSION_TTL=300                   # Active session ownership TTL (seconds)
 # Default: 300 (5 minutes)
 # Higher values: More stable sessions, slower failover
 # Lower values: Faster failover, more frequent TTL refreshes
 
 # ===== Lock Configuration =====
-SESSION_LOCK_TTL=30                       # Lock expiry time (seconds)
+LLMCHAT_SESSION_LOCK_TTL=30               # Lock expiry time (seconds)
 # Default: 30 seconds
 # Should be > typical initialization time
 
-SESSION_LOCK_RETRIES=10                   # Lock acquisition retry attempts
+LLMCHAT_SESSION_LOCK_RETRIES=10           # Lock acquisition retry attempts
 # Default: 10 attempts
 # Total wait time = RETRIES × WAIT
 
-SESSION_LOCK_WAIT=0.2                     # Wait between retry attempts (seconds)
+LLMCHAT_SESSION_LOCK_WAIT=0.2             # Wait between retry attempts (seconds)
 # Default: 0.2 seconds (200ms)
 # Total max wait: 10 × 0.2 = 2 seconds
 
 # ===== Chat History =====
-CHAT_HISTORY_TTL=3600                     # History expiry time (seconds)
+LLMCHAT_CHAT_HISTORY_TTL=3600             # History expiry time (seconds)
 # Default: 3600 (1 hour)
 
-CHAT_HISTORY_MAX_MESSAGES=50              # Maximum messages per user
+LLMCHAT_CHAT_HISTORY_MAX_MESSAGES=50      # Maximum messages per user
 # Default: 50
 # Older messages automatically trimmed
 ```
@@ -153,7 +153,7 @@ After selecting a server, expand the **LLM Configuration** section and choose yo
 5. IBM watsonx.ai
 6. Ollama
 
-Select your preferred provider. If you’ve already configured LLM details like API key, URL, etc., in the environment variables, you can leave the next fields blank.
+Select your preferred provider. If you've already configured LLM details like API key, URL, etc., in the environment variables, you can leave the next fields blank.
 
 
 ### Step 3: 🔗 Connect to the Chat Session
