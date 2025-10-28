@@ -4656,7 +4656,15 @@ async function editServer(serverId) {
         // Store server data for modal population
         window.currentEditingServer = server;
 
+        // Set associated tools data attribute on the container for reference by initToolSelect
+        const editToolsContainer = document.getElementById('edit-server-tools');
+        if (editToolsContainer && server.associatedTools) {
+            editToolsContainer.setAttribute('data-server-tools', JSON.stringify(server.associatedTools));
+            console.log("Set data-server-tools attribute with:", server.associatedTools);
+        }
+
         openModal("server-edit-modal");
+        console.log("Opened server edit modal");
 
         // Use multiple approaches to ensure checkboxes get set
         setEditServerAssociations(server);
@@ -4665,15 +4673,32 @@ async function editServer(serverId) {
 
         // Set associated items after modal is opened
         setTimeout(() => {
+            console.log("Inside first setTimeout after modal opened");
             // Set associated tools checkboxes
             const toolCheckboxes = document.querySelectorAll(
                 'input[name="associatedTools"]',
             );
 
+            console.log("Found", toolCheckboxes.length, "tool checkboxes to check");
+
             toolCheckboxes.forEach((checkbox) => {
-                const isChecked =
-                    server.associatedTools &&
-                    server.associatedTools.includes(checkbox.value);
+                let isChecked = false;
+                if (server.associatedTools && window.toolMapping) {
+                    // Get the tool name for this checkbox UUID
+                    const toolName = window.toolMapping[checkbox.value];
+                    console.log("Checking checkbox:", checkbox.value, "mapped to tool name:", toolName);
+
+                    // Check if this tool name is in the associated tools array
+                    isChecked = toolName && server.associatedTools.includes(toolName);
+                    if (isChecked) {
+                        console.log("✓ Tool should be checked:", toolName);
+                    } else {
+                        console.log("- Tool should not be checked:", toolName);
+                    }
+                } else {
+                    console.log("Tool mapping or server tools not available for checkbox:", checkbox.value);
+                }
+
                 checkbox.checked = isChecked;
             });
 
@@ -4833,6 +4858,192 @@ function setEditServerAssociations(server) {
             }
         });
     }, 50);
+}
+
+// ===================================================================
+// HTMX HANDLERS for dynamic content loading
+// ===================================================================
+
+// Set up HTMX handler for auto-checking newly loaded tools when Select All is active or Edit Server mode
+if (window.htmx && !window._toolsHtmxHandlerAttached) {
+  window._toolsHtmxHandlerAttached = true;
+  
+  console.log("HTMX handler for tools loading registered");
+  
+  htmx.on('htmx:afterSettle', function(evt) {
+    // Only handle tool pagination requests
+    if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath && evt.detail.pathInfo.requestPath.includes('/admin/tools/partial')) {
+      console.log("HTMX afterSettle event caught for tools partial load");
+      // Use a slight delay to ensure DOM is fully updated
+      setTimeout(() => {
+        // Find which container actually triggered the request by checking the target
+        let container = null;
+        const target = evt.detail.target;
+        
+        console.log("HTMX event target:", target ? target.id || target.tagName : "null");
+        
+        // Check if the target itself is the edit server tools container (most common case for infinite scroll)
+        if (target && target.id === 'edit-server-tools') {
+          container = target;
+          console.log("Target is edit-server-tools container directly");
+        } 
+        // Or if target is the associated tools container (for add server)
+        else if (target && target.id === 'associatedTools') {
+          container = target;
+          console.log("Target is associatedTools container for add server");
+        }
+        // Otherwise try to find the container using closest
+        else if (target) {
+          container = target.closest('#associatedTools') || target.closest('#edit-server-tools');
+          console.log("Container found from target.closest():", container ? container.id : "null");
+        }
+        
+        // Fallback logic if container still not found
+        if (!container) {
+          // Check which modal/dialog is currently open to determine the correct container
+          const editModal = document.getElementById('server-edit-modal');
+          const isEditModalOpen = editModal && !editModal.classList.contains('hidden');
+          
+          if (isEditModalOpen) {
+            container = document.getElementById('edit-server-tools');
+            console.log("Fallback: Edit modal is open, using edit-server-tools container");
+          } else {
+            container = document.getElementById('associatedTools');
+            console.log("Fallback: Using associatedTools container");
+          }
+        }
+        
+        // Final safety check - use direct lookup if still not found
+        if (!container) {
+          const addServerContainer = document.getElementById('associatedTools');
+          const editServerContainer = document.getElementById('edit-server-tools');
+          
+          console.log("Direct container lookup - associatedTools:", !!addServerContainer, "edit-server-tools:", !!editServerContainer);
+          console.log("Visibility check - associatedTools offsetParent:", addServerContainer ? !!addServerContainer.offsetParent : "null");
+          console.log("Visibility check - edit-server-tools offsetParent:", editServerContainer ? !!editServerContainer.offsetParent : "null");
+          
+          // Check if edit server container has the server tools data attribute set
+          if (editServerContainer && editServerContainer.getAttribute('data-server-tools')) {
+            container = editServerContainer;
+            console.log("Final fallback: found edit-server-tools with data-server-tools attribute");
+          } else if (addServerContainer && addServerContainer.offsetParent !== null) {
+            container = addServerContainer;
+            console.log("Final fallback: found associatedTools container");
+          } else if (editServerContainer && editServerContainer.offsetParent !== null) {
+            container = editServerContainer;
+            console.log("Final fallback: found edit-server-tools container");
+          } else {
+            // Last resort: just pick one that exists
+            container = addServerContainer || editServerContainer;
+            console.log("Last resort: picked default container", container ? container.id : "null");
+          }
+        }
+        
+        if (container) {
+          console.log("Processing container:", container.id);
+          console.log("Container ID check for edit-server-tools:", container.id === 'edit-server-tools');
+          
+          // Update tool mapping for newly loaded tools
+          const newCheckboxes = container.querySelectorAll('input[data-auto-check=true]');
+          console.log("Found", newCheckboxes.length, "new checkboxes with data-auto-check");
+          
+          if (!window.toolMapping) {
+            window.toolMapping = {};
+          }
+          
+          newCheckboxes.forEach(cb => {
+            const toolId = cb.value;
+            const toolName = cb.getAttribute('data-tool-name');
+            if (toolId && toolName) {
+              window.toolMapping[toolId] = toolName;
+              console.log("Updated tool mapping:", toolId, "->", toolName);
+            }
+          });
+          
+          const selectAllInput = container.querySelector('input[name="selectAllTools"]');
+          console.log("Select All input found:", !!selectAllInput);
+          if (selectAllInput) {
+            const selectAllValue = selectAllInput.value;
+            console.log("Select All input value:", selectAllValue);
+          }
+          
+          // Check if Select All is active
+          if (selectAllInput && selectAllInput.value === 'true') {
+            console.log("Select All mode is active, checking all new checkboxes");
+            newCheckboxes.forEach(cb => {
+              cb.checked = true;
+              cb.removeAttribute('data-auto-check');
+            });
+            
+            if (newCheckboxes.length > 0) {
+              const event = new Event('change', { bubbles: true });
+              container.dispatchEvent(event);
+            }
+          }
+          // Check if we're in Edit Server mode and need to pre-select tools
+          else if (container.id === 'edit-server-tools') {
+            console.log("In edit server mode, checking for server tools to select");
+            // Try to get server tools from data attribute (primary source)
+            let serverTools = null;
+            const dataAttr = container.getAttribute('data-server-tools');
+            console.log("Data attribute 'data-server-tools' value:", dataAttr);
+            
+            if (dataAttr) {
+              try {
+                serverTools = JSON.parse(dataAttr);
+                console.log("Server tools from data attribute:", serverTools, "length:", serverTools.length);
+              } catch (e) {
+                console.error('Failed to parse data-server-tools:', e);
+              }
+            } else {
+              console.log("No data-server-tools attribute found on container");
+            }
+            
+            if (serverTools && serverTools.length > 0) {
+              console.log(`Found ${serverTools.length} server tools, checking ${newCheckboxes.length} new checkboxes`);
+              let checkedCount = 0;
+              newCheckboxes.forEach(cb => {
+                const toolId = cb.value;
+                const toolName = cb.getAttribute('data-tool-name'); // Use the data attribute directly
+                if (toolId && toolName) {
+                  console.log(`Checking tool: ID=${toolId}, Name=${toolName}`);
+                  // Check if this tool name exists in server associated tools
+                  if (serverTools.includes(toolName)) {
+                    cb.checked = true;
+                    cb.removeAttribute('data-auto-check');
+                    checkedCount++;
+                    console.log(`✓ Selected tool: ${toolName} (ID: ${toolId})`);
+                  } else {
+                    console.log(`- Not selecting tool: ${toolName} (ID: ${toolId}) - not in server tools`);
+                    cb.removeAttribute('data-auto-check');
+                  }
+                } else {
+                  console.log(`Tool with missing ID or name: ID=${toolId}, Name=${toolName}`);
+                  cb.removeAttribute('data-auto-check');
+                }
+              });
+              
+              console.log(`Selected ${checkedCount} out of ${newCheckboxes.length} new tools`);
+              
+              // Trigger an update to display the correct count based on server.associatedTools
+              // This will make sure the pill counters reflect the total associated tools count
+              const event = new Event('change', { bubbles: true });
+              container.dispatchEvent(event);
+              console.log("Dispatched change event to update UI");
+            } else {
+              console.log("No server tools found or server tools is empty");
+            }
+          } else {
+            console.log(`Container is not edit-server-tools, it's: ${container.id}, element type: ${container.tagName}`);
+          }
+        } else {
+          console.log("No container found for HTMX event handling");
+        }
+      }, 10); // Small delay to ensure DOM is updated
+    } else {
+      console.log("HTMX event not for tools partial, path:", evt.detail.pathInfo?.requestPath);
+    }
+  });
 }
 
 // ===================================================================
@@ -5681,6 +5892,22 @@ function initToolSelect(
             // Check if "Select All" mode is active
             const selectAllInput = container.querySelector('input[name="selectAllTools"]');
             const allIdsInput = container.querySelector('input[name="allToolIds"]');
+            
+            // Check if this is the edit server tools container
+            const isEditServerMode = selectId === 'edit-server-tools';
+            let serverTools = null;
+            
+            if (isEditServerMode) {
+                const dataAttr = container.getAttribute('data-server-tools');
+                if (dataAttr) {
+                    try {
+                        serverTools = JSON.parse(dataAttr);
+                    } catch (e) {
+                        console.error("Error parsing data-server-tools:", e);
+                    }
+                }
+            }
+            
             let count = checked.length;
             
             // If Select All mode is active, use the count from allToolIds
@@ -5692,12 +5919,27 @@ function initToolSelect(
                     console.error("Error parsing allToolIds:", e);
                 }
             }
+            // If in edit server mode and we have server tools data, use that count
+            else if (isEditServerMode && serverTools && Array.isArray(serverTools)) {
+                count = serverTools.length;
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
             
-            checked.slice(0, maxPillsToShow).forEach((cb) => {
+            // In edit server mode, we want to show the server tools rather than just currently checked ones
+            let pillsToDisplay = checked;
+            if (isEditServerMode && serverTools && Array.isArray(serverTools) && window.toolMapping) {
+                // Create a list of tools that exist both in serverTools and currently loaded tools
+                const allLoadedTools = Array.from(checkboxes);
+                pillsToDisplay = allLoadedTools.filter(checkbox => {
+                    const toolName = window.toolMapping[checkbox.value];
+                    return toolName && serverTools.includes(toolName);
+                });
+            }
+            
+            pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
                 span.textContent =
@@ -5846,6 +6088,39 @@ function initToolSelect(
                         allIdsInput.value = JSON.stringify(allIds);
                     } catch (error) {
                         console.error('Error updating allToolIds:', error);
+                    }
+                }
+                // Check if we're in edit server mode
+                else if (selectId === 'edit-server-tools') {
+                    // In edit server mode, update the server tools data based on checkbox state
+                    const dataAttr = container.getAttribute('data-server-tools');
+                    let serverTools = [];
+                    
+                    if (dataAttr) {
+                        try {
+                            serverTools = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error('Error parsing data-server-tools:', e);
+                        }
+                    }
+                    
+                    // Get the tool name from toolMapping to update serverTools array
+                    const toolId = e.target.value;
+                    const toolName = window.toolMapping && window.toolMapping[toolId];
+                    
+                    if (toolName) {
+                        if (e.target.checked) {
+                            // Add tool name to server tools if not already there
+                            if (!serverTools.includes(toolName)) {
+                                serverTools.push(toolName);
+                            }
+                        } else {
+                            // Remove tool name from server tools
+                            serverTools = serverTools.filter(name => name !== toolName);
+                        }
+                        
+                        // Update the data attribute
+                        container.setAttribute('data-server-tools', JSON.stringify(serverTools));
                     }
                 }
                 
