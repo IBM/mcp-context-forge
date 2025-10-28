@@ -42,9 +42,10 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, case, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
@@ -1041,12 +1042,25 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         server_id = form.get("id")
         visibility = str(form.get("visibility", "private"))
         LOGGER.info(f" user input id::{server_id}")
+
+        # Handle "Select All" for tools
+        associated_tools_list = form.getlist("associatedTools")
+        if form.get("selectAllTools") == "true":
+            # User clicked "Select All" - get all tool IDs from hidden field
+            all_tool_ids_json = str(form.get("allToolIds", "[]"))
+            try:
+                all_tool_ids = json.loads(all_tool_ids_json)
+                associated_tools_list = all_tool_ids
+                LOGGER.info(f"Select All tools enabled: {len(all_tool_ids)} tools selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
+
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
+            associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
             associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
             tags=tags,
@@ -1233,12 +1247,24 @@ async def admin_edit_server(
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
+        # Handle "Select All" for tools
+        associated_tools_list = form.getlist("associatedTools")
+        if form.get("selectAllTools") == "true":
+            # User clicked "Select All" - get all tool IDs from hidden field
+            all_tool_ids_json = str(form.get("allToolIds", "[]"))
+            try:
+                all_tool_ids = json.loads(all_tool_ids_json)
+                associated_tools_list = all_tool_ids
+                LOGGER.info(f"Select All tools enabled for edit: {len(all_tool_ids)} tools selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
+            associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
             associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
             tags=tags,
@@ -4986,6 +5012,18 @@ async def admin_tools_partial_html(
             },
         )
 
+    # If render=selector, return tool selector items for infinite scroll
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "tools_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
     # Render template with paginated data
     return request.app.state.templates.TemplateResponse(
         "tools_partial.html",
@@ -4998,6 +5036,131 @@ async def admin_tools_partial_html(
             "include_inactive": include_inactive,
         },
     )
+
+
+@admin_router.get("/tools/ids", response_class=JSONResponse)
+async def admin_get_all_tool_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Return all tool IDs accessible to the current user.
+
+    This is used by "Select All" to get all tool IDs without loading full data.
+
+    Args:
+        include_inactive (bool): Whether to include inactive tools in the results
+        db (Session): Database session dependency
+        user: Current user making the request
+
+    Returns:
+        JSONResponse: List of tool IDs accessible to the user
+    """
+    user_email = get_user_email(user)
+
+    # Build base query
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+
+    query = select(DbTool.id)
+
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+
+    # Build access conditions
+    access_conditions = [DbTool.owner_email == user_email, DbTool.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    # Get all IDs
+    tool_ids = [row[0] for row in db.execute(query).all()]
+
+    return {"tool_ids": tool_ids, "count": len(tool_ids)}
+
+
+@admin_router.get("/tools/search", response_class=JSONResponse)
+async def admin_search_tools(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Search tools by name, ID, or description.
+
+    This endpoint searches tools across all accessible tools for the current user,
+    returning both IDs and names for use in search functionality like the Add Server page.
+
+    Args:
+        q (str): Search query string to match against tool names, IDs, or descriptions
+        include_inactive (bool): Whether to include inactive tools in the search results
+        limit (int): Maximum number of results to return (1-1000)
+        db (Session): Database session dependency
+        user: Current user making the request
+
+    Returns:
+        JSONResponse: Dictionary containing list of matching tools and count
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+
+    if not search_query:
+        # If no search query, return empty list
+        return {"tools": [], "count": 0}
+
+    # Build base query
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+
+    query = select(DbTool.id, DbTool.original_name, DbTool.custom_name, DbTool.display_name, DbTool.description)
+
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+
+    # Build access conditions
+    access_conditions = [DbTool.owner_email == user_email, DbTool.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    # Add search conditions - search in display fields and description
+    # Using the same priority as display: displayName -> customName -> original_name
+    search_conditions = [
+        func.lower(coalesce(DbTool.display_name, "")).contains(search_query),
+        func.lower(coalesce(DbTool.custom_name, "")).contains(search_query),
+        func.lower(DbTool.original_name).contains(search_query),
+        func.lower(coalesce(DbTool.description, "")).contains(search_query),
+    ]
+
+    query = query.where(or_(*search_conditions))
+
+    # Order by relevance - prioritize matches at start of names
+    query = query.order_by(
+        case(
+            (func.lower(DbTool.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbTool.custom_name, "")).startswith(search_query), 1),
+            (func.lower(coalesce(DbTool.display_name, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbTool.original_name),
+    ).limit(limit)
+
+    # Execute query
+    results = db.execute(query).all()
+
+    # Format results
+    tools = []
+    for row in results:
+        tools.append({"id": row.id, "name": row.original_name, "display_name": row.display_name, "custom_name": row.custom_name})  # original_name for search matching
+
+    return {"tools": tools, "count": len(tools)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
