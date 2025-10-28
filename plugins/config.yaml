@@ -869,3 +869,33 @@ plugins:
       enable_caching: true
       cache_ttl: 3600
       max_text_length: 10000
+
+  # ALTK: JSON Processor
+  - name: "ALTKJsonProcessor"
+    kind: "plugins.altk_json_processor.json_processor.ALTKJsonProcessor"
+    description: "Uses JSON Processor from ALTK to extract data from long JSON responses"
+    version: "0.1.0"
+    author: "Jason Tsay"
+    hooks: ["tool_post_invoke"]
+    tags: ["plugin"]
+    mode: "disabled"  # enforce | permissive | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools/servers
+      - server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      jsonprocessor_query: ""
+      llm_provider: "watsonx" # one of watsonx, ollama, openai, anthropic
+      watsonx: # each section of providers is optional
+        wx_api_key: "" # optional, can define WX_API_KEY instead
+        wx_project_id: "" # optional, can define WX_PROJECT_ID instead
+        wx_url: "https://us-south.ml.cloud.ibm.com"
+      ollama:
+        ollama_url: "http://localhost:11434"
+      openai:
+        api_key: "" # optional, can define OPENAI_API_KEY instead
+      anthropic:
+        api_key: "" # optional, can define ANTHROPIC_API_KEY instead
+      model_id: "ibm/granite-3-3-8b-instruct" # note that this changes depending on provider
+      length_threshold: 100000
