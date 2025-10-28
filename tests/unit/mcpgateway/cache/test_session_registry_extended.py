@@ -857,10 +857,12 @@ class TestRedisSessionRefresh:
     async def test_refresh_redis_sessions_general_error(self, monkeypatch, caplog):
         """Test _refresh_redis_sessions handles general errors."""
         mock_redis = AsyncMock()
+        mock_redis.close = Mock()  # Redis close() is synchronous
+        mock_redis.pubsub = Mock(return_value=AsyncMock())  # pubsub() is synchronous, returns async object
 
         with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
-                MockRedis.from_url.return_value = mock_redis
+                MockRedis.from_url = Mock(return_value=mock_redis)  # from_url is synchronous
 
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
 
@@ -929,7 +931,7 @@ class TestInitializationAndShutdown:
 
         with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
-                MockRedis.from_url.return_value = mock_redis
+                MockRedis.from_url = Mock(return_value=mock_redis)  # from_url is synchronous
 
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
                 await registry.initialize()

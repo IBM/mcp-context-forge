@@ -540,7 +540,8 @@ class TestAssignRoleToUser:
         """Test assigning team-scoped role without scope_id."""
         sample_role.scope = "team"
 
-        with patch.object(role_service, "get_role_by_id", new=AsyncMock(return_value=sample_role)):
+        mock_get_role = AsyncMock(return_value=sample_role)
+        with patch.object(role_service, "get_role_by_id", new=mock_get_role):
             with pytest.raises(ValueError, match="scope_id required"):
                 await role_service.assign_role_to_user(user_email="user@example.com", role_id="role-123", scope="team", scope_id=None, granted_by="admin@example.com")
 

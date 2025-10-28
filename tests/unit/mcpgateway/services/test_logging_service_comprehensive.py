@@ -581,6 +581,7 @@ async def test_storage_handler_emit_format_error():
 
     # Mock the event loop
     mock_loop = MagicMock()
+    mock_loop.call_soon_threadsafe = MagicMock()  # Ensure call_soon_threadsafe is sync
     handler.loop = mock_loop
 
     # Should not raise
