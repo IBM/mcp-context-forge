@@ -19,6 +19,7 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - **🧪 Quality & Testing** - Complete build pipeline verification, enhanced linting, mutation testing, and fuzzing
 - **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70% + orjson JSON serialization providing 5-6x faster JSON encoding
 - **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
+- **💻 Admin UI** - Quality of life improvements for admins when managing MCP servers
 
 ### Added
 
@@ -166,6 +167,10 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
   - **Options**: OPT_NON_STR_KEYS (integer dict keys), OPT_SERIALIZE_NUMPY (numpy arrays)
   - **Implementation**: `mcpgateway/utils/orjson_response.py` configured as default FastAPI response class
   - **Test Coverage**: 29 comprehensive unit tests with 100% code coverage
+
+#### **💻 Admin UI enhancements** (#1336)
+* **Inspectable auth passwords, tokens and headers** (#1336) - Admins can now view and verify passwords, tokens and custom headers they set when creating or editing MCP servers.
+
 
 ### Fixed
 
