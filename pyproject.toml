@@ -116,7 +116,7 @@ dev = [
     "pydocstyle>=6.3.0",
     "pylint>=3.3.9",
     "pylint-pydantic>=0.3.5",
-    "pyre-check>=0.9.25",
+    #"pyre-check>=0.9.25", # unused, conflicts with altk, superceded by pyrefly
     "pyrefly>=0.35.0",
     "pyright>=1.1.406",
     "pyroma>=5.0",
@@ -211,6 +211,11 @@ aiosqlite = [
 # Async PostgreSQL driver (optional)
 asyncpg = [
     "asyncpg>=0.30.0",
+]
+
+# Agent Lifecycle Toolkit(optional)
+altk = [
+    "agent-lifecycle-toolkit>=0.4.0",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
