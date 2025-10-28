@@ -367,7 +367,7 @@ class Settings(BaseSettings):
 
     # Security Headers Configuration
     security_headers_enabled: bool = Field(default=True)
-    x_frame_options: str = Field(default="SAMEORIGIN")
+    x_frame_options: str = Field(default="DENY")
     x_content_type_options_enabled: bool = Field(default=True)
     x_xss_protection_enabled: bool = Field(default=True)
     x_download_options_enabled: bool = Field(default=True)
