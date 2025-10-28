@@ -61,6 +61,18 @@
     {% endfor %}
     {% endif %}
 
+    // Scroll to the top of the table before loading new content
+    const targetElement = document.querySelector(this.targetSelector);
+    if (targetElement) {
+      // Find the parent section/panel to scroll to
+      const panel = targetElement.closest('.tab-panel, .bg-white, .shadow');
+      if (panel) {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
     // Trigger HTMX request - use innerHTML so we only replace tbody content (rows)
     // The OOB swap will handle the pagination controls separately
     htmx.ajax('GET', url.toString(), {
