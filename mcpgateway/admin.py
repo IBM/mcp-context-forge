@@ -1041,12 +1041,25 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         server_id = form.get("id")
         visibility = str(form.get("visibility", "private"))
         LOGGER.info(f" user input id::{server_id}")
+        
+        # Handle "Select All" for tools
+        associated_tools_list = form.getlist("associatedTools")
+        if form.get("selectAllTools") == "true":
+            # User clicked "Select All" - get all tool IDs from hidden field
+            all_tool_ids_json = str(form.get("allToolIds", "[]"))
+            try:
+                all_tool_ids = json.loads(all_tool_ids_json)
+                associated_tools_list = all_tool_ids
+                LOGGER.info(f"Select All tools enabled: {len(all_tool_ids)} tools selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
+        
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
+            associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
             associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
             tags=tags,
@@ -1233,12 +1246,24 @@ async def admin_edit_server(
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
+        # Handle "Select All" for tools
+        associated_tools_list = form.getlist("associatedTools")
+        if form.get("selectAllTools") == "true":
+            # User clicked "Select All" - get all tool IDs from hidden field
+            all_tool_ids_json = str(form.get("allToolIds", "[]"))
+            try:
+                all_tool_ids = json.loads(all_tool_ids_json)
+                associated_tools_list = all_tool_ids
+                LOGGER.info(f"Select All tools enabled for edit: {len(all_tool_ids)} tools selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
-            associated_tools=",".join(str(x) for x in form.getlist("associatedTools")),
+            associated_tools=",".join(str(x) for x in associated_tools_list),
             associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
             associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
             tags=tags,
@@ -5010,6 +5035,45 @@ async def admin_tools_partial_html(
             "include_inactive": include_inactive,
         },
     )
+
+
+@admin_router.get("/tools/ids", response_class=JSONResponse)
+async def admin_get_all_tool_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Return all tool IDs accessible to the current user.
+    
+    This is used by "Select All" to get all tool IDs without loading full data.
+    """
+    user_email = get_user_email(user)
+    
+    # Build base query
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+    
+    query = select(DbTool.id)
+    
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+    
+    # Build access conditions
+    access_conditions = [
+        DbTool.owner_email == user_email,
+        DbTool.visibility == "public"
+    ]
+    if team_ids:
+        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+    
+    query = query.where(or_(*access_conditions))
+    
+    # Get all IDs
+    tool_ids = [row[0] for row in db.execute(query).all()]
+    
+    return {"tool_ids": tool_ids, "count": len(tool_ids)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)

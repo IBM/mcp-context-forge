@@ -5634,12 +5634,12 @@ function initToolSelect(
         return;
     }
 
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     const pillClasses =
         "inline-block px-3 py-1 text-xs font-semibold text-indigo-700 bg-indigo-100 rounded-full shadow";
 
     function update() {
         try {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
             const count = checked.length;
 
@@ -5664,22 +5664,107 @@ function initToolSelect(
         }
     }
 
-    if (clearBtn) {
-        clearBtn.addEventListener("click", () => {
+    // Remove old event listeners by cloning and replacing (preserving ID)
+    if (clearBtn && !clearBtn.dataset.listenerAttached) {
+        clearBtn.dataset.listenerAttached = "true";
+        const newClearBtn = clearBtn.cloneNode(true);
+        newClearBtn.dataset.listenerAttached = "true";
+        clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+        
+        newClearBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach((cb) => (cb.checked = false));
+            
+            // Clear the "select all" flag
+            const selectAllInput = container.querySelector('input[name="selectAllTools"]');
+            if (selectAllInput) {
+                selectAllInput.remove();
+            }
+            const allIdsInput = container.querySelector('input[name="allToolIds"]');
+            if (allIdsInput) {
+                allIdsInput.remove();
+            }
+            
             update();
         });
     }
 
-    if (selectBtn) {
-        selectBtn.addEventListener("click", () => {
-            checkboxes.forEach((cb) => (cb.checked = true));
-            update();
+    if (selectBtn && !selectBtn.dataset.listenerAttached) {
+        selectBtn.dataset.listenerAttached = "true";
+        const newSelectBtn = selectBtn.cloneNode(true);
+        newSelectBtn.dataset.listenerAttached = "true";
+        selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+        
+        newSelectBtn.addEventListener("click", async () => {
+            // Disable button and show loading state
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = "Selecting all tools...";
+            
+            try {
+                // Fetch all tool IDs from the server
+                const response = await fetch(`${window.ROOT_PATH}/admin/tools/ids`);
+                if (!response.ok) throw new Error("Failed to fetch tool IDs");
+                
+                const data = await response.json();
+                const allToolIds = data.tool_ids || [];
+                
+                console.log(`Select All: ${allToolIds.length} tools available for container ${selectId}`);
+                
+                // Check all currently loaded checkboxes
+                const loadedCheckboxes = container.querySelectorAll('input[type="checkbox"]');
+                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                
+                // Add a hidden input to indicate "select all" mode
+                // Remove any existing one first
+                let selectAllInput = container.querySelector('input[name="selectAllTools"]');
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement('input');
+                    selectAllInput.type = 'hidden';
+                    selectAllInput.name = 'selectAllTools';
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = 'true';
+                
+                // Also store the IDs as a JSON array for the backend
+                let allIdsInput = container.querySelector('input[name="allToolIds"]');
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement('input');
+                    allIdsInput.type = 'hidden';
+                    allIdsInput.name = 'allToolIds';
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allToolIds);
+                
+                update();
+                
+                newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
+                setTimeout(() => {
+                    newSelectBtn.textContent = originalText;
+                }, 2000);
+                
+            } catch (error) {
+                console.error("Error in Select All:", error);
+                alert("Failed to select all tools. Please try again.");
+                newSelectBtn.disabled = false;
+                newSelectBtn.textContent = originalText;
+            } finally {
+                newSelectBtn.disabled = false;
+            }
         });
     }
 
     update(); // Initial render
-    checkboxes.forEach((cb) => cb.addEventListener("change", update));
+    
+    // Attach change listeners to checkboxes (using delegation for dynamic content)
+    if (!container.dataset.changeListenerAttached) {
+        container.dataset.changeListenerAttached = "true";
+        container.addEventListener("change", (e) => {
+            if (e.target.type === "checkbox") {
+                update();
+            }
+        });
+    }
 }
 
 function initResourceSelect(
@@ -5703,12 +5788,12 @@ function initResourceSelect(
         return;
     }
 
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     const pillClasses =
         "inline-block px-3 py-1 text-xs font-semibold text-blue-700 bg-blue-100 rounded-full shadow dark:text-blue-300 dark:bg-blue-900";
 
     function update() {
         try {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
             const count = checked.length;
 
@@ -5733,22 +5818,44 @@ function initResourceSelect(
         }
     }
 
-    if (clearBtn) {
-        clearBtn.addEventListener("click", () => {
+    // Remove old event listeners by cloning and replacing (preserving ID)
+    if (clearBtn && !clearBtn.dataset.listenerAttached) {
+        clearBtn.dataset.listenerAttached = "true";
+        const newClearBtn = clearBtn.cloneNode(true);
+        newClearBtn.dataset.listenerAttached = "true";
+        clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+        
+        newClearBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach((cb) => (cb.checked = false));
             update();
         });
     }
 
-    if (selectBtn) {
-        selectBtn.addEventListener("click", () => {
+    if (selectBtn && !selectBtn.dataset.listenerAttached) {
+        selectBtn.dataset.listenerAttached = "true";
+        const newSelectBtn = selectBtn.cloneNode(true);
+        newSelectBtn.dataset.listenerAttached = "true";
+        selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+        
+        newSelectBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach((cb) => (cb.checked = true));
             update();
         });
     }
 
     update(); // Initial render
-    checkboxes.forEach((cb) => cb.addEventListener("change", update));
+    
+    // Attach change listeners using delegation for dynamic content
+    if (!container.dataset.changeListenerAttached) {
+        container.dataset.changeListenerAttached = "true";
+        container.addEventListener("change", (e) => {
+            if (e.target.type === "checkbox") {
+                update();
+            }
+        });
+    }
 }
 
 function initPromptSelect(
@@ -5772,12 +5879,12 @@ function initPromptSelect(
         return;
     }
 
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
     const pillClasses =
         "inline-block px-3 py-1 text-xs font-semibold text-purple-700 bg-purple-100 rounded-full shadow dark:text-purple-300 dark:bg-purple-900";
 
     function update() {
         try {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
             const count = checked.length;
 
@@ -5802,22 +5909,44 @@ function initPromptSelect(
         }
     }
 
-    if (clearBtn) {
-        clearBtn.addEventListener("click", () => {
+    // Remove old event listeners by cloning and replacing (preserving ID)
+    if (clearBtn && !clearBtn.dataset.listenerAttached) {
+        clearBtn.dataset.listenerAttached = "true";
+        const newClearBtn = clearBtn.cloneNode(true);
+        newClearBtn.dataset.listenerAttached = "true";
+        clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+        
+        newClearBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach((cb) => (cb.checked = false));
             update();
         });
     }
 
-    if (selectBtn) {
-        selectBtn.addEventListener("click", () => {
+    if (selectBtn && !selectBtn.dataset.listenerAttached) {
+        selectBtn.dataset.listenerAttached = "true";
+        const newSelectBtn = selectBtn.cloneNode(true);
+        newSelectBtn.dataset.listenerAttached = "true";
+        selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+        
+        newSelectBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach((cb) => (cb.checked = true));
             update();
         });
     }
 
     update(); // Initial render
-    checkboxes.forEach((cb) => cb.addEventListener("change", update));
+    
+    // Attach change listeners using delegation for dynamic content
+    if (!container.dataset.changeListenerAttached) {
+        container.dataset.changeListenerAttached = "true";
+        container.addEventListener("change", (e) => {
+            if (e.target.type === "checkbox") {
+                update();
+            }
+        });
+    }
 }
 
 // ===================================================================
